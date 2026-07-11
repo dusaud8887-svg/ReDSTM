@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS command_ledger (
     claimed_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     run_id TEXT,
-    result_json TEXT NOT NULL DEFAULT '{}'
+    result_json TEXT NOT NULL DEFAULT '{}',
+    reported_at TEXT
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS outbox (
@@ -121,6 +122,11 @@ class ControlStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(_SCHEMA)
+            columns = {
+                str(row["name"]) for row in connection.execute("PRAGMA table_info(command_ledger)")
+            }
+            if "reported_at" not in columns:
+                connection.execute("ALTER TABLE command_ledger ADD COLUMN reported_at TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5)
@@ -194,7 +200,8 @@ class ControlStore:
         with self._connect() as connection:
             connection.execute(
                 """
-                UPDATE command_ledger SET state = ?, result_json = ?, updated_at = ?
+                UPDATE command_ledger
+                SET state = ?, result_json = ?, updated_at = ?, reported_at = NULL
                 WHERE command_id = ? AND state IN ('claimed', 'running')
                 """,
                 (state, result_json, _timestamp(now), command_id),
@@ -205,6 +212,31 @@ class ControlStore:
         if row is None or row["state"] != state:
             raise ValueError("command cannot transition to terminal state")
         return dict(row)
+
+    def pending_commands(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        if limit < 1 or limit > 50:
+            raise ValueError("command page limit must be between 1 and 50")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM command_ledger WHERE reported_at IS NULL
+                ORDER BY claimed_at, command_id LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_reported(self, command_id: str, *, now: datetime | None = None) -> None:
+        with self._connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE command_ledger SET reported_at = ?
+                WHERE command_id = ? AND state IN ('succeeded', 'partial', 'failed')
+                """,
+                (_timestamp(now), command_id),
+            )
+        if result.rowcount != 1:
+            raise ValueError("only terminal commands can be marked reported")
 
     def command(self, command_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -311,7 +343,7 @@ class ControlStore:
                 """
                 SELECT * FROM outbox
                 WHERE next_attempt_at IS NULL OR next_attempt_at <= ?
-                ORDER BY priority DESC, id LIMIT ?
+                ORDER BY id LIMIT ?
                 """,
                 (_timestamp(now), limit),
             ).fetchall()

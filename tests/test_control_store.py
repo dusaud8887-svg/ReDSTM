@@ -36,6 +36,9 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
     }
     assert store.record_claim(command_id, "sync-now")["state"] == "succeeded"
     assert store.begin_command(command_id) is False
+    assert [row["command_id"] for row in store.pending_commands()] == [command_id]
+    store.mark_reported(command_id, now=_NOW)
+    assert store.pending_commands() == []
 
 
 def test_command_ledger_rejects_action_mismatch_and_terminal_change(tmp_path: Path) -> None:
@@ -61,9 +64,11 @@ def test_command_ledger_rejects_unsafe_replay_payload(tmp_path: Path) -> None:
             "cycle_failed",
             result_payload={"path": "/srv/redstm/private"},
         )
+    with pytest.raises(ValueError, match="terminal"):
+        store.mark_reported(command_id)
 
 
-def test_outbox_coalesces_status_and_orders_protected_events(tmp_path: Path) -> None:
+def test_outbox_coalesces_status_and_preserves_causal_order(tmp_path: Path) -> None:
     store = ControlStore(tmp_path / "control.sqlite")
     store.enqueue(
         "heartbeat",
@@ -89,8 +94,8 @@ def test_outbox_coalesces_status_and_orders_protected_events(tmp_path: Path) -> 
 
     assert store.stats()["rows"] == 2
     pending = store.pending(now=_NOW + timedelta(minutes=1))
-    assert [item["kind"] for item in pending] == ["run_finish", "heartbeat"]
-    assert json.loads(pending[1]["payload_json"])["runner_version"] == "git-new"
+    assert [item["kind"] for item in pending] == ["heartbeat", "run_finish"]
+    assert json.loads(pending[0]["payload_json"])["runner_version"] == "git-new"
 
 
 def test_outbox_evicts_detail_before_terminal_and_honours_defer(tmp_path: Path) -> None:

@@ -208,6 +208,13 @@ Oracle은 [08](08_operations_control_plane.md)의 runner endpoint만 사용한�
 5. Worker/D1 장애 event는 local outbox에 두고 재연결 후 sequence로 replay한다.
 6. 허용 command 외 shell/path/arg를 실행하는 generic dispatcher는 만들지 않는다.
 
+상태(2026-07-12): local core 구현 완료, Oracle/Access canary 전이다. 별도 SQLite command ledger와
+10MiB/10,000-event outbox, 5초 connect/15초 total retry transport, 60초 circuit breaker, fixed 5-action
+dispatcher, 30초 heartbeat/lease, atomic pause/publish marker, crash terminal replay와 board summary를
+구현했다. subprocess stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
+실행 명령에 들어가지 않는다. service token 주입과 systemd unit 연결 전이므로 G5 전체를 live
+완료로 표시하지 않는다.
+
 ## 7. 자동 cycle state machine
 
     scheduled or bounded manual command
