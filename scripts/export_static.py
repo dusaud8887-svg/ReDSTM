@@ -9,7 +9,9 @@ import re
 import sqlite3
 import tempfile
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
@@ -97,33 +99,36 @@ def _write_gzip_object(writer: _ObjectWriter, prefix: str, payload: bytes) -> di
     return _object_ref(key, payload, body)
 
 
-def _comments(connection: sqlite3.Connection, post_id: int) -> tuple[NormalizedComment, ...]:
-    # ponytail: one indexed query per post; stream-merge only if full-export profiling requires it.
-    return tuple(
-        NormalizedComment(
-            position=int(row["position"]),
-            source_comment_id=row["source_comment_id"],
-            parent_position=(
-                int(row["parent_position"]) if row["parent_position"] is not None else None
-            ),
-            depth=int(row["depth"]),
-            author=row["author"],
-            content_html=str(row["content_html"]),
-            content_text=str(row["content_text"]),
-            created_at_raw=row["created_at_raw"],
-        )
-        for row in connection.execute(
-            """
-            SELECT position, source_comment_id, parent_position, depth, author,
-                   content_html, content_text, created_at_raw
-            FROM comments WHERE post_id = ? ORDER BY position
-            """,
-            (post_id,),
-        )
+def _comment(row: sqlite3.Row) -> NormalizedComment:
+    return NormalizedComment(
+        position=int(row["position"]),
+        source_comment_id=row["source_comment_id"],
+        parent_position=(
+            int(row["parent_position"]) if row["parent_position"] is not None else None
+        ),
+        depth=int(row["depth"]),
+        author=row["author"],
+        content_html=str(row["content_html"]),
+        content_text=str(row["content_text"]),
+        created_at_raw=row["created_at_raw"],
     )
 
 
-def _post_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> NormalizedPost:
+def _grouped_comments(
+    connection: sqlite3.Connection,
+) -> Iterator[tuple[int, tuple[NormalizedComment, ...]]]:
+    rows = connection.execute(
+        """
+        SELECT post_id, position, source_comment_id, parent_position, depth, author,
+               content_html, content_text, created_at_raw
+        FROM comments ORDER BY post_id, position
+        """
+    )
+    for post_id, grouped in groupby(rows, key=lambda row: int(row["post_id"])):
+        yield post_id, tuple(_comment(row) for row in grouped)
+
+
+def _post_from_row(row: sqlite3.Row, comments: tuple[NormalizedComment, ...]) -> NormalizedPost:
     body_html = decompress_body(row["body_html_zstd"])
     content_sha256 = str(row["content_sha256"])
     if _sha256(body_html.encode()) != content_sha256:
@@ -142,7 +147,7 @@ def _post_from_row(connection: sqlite3.Connection, row: sqlite3.Row) -> Normaliz
         body_html=body_html,
         body_text=decompress_body(row["body_text_zstd"]),
         is_aa=bool(row["is_aa"]),
-        comments=_comments(connection, int(row["post_id"])),
+        comments=comments,
         content_sha256=content_sha256,
         comments_sha256=str(row["comments_sha256"]),
         warc_record_id=row["warc_record_id"],
@@ -329,6 +334,8 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             raise ValueError(f"canonical schema v{SCHEMA_VERSION} is required")
         connection.execute("BEGIN")
         boards = [dict(row) for row in connection.execute("SELECT * FROM boards ORDER BY board_id")]
+        comment_groups = iter(_grouped_comments(connection))
+        current_comments = next(comment_groups, None)
         for row in connection.execute(
             """
             SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
@@ -337,10 +344,19 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
                    v.body_html_zstd, v.body_text_zstd, v.comments_sha256, v.warc_record_id
             FROM posts AS p
             JOIN post_versions AS v ON v.id = p.latest_version_id
-            ORDER BY p.board_id, p.external_post_id
+            ORDER BY p.id
             """
         ):
-            post = _post_from_row(connection, row)
+            current_post_id = int(row["post_id"])
+            if current_comments is not None and current_comments[0] < current_post_id:
+                raise ValueError(
+                    f"comments reference post without latest version: {current_comments[0]}"
+                )
+            comments: tuple[NormalizedComment, ...] = ()
+            if current_comments is not None and current_comments[0] == current_post_id:
+                comments = current_comments[1]
+                current_comments = next(comment_groups, None)
+            post = _post_from_row(row, comments)
             origin = str(row["capture_origin"])
             if origin not in {"live", "legacy_import", "reparse"}:
                 raise ValueError(f"unsupported capture origin: {origin}")
@@ -358,6 +374,11 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             search_rows.append((str(row["created_at_source"] or ""), static_post.summary))
             object_key_by_post_id[int(row["post_id"])] = static_post.summary.object_key
             comment_count += len(post.comments)
+
+        if current_comments is not None:
+            raise ValueError(
+                f"comments reference post without latest version: {current_comments[0]}"
+            )
 
         board_refs: list[dict[str, object]] = []
         for board in boards:
