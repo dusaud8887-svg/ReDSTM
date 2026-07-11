@@ -278,7 +278,7 @@ ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 �
 Python 131 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
 302다. 3의 별도 Access service identity와
 인증 role smoke, Access secret 주입·timer 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3
-전체는 DONE이 아니다. Oracle에는 application base와 disabled control timer가 설치됐다.
+전체는 DONE이 아니다. Oracle에는 application base와 disabled control/schedule timer가 설치됐다.
 
 완료 기준:
 
@@ -305,10 +305,10 @@ Python 131 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops
 상태(2026-07-12): E legacy source 28,811,358,208 bytes의 SHA-256은 `e16203a7...5500`으로 기존
 기록과 다시 일치했다. Oracle은 Ubuntu 22.04, 2 CPU, RAM 956MiB, swap 4GiB, root free 약
 103GB이며 기존 legacy 50GB와 DB backup 27GB, enabled Nginx/PM2를 보존 중이다. 전용 user/path,
-pinned uv 0.9.21/Python 3.14, release `506b7e5` application을 설치했고 `dd85021`로 rollback한 뒤
-`506b7e5`로 재복귀했다. control timer는 disabled/inactive, Access secret과 canonical은 없으며
-새 schedule unit의 remote 배포·재rollback이 다음 gate다. 기존 public listener는 아직 건드리지
-않았다.
+pinned uv 0.9.21/Python 3.14와 release `dd88366`을 설치했다. 신규 schedule unit이 없는 구버전
+`506b7e5`로 rollback할 때 해당 unit이 fail-closed로 제거되는 것을 확인한 뒤 `dd88366`으로
+재복귀했다. control/schedule timer는 disabled/inactive, Access secret과 canonical은 없으며
+기존 public listener는 아직 건드리지 않았다.
 
 완료 기준:
 

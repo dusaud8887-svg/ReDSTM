@@ -203,8 +203,9 @@ DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy comm
 넣지 않는다.
 
 상태(2026-07-12): 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 versioned release 설치가
-완료됐다. `506b7e5`에서 `dd85021`로 application rollback 후 다시 `506b7e5`로 복귀했으며 두 timer는
-disabled/inactive다. canonical activation과 새 schedule unit을 포함한 다음 release rollback은 남았다.
+완료됐다. schedule unit을 포함한 `dd88366`에서 구버전 `506b7e5`로 rollback할 때 신규 unit을
+fail-closed로 제거한 뒤 다시 `dd88366`으로 복귀했다. 두 timer는 disabled/inactive이며 canonical
+activation이 남았다.
 
 ### G5. Operations client
 
@@ -323,9 +324,8 @@ remote online-backup hash는 저우선순위 background 검증 중이며 stop/de
 - Access service token route-role과 D1 status/event smoke를 검증한다.
 - timer 없이 manual canary만 실행한다.
 
-상태(2026-07-12): application/user/path/runtime install과 application rollback rehearsal은 완료됐다.
-canonical transfer/doctor, secret 주입, schedule unit remote install과 authenticated manual canary는
-남아 있다.
+상태(2026-07-12): application/user/path/runtime와 schedule unit install, 구버전 rollback/재복귀는
+완료됐다. canonical transfer/doctor, secret 주입과 authenticated manual canary는 남아 있다.
 
 ### Phase O2 — canary와 shadow
 

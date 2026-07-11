@@ -76,7 +76,8 @@ R2 baseline publish와 remote pointer rollback/복귀는 완료됐다. 로그인
 production data smoke가 A0의 마지막 gate다. A1은 local 구현과 fixture가 끝났으며,
 offline/Access-expired 복구와 control API를 포함한 version `c47b2e58-0019-4c0c-8695-6c7836919950`가
 배포됐다. authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다. Oracle은
-versioned application 배포와 rollback/복귀까지 통과했고 canonical·Access secret·canary 전이다.
+versioned application과 6시간 schedule unit 배포, 구버전 rollback/복귀까지 통과했고
+canonical·Access secret·canary 전이다.
 
 ### 구현 필요
 
