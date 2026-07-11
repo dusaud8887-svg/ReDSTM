@@ -516,7 +516,7 @@ core command는 특정 scheduler 제품에 의존하지 않는다.
 
 - 2026-07 구현 기준은 Python 3.14, Scrapy 2.17.x, Node 22+, Wrangler 4.110.0이다.
 - Python dependency는 `uv.lock`, edge 개발 dependency는 `edge/package-lock.json`에 exact pin한다.
-- production Worker에는 npm runtime dependency가 없고 build tool은 Wrangler 하나다.
+- production Worker runtime dependency는 Access JWT 검증용 `jose` 하나이며 build tool은 Wrangler다.
 - browser code는 표준 API만 사용하며 frontend framework, router, global state library를 넣지 않는다.
 - 월 1회 security patch, lock diff, `npm audit`와 SBOM/license inventory를 검토한다.
 
@@ -531,9 +531,10 @@ nh3          normalized HTML sanitizer
 filelock     cross-platform single-crawler lock
 ```
 
-Edge production은 dependency 없는 Worker module과 static HTML/CSS/JS다. Wrangler와 Playwright는
-개발 전용이다. 외부 실행 도구는 restic이며 Browsertrix는 emergency profile에서만 pinned
-container로 사용한다.
+Edge production은 plain Worker module과 static HTML/CSS/JS에 JWT/JWKS 검증용 `jose`만 쓴다.
+Cloudflare 공식 예제의 검증 경로를 사용해 자체 RS256/JWK 구현을 소유하지 않는다. Wrangler와
+Playwright는 개발 전용이다. 외부 실행 도구는 rclone/restic이며 Browsertrix는 emergency
+profile에서만 pinned container로 사용한다.
 
 새 dependency는 기존 목록의 책임으로 해결되지 않고, 추가 package보다 더 많은 자체 코드와 test를 삭제한다는 근거가 있을 때만 ADR로 추가한다.
 
@@ -1416,7 +1417,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 ### ADR-003: Worker Static Assets + plain ES module viewer
 
 - 결정: 승인
-- 근거: server/volume/remote DB 제거, production runtime dependency 0개, 실제 desktop/mobile gate 통과
+- 근거: server/volume/remote DB 제거, production runtime dependency 1개, 실제 desktop/mobile gate 통과
 - 조건: viewport test와 별도로 실제 Android full-index memory/background restore를 production 전에 통과
 - 재검토 조건: browser memory가 512MB를 넘거나 tab kill이 재현되거나 device 간 user state sync가 core 요구가 됨
 

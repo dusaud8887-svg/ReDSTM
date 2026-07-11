@@ -16,6 +16,7 @@
 | nh3 | 0.3.6 | MIT | [messense/nh3](https://github.com/messense/nh3) |
 | warcio | 1.8.1 | Apache-2.0 | [webrecorder/warcio](https://github.com/webrecorder/warcio) |
 | Parsel, required and exposed by Scrapy | 1.11.0 | BSD-3-Clause | [scrapy/parsel](https://github.com/scrapy/parsel) |
+| jose | 6.2.3 | MIT | [panva/jose](https://github.com/panva/jose) |
 
 ## Development Dependencies
 
@@ -33,9 +34,11 @@
 |---|---:|---|---|
 | Browsertrix Crawler container | 1.12.4, image digest `sha256:070d452c...7306` | AGPL-3.0-or-later | [webrecorder/browsertrix-crawler](https://github.com/webrecorder/browsertrix-crawler) |
 | ReplayWeb.page | 2.4.6, commit `b3f3df1` | AGPL-3.0 | [webrecorder/replayweb.page](https://github.com/webrecorder/replayweb.page) |
+| rclone | 1.74.4 | MIT | [rclone/rclone](https://github.com/rclone/rclone) |
 
-두 도구는 Phase 0 emergency WACZ capture/replay 검증에만 사용하며 ReDSTM runtime이나 배포
-bundle에 포함하지 않는다. 고정 version, image digest, 결과 hash는
+Browsertrix와 ReplayWeb.page은 Phase 0 emergency WACZ capture/replay 검증에만 사용하며
+ReDSTM runtime이나 배포 bundle에 포함하지 않는다. rclone은 검증된 정적 release를 R2에
+올리는 외부 배포 도구이며 bundle에는 포함하지 않는다. 고정 version, image digest, 결과 hash는
 `artifacts/phase0/reports/browsertrix-emergency-20260711.json`에 기록한다.
 
 ## Transitive Inventory
