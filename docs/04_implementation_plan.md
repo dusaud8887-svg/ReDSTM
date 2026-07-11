@@ -269,6 +269,12 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
+상태(2026-07-12): 1, 2, 4의 local core와 browser read, conditional claim/expiry, heartbeat lease,
+monotonic board summary, run/event/finish, marker command finish까지 구현했다. 5는 Worker reclaim까지,
+7은 Worker ingest까지 완료했으며 Oracle local ledger/outbox는 아직이다. 3의 별도 Access service
+identity, remote D1 migration/deploy, 6의 Oracle marker 동작, 8의 `/ops` UI, 9의 live/failure gate는
+진행 전이므로 A3 전체는 DONE이 아니다.
+
 완료 기준:
 
 - browser token으로 runner route, service token으로 user command route를 사용할 수 없다.

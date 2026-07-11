@@ -117,6 +117,7 @@ test("returns an existing idempotent command without inserting", async () => {
 test("claims one command with a conditional update", async () => {
   let receivedSql = "";
   let receivedParameters = [];
+  let reconciliation = [];
   let updates = 0;
   const claimed = {
     command_id: crypto.randomUUID(),
@@ -127,6 +128,10 @@ test("claims one command with a conditional update", async () => {
   };
   const env = {
     CONTROL_DB: database((method, sql, parameters) => {
+      if (method === "batch") {
+        reconciliation = parameters;
+        return [];
+      }
       if (sql.includes("WHERE claim_idempotency_key")) return updates ? claimed : null;
       updates += 1;
       receivedSql = sql;
@@ -150,6 +155,9 @@ test("claims one command with a conditional update", async () => {
   assert.equal(receivedParameters[2], "oracle-primary");
   assert.equal(receivedParameters[3], "claim-attempt-001");
   assert.equal((await result.json()).data.command.state, "claimed");
+  assert.equal(reconciliation.length, 3);
+  assert.match(reconciliation[1].sql, /claim_attempts < 2/);
+  assert.match(reconciliation[2].sql, /claim_lost/);
 
   const replay = await controlApiResponse(
     request("/api/v1/runner/commands/claim", {
@@ -169,6 +177,9 @@ test("heartbeat and overview expose only bounded status", async () => {
   const env = {
     CONTROL_DB: database((method, sql, parameters) => {
       statements.push({ method, sql, parameters });
+      if (method === "batch") {
+        return parameters.map((_, index) => ({ meta: { changes: index === 1 ? 1 : 0 } }));
+      }
       if (sql.includes("runner_status WHERE")) {
         return { state: "idle", heartbeat_at: "2026-07-12T00:00:00.000Z" };
       }
@@ -199,7 +210,25 @@ test("heartbeat and overview expose only bounded status", async () => {
     { role: "runner", subject: "runner-token" },
   );
   assert.equal(heartbeat.status, 200);
-  assert.match(statements[0].sql, /ON CONFLICT\(id\) DO UPDATE/);
+  assert.match(statements[0].parameters[0].sql, /ON CONFLICT\(id\) DO UPDATE/);
+
+  const commandId = crypto.randomUUID();
+  const renewed = await controlApiResponse(
+    request("/api/v1/runner/heartbeat", {
+      method: "POST",
+      body: {
+        runner_version: "git-abc123",
+        state: "running",
+        runner_id: "oracle-primary",
+        active_command_id: commandId,
+      },
+      headers: { "Idempotency-Key": "heartbeat-lease-0001" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal((await renewed.json()).data.command_lease_renewed, true);
+  assert.match(statements[1].parameters[1].sql, /state = 'claimed'/);
 
   const overview = await controlApiResponse(
     request("/api/v1/ops/overview"),
@@ -356,8 +385,9 @@ test("starts a run and command link in one D1 batch", async () => {
         statements = values;
         return [];
       }
-      assert.match(sql, /SELECT \* FROM runs/);
-      return null;
+      if (sql.includes("SELECT * FROM runs")) return null;
+      assert.match(sql, /SELECT action, state, run_id FROM commands/);
+      return { action: "sync-now", state: "claimed", run_id: null };
     }),
   };
   const commandId = crypto.randomUUID();
@@ -380,6 +410,102 @@ test("starts a run and command link in one D1 batch", async () => {
   assert.equal(statements.length, 2);
   assert.match(statements[0].sql, /INSERT INTO runs/);
   assert.match(statements[1].sql, /UPDATE commands SET run_id/);
+});
+
+test("rejects a command run with a mismatched action", async () => {
+  const env = {
+    CONTROL_DB: database((method, sql) => {
+      assert.equal(method, "first");
+      if (sql.includes("SELECT * FROM runs")) return null;
+      return { action: "retry-batch", state: "claimed", run_id: null };
+    }),
+  };
+  const response = await controlApiResponse(
+    request("/api/v1/runner/runs", {
+      method: "POST",
+      body: {
+        run_id: "sync-run-002",
+        kind: "manual-sync",
+        source: "command",
+        command_id: crypto.randomUUID(),
+      },
+      headers: { "Idempotency-Key": "start-run-mismatch" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(response.status, 409);
+});
+
+test("upserts monotonic bounded board status", async () => {
+  let sql;
+  let parameters;
+  const env = {
+    CONTROL_DB: database((method, statement, values) => {
+      assert.equal(method, "run");
+      sql = statement;
+      parameters = values;
+      return { success: true };
+    }),
+  };
+  const response = await controlApiResponse(
+    request("/api/v1/runner/boards/status", {
+      method: "POST",
+      body: {
+        board_id: "aa",
+        last_scanned_at: "2026-07-12T04:00:00Z",
+        last_outcome: "partial",
+        counters: { discovered: 10, changed: 2, pending: 3, retry: 1, dead: 0 },
+        warning_code: "parse_drift",
+      },
+      headers: { "Idempotency-Key": "board-status-0001" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(response.status, 200);
+  assert.match(sql, /excluded\.last_scanned_at >= board_status\.last_scanned_at/);
+  assert.deepEqual(parameters.slice(0, 3), ["aa", "2026-07-12T04:00:00.000Z", "partial"]);
+});
+
+test("finishes marker commands idempotently for the claiming runner", async () => {
+  const commandId = crypto.randomUUID();
+  const claimed = {
+    command_id: commandId,
+    action: "pause-after-current",
+    state: "claimed",
+    runner_id: "oracle-primary",
+    requested_at: "2026-07-12T04:00:00Z",
+    expires_at: "2026-07-12T04:15:00Z",
+  };
+  let updated = false;
+  const env = {
+    CONTROL_DB: database((method, sql, values) => {
+      assert.equal(method, "first");
+      if (sql.startsWith("SELECT")) return updated ? { ...claimed, state: "succeeded" } : claimed;
+      assert.match(sql, /runner_id = \? RETURNING/);
+      assert.equal(values.at(-1), "oracle-primary");
+      updated = true;
+      return { ...claimed, state: "succeeded", safe_message: "schedule_paused" };
+    }),
+  };
+  const options = {
+    method: "POST",
+    body: { runner_id: "oracle-primary", state: "succeeded", safe_summary_code: "schedule_paused" },
+    headers: { "Idempotency-Key": "finish-marker-0001" },
+  };
+  const first = await controlApiResponse(
+    request(`/api/v1/runner/commands/${commandId}/finish`, options),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(first.status, 200);
+  const replay = await controlApiResponse(
+    request(`/api/v1/runner/commands/${commandId}/finish`, options),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(replay.status, 200);
 });
 
 test("batches idempotent run events and terminal command state", async () => {

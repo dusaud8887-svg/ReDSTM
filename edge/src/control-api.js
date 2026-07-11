@@ -13,6 +13,12 @@ const runnerStates = new Set(["idle", "running", "degraded", "failed", "paused"]
 const runKinds = new Set(["scheduled", "manual-sync", "retry", "publish"]);
 const runSources = new Set(["systemd", "command"]);
 const terminalStates = new Set(["succeeded", "partial", "failed"]);
+const boardOutcomes = new Set(["succeeded", "partial", "failed"]);
+const commandRunKinds = new Map([
+  ["sync-now", "manual-sync"],
+  ["retry-batch", "retry"],
+  ["publish-if-changed", "publish"],
+]);
 const safeWarnings = new Set([
   "auth_failed",
   "parse_drift",
@@ -102,6 +108,10 @@ function validTimestamp(value) {
   );
 }
 
+function timestampValue(value) {
+  return value == null ? null : new Date(value).toISOString();
+}
+
 async function createCommand(request, env, auth, requestId, url) {
   if (!browserMutation(request, url)) {
     return failure(requestId, 403, "origin_denied", "Command request was denied");
@@ -172,6 +182,24 @@ async function claimCommand(request, env, requestId) {
   ).bind(idempotencyKey).first();
   if (replay) return envelope(requestId, { command: commandView(replay) });
   const now = new Date();
+  const nowText = now.toISOString();
+  await env.CONTROL_DB.batch([
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = 'expired', finished_at = ?, safe_message = 'expired'
+       WHERE state = 'queued' AND expires_at <= ?`,
+    ).bind(nowText, nowText),
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = 'queued', claimed_at = NULL, claim_expires_at = NULL,
+         runner_id = NULL, claim_idempotency_key = NULL
+       WHERE state = 'claimed' AND claim_expires_at <= ?
+         AND claim_attempts < 2 AND run_id IS NULL`,
+    ).bind(nowText),
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = 'failed', finished_at = ?, safe_message = 'claim_lost'
+       WHERE state = 'claimed' AND claim_expires_at <= ?
+         AND claim_attempts >= 2 AND run_id IS NULL`,
+    ).bind(nowText, nowText),
+  ]);
   let claimed;
   try {
     claimed = await env.CONTROL_DB.prepare(
@@ -183,11 +211,11 @@ async function claimCommand(request, env, requestId) {
        ) AND state = 'queued'
        RETURNING *`,
     ).bind(
-      now.toISOString(),
+      nowText,
       new Date(now.getTime() + 2 * 60 * 1000).toISOString(),
       body.runner_id,
       idempotencyKey,
-      now.toISOString(),
+      nowText,
     ).first();
   } catch {
     claimed = await env.CONTROL_DB.prepare(
@@ -200,18 +228,23 @@ async function claimCommand(request, env, requestId) {
 
 async function heartbeat(request, env, requestId) {
   const body = await readJson(request, 64 * 1024);
+  const commandLease = body.active_command_id != null || body.runner_id != null;
   if (!identifierPattern.test(body.runner_version || "") || !runnerStates.has(body.state) ||
       (body.safe_warning_code != null && !safeWarnings.has(body.safe_warning_code)) ||
       [body.active_run_id, body.active_step, body.active_board_id].some(
         (value) => value != null && !identifierPattern.test(value),
       ) ||
       !validTimestamp(body.next_scheduled_at) ||
+      (commandLease && (
+        !/^[0-9a-f-]{36}$/i.test(body.active_command_id || "") ||
+        !identifierPattern.test(body.runner_id || "")
+      )) ||
       (body.disk_free_bytes != null &&
         (!Number.isSafeInteger(body.disk_free_bytes) || body.disk_free_bytes < 0))) {
     return failure(requestId, 400, "invalid_heartbeat", "Heartbeat fields are invalid");
   }
   const now = new Date().toISOString();
-  await env.CONTROL_DB.prepare(
+  const statements = [env.CONTROL_DB.prepare(
     `INSERT INTO runner_status (
        id, schema_version, runner_version, state, heartbeat_at, next_scheduled_at,
        active_run_id, active_step, active_board_id, disk_free_bytes, safe_warning_code
@@ -228,14 +261,31 @@ async function heartbeat(request, env, requestId) {
     body.runner_version,
     body.state,
     now,
-    body.next_scheduled_at ?? null,
+    timestampValue(body.next_scheduled_at),
     body.active_run_id ?? null,
     body.active_step ?? null,
     body.active_board_id ?? null,
     body.disk_free_bytes ?? null,
     body.safe_warning_code ?? null,
-  ).run();
-  return envelope(requestId, { accepted: true, heartbeat_at: now });
+  )];
+  if (commandLease) {
+    statements.push(
+      env.CONTROL_DB.prepare(
+        `UPDATE commands SET claim_expires_at = ?
+         WHERE command_id = ? AND state = 'claimed' AND runner_id = ?`,
+      ).bind(
+        new Date(Date.parse(now) + 2 * 60 * 1000).toISOString(),
+        body.active_command_id,
+        body.runner_id,
+      ),
+    );
+  }
+  const results = await env.CONTROL_DB.batch(statements);
+  return envelope(requestId, {
+    accepted: true,
+    heartbeat_at: now,
+    command_lease_renewed: commandLease ? Number(results[1]?.meta?.changes ?? 0) === 1 : null,
+  });
 }
 
 async function startRun(request, env, requestId) {
@@ -243,19 +293,29 @@ async function startRun(request, env, requestId) {
   if (!identifierPattern.test(body.run_id || "") || !runKinds.has(body.kind) ||
       !runSources.has(body.source) || !validTimestamp(body.requested_at) ||
       !validTimestamp(body.started_at) ||
-      (body.command_id != null && !/^[0-9a-f-]{36}$/i.test(body.command_id))) {
+      (body.command_id != null && !/^[0-9a-f-]{36}$/i.test(body.command_id)) ||
+      (body.source === "command") !== (body.command_id != null)) {
     return failure(requestId, 400, "invalid_run", "Run fields are invalid");
   }
   const existing = await env.CONTROL_DB.prepare(
     "SELECT * FROM runs WHERE run_id = ?",
   ).bind(body.run_id).first();
   if (existing) return envelope(requestId, runView(existing));
-  const startedAt = body.started_at ?? new Date().toISOString();
+  if (body.command_id != null) {
+    const command = await env.CONTROL_DB.prepare(
+      "SELECT action, state, run_id FROM commands WHERE command_id = ?",
+    ).bind(body.command_id).first();
+    if (!command || command.state !== "claimed" || command.run_id != null ||
+        commandRunKinds.get(command.action) !== body.kind) {
+      return failure(requestId, 409, "command_not_startable", "Command cannot start this run");
+    }
+  }
+  const startedAt = timestampValue(body.started_at) ?? new Date().toISOString();
   const statements = [
     env.CONTROL_DB.prepare(
       `INSERT INTO runs (run_id, kind, source, state, requested_at, started_at)
        VALUES (?, ?, ?, 'running', ?, ?) ON CONFLICT(run_id) DO NOTHING`,
-    ).bind(body.run_id, body.kind, body.source, body.requested_at ?? null, startedAt),
+    ).bind(body.run_id, body.kind, body.source, timestampValue(body.requested_at), startedAt),
   ];
   if (body.command_id != null) {
     statements.push(
@@ -270,6 +330,78 @@ async function startRun(request, env, requestId) {
     runView({ ...body, state: "running", started_at: startedAt }),
     202,
   );
+}
+
+function validBoardCounters(value) {
+  const names = ["discovered", "changed", "pending", "retry", "dead"];
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).length === names.length && names.every(
+      (name) => Number.isSafeInteger(value[name]) && value[name] >= 0,
+    );
+}
+
+async function recordBoardStatus(request, env, requestId) {
+  const body = await readJson(request, 16 * 1024);
+  if (!identifierPattern.test(body.board_id || "") || !boardOutcomes.has(body.last_outcome) ||
+      typeof body.last_scanned_at !== "string" || !validTimestamp(body.last_scanned_at) ||
+      !validBoardCounters(body.counters) ||
+      (body.warning_code != null && !safeWarnings.has(body.warning_code))) {
+    return failure(requestId, 400, "invalid_board_status", "Board status is invalid");
+  }
+  const counters = body.counters;
+  const scannedAt = timestampValue(body.last_scanned_at);
+  await env.CONTROL_DB.prepare(
+    `INSERT INTO board_status (
+       board_id, last_scanned_at, last_outcome, discovered, changed, pending, retry, dead, warning_code
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(board_id) DO UPDATE SET
+       last_scanned_at = excluded.last_scanned_at, last_outcome = excluded.last_outcome,
+       discovered = excluded.discovered, changed = excluded.changed, pending = excluded.pending,
+       retry = excluded.retry, dead = excluded.dead, warning_code = excluded.warning_code
+     WHERE board_status.last_scanned_at IS NULL
+        OR excluded.last_scanned_at >= board_status.last_scanned_at`,
+  ).bind(
+    body.board_id,
+    scannedAt,
+    body.last_outcome,
+    counters.discovered,
+    counters.changed,
+    counters.pending,
+    counters.retry,
+    counters.dead,
+    body.warning_code ?? null,
+  ).run();
+  return envelope(requestId, { accepted: true });
+}
+
+async function finishCommand(request, env, requestId, commandId) {
+  const body = await readJson(request, 16 * 1024);
+  if (!identifierPattern.test(body.runner_id || "") || !terminalStates.has(body.state) ||
+      (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
+    return failure(requestId, 400, "invalid_command_finish", "Command result is invalid");
+  }
+  const existing = await env.CONTROL_DB.prepare(
+    "SELECT * FROM commands WHERE command_id = ?",
+  ).bind(commandId).first();
+  if (!existing) return failure(requestId, 404, "command_not_found", "Command was not found");
+  if (terminalStates.has(existing.state)) {
+    return existing.state === body.state
+      ? envelope(requestId, commandView(existing))
+      : failure(requestId, 409, "command_terminal", "Command has a different terminal state");
+  }
+  const result = await env.CONTROL_DB.prepare(
+    `UPDATE commands SET state = ?, finished_at = ?, safe_message = ?
+     WHERE command_id = ? AND state = 'claimed' AND runner_id = ? RETURNING *`,
+  ).bind(
+    body.state,
+    new Date().toISOString(),
+    body.safe_summary_code ?? null,
+    commandId,
+    body.runner_id,
+  ).first();
+  return result
+    ? envelope(requestId, commandView(result))
+    : failure(requestId, 409, "command_not_finishable", "Command cannot be finished");
 }
 
 function validEvent(event) {
@@ -304,7 +436,7 @@ async function recordEvents(request, env, requestId, runId) {
       event.sequence,
       event.step,
       event.state,
-      event.recorded_at ?? new Date().toISOString(),
+      timestampValue(event.recorded_at) ?? new Date().toISOString(),
       JSON.stringify(event.counters ?? {}),
       event.safe_message ?? null,
     )),
@@ -410,6 +542,15 @@ export async function controlApiResponse(request, env, auth) {
     }
     if (request.method === "POST" && url.pathname === "/api/v1/runner/heartbeat") {
       return await heartbeat(request, env, requestId);
+    }
+    if (request.method === "POST" && url.pathname === "/api/v1/runner/boards/status") {
+      return await recordBoardStatus(request, env, requestId);
+    }
+    const commandFinishMatch = /^\/api\/v1\/runner\/commands\/([0-9a-f-]{36})\/finish$/.exec(
+      url.pathname,
+    );
+    if (request.method === "POST" && commandFinishMatch) {
+      return await finishCommand(request, env, requestId, commandFinishMatch[1]);
     }
     if (request.method === "POST" && url.pathname === "/api/v1/runner/runs") {
       return await startRun(request, env, requestId);

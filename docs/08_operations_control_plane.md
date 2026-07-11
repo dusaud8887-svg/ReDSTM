@@ -1,7 +1,7 @@
 # Operations Control Plane 사양
 
-- 상태: Accepted target; C0 local fallback completed, remote control unimplemented
-- 기준일: 2026-07-11
+- 상태: Accepted target; C0 완료, A3 Worker/D1 local core 구현, live Access/Oracle 연동 전
+- 기준일: 2026-07-12
 - product UX: [06](06_final_product_experience.md)
 - frontend: [09](09_frontend_strategy_and_roadmap.md)
 - runner: [10](10_oracle_runner_runbook.md)
@@ -103,7 +103,7 @@ inbound firewall port를 열지 않는다.
 | mutation replay | 모든 POST/DELETE에 `Idempotency-Key`, D1 unique constraint |
 | response | `api_version`, `request_id`, `server_time`, `data` 또는 `error` |
 | page | opaque `cursor`, `limit` 최대 50; offset pagination 금지 |
-| clock | 모든 시간 UTC RFC 3339, 순서는 DB sequence/ID로 결정 |
+| clock | 입력 시간은 UTC RFC 3339, 저장 전 millisecond ISO UTC로 정규화; 순서는 DB sequence/ID로 결정 |
 | body cap | runner batch 64KiB, 나머지 16KiB; 초과 시 413 |
 
 오류는 `code`, 사용자용 `message`, `retryable`, 선택적 `retry_after_seconds`만 반환한다.
@@ -128,6 +128,8 @@ stack trace, SQL, local path와 upstream body는 포함하지 않는다. 400/401
 |---|---|
 | `POST /api/v1/runner/heartbeat` | runner/state/schedule upsert |
 | `POST /api/v1/runner/commands/claim` | oldest eligible command conditional claim |
+| `POST /api/v1/runner/commands/{id}/finish` | run 없는 marker command terminal 결과 |
+| `POST /api/v1/runner/boards/status` | board 완료 summary의 monotonic upsert |
 | `POST /api/v1/runner/runs` | scheduled/manual run 시작 |
 | `POST /api/v1/runner/runs/{id}/events:batch` | sequence event 최대 50개 |
 | `POST /api/v1/runner/runs/{id}/finish` | terminal summary와 command 결과 |
@@ -292,11 +294,18 @@ local ledger가 running/terminal이면 그 결과를 replay하고, 실행 흔적
 queued command는 expired가 된다. Oracle local command ledger에도 command_id와 terminal result를
 기록해 D1 replay가 중복 실행을 만들지 못하게 한다.
 
+heartbeat가 `runner_id`와 `active_command_id`를 함께 보내면 Worker는 같은 runner가 claim한 행만
+2분 연장하고 갱신 여부를 반환한다. 둘 중 하나만 보내면 400이다. claim poll 직전 Worker는 run_id가
+없는 만료 claim만 위 규칙으로 재조정한다. 이미 run에 연결된 claim은 local ledger replay가 끝낼 수
+있도록 자동 재queue하지 않는다.
+
 ### 7.5 Event/finish
 
 - step transition 또는 30초 이상 heartbeat마다 safe event
-- board 완료마다 board_status summary
+- board 완료마다 `/api/v1/runner/boards/status`에 5개 bounded counter summary를 보내며, 오래된
+  `last_scanned_at` replay는 최신 행을 덮지 않는다
 - finish는 D1과 local report에 동일 run_id
+- pause/resume처럼 run 없는 marker는 `/api/v1/runner/commands/{id}/finish`로 claiming runner만 끝낸다
 - D1 event 실패는 local run을 중단하지 않고 bounded retry
 - 재연결 후 sequence unique key로 idempotent replay
 
