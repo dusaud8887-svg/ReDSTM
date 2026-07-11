@@ -125,6 +125,25 @@ def publish_static(
     release_key = str(validation["release_key"])
     release_body = (root / release_key).read_bytes()
     target = _remote_target(remote, runner)
+    pointer_target = f"{target}/release.json"
+    try:
+        remote_pointer = runner(
+            ["rclone", "cat", pointer_target],
+            check=True,
+            stdout=subprocess.PIPE,
+        ).stdout
+    except subprocess.CalledProcessError:
+        remote_pointer = None
+    if remote_pointer == release_body:
+        return {
+            **validation,
+            "remote": target,
+            "pointer_verified": True,
+            "mode": "noop",
+            "new_bytes": 0,
+            "new_objects": 0,
+        }
+
     common = {"check": True}
     budget = _r2_budget_preflight(
         root,
@@ -154,7 +173,6 @@ def publish_static(
         ["rclone", "check", str(root), target, "--exclude", "/release.json", "--one-way"],
         **common,
     )
-    pointer_target = f"{target}/release.json"
     runner(
         ["rclone", "copyto", str(root / release_key), pointer_target, "--no-check-dest"],
         **common,
@@ -166,7 +184,13 @@ def publish_static(
     ).stdout
     if remote_pointer != release_body:
         raise RuntimeError("remote release pointer verification failed")
-    return {**validation, **budget, "remote": target, "pointer_verified": True}
+    return {
+        **validation,
+        **budget,
+        "remote": target,
+        "pointer_verified": True,
+        "mode": "publish",
+    }
 
 
 def activate_remote_release(

@@ -31,7 +31,10 @@ def test_publish_validates_objects_before_writing_pointer(
 
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         commands.append(command)
-        return SimpleNamespace(stdout=body if command[1] == "cat" else b"")
+        pointer_checks = sum(item[1] == "cat" for item in commands)
+        return SimpleNamespace(
+            stdout=body if command[1] == "cat" and pointer_checks == 2 else b"previous"
+        )
 
     monkeypatch.setattr(
         "scripts.publish_static.validate_release",
@@ -43,10 +46,33 @@ def test_publish_validates_objects_before_writing_pointer(
     )
     report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
 
-    assert [command[1] for command in commands] == ["copy", "check", "copyto", "cat"]
-    assert commands[0][commands[0].index("--exclude") + 1] == "/release.json"
-    assert commands[2][3] == "r2:redstm-archive/release.json"
+    assert [command[1] for command in commands] == ["cat", "copy", "check", "copyto", "cat"]
+    assert commands[1][commands[1].index("--exclude") + 1] == "/release.json"
+    assert commands[3][3] == "r2:redstm-archive/release.json"
     assert report["pointer_verified"] is True
+    assert report["mode"] == "publish"
+
+
+def test_publish_is_noop_when_remote_pointer_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_key, body = _release(tmp_path)
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(stdout=body)
+
+    monkeypatch.setattr(
+        "scripts.publish_static.validate_release",
+        lambda root, release: {"release_key": release_key, "post_count": 2},
+    )
+    report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
+
+    assert [command[1] for command in commands] == ["cat"]
+    assert report["mode"] == "noop"
+    assert report["pointer_verified"] is True
+    assert report["new_bytes"] == report["new_objects"] == 0
 
 
 def test_failed_remote_check_never_writes_pointer(
@@ -72,7 +98,7 @@ def test_failed_remote_check_never_writes_pointer(
     with pytest.raises(subprocess.CalledProcessError):
         publish_static(tmp_path, "r2:redstm-archive", runner=run)
 
-    assert [command[1] for command in commands] == ["copy", "check"]
+    assert [command[1] for command in commands] == ["cat", "copy", "check"]
 
 
 def test_activate_existing_release_only_writes_pointer(tmp_path: Path) -> None:
