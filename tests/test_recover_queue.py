@@ -107,9 +107,15 @@ def test_empty_recovery_writes_success_report_without_session_request(
 ) -> None:
     archive = tmp_path / "archive.sqlite"
     initialize_archive(archive)
+    ArchiveStore(archive).start_run("sync", now=_NOW)
+    pings: list[bool] = []
     monkeypatch.setattr(
         "scripts.recover_queue.ensure_session_export",
         lambda *args, **kwargs: pytest.fail("empty recovery must not validate a session"),
+    )
+    monkeypatch.setattr(
+        "scripts.recover_queue.notify_dead_man",
+        lambda succeeded, url: pings.append(succeeded),
     )
 
     report = run_recovery(
@@ -125,3 +131,5 @@ def test_empty_recovery_writes_success_report_without_session_request(
     assert report["ok"] is True
     assert report["selected_posts"] == report["scheduled_posts"] == 0
     assert report["outcomes"] == {}
+    assert report["interrupted_runs"] == 1
+    assert pings == [True]

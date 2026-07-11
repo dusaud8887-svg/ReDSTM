@@ -5,7 +5,7 @@
 - 대상: 개인용 TypeMoon 아카이버 및 뷰어
 - 입력 자료: 기존 [DSOTM](../../Dark-Side-of-Type-Moon/README.md) 문서와 코드
 
-> **2026-07-11 결정:** [`02_static_edge_feasibility.md`](02_static_edge_feasibility.md)의
+> **2026-07-11 결정:** [`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md)의
 > production sample, full metadata search, Worker/R2, desktop/mobile reader와 rollback gate가
 > 모두 통과했다. 따라서 아래 Worker + private R2 구조가 현재 source of truth이며 이전
 > Django/Gunicorn single-host 안은 fallback 비교안으로만 남는다.
@@ -19,7 +19,7 @@
 ReDSTM은 여러 무료 SaaS를 연결한 웹 서비스가 아니라 **한 사람이 오래 보유할 수 있는 개인 아카이빙 장치**로 설계한다.
 
 ```text
-로컬/E: archive kernel
+Oracle runner: active archive kernel
   -> canonical SQLite (수집 정합성, migration, 재생성 원장)
   -> Scrapy: discover -> frontier batch -> collect
   -> warcio: 변경된 원문 응답을 WARC 1.1로 보존
@@ -36,28 +36,41 @@ Cloudflare Worker
   -> Worker Static Assets의 HTML/CSS/ES module
   -> private R2 binding streaming/range
   -> browser Web Worker의 title/author/category 검색
+  -> /ops의 제한된 운영 화면
 
-별도 backup set
+Cloudflare D1: 작은 control plane
+  -> runner heartbeat, run/board summary, fixed command와 audit
+  -> archive 본문, canonical DB, credential은 저장하지 않음
+
+로컬 E
   -> SQLite Online Backup으로 일관된 snapshot 생성
-  -> restic으로 canonical DB/WARC를 암호화해 Backblaze B2에 저장
-  -> 자동 restore rehearsal과 별도 로컬/외장 사본
+  -> verified legacy source와 격리 restore 사본 유지
+  -> 외부 backup provider는 현재 범위에서 제외
 ```
 
 핵심 결정은 다음과 같다.
 
 1. **TypeMoon만 지원한다.** BookToki, 범용 source plugin, anti-bot ladder는 v2 제품 범위에서 제거한다.
-2. **SQLite를 local canonical 원장으로 유지한다.** 실측 26.8GiB도 PostgreSQL 전환 사유가 아니며 server serving path에는 DB를 올리지 않는다.
+2. **SQLite를 single-writer canonical 원장으로 유지한다.** active 원장은 Oracle runner에 두고
+   현재 검증된 로컬 E 사본을 보존한다. 실측 26.8GiB도 PostgreSQL 전환 사유가 아니며 viewer
+   serving path에는 DB를 올리지 않는다.
 3. **수집은 Python, 배포 viewer는 표준 HTML/CSS/ES module + 작은 Worker다.** runtime 간 API나 DB 공유는 없고 immutable 파일 계약만 공유한다.
 4. **검증된 바퀴는 적극 재사용한다.** 기존 DSOTM의 순수 도메인 코드/CSS/fixture와 유지보수되는 외부 library를 선별 이식하되, framework와 compatibility 계층을 통째로 복사하지 않는다.
 5. **crawler는 Scrapy 기반 Python command다.** Scrapy가 HTTP/session/retry/throttle을, `warcio`가 WARC를, `nh3`가 HTML sanitize를 맡는다. Celery, RabbitMQ, Redis는 넣지 않는다.
 6. **배포 viewer는 private R2의 zstd object를 읽는다.** bucket direct URL은 공개하지 않고 Worker binding만 사용한다.
-7. **R2 serving과 B2 암호화 backup을 공급자까지 분리한다.** serving release rollback과 restic retention을 섞지 않는다.
+7. **B2/restic 독립 backup은 현재 구현·출시 gate에서 제외한다.** 필요해지는 시점에만 `12`와
+   ADR-002를 재승인한다. R2 serving release를 canonical backup이라고 부르지는 않는다.
 8. **원문 WARC와 canonical SQLite가 보존 source of truth다.** 배포 object와 search index는 언제든 재생성 가능한 파생물이다.
-9. **fallback은 home server + Tailscale다.** edge gate나 비용 상한이 깨질 때 동일 static object 또는 local SQLite reader를 올리며 Oracle은 쓰지 않는다.
+9. **기존 Oracle VM은 disposable crawler runner로 재사용한다.** viewer/API는 올리지 않고 canonical/WARC의 유일본으로 취급하지 않는다. viewer fallback은 home server + Tailscale다.
+10. **D1은 작은 운영 제어면으로만 쓴다.** systemd 자동 스케줄은 D1 없이도 계속 돌고,
+    Oracle이 Access service token으로 outbound poll/heartbeat/event를 수행한다. 임의 shell,
+    경로, 인자, restore/delete 명령은 원격에서 실행하지 않는다.
 
 이 결정은 초기 Northflank + PostgreSQL + RabbitMQ + Pages 분산안과 Django persistent-volume
-배포안을 폐기한다. Cloudflare는 viewer gate와 object storage만 담당하고 crawler나 canonical DB를
-호스팅하지 않으므로 공급자 종속은 표준 zstd(RFC 8878) JSON/WARC export와 local 원장으로 제한된다.
+배포안을 폐기한다. Cloudflare는 viewer gate, object storage와 작은 운영 제어면만 담당한다. crawler와 active
+canonical DB는 기존 Oracle VM에서 실행하고 검증된 local source/snapshot을 보존한다. 공급자
+종속은 표준 zstd(RFC 8878) JSON, WARC 1.1 gzip과 SQLite
+원장으로 제한된다.
 
 ## 1. 문제 정의
 
@@ -187,15 +200,15 @@ listing discover
 - 같은 text 표본에서 contentless FTS5 index는 `unicode61` 30,482,432 bytes(본문 대비 19.49%), `trigram` 226,070,528 bytes(144.53%)였다. 전체 단순 비례값은 약 3.81GiB와 28.22GiB다.
 - legacy body 500건을 WARC gzip으로 만든 하한 proxy는 raw의 20.58%였고 전체 기존 본문 1회분 하한은 약 5.23GiB다. full response shell, header, listing, asset, 향후 version은 포함하지 않은 하한이다.
 
-Phase 0 static-edge gate 통과 후 local canonical DB는 유지하면서 sanitized 본문을 재생성 가능한
-content-addressed 압축 배포물로 내보내는 결정을 채택했다.
+Phase 0 static-edge gate 통과 후 single-writer canonical DB는 유지하면서 sanitized 본문을 재생성
+가능한 content-addressed 압축 배포물로 내보내는 결정을 채택했다.
 
 ### 2.5 외부 기술 검증
 
 - SQLite는 기본 4KiB page에서 약 17.5TB, 최대 page size에서 약 281TB까지 지원한다. 실측 26.8GiB는 엔진 한계와 무관하다. [SQLite limits](https://www.sqlite.org/limits.html)
 - SQLite 공식 가이드는 낮은 write concurrency와 1TB 미만의 device-local storage에 SQLite를 적합한 선택으로 설명한다. [Appropriate Uses For SQLite](https://www.sqlite.org/whentouse.html)
 - WAL은 reader/writer 동시성을 높이지만 checkpoint와 같은 host 제약을 추가한다. 2026-03에 발견된 WAL reset bug는 3.51.3, 3.50.7, 3.44.6 이상에서 수정됐다. [SQLite WAL](https://www.sqlite.org/wal.html)
-- 현재 로컬 Python은 SQLite 3.50.4를 사용해 해당 수정 전 버전이고, `better-sqlite3`는 3.53.0을 사용한다. v2 기본 rollback journal은 해당 결함 경로가 아니므로 시작 시 version 검사를 두지 않고, WAL을 켜는 결정에서만 fixed runtime/version test를 선행한다([`03_review_validation_20260711.md`](03_review_validation_20260711.md)).
+- 현재 로컬 Python은 SQLite 3.50.4를 사용해 해당 수정 전 버전이고, `better-sqlite3`는 3.53.0을 사용한다. v2 기본 rollback journal은 해당 결함 경로가 아니므로 시작 시 version 검사를 두지 않고, WAL을 켜는 결정에서만 fixed runtime/version test를 선행한다([`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)).
 - SQLite FTS5는 일반 token 검색과 trigram substring 검색을 제공한다. 본문 검색을 별도 검색 서버 없이 구현할 수 있다. [FTS5](https://www.sqlite.org/fts5.html)
 - WARC 1.1은 HTTP 응답, 메타데이터, 변환물, digest와 중복 참조를 보존하는 ISO 표준이다. [IIPC WARC 1.1](https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/), [미국 NARA 허용 포맷](https://www.archives.gov/records-mgmt/policy/transfer-guidance-tables.html)
 - R2 Standard의 월 무료량은 10GB-month, Class A 100만, Class B 1,000만 요청이며 egress는 무료다. 실측 DB snapshot만 26.8GiB이므로 무료 저장량 안에 들어가지 않으며 유료 저장 비용을 전제로 한다. [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
@@ -322,7 +335,7 @@ community 조사는 결정을 보조했다.
 - `discover -> collect`를 유지한다.
 - content hash와 parser version을 기록한다.
 - queue/job 상태를 영속화한다.
-- daily backup과 restore rehearsal을 한다.
+- verified local source와 기존 restore evidence를 보존한다. 외부 backup은 deferred다.
 - 플랫폼 탈출 경로를 준비한다.
 - R2를 저비용 원격 저장소로 활용한다.
 
@@ -334,9 +347,9 @@ community 조사는 결정을 보조했다.
 | Django API/Admin | 배포 DB와 항상 켜진 volume이 비용·운영 경계를 다시 만듦 | deployed path에서 제외, local archive command만 유지 |
 | Celery worker | worker 1개인데 broker와 task protocol을 소유 | 단일 crawler child + SQLite frontier |
 | CloudAMQP | 단일 producer/consumer에 불필요한 외부 장애점 | 사용 안 함 |
-| PostgreSQL metadata | 동시 write가 거의 없고 실측 26.8GiB도 SQLite 적정 범위 | local canonical SQLite 유지 |
-| R2 body JSON | private binding, deterministic hash, rollback과 gzip round-trip 통과 | viewer serving path로 채택 |
-| R2 raw/backups | 보존과 원격 사본에 적합 | serving prefix/bucket과 분리한 restic target |
+| PostgreSQL metadata | 동시 write가 거의 없고 실측 26.8GiB도 SQLite 적정 범위 | Oracle active + 현재 local verified 사본의 canonical SQLite 유지 |
+| R2 body JSON | private binding, deterministic hash, rollback과 zstd fixture round-trip 통과 | viewer serving path로 채택 |
+| R2 raw/backups | serving/canonical 책임이 섞임 | 현재 사용하지 않음; 외부 backup은 deferred |
 | Northflank 2 services + 2 jobs | 연 $10 상한을 넘고 persistent runtime 불필요 | 사용 안 함 |
 | block JSON 변환 | AA/legacy HTML fidelity를 잃을 수 있음 | sanitized HTML + text, raw WARC 보존 |
 | 본문 검색 제외 | Pagefind/FTS 표본 비용이 P0 효익보다 큼 | metadata substring만, 본문 검색은 사용 근거가 생길 때 board별 추가 |
@@ -405,9 +418,10 @@ fork는 upstream의 핵심 data model과 workflow가 ReDSTM에 맞고 정기 mer
 
 ### 5.1 화면 정보 구조
 
-P0는 별도 landing/admin 화면 없이 실제 reader를 첫 화면으로 연다.
+P0는 별도 landing/admin 화면 없이 실제 데이터가 채워진 Home/장서를 첫 화면으로 연다.
 
 ```text
+Home                 검색, 이어읽기, 최신 갱신, 최근 읽은 글
 왼쪽/상단 catalog  title/author/category 검색, board filter, 전체/history/bookmark
 오른쪽/하단 reader prose/AA, 댓글, 이전/다음, 원문, 설정
 local state          theme, typography, bookmark, history, scroll position
@@ -433,16 +447,18 @@ local state          theme, typography, bookmark, history, scroll position
 - dark mode
 - 모바일 catalog 다음에 reader가 이어지는 단일 흐름
 
-### 5.2 관리자 경험
+### 5.2 운영자 경험
 
-P0에는 배포된 관리자 화면을 만들지 않는다. 운영 command는 local CLI 또는 GitHub Actions/
-self-hosted runner workflow에서만 실행한다.
+최종 제품은 같은 Access 경계 안의 `/ops`에서 상태와 제한 명령을 제공한다. 자동 수집의
+source of truth는 Oracle systemd timer이고, D1이나 Worker 장애가 자동 주기를 멈추게 해서는
+안 된다. 로컬 C0 console은 장애 조사용 read-only fallback으로만 보존한다.
 
 ```text
 Sync now       신규/변경 discovery + collect
-Resume backfill
-Retry failures
-Backup now
+Retry batch     최대 100건
+Publish if changed
+Pause after current
+Resume schedule
 ```
 
 run artifact와 coverage report에 필요한 상태:
@@ -452,29 +468,32 @@ run artifact와 coverage report에 필요한 상태:
 - 전체 backfill cursor
 - 최근 실패 20건과 reason
 - 마지막 성공 sync
-- 마지막 성공 backup과 검증 시각
+- 마지막 local recovery evidence 시각
 - disk 사용량
 
-viewer에는 crawler credential, run trigger, log streaming을 노출하지 않는다. workflow 결과와
-요약 report에 더해 sync/backup/restore 성공 ping을 외부 dead-man check로 감시한다. remote write
-control은 실제 필요가 생길 때 별도 인증 설계 후 추가한다.
+브라우저에는 crawler credential, 원문 log streaming, local path를 노출하지 않는다. Access
+사용자만 command를 만들 수 있고 Oracle 전용 service token은 claim/status/event route만
+사용한다. command는 고정 allowlist, 만료, idempotency key, audit를 강제한다. shell, 임의 argument,
+restore/delete는 금지한다. sync/recovery 상태는 D1 heartbeat와 stale 판정으로 감시한다.
+세부 계약은 [`08_operations_control_plane.md`](08_operations_control_plane.md)를 따른다.
 
 ## 6. 목표 아키텍처
 
 ### 6.1 runtime topology
 
 ```text
-local Windows/Linux runner
+Oracle runner
   Python 3.14 + Scrapy/warcio/nh3
   canonical SQLite + WARC + optional same-origin blob
   deterministic zstd exporter
-            │ upload immutable objects, verify hash
-            ▼
-private R2 ── release.json written last
-            ▲
-Cloudflare Access -> Worker (R2 binding, static assets)
-            │
-browser (plain ES modules, search Web Worker, localStorage state)
+       │ immutable upload/readback, release.json last
+       ▼
+private R2 <-> Cloudflare Access -> Worker Static Assets/reader
+                                      │
+                                      ├-> browser local user state
+                                      └-> /ops <-> D1 control plane
+                                                     ▲
+                                                     └ outbound poll/heartbeat/event
 ```
 
 ### 6.2 API와 server database를 두지 않는 이유
@@ -483,7 +502,8 @@ browser (plain ES modules, search Web Worker, localStorage state)
 - crawler와 viewer는 database API가 아니라 versioned file schema를 공유한다.
 - signed URL/CORS 없이 Worker의 private R2 binding으로 같은 origin에서 streaming한다.
 - canonical SQLite가 손상되거나 배포 공급자가 바뀌어도 release object는 표준 zstd JSON(RFC 8878)이다.
-- single user state는 `localStorage`와 JSON export/import로 보존하며 동기화 요구가 생기기 전 D1을 추가하지 않는다.
+- single user reading state는 `localStorage`와 JSON export/import로 보존한다.
+- D1은 reading state나 archive data가 아니라 제한된 operations status/command/audit에만 쓴다.
 
 ### 6.3 process와 publish 규칙
 
@@ -491,27 +511,33 @@ browser (plain ES modules, search Web Worker, localStorage state)
 - Scrapy/Twisted reactor는 command process마다 한 번 실행하고 process와 함께 종료한다.
 - login session reuse가 우선이며 만료 시 form POST는 run당 한 번만 시도하고 실패하면 중단한다.
 - export는 immutable post/board/search/versioned release를 먼저 쓴다.
+- full export는 source SQLite를 read-only로 한 번 순회하고, 객체 압축만 최대 8개 worker로
+  bounded 병렬화한다. 입력 순서와 manifest 순서는 유지한다.
+- 중단된 export를 같은 output에 재실행하면 content-addressed 기존 객체의 payload를 검증해
+  재사용하고, 없는 객체만 압축한다. 완성되지 않은 output에는 `release.json`이 없어야 한다.
 - upload 후 size/hash와 참조 대상 존재를 확인하고 `release.json`을 마지막에 교체한다.
 - rollback은 원격의 content-addressed manifest bytes를 확인한 뒤 `--activate`로 `release.json`만
   다시 쓰는 작업이다. 전체 object copy/check를 반복하지 않는다.
 
 ### 6.4 scheduler
 
-core command는 특정 scheduler 제품에 의존하지 않는다.
-
-- 1순위: 고정된 집 IP의 self-hosted runner에서 authenticated crawl 실행
-- GitHub-hosted runner는 test/lint와 credential이 필요 없는 static publish에 사용
-- 로컬 Windows 수동/Task Scheduler도 동일 Python command를 실행
+core command는 특정 scheduler 제품에 의존하지 않는다. production scheduler는 기존 Oracle VM의
+systemd oneshot/timer를 사용하고 로컬 Windows는 manual recovery fallback으로 유지한다. GitHub-hosted
+runner는 authenticated crawl이나 canonical DB를 맡지 않는다. 2026-07-11 현재 Oracle timer와 7일
+shadow는 아직 없다.
 
 스케줄 기본값:
 
 - incremental sync: 6시간마다
-- backup: 성공한 crawl 직후, 최소 하루 1회
+- delta publish: 변경 시 하루 최대 1회
 - full board inventory audit: 주 1회
-- restore rehearsal: 월 1회
 
-각 성공 작업은 archive 내용을 보내지 않고 Healthchecks.io 같은 외부 dead-man endpoint에 ping한다.
-예정 시간과 grace를 넘긴 무응답은 scheduler/host 자체 장애로 알린다.
+각 run은 D1 heartbeat와 next_expected_by를 갱신하고 `/ops`가 stale scheduler/host를 표시한다.
+Healthchecks.io 같은 외부 push alert는 계정 없이 구현하지 않으며 현재 출시 gate가 아니다.
+
+Oracle은 idle일 때 60초 간격으로 D1 command를 conditional claim하고 run/board 요약과 heartbeat를
+보낸다. 이 poll은 자동 schedule의 선행조건이 아니다. D1 장애 중 event는 bounded local outbox에
+보존하고, 복구 뒤 sequence 순서로 재전송한다.
 
 ### 6.5 version 정책
 
@@ -534,7 +560,7 @@ filelock     cross-platform single-crawler lock
 
 Edge production은 plain Worker module과 static HTML/CSS/JS에 JWT/JWKS 검증용 `jose`만 쓴다.
 Cloudflare 공식 예제의 검증 경로를 사용해 자체 RS256/JWK 구현을 소유하지 않는다. Wrangler와
-Playwright는 개발 전용이다. 외부 실행 도구는 rclone/restic이며 Browsertrix는 emergency
+Playwright는 개발 전용이다. 외부 실행 도구는 rclone이며 Browsertrix는 emergency
 profile에서만 pinned container로 사용한다.
 
 새 dependency는 기존 목록의 책임으로 해결되지 않고, 추가 package보다 더 많은 자체 코드와 test를 삭제한다는 근거가 있을 때만 ADR로 추가한다.
@@ -619,7 +645,7 @@ UNIQUE(post_id, content_sha256, comments_sha256)
 bytes였다. 같은 UTF-8 payload는 gzip-6 21.41%/17.943초, Python 3.14 표준 zstd-3
 20.38%/3.730초였고 zstd schema DB는 231,505,920 bytes로 78.87% 작아졌다. local canonical
 DB는 zstd-3 BLOB을 쓰고, R2 static object는 2026-07-11 결정 이후 zstd level 15를 쓴다
-([`02_static_edge_feasibility.md`](02_static_edge_feasibility.md) §3의 브라우저 제약 참고). 근거는 `canonical-schema-spike-20260711.json`이다.
+([`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md) §3의 브라우저 제약 참고). 근거는 `canonical-schema-spike-20260711.json`이다.
 
 #### `comments`
 
@@ -715,13 +741,20 @@ tuple을 최신순으로 `search/title-author-{sha256}.json.zst`에 쓴다.
 board_id, external_post_id, title, author, category, created_at_raw, payload_sha256
 ```
 
+다음 export 계약 확장에서 tuple 끝에 `is_aa`를 추가해 catalog row의 AA 표시와 content-mode
+filter 근거를 만든다. viewer는 7/8-field를 모두 수용하는 버전을 먼저 배포하고, exporter 변경은
+이미 게시된 release를 재작성하지 않는다.
+
 browser Web Worker는 NFKC/lowercase 검색 문자열을 준비하고 250ms debounce, 결과 100건 상한으로
 선형 scan한다. 전체 282,239건 실측은 gzip 21,276,963 bytes, 준비 1.433초, RSS 증가
 424,001,536 bytes, 없는 질의 P95 16.962ms다. 이는 desktop Node 수치이며 mobile viewport
 emulation은 실제 Android memory 증거가 아니다. production gate에서 실제 Android Chrome의 full
-load/search/background restore를 측정한다. 512MB를 넘거나 tab kill이 재현되면 rows NDJSON,
+load/search/background restore를 측정하고, index 첫 로드의 전송 크기·시간(모바일 회선 데이터
+비용 포함)도 함께 기록한다. 512MB를 넘거나 tab kill이 재현되면 rows NDJSON,
 normalized terms, typed offset, matched-row lazy parse representation을 먼저 benchmark한다. board
 shard는 board filter를 먼저 선택하는 UX에서만 비교하며 server DB를 먼저 추가하지 않는다.
+전체 index 로드가 Home 첫 표시를 지연시키는 것이 실측되면 Home 상단 N건만 담은 소형 recent
+object를 release당 1개 추가하고 index는 첫 검색/목록 진입 시 lazy load하는 방안을 그때 비교한다.
 
 Pagefind full-body 계획값은 9.38GB이고 기존 FTS5 `unicode61` 계획값은 3.81GiB였다. 둘 다 P0에서
 제외한다. 실제 사용으로 본문 검색 가치가 확인될 때 선택한 board만 Pagefind 또는 local FTS5로
@@ -782,6 +815,27 @@ viewer에 직접 렌더링하지 않는다.
 
 ## 8. crawler 설계
 
+### 8.0 2026-07-11 구현 감사 판정
+
+현재 crawler는 **bounded vertical slice 완료, 장기 무인 운영 미완료**다. 별도 schema v2 canary
+DB에서 한 글을 3회 수집해 stored/unchanged, 댓글, WARC와 lease 전이를 확인했지만 canonical에는
+아직 실제 `sync`/`retry` run이 없다. 현재 frontier는 pending 29,384, retry 4,327, done 9,657,
+dead 1이며 expired running lease는 0이다.
+
+| 영역 | 현재 구현 | 장기 운영 전 남은 gate |
+|---|---|---|
+| 부하 제한 | concurrency 1, domain concurrency 1, 고정 10초 delay, robots 준수 | 100건 canary에서 요청 간격·429 여부 확인 |
+| 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
+| durable retry | frontier 2분 지수 backoff, 6시간 cap, network 5회 후 dead, auth는 보류 | dead/retry 운영 report와 수동 재개 기준 |
+| 중단 복구 | file lock/lease, stale run 회수, capture 누락 종료 판정, WARC `.partial` 진단 | live process kill 확인 |
+| listing | fixed cap, idempotent seed, errback·비HTML/구조 실패 판정 | overlap boundary/inventory |
+| detail | 1건씩 claim, 인증·restricted·parse drift·WARC/canonical transaction | 20/100건 live canary |
+| monitoring/UI | sync/recovery success hook, JSON report, CLI doctor, loopback read-only C0 console | scheduler/D1 heartbeat, remote Operations와 7일 shadow |
+
+따라서 현재 command를 수동 1~20건 canary에 쓰는 것은 가능하지만 장시간 production queue나 정기
+무인 sync를 시작해서는 안 된다. 실제 100건과 7일 shadow가 통과하기 전 “crawler 완성”으로
+표시하지 않는다.
+
 ### 8.1 명령 표면
 
 ```text
@@ -823,9 +877,11 @@ canonical schema와 migration은 Python `sqlite3`의 parameter binding과 명시
 
 HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, BeautifulSoup, Scrapling을 나란히 설치하거나 parser adapter를 만들지 않는다. 한 source이므로 interface/factory/manifest도 필요 없다. 새 source 요구가 실제로 생기면 그때 두 번째 구현에서 공통 경계를 추출한다.
 
-### 8.3 incremental sync
+### 8.3 incremental sync 목표와 현재 차이
 
-board별로 page 1부터 읽는다.
+현재 `scripts.sync`는 board별 page 1부터 `max_pages`/`max_posts` 고정 상한만큼 읽고 detail을 다시
+수집한다. 아래 overlap boundary, metadata 변경 비교, reported total snapshot과 주간 inventory는
+목표 계약이며 아직 구현되지 않았다.
 
 1. 공지/pinned row를 일반 row와 구분한다.
 2. 신규 key 또는 list metadata 변경을 frontier에 넣는다.
@@ -836,6 +892,10 @@ board별로 page 1부터 읽는다.
 고정된 page 수를 모두 읽는 대신 overlap boundary를 사용하되, 주 1회 inventory audit로 조기 종료 오류를 보완한다.
 
 ### 8.4 backfill
+
+현재 구현된 것은 legacy frontier의 due pending/retry를 AA -> 창작 -> 팬픽 -> 나머지 순서로
+선택하고 detail을 한 건씩 claim하는 bounded `scripts.recover_queue`다. 아래 board cursor와 시간
+budget은 아직 없다.
 
 - board별 cursor를 DB에 저장
 - 창작/팬픽/AA board 우선
@@ -855,7 +915,7 @@ board별로 page 1부터 읽는다.
 10초 고정 간격의 retry/listing 제외 이론값은 기존 queue 33,712건 복구가 93.64시간(3.90일),
 모든 legacy post 282,239건 detail 재검증이 784.0시간(32.7일)이다. 초기 backfill은 queue recovery로
 한정하고 전체 재검증은 별도 coverage 작업으로 취급한다. 상세 board별 수치는
-[`03_review_validation_20260711.md`](03_review_validation_20260711.md)를 따른다.
+[`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)를 따른다.
 
 ### 8.5 collect와 version
 
@@ -880,7 +940,7 @@ transaction이 실패하면 version과 frontier가 반쪽으로 남지 않아야
 
 ### 8.6 상태 분류
 
-HTTP/parse 실패를 하나의 `failed`로 뭉치지 않는다.
+목표 상태는 HTTP/parse 실패를 하나의 `failed`로 뭉치지 않는 것이다.
 
 ```text
 network_error
@@ -895,30 +955,46 @@ storage_error
 
 - restricted 판정은 content root가 없는 응답에서만 login form/field 구조와 안내 구문으로
   결정한다. content root가 있으면 구문은 본문 인용으로 보고 정상 저장한다
-  ([`03_review_validation_20260711.md`](03_review_validation_20260711.md)).
+  ([`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)).
+- 현재 capture/DB까지 연결된 error code는 `network_error`, `rate_limited`, `auth_required`,
+  `permission_denied`, `not_found`, `parse_drift`다. `quality_rejected`, `storage_error`의 독립 집계는
+  아직 구현되지 않았다.
 - `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
 - `permission_denied`는 retry storm을 만들지 않고 session 확인 후 보류한다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
   6시간에서 멈춘다. `network_error`는 5회 시도 후 `dead`로 전이하며, `auth_required`는
   session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
-- 429는 `Retry-After`를 우선하고 전체 source cooldown을 적용한다.
+- 429는 같은 request 안에서 재시도하지 않는다. `rate_limited`로 기록하고 frontier 기본 backoff와
+  `Retry-After` 중 더 긴 시각까지 미룬다. `Retry-After`는 최대 24시간으로 제한한다.
 
 ### 8.7 요청 정책
 
-- Scrapy `CONCURRENT_REQUESTS_PER_DOMAIN=1`
-- `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`로 최소 10초 고정 간격
+- network policy의 단일 source of truth는 `crawler/settings.py`다. YAML을 추가하지 않는다.
+  board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
+- 구현값은 `CONCURRENT_REQUESTS=1`, `CONCURRENT_REQUESTS_PER_DOMAIN=1`,
+  `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, `RETRY_TIMES=2`,
+  `AUTOTHROTTLE_ENABLED=False`, `ROBOTSTXT_OBEY=True`다.
+- `DOWNLOAD_TIMEOUT=180`과 retry HTTP code는 settings에 명시했다. 180초는 “최적값”이 아니라
+  오래된 server를 위한 보수적 시작값이며 100건 canary latency로만 조정한다.
+- A2 반영 예정 시작값: listing 60초/detail 180초 timeout 분리, `DOWNLOAD_WARNSIZE` 8MiB와
+  `DOWNLOAD_MAXSIZE` 64MiB 명시, 감속 전용 AutoThrottle(하한 10초, 최대 60초), frontier lease
+  기본 900초(현행 300초는 detail 180초 × 최대 3 시도 경로를 못 덮음). 느린 원 사이트와 수 MB AA
+  문서가 전제이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
+- site outage 조기 판정: run preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
+  `site_unreachable`로 run을 조기 종료한다. 그 run의 network 실패는 frontier attempt로 세지
+  않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 run당 1회, 최소
+  간격 30분으로 제한한다.
 - 저장 session으로 authenticated GET을 먼저 검증하고 실패 시 login page token을 읽어 form POST를 run당 한 번만 수행
 - login 실패/권한 제한은 retry storm 없이 run을 중단하고 session/credential 값을 log/WARC에 남기지 않음
 - export는 timezone이 있는 `created_at`/`expires_at`, user agent, browser cookie list만 읽고 만료·중복 cookie·TypeMoon 외 domain·header control character를 거부
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
-- `RetryMiddleware`의 network/408/429/5xx retry를 제한된 횟수만 사용
-- `ETag`/`Last-Modified`가 있으면 conditional request
-- timeout과 retry는 Scrapy request 단위이며 429 `Retry-After`만 source cooldown으로 확장
-- 연속 auth/parse failure가 threshold를 넘으면 run 중단
+- `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
+- `ETag`/`Last-Modified` conditional request와 연속 auth/parse threshold 중단은 아직 구현되지 않았다.
 - crawler user agent는 개인 아카이빙 도구임을 식별하고 연락처는 공개하지 않음
 
-요청률은 설정 가능하게 남기되, dashboard에 복잡한 performance preset은 만들지 않는다.
+요청률은 코드 review가 가능한 settings에서 관리하고 dashboard에 performance preset이나 임의
+network setting 입력을 만들지 않는다.
 
 ### 8.8 framework 책임 경계
 
@@ -943,7 +1019,7 @@ custom Scrapy downloader middleware가 listing/detail GET 응답을 parser와 de
 
 `nh3.Cleaner` 한 instance가 tag, attribute, URL scheme, AA용 style property allowlist를 적용한다. `script/style/iframe/object/embed` 내용과 event attribute, `javascript:`/`data:` URL, remote background와 positioning CSS를 제거한다. `AA_Text`, legacy `font`, color/typography/white-space/table property만 보존한다. 이 두 포맷·보안 계층을 자체 구현하지 않는다.
 
-production HTML 2,000행 profile에서 inline style 문서는 668개였고 모든 문서에 `AA_Text` class가 있었지만 실제 `is_aa`는 464개였다. 따라서 content root class는 보존하되 AA 판정 source로 사용하지 않는다. P0 판정은 AA board/category, root 아래의 명시적 AA marker, Saitamaar/MS Gothic/Mona font hint만 인정한다. box-drawing 문자 개수와 legacy `_detect_aa`도 false positive가 실측되어 단독 신호로 쓰지 않는다. 같은 2,000행 sanitizer corpus는 2,000건 모두 성공했고 active-content marker 0건, sanitized/raw byte ratio 99.66%, 빈 body text 1건이었다. HTML이 유효한 image-only post를 잃지 않도록 body text가 비어도 sanitized HTML이 있으면 허용한다. 근거는 `html-corpus-sample-20260711.json`, `sanitizer-corpus-sample-20260711.json`, [`03_review_validation_20260711.md`](03_review_validation_20260711.md)다.
+production HTML 2,000행 profile에서 inline style 문서는 668개였고 모든 문서에 `AA_Text` class가 있었지만 실제 `is_aa`는 464개였다. 따라서 content root class는 보존하되 AA 판정 source로 사용하지 않는다. P0 판정은 AA board/category, root 아래의 명시적 AA marker, Saitamaar/MS Gothic/Mona font hint만 인정한다. box-drawing 문자 개수와 legacy `_detect_aa`도 false positive가 실측되어 단독 신호로 쓰지 않는다. 같은 2,000행 sanitizer corpus는 2,000건 모두 성공했고 active-content marker 0건, sanitized/raw byte ratio 99.66%, 빈 body text 1건이었다. HTML이 유효한 image-only post를 잃지 않도록 body text가 비어도 sanitized HTML이 있으면 허용한다. 근거는 `html-corpus-sample-20260711.json`, `sanitizer-corpus-sample-20260711.json`, [`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)다.
 
 Scrapling adaptive selector와 Crawl4AI/LLM extraction은 core 저장 경로에서 금지한다. selector drift는 추정으로 통과시키지 않고 `parse_drift`로 멈춘다. 필요하면 별도 진단 script에서만 새 selector 후보를 제안하고 fixture 승인 뒤 반영한다.
 
@@ -981,7 +1057,9 @@ session Cookie header를 보존함도 실측했다. 따라서 emergency WACZ/pro
 최근 Nginx log는 약 15일뿐이고 성공 요청도 33건이라 기능 삭제 근거로 쓰지 않는다. 반면 IndexedDB offline download/PWA, 개인 읽기 통계, 상위 작성자 화면과 BookToki library는 P0에서 제외한다. immersive/keyboard 동작은 reader JS 안의 작은 보조 동작으로만 남기고 별도 상태 계층을 만들지 않는다.
 
 Worker Static Assets가 `index.html`, `app.css`, 표준 ES module을 같은 배포로 제공하고
-`run_worker_first=true`로 모든 asset에 인증을 적용한다. browser JS 책임은 다음뿐이다.
+`run_worker_first=true`로 모든 asset에 인증을 적용한다. `/read/*`, `/search`, `/saved`,
+`/settings` 같은 asset 미일치 GET은 `assets.not_found_handling = "single-page-application"`으로
+같은 shell을 200으로 돌려준다. browser JS 책임은 다음뿐이다.
 
 - search Web Worker 초기화와 250ms debounce
 - 선택한 zstd JSON post fetch와 sanitized body/comment HTML 렌더
@@ -995,10 +1073,14 @@ JavaScript가 필요한 reader이므로 JS-off 지원을 별도 목표로 두지
 
 ### 9.2 object/query 규칙
 
-- release search tuple은 최신순이며 result 100건까지만 main thread로 보냄
+- release search tuple은 최신순이며 result 100건까지만 main thread로 보냄; 전체 match count는
+  정확한 값을 별도로 보고함
 - detail은 search result가 재구성한 content-addressed object key 한 건만 fetch
 - board filter는 exact id, query token은 title/author/category/board 모두 포함해야 match
+- board filter label은 release `boards[]`의 `name`/`group_name`이 있으면 사용, 없으면 `board_id`
 - post/board/search object는 immutable cache, `release.json`만 `no-cache`
+- `release.json` 본문에는 생성 시각을 넣지 않고(재export 결정론 유지) Worker가 R2 `uploaded`
+  기반 `Last-Modified` header를 노출해 Home freshness의 근거로 씀
 - versioned release를 남기고 mutable pointer만 교체
 
 ### 9.3 HTML 안전성
@@ -1051,6 +1133,16 @@ backup/restore 시간
 
 현재처럼 WAL checkpoint를 여러 process가 운영 작업으로 다루지 않는다.
 
+장시간 local 작업은 다음 경계를 지킨다.
+
+- canonical writer는 항상 하나만 실행한다.
+- import/export의 CPU 변환은 bounded worker로 병렬화하되 SQLite 읽기와 write transaction은
+  주 process가 순서대로 수행한다.
+- export는 OS background process로 실행할 수 있지만 backup/restore/doctor/image inventory처럼
+  같은 DB·disk를 전수 scan하는 작업과 동시에 돌리지 않는다.
+- backup/restore/hash/doctor는 I/O와 일관성이 지배하므로 내부 병렬화를 기본값으로 두지 않는다.
+- 완료 판정은 process 생존이나 partial file 수가 아니라 최종 manifest와 검증 report로 한다.
+
 ### 10.3 목표 SLO
 
 production data 기준:
@@ -1065,7 +1157,7 @@ production data 기준:
 | incremental sync 발견 지연 | 12시간 이하 |
 | silent crawl failure | 0건 |
 
-silent failure SLO는 sync/backup/restore dead-man check가 예정 시간+grace 안에 ping했는지로
+silent failure SLO는 D1 heartbeat가 next_expected_by+grace 안에 갱신됐는지로
 측정한다. 목표를 못 맞추면 query/index/body representation을 profiler 근거로 바꾼다. Redis나 PostgreSQL을 먼저 추가하지 않는다.
 
 ## 11. 배포 선택
@@ -1073,60 +1165,72 @@ silent failure SLO는 sync/backup/restore dead-man check가 예정 시간+grace 
 ### 11.1 1순위 pilot: Worker + private R2
 
 배포 artifact는 실행 중인 database가 아니라 immutable zstd object와 release manifest다.
-Cloudflare Worker가 단일 사용자 인증과 private R2 streaming만 담당한다. 상세 수치와 gate는
-[`02_static_edge_feasibility.md`](02_static_edge_feasibility.md)를 따른다.
+Cloudflare Worker가 단일 사용자 인증, private R2 streaming과 제한된 `/ops` route를 담당한다.
+archive data는 R2, operations metadata는 D1으로 분리한다. 상세 수치와 gate는
+[`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md)를 따른다.
 
 ```text
-D: workspace-local canonical SQLite
+Oracle active canonical SQLite
   -> deterministic exporter
   -> zstd post/board/search/collection objects + release manifest
   -> private R2
   -> Access-protected Worker reader
+
+Local E: verified source + independent recovery copy
 ```
 
 - Worker Free: 100,000 request/day, 10ms CPU/request
 - R2 Standard: 10GB-month 무료, 이후 $0.015/GB-month, egress 무료
-- publisher는 현재 원격 사용량과 dry-run 신규 object를 합산하고 8,000,000,000 bytes 또는
-  800,000 objects를 넘으면 실제 upload 전에 실패한다. 무료량의 20%를 운영 여유로 남긴다.
+- publisher는 현재 원격 사용량과 dry-run 신규 object를 합산하고 20,000,000,000 bytes 또는
+  800,000 objects를 넘으면 실제 upload 전에 실패한다. 현재 코드의 8GB free-only guard는 첫
+  baseline에는 유지하고, 증분 운영 전에 이 계약으로 갱신한다.
 - app shell은 같은 Worker Static Assets에 두고 archive object만 R2에 저장
 - R2 object key는 content hash/revision을 포함하고 release manifest만 교체
 
 Worker가 HTML parse, full-text scan, crawl 또는 migration을 수행하지 않는다. archive object는
 R2 binding으로 streaming해 CPU budget을 사용하지 않고, 간단 검색은 browser Web Worker가
-title/author metadata에서 수행한다.
+title/author metadata에서 수행한다. `/ops`도 crawler process를 실행하지 않고 command intent와
+작은 status/audit row만 다룬다.
 
 ### 11.2 수집과 갱신 실행기
 
-초기 legacy migration은 대용량 작업 공간이 필요해 `E:`에서 수행했지만, 12.4GB canonical과
-static 작업 산출물은 `D:\ReDSTM\.data`에서 운영한다. `E:\ReDSTM\backups`에는 검증된 독립
-사본만 둔다. 이후 증분은 같은 Python/Scrapy command를 고정된 집 IP의 self-hosted runner에서
-실행한다. GitHub Actions private repository는 test/lint와 credential 없는 publish에 사용한다.
+초기 legacy migration과 첫 static export는 로컬 `D:`/`E:`에서 완료했다. production active
+canonical과 closed WARC는 기존 Oracle VM의 `/srv/redstm`에 두고, `E:\ReDSTM\backups`의
+검증된 legacy source와 격리 restore 사본은 보존한다. 이후 증분은 같은 Python/Scrapy command를 Oracle systemd timer에서
+실행한다. GitHub Actions private repository는 test/lint에만 사용한다.
 
 - crawler를 Worker TypeScript로 다시 작성하지 않음
 - 한 run에서 유효 session reuse, 필요 시 login form 1회만 제출
-- changed post/board manifest만 `rclone copy --immutable`로 upload
+- 첫 baseline 뒤 changed post/board/search/release만 `rclone copy --immutable`로 upload하는 delta
+  publish gate를 구현
 - `rclone check` 완료 뒤 versioned release bytes를 `release.json`으로 마지막에 교체
 - 이전 release manifest를 보존해 rollback
 
 ### 11.3 secret과 배포 선언
 
 - Git에 넣는 YAML에는 schedule, command, permission과 secret 이름만 둔다.
-- TypeMoon ID/PW는 GitHub Actions 또는 self-hosted runner secret에 둔다.
+- TypeMoon ID/PW는 Oracle의 root-owned credential file에 두고 GitHub Actions에는 넣지 않는다.
 - R2 API token은 Cloudflare/local secret store에 둔다. Viewer는 `workers.dev` Cloudflare Access의
   본인 account + MFA policy로 제한하고 Worker도 `Cf-Access-Jwt-Assertion`의 signature, issuer,
   audience를 검증한다. Preview URL은 끄고 Basic auth는 local/emergency fallback에만 쓴다.
 - cookie, password, login POST body, API token은 YAML, log, WARC, artifact에 넣지 않는다.
-- production bucket/token 생성 전 local gate 결과와 연 $10 budget을 다시 확인한다.
+- Oracle 전용 Access service token은 `/api/v1/runner/*`에만 허용하고 `/api/v1/ops/*`에는
+  허용하지 않는다. browser Access identity와 runner machine identity를 같은 권한으로 합치지 않는다.
+- production storage 변경 전 local gate 결과와 Cloudflare 연 $20 budget을 확인한다.
 - Cloudflare budget alert는 hard cap이 아니므로 비용 방어 근거로 사용하지 않는다. 초과 방지는
-  publisher preflight의 8GB/800,000-object hard refusal을 기준으로 한다.
+  publisher preflight의 20GB/800,000-object hard refusal을 기준으로 한다.
 
 ### 11.4 fallback: home server + Tailscale
 
 static edge local gate는 통과했다. 향후 실제 Chrome memory, Cloudflare 정책/비용 또는 private
 access가 acceptance를 벗어나면 NAS, mini PC 또는 집 PC에 동일 static object나 local SQLite
-reader를 두고 Tailscale Serve로 전환한다. 이 fallback도 Oracle은 쓰지 않는다.
+reader를 두고 Tailscale Serve로 전환한다. Oracle은 crawler runner일 뿐 viewer fallback이 아니다.
 
 ## 12. 백업과 재해 복구
+
+**상태: Deferred by user (2026-07-11).** 이 절은 향후 독립 backup을 다시 요구할 때 사용할
+설계 후보이며 현재 구현, Oracle timer enable, viewer release의 선행조건이 아니다. 현재는
+`E:\ReDSTM\backups`의 verified legacy source와 기존 격리 restore 사본을 삭제하지 않는다.
 
 ### 12.1 backup set
 
@@ -1233,8 +1337,9 @@ Gate:
 
 ### 13.3 Phase 1: archive kernel
 
-상태: 부분 완료. schema/importer/parser/store/frontier, bounded listing/sync, WARC rotation,
-capture ledger와 `doctor`는 구현했다. 무제한 backfill은 배포 이후 gate로 남아 있다.
+상태: 운영 hardening code 완료, live gate 대기. schema/importer/parser/store/frontier, bounded
+listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
+정책과 `doctor`는 구현했다. scheduler/D1 heartbeat 실연결과 20/100건·7일 shadow는 남아 있다.
 
 - 최소 schema/migration 작성
 - legacy importer
@@ -1284,12 +1389,23 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 
 ### 13.5 Phase 3: viewer
 
-상태: 구현과 local export 완료, R2 data publish gate 대기. Full canonical exporter, collection
-연속 읽기, unavailable entry skip, stable user-state, Saitamaar와 desktop/mobile Playwright를
-구현했다. 전수 export와 post-export doctor는 완료했고 산출물은 6,079,309,130 bytes/282,289
-files다. Worker/private R2 bucket/Access email allow/TOTP MFA와 인증된 shell smoke도 완료했다.
-R2 bucket은 아직 0 objects이며 local `rclone` 연결, data publish/smoke, remote rollback과 실제
-Android gate가 남아 있다.
+상태: viewer 기능, gzip/zstd full local export와 R2 baseline publish 완료. authenticated data
+smoke/rollback과 승인된 시각 재설계 구현 대기.
+Full canonical exporter, collection
+연속 읽기, unavailable entry skip, legacy object-key user-state, Saitamaar와 desktop/mobile Playwright를
+구현했다. 기존 gzip 전수 export와 post-export doctor는 완료했고 baseline은
+6,079,326,086 bytes/282,290 files다. zstd level 15 exporter/Worker와 bounded 8-worker·resume
+계약은 fixture 검증을 통과했고 같은 output의 resume와 최종 `release.json` count 검증도
+완료했다. Worker/private R2 bucket/Access email
+allow/TOTP MFA와 인증된 shell smoke는 완료했다. matching bucket-scoped key로 local `rclone`
+연결을 복구했고 immutable baseline 5,148,165,450 bytes/282,289 objects를 게시했다. remote check
+차이 0과 pointer 검증이 통과했다. authenticated data smoke, remote rollback과 실제 Android
+gate가 남아 있다.
+
+현재 live shell의 색·서체·정보 구조는 제품 acceptance를 통과한 것으로 보지 않는다. 최종 구현은
+[`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose, Saitamaar AA와
+[`06_final_product_experience.md`](06_final_product_experience.md)의 stable identity/mobile flow를
+따라 교체한다.
 
 Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링한다. 원문 version이
 없는 unavailable placeholder 1,831개와 그 댓글 22,222개는 canonical에 보존하고 release manifest의
@@ -1300,7 +1416,7 @@ Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 
 - compact metadata search Web Worker
 - R2 post/search/release object streaming
 - bookmark/history/scroll local state
-- stable post identity migration과 user-state JSON export/import
+- user-state JSON export/import 구현; stable post identity migration은 Phase A1 대기
 - legacy collection export와 연속 탐색
 - mobile/desktop visual verification
 
@@ -1315,14 +1431,15 @@ Gate:
 
 ### 13.6 Phase 4: backup/restore
 
-상태: local 완료, 독립 provider 보류. Online Backup snapshot manifest와 격리 restore rehearsal은
-hash/count/quick_check/FK가 일치했다. B2/restic은 소액 과금과 account 준비 전까지 실행하지 않는다.
+상태: local 완료, 외부 provider는 사용자 결정으로 현재 범위에서 제외. Online Backup snapshot
+manifest와 격리 restore rehearsal은 hash/count/quick_check/FK가 일치했다. 아래 restic/B2 항목은
+향후 재승인 전에는 구현하지 않는다.
 
 - SQLite consistent snapshot
 - restic B2 S3-compatible repository
 - retention
 - health surface
-- sync/backup/restore dead-man checks
+- D1 heartbeat/stale health surface
 - 빈 환경 restore rehearsal
 
 Gate:
@@ -1396,9 +1513,9 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - desktop/mobile에서 AA와 prose reader 사용 가능
 - 실제 Android에서 Saitamaar AA와 full metadata search가 tab kill 없이 동작
 - 제목/작성자/category 검색 SLO 통과
-- backup 자동 실행과 마지막 성공 상태 표시
-- 빈 host restore rehearsal 통과
-- old Oracle 없이 동일 archive 실행 가능
+- E verified source와 기존 격리 restore evidence 보존
+- Oracle application release rollback과 R2 pointer rollback 통과
+- 외부 backup 부재로 최신 canonical/WARC 동시 손실 위험을 현재 수용
 - `uv sync --frozen`으로 빈 host build 가능
 - vendored/copied code와 asset의 source/license/commit이 모두 추적 가능
 - emergency WACZ 한 건을 ReplayWeb.page에서 offline replay 가능
@@ -1413,10 +1530,10 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 | 계정/session 만료 | crawl 정지 | 저장 session reuse, form login 1회, 명시적 auth_required |
 | 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 1, delay, cooldown, weekly audit |
 | raw HTML XSS | 개인 기기 compromise | WARC 직접 렌더 금지, sanitize/CSP |
-| R2 credential 탈취 | serving 삭제 | content-addressed local 원장에서 재배포, scoped token |
-| B2 credential 탈취 | backup 삭제 | 별도 account/token, local canonical, offline recovery 사본 |
+| R2 credential 탈취 | serving 삭제 | content-addressed canonical/backup에서 재배포, scoped token |
+| B2 credential 탈취 | backup 삭제 | 별도 account/token, Oracle canonical, offline recovery 사본 |
 | restic password 유실 | backup 영구 접근 불가 | password manager + offline recovery note |
-| Cloudflare 정책/가격 변경 | viewer 중단/비용 증가 | 표준 object export, Tailscale fallback, 연 $10 hard stop |
+| Cloudflare 정책/가격 변경 | viewer 중단/비용 증가 | 표준 object export, Tailscale fallback, 연 $20 hard stop |
 | SQLite runtime 취약 버전 | WAL 사용 시 corruption 가능 | rollback journal 기본, WAL 활성화 전 fixed runtime/version test |
 | WARC/blob 성장 | disk 부족 | content dedupe, capacity alert, R2 비용 관찰 |
 | dependency hype/churn | 0.x upgrade로 재작성 | stable pin, lock/SBOM, private API 금지, adoption gate |
@@ -1425,18 +1542,20 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 
 ## 16. 결정 기록
 
-### ADR-001: local canonical SQLite 유지
+### ADR-001: single-writer canonical SQLite 유지
 
 - 결정: 승인
-- 근거: single writer, 실측 26.8GiB, migration/rebuild 원장, 쉬운 복구; server에는 올리지 않음
+- 근거: single writer, 실측 26.8GiB, migration/rebuild 원장, 쉬운 복구. active DB는 Oracle runner에
+  두되 viewer serving path와 분리하고 현재 local verified 사본을 유지함
 - 재검토 조건: DB가 100GB 이상이어서 backup/restore SLO를 못 맞추거나, 실제 concurrent writer 요구가 생김
 
-### ADR-002: R2 serving과 B2 encrypted backup을 공급자 분리
+### ADR-002: 외부 encrypted backup
 
-- 결정: 승인
-- 근거: R2 Worker binding의 private streaming/range와 B2 40GB 약 $2.50/year로 연 $10 gate 통과
-- 조건: R2에는 재생성 가능한 serving object만, B2에는 canonical DB/WARC/blob/WACZ restic repository만 저장
-- 재검토 조건: 실제 비용/정책이 hard budget을 넘거나 object restore/exit가 실패함
+- 결정: **Deferred (2026-07-11, 사용자 명시 결정)**
+- 현재: B2 account/key/restic을 만들지 않고 viewer/Oracle 출시 gate에서도 제외한다.
+- 유지: R2에는 재생성 가능한 serving object만 저장하며 canonical backup이라고 부르지 않는다.
+- 재검토 조건: 사용자가 독립 provider backup을 다시 요구하거나 Oracle/local 사본의 위험을
+  수용할 수 없게 됨
 
 ### ADR-003: Worker Static Assets + plain ES module viewer
 
@@ -1493,20 +1612,81 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 ### ADR-011: Cloudflare Access와 self-hosted authenticated crawler
 
 - 결정: 승인
-- 근거: `workers.dev` Access는 custom domain 없이 사용할 수 있고 account MFA로 shared Basic secret을 제거한다. 고정 집 IP는 매 run 다른 GitHub-hosted IP보다 TypeMoon account/session 위험이 낮다.
+- 근거: `workers.dev` Access는 custom domain 없이 사용할 수 있고 account MFA로 shared Basic secret을 제거한다. 기존 Oracle VM의 고정 host/session은 매 run 다른 GitHub-hosted IP보다 account/session 위험이 낮고 로컬 PC 상시 전원을 요구하지 않는다.
 - fallback: local/emergency Worker Basic auth와 Tailscale reader
-- 재검토 조건: Access free policy가 개인 사용을 막거나 self-hosted runner 가용성이 sync SLO를 반복 위반함
+- 재검토 조건: Access free policy가 개인 사용을 막거나 Oracle runner 가용성이 sync SLO를 반복 위반함
 
 ### ADR-012: R2 serving object의 zstd 전송 포맷
 
 - 결정: 승인 (2026-07-11, 초기 gzip-6 결정을 대체)
 - 근거: 첫 R2 publish 전(bucket 0 objects)이 content-addressed immutable key 구조에서 유일한
   무비용 전환 시점이며, zstd level 15가 R2 무료 한도 headroom과 브라우저 해제 속도에서 유리함
-- 제약: `Content-Encoding: zstd`는 Chromium 123+/Firefox 126+ 전용이고 Safari/iOS(WebKit)를
-  지원하지 않음. 단일 사용자(Windows/Android Chrome)의 의도된 제약으로 수용함
+- 제약: `Content-Encoding: zstd`는 Chromium 123+, Firefox 126+, Safari 26.3+가 지원한다.
+  그보다 오래된 Safari/iOS/WebView는 지원 대상이 아니며 단일 사용자 Windows/Android Chrome을
+  production gate로 둔다. [Safari 26.3 zstd](https://webkit.org/blog/17798/webkit-features-for-safari-26-3/)
 - 계약: object key 확장자(`.json.zst`)는 exporter와 browser가 공유하며, user-state는 이전
-  gz 확장자 export 파일을 계속 import함. 세부는 [`02_static_edge_feasibility.md`](02_static_edge_feasibility.md) §3
+  gz 확장자 export 파일을 계속 import함. 세부는 [`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md) §3
 - 재검토 조건: WebKit 계열 사용 요구가 생기거나 level 15 재export 시간이 release 일정을 반복 위협함
+
+### ADR-013: 별도 loopback read-only Operations Console C0
+
+- 결정: **승인 (2026-07-11, 사용자 명시 승인)**
+- 구현 상태: **C0 완료 (2026-07-11)**. stdlib boundary test와 1440/320px canonical read-only
+  render QA를 통과했으며 action endpoint와 subprocess는 없다.
+- 범위: `scripts.console`과 `console/public`을 Edge Worker와 분리하고 C0에서는 Overview, 기존 doctor,
+  coverage, backup/release report만 읽는다. command 실행, subprocess, POST action, R2 write는 없다.
+- server: 새 dependency 없이 Python stdlib HTTP server로 `127.0.0.1`에만 bind한다. host override,
+  `0.0.0.0`, CORS, 외부 CDN, Windows service는 제공하지 않는다.
+- data: browser가 path를 넘기지 않는다. controller 시작 시 등록된 profile의 canonical SQLite는 URI
+  `mode=ro`와 `PRAGMA query_only=ON`으로, JSON/report/export metadata는 등록 root 아래에서만 읽는다.
+  C0는 doctor나 inventory를 실행하지 않고 마지막 report와 현재 lightweight read를 구분한다.
+- browser boundary: 시작할 때 생성한 random capability를 URL fragment로 전달하고 exact
+  Origin/Host를 검증한 1회 session 교환 뒤 HttpOnly, SameSite=Strict cookie를 쓴다. CSP
+  `default-src 'self'`, `frame-ancestors 'none'`, `Cache-Control: no-store`, no CORS를 고정한다.
+- separation gate: console package를 import하거나 실행하지 않아도 CLI와 Edge test가 그대로 통과해야
+  하며 Edge asset/route/API에 console, local path, report가 포함되지 않아야 한다.
+- 대안 기각: CLI-only는 판단 시간 단축 목표를 충족하지 못하고, Edge admin route는 trust boundary를
+  깨며, FastAPI/React/Redis/Celery는 C0의 고정 GET/read-only surface에 불필요하다.
+- 다음 gate: C0에는 command를 추가하지 않는다. 원격 제어는 C0 확장이 아니라 ADR-015의 별도
+  Access/D1 trust boundary로 구현한다.
+- 재검토 조건: stdlib로 session/origin/shutdown test를 명료하게 만족하지 못하거나 실제 C0 API가
+  복합 routing/schema validation을 요구해 작은 검증된 server dependency보다 더 많은 코드를 소유함
+
+### ADR-014: 기존 Oracle VM을 crawler/canonical runner로 in-place 재사용
+
+- 결정: **승인 (2026-07-11, 사용자 방향 확정)**
+- 범위: instance, 194GiB boot volume, SSH와 network는 유지하고 legacy application/data만 검증된
+  manifest 단위로 퇴역한다. Oracle에는 public viewer/API를 두지 않는다.
+- 근거: 추가 비용 0, 97GiB free와 4GiB swap을 이미 확보했고 concurrency 1 crawler에 충분하다.
+  Cloudflare Free CPU/ephemeral container disk는 Python/Scrapy + 12GB SQLite/WARC host에 맞지 않고,
+  새 Oracle A1을 위해 현 instance를 삭제하면 capacity와 200GB volume을 잃을 위험이 있다.
+- runtime: native pinned `uv` + Python 3.14 + systemd oneshot/timer. Docker는 smoke/fallback이며
+  production 필수 계층이 아니다.
+- durability: 현재는 local E의 verified legacy source와 격리 restore 사본을 유지한다. B2/restic은
+  timer/cutover 선행조건이 아니다. 독립 backup이 없는 동안 remote legacy data cleanup은 보류한다.
+- destructive gate: remote DB, PM2/Nginx/helper stop과 파일 삭제는 deploy의 부작용이 아니다.
+  standing approval가 있더라도 required backup/restore/rollback gate와 exact manifest를 먼저
+  기록하고 그 범위만 수행한다. instance/volume/network와 마지막 검증 사본 삭제는 별도 hard stop이다.
+- 세부 계약: [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md)
+- 재검토 조건: Oracle이 7일 sync SLO를 반복 위반하거나 backup restore가 runner 교체 목표를 만족하지 못함
+
+### ADR-015: Access/D1 기반 제한 Operations control plane
+
+- 결정: **승인된 목표 구조 (2026-07-11)**
+- 범위: 같은 Worker의 `/ops`와 작은 D1에 runner status, command, run/event, board summary와
+  audit만 둔다. archive 본문, canonical DB, cookie/token, 원문 log는 저장하지 않는다.
+- 자동성: Oracle systemd timer가 수집의 source of truth다. D1/Worker 장애는 자동 수집과 마지막
+  R2 release 열람을 중단하지 않는다.
+- 통신: public inbound Oracle port를 열지 않는다. Oracle이 전용 Access service token으로
+  command claim, heartbeat와 event를 outbound HTTPS로 보낸다.
+- 명령: `sync-now`, `retry-batch`(최대 100), `publish-if-changed`,
+  `pause-after-current`, `resume-schedule`만 허용한다. shell, 임의 path/arg, restore/delete,
+  강제 kill은 금지한다.
+- 안전성: conditional claim, expires_at, claim lease/renew/reclaim, idempotency key, local command
+  ledger, bounded outbox, role-separated Access policy와 audit retention을 구현한다.
+- 세부 계약: [`08_operations_control_plane.md`](08_operations_control_plane.md)
+- 재검토 조건: D1 free limits나 Access policy가 실제 status/command 트래픽을 반복 제한하거나,
+  outbound polling이 Oracle sync SLO를 침해함
 
 ## 17. 확정된 사용자 결정
 
@@ -1514,9 +1694,19 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 
 1. **수집 정책**: 개인 비공개 전체 수집 승인
 2. **접근 방식**: 단일 사용자 private Worker gate를 spike하고 실패 시 Tailscale fallback
-3. **배포 pilot**: Oracle 제외, Worker + private R2, 연 $10 hard budget
+3. **배포 pilot**: viewer는 Worker + private R2, crawler/canonical은 기존 Oracle VM을 in-place 재사용
 4. **보존 범위**: 전 board, 창작/팬픽/AA 우선
 5. **자산 범위**: URL/metadata link-first, same-origin binary는 용량 측정 뒤 결정
+6. **실행 권한**: Cloudflare/Oracle의 조회, 비파괴 설정, 배포, canary, recovery 검증, systemd와
+   gate 기반 cutover/manifest cleanup을 에이전트가 직접 수행
+7. **platform 통신**: Access 뒤 Worker `/api/v1`을 유일한 control API로 사용하고 Oracle은
+   service token으로 outbound 통신; Oracle inbound API와 별도 자체 shared key는 만들지 않음
+8. **실행 준비**: GitHub CLI 로그인과 remote read를 확인했으며 Git commit/push를 포함한
+   비파괴 개발·배포 작업을 에이전트가 직접 수행
+9. **외부 계정 최소화**: B2/restic과 외부 dead-man 계정은 현재 gate에서 제외하고 D1 stale
+   감지를 기본으로 사용
+10. **Cloudflare budget**: R2 포함 연 $20, projected storage 20GB와 800,000 objects에서
+    publisher가 중단하고 추가 승인을 기다림
 
 ## 18. 첫 실행 체크리스트
 
@@ -1532,12 +1722,17 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] THIRD_PARTY_NOTICES source/tag/license 작성
 [x] uv lock/check와 Python 3.14 container build
 [x] local Worker/R2 static edge search/reader/rollback gate
-[x] Oracle/Northflank 제외와 edge pilot 결정
+[x] Oracle을 viewer에서 제외한 edge pilot 결정
+[x] 기존 Oracle VM을 crawler/canonical runner로 재사용하는 ADR-014 승인
 [x] R2 private serving bucket과 bucket-scoped Object R/W token 생성
-[ ] bucket-scoped token의 local `rclone` 연결과 R2 publish/data smoke/remote rollback
+[x] matching bucket-scoped key pair로 local `rclone` 연결 복구
+[x] zstd full release 생성과 count 검증 (`release.json`, `.partial` 0)
+[x] R2 baseline publish/check/pointer 검증
+[ ] authenticated data smoke/remote rollback
 [x] `workers.dev` Access 본인 email allow + TOTP MFA policy와 인증 shell smoke
-[ ] B2 private bucket과 restic 전용 S3-compatible key 준비
-[ ] restic recovery password 별도 보관
+[x] Access/D1 제한 control-plane 계약과 ADR-015 확정
+[ ] D1 schema/route와 Oracle service-token smoke
+[x] B2/restic을 현재 구현·출시 gate에서 제외
 [x] Phase 1 schema v1 + zstd body ADR 확정
 [x] full legacy import transaction과 auxiliary data 반영
 [x] `scripts.verify_migration` full report `ok=true`
@@ -1548,4 +1743,6 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 
 ## 19. 최종 한 줄
 
-**ReDSTM은 TypeMoon 하나를 local SQLite/WARC로 보존하고, 재생성 가능한 zstd release를 private R2와 작은 Worker로 읽는 개인 아카이빙 장치다.**
+**ReDSTM은 TypeMoon을 Oracle의 SQLite/WARC로 자동 보존하고, 재생성 가능한 zstd release를
+private R2/Worker에서 어디서나 읽으며, Access/D1의 제한 제어면으로 안전하게 관찰·운영하는
+개인 아카이빙 장치다.**

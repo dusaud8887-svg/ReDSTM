@@ -64,8 +64,9 @@ Worker는 이미 압축된 R2 bytes를 다시 압축하지 않도록 Cloudflare
 이후 전환은 전체 재업로드와 이중 저장을 만들므로 지금이 유일한 무비용 전환 시점이다. 근거는
 R2 무료 한도 headroom과 브라우저 해제 속도다. 이 결정의 제약:
 
-- `Content-Encoding: zstd`는 Chromium 123+와 Firefox 126+만 해제한다. **Safari/iOS(WebKit)
-  전체에서 viewer가 동작하지 않으며**, 단일 사용자(Windows/Android Chrome)의 의도된 제약이다.
+- `Content-Encoding: zstd`는 Chromium 123+, Firefox 126+, Safari 26.3+가 해제한다. 오래된
+  Safari/iOS/WebView는 지원하지 않으며 단일 사용자 Windows/Android Chrome을 production
+  gate로 둔다. [Safari 26.3 zstd](https://webkit.org/blog/17798/webkit-features-for-safari-26-3/)
 - Worker는 `Accept-Encoding` 협상 없이 zstd를 반환한다. 미지원 브라우저 요구가 생기면
   gzip 병행이 아니라 이 결정 자체를 재검토한다.
 - object key 확장자(`.json.zst`)는 exporter와 browser(search key 재구성, user-state 검증)가
@@ -80,8 +81,17 @@ R2 무료 한도 headroom과 브라우저 해제 속도다. 이 결정의 제약
 | gzip-6 | 38,428,461 | 24.57% | 2.104s |
 | Python 3.14 zstd-3 | 37,649,293 | 24.07% | 0.633s |
 
-level 15는 level 3보다 압축 시간이 크게 늘어나므로 282k object 전수 재export 시간이 배포
-임계 경로에 들어간다. 재export가 일정을 위협하면 level을 낮추는 것이 우선 대응이다.
+현재 gzip object 300개 표본을 같은 payload로 재압축한 결과는 다음과 같다.
+
+| 포맷 | bytes | gzip-6 대비 절감 | 1 worker 시간 |
+|---|---:|---:|---:|
+| gzip-6 baseline | 7,236,131 | - | - |
+| Python 3.14 zstd-15 | 5,970,813 | 17.486% | 3.331s |
+
+같은 zstd-15 표본은 1/2/4/8 workers에서 3.331/1.865/1.203/0.763초였다. 따라서 level을 낮추는
+대신 최대 8-worker bounded 병렬 압축과 기존 object 검증형 resume를 기본 대응으로 채택한다.
+SQLite read와 manifest 순서는 main process가 유지하며, 전체 재생성 완료 전에는 표본 수치를
+production 용량으로 확정하지 않는다.
 
 실제 compact legacy sample export는 post 2,000건과 comment 25,636건을 search와 versioned
 release를 포함한 2,042개 파일, 44,332,961 bytes로 만들었다. search object는 186,784 bytes,
@@ -89,16 +99,20 @@ release hash는 `f3786eb3627f7493df8b0779fa19a17a9e993ecb936b5a9ae6bf88d53b58dcb
 이전 두 번의 production export에서 상대 경로, 길이, SHA-256 차이는 0건이었고 현재 포맷도
 단위 fixture를 두 번 export해 byte-identical tree를 확인한다.
 
-전체 단순 계획값:
+전체 용량 기준:
 
-- latest post + comments static objects: 약 6.19GB
-- title/author/board metadata: 0.021GB
-- R2 serving 기본 합계: 약 6.21GB + 작은 manifest/collection 증가분
+- 검증 완료된 gzip baseline: 6,079,326,086 bytes/282,290 files
+- zstd-15 계획값: 표본 절감률 적용 시 약 5.0GB, 전수 release 미완료이므로 확정값 아님
+- 중단된 zstd partial: 3,650,475,372 bytes/248,111 files, `release.json` 없음, 배포 금지
 - canonical DB/WARC/blob은 serving R2가 아니라 B2 encrypted restic backup에 포함
 - B2 40GB 보관 가정: 첫 10GB 무료, 유료 30GB 기준 약 $2.50/year
 
 이는 asset, future version, full response 증가분을 제외한 계획값이다. R2와 B2 실사용량 합계에
 hard budget $10/year를 적용한다. serving R2는 8/10/20GB, B2 backup은 20/40/80GB에서 경고한다.
+
+R2 Standard 저장비만 보면 15GB 총사용은 무료 10GB를 뺀 5GB로 월 $0.075/연 $0.90,
+20GB는 10GB로 월 $0.15/연 $1.80이다. Class A/B 초과분은 별도이며 현재 최초 282,290 object는
+월 Class A 무료 100만 안이다. [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
 
 ## 4. 검색
 
@@ -162,7 +176,7 @@ Access application과 MFA allow policy를 확인하기 전에는 공개 배포�
 다음을 모두 통과해야 기존 Django single-host 결정을 교체한다.
 
 - [x] 2,000 production sample export와 manifest hash 재현
-- [x] gzip object round-trip 후 sanitized HTML/comment 동일성
+- [x] zstd fixture round-trip 후 sanitized HTML/comment 동일성
 - [x] title/author 검색의 Korean query와 board filter
 - [x] Worker local emulator에서 private auth, R2 GET, cache/range/error 처리
 - [x] desktop/mobile reader에서 prose/AA 렌더와 scroll restore
@@ -183,9 +197,10 @@ Access application과 MFA allow policy를 확인하기 전에는 공개 배포�
 
 Worker 4.110.0 local R2 실검증에서 unauthorized 401, health/object 200, WARC range 206,
 ETag conditional 304, invalid key 400, missing object 404, unsupported method 405를 확인했다.
-release와 post gzip은 source SHA-256과 byte-identical했고 cache 계약은 release `no-cache`,
-immutable object `private, immutable`이었다. 이 과정에서 full GET을 206으로 잘못 판정하던 조건과
-pre-compressed body를 이중 gzip하던 응답을 수정했다.
+초기 spike의 release와 post gzip은 source SHA-256과 byte-identical했고, 현재 zstd fixture도
+동일 payload/hash 계약을 통과했다. cache 계약은 release `no-cache`, immutable object
+`private, immutable`이다. 이 과정에서 full GET을 206으로 잘못 판정하던 조건과 pre-compressed
+body를 이중 압축하던 응답을 수정했다.
 
 Playwright 1.61.1과 설치된 Chrome으로 desktop 1440x900, Pixel 7 viewport에서 실제 R2 sample의
 Korean search, prose/AA, comment, setting dialog, bookmark, scroll restore, collection navigation과

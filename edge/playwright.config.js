@@ -5,7 +5,7 @@ export default defineConfig({
   timeout: 30_000,
   fullyParallel: false,
   webServer: {
-    command: "npx wrangler dev --local --port 8791 --var VIEWER_USERNAME:reader --var VIEWER_PASSWORD:test-secret",
+    command: "npx wrangler dev --local --port 8791 --var TEAM_DOMAIN: --var POLICY_AUD: --var VIEWER_USERNAME:reader --var VIEWER_PASSWORD:test-secret",
     url: "http://127.0.0.1:8791/health",
     reuseExistingServer: true,
   },
@@ -20,6 +20,7 @@ export default defineConfig({
   },
   projects: [
     { name: "desktop", use: { viewport: { width: 1440, height: 900 } } },
-    { name: "mobile", use: { ...devices["Pixel 7"], channel: "chrome" } },
+    { name: "mobile", use: { ...devices["Pixel 7"], viewport: { width: 390, height: 844 }, channel: "chrome" } },
+    { name: "compact", use: { viewport: { width: 320, height: 800 } } },
   ],
 });

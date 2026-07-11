@@ -1,394 +1,400 @@
-# ReDSTM 구현 및 운영 준비 계획
+# ReDSTM 최종 구현·출시 계획
 
-- 상태: Active execution plan
+- 상태: Active source of execution truth
 - 기준일: 2026-07-11
-- 마감 목표: 2026-07-12 private read-only viewer release candidate
-- 적용 범위: schema v2 canonical 이후 production 수집·백업·배포 준비
-- 상위 계약: [`00_initial_product_architecture.md`](00_initial_product_architecture.md)
+- 범위: 현재 검증된 데이터/코드에서 완전 자동 private archive로 가는 남은 작업
+- 제품 계약: [`00`](00_initial_product_architecture.md)
+- 완료 증거: [`archive/2026-07-11`](archive/2026-07-11/README.md)
 
-이 문서는 **다음에 무엇을 어떤 순서로 구현할지**를 관리한다. 제품 범위와 구조를 바꾸는
-결정은 초기 아키텍처와 ADR에 먼저 반영하고, 이 문서에는 승인된 실행 순서와 gate만 둔다.
+이 문서는 완료된 작업의 일지를 반복하지 않는다. 완료 증거는 archive와 report에 고정하고,
+여기에는 **현재 판정, 앞으로 할 일, 순서, gate, 사용자 입력**만 둔다.
 
 ## 1. 현재 판정
 
-### 1.1 데이터 migration과 local DB: 준비 완료
+| 영역 | 현재 상태 | 제품 판정 |
+|---|---|---|
+| legacy 원본 | E 드라이브에 28,811,358,208-byte verified source 보존 | DONE |
+| canonical | schema v2, 284,070 posts/3,729,706 comments, doctor/restore 통과 | DONE |
+| static release | zstd level 15 full release, 282,239 readable posts, `.partial` 0 | DONE |
+| Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
+| R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
+| live data | authenticated data smoke와 remote rollback | READY |
+| current UI | 기능 shell은 있으나 시각·모바일·정보 구조 acceptance 불합격 | REWORK |
+| crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
+| unattended crawl | overlap discovery, 46-board cycle, delta publish, scheduler | NOT READY |
+| Oracle | 읽기 전용 조사와 target runbook 완료, ReDSTM mutation 미시작 | PLANNED |
+| remote operations | local read-only C0 완료, Access/D1 `/ops` 미구현 | PLANNED |
+| external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
+| GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
-2026-07-11 기준 legacy migration은 완료됐으며 검증 report는
-[`../.data/migration/full-import-verification.json`](../.data/migration/full-import-verification.json)이다.
+현재 결론은 **데이터 기반과 bounded crawler는 준비됐지만, live data activation·frontend 재설계·
+Oracle 자동화·remote operations가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
+된다”는 판정은 더 이상 유효하지 않다.
 
-| 항목 | 결과 |
+현재 baseline 검증은 Python 87 tests, Node 10 tests, Ruff check/format과 mypy가 통과했다.
+Playwright self-contained fixture는 15건 통과했고 local R2에 seed하지 않은 실제 AA/prose object
+6건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의 authenticated live smoke에서 확인한다.
+
+R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
+겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
+
+## 2. 최종 완료 정의
+
+다음을 모두 만족해야 “완전 자동 private ReDSTM”으로 완료 처리한다.
+
+1. 사용자는 Access 로그인 뒤 desktop/Android에서 장서, 검색, 일반 글, AA, 댓글, collection,
+   bookmark/history/settings를 안정적으로 사용한다.
+2. browser state는 `board_id:external_post_id`만 저장하고 새 release의 object key로 재해석된다.
+3. Oracle systemd가 PC와 무관하게 6시간 incremental cycle을 실행한다.
+4. 알려진 최신 글을 매번 detail fetch하지 않고 46개 board를 한 번에 하나씩 순차 처리한다.
+5. 변경된 serving object만 R2에 올리고 검증 뒤 `release.json`을 마지막에 바꾼다.
+6. 실패 글은 전체 cycle을 막지 않고 bounded retry queue로 넘으며 auth/parser drift는 조용히
+   정상 처리되지 않는다.
+7. Access 보호 `/ops`에서 상태, run, board/queue, release/backup과 고정 명령을 어디서나 본다.
+8. Worker/D1 장애 중에도 자동 crawl과 마지막 R2 release 열람이 계속된다.
+9. 검증된 E legacy source와 기존 격리 restore 사본을 유지하고 외부 backup 부재 위험을 명시한다.
+10. 7일 shadow, live rollback, service-token rotation, killed-runner/duplicate-command failure
+    injection과 실제 Android acceptance를 통과한다.
+11. Oracle에는 SSH 외 public listener가 없고 credential/본문/path가 API·log·D1에 노출되지 않는다.
+12. 관련 unit/type/lint/E2E/doctor가 모두 green이고 공개 계약 변경은 docs와 함께 반영된다.
+
+## 3. 실행 원칙
+
+- canonical SQLite는 single writer다. crawler, recovery, backup/export를 동시에 쓰지 않는다.
+- TypeMoon concurrency 1, fixed 10초 delay를 기본으로 하며 canary 증거 없이 공격적으로 높이지 않는다.
+- 자동 schedule은 Oracle systemd, remote command는 D1이다. 둘을 서로의 단일 장애점으로 만들지 않는다.
+- immutable object upload/readback 뒤 pointer-last activate한다.
+- 앱·DB·service를 한 deploy command에서 몰래 삭제/중지/enable하지 않는다.
+- 새 framework, Redis/Celery, WebSocket, Oracle inbound API, 자체 auth는 추가하지 않는다.
+- 완료는 시간 경과나 process 존재가 아니라 report, smoke, rollback 결과로 판정한다.
+
+## 4. 우선순위별 구현
+
+### A0 — 현재 R2 baseline 활성화
+
+목표: 이미 만든 release를 데이터가 있는 private viewer로 안전하게 연다.
+
+작업:
+
+1. [완료] background publisher report `ok=true`.
+2. [완료] 5,148,165,450 bytes/282,289 objects, remote check 차이 0.
+3. [완료] versioned manifest와 `release.json` pointer 검증.
+4. 로그인된 Chrome으로 live Home/search/prose/AA/comment/collection을 smoke한다. 자동 E2E는
+   local Worker에서 실행하며 테스트를 위해 Any/Everyone/Bypass policy를 만들지 않는다.
+5. 이전 pointer rollback 후 현재 pointer 복귀를 실제 R2에서 검증한다.
+6. Python/Node unit, type/lint, Playwright와 canonical doctor를 한 번 실행한다.
+
+완료 기준:
+
+- authenticated browser가 실제 post object를 읽는다.
+- rollback/복귀 모두 전체 재업로드 없이 성공한다.
+- remote/current release ID와 report가 일치한다.
+
+중단 조건:
+
+- object/hash/count 불일치
+- 예상 storage/object hard limit 초과
+- Access 우회/AnyOpen 또는 secret 노출
+
+### A1 — stable identity와 Signal Archive frontend
+
+목표: 현재 촌스럽고 빈 shell을 [`DESIGN.md`](../DESIGN.md)와 [`05`](05_viewer_design.md)의
+mobile-first 제품으로 교체한다.
+
+#### A1.1 identity/data correctness
+
+1. bookmark/history/progress를 `board_id:external_post_id`로 migration한다.
+2. URL을 `/read/{board}/{external_id}`로 고정하고 현재 release에서 object key를 resolve한다.
+3. old object-key state import migration과 unknown/deleted post error를 test한다.
+4. 배포된 이전 shell의 `#posts/<object key>` hash deep link를 최초 로드에서 stable URL로
+   replace한다.
+5. `/read/*`·`/search`·`/saved`·`/settings` 직접 진입은 Worker Static Assets
+   `not_found_handling: single-page-application`으로 같은 shell을 돌려준다. `/archive/*`와
+   `/health`는 지금처럼 Worker 코드가 먼저 처리한다.
+
+이 단계는 시각 변경보다 먼저 수행한다. release가 바뀔 때 reading state가 깨지면 frontend polish를
+완료로 볼 수 없다.
+
+#### A1.2 shell과 Home
+
+1. SUIT UI/title, MaruBuri prose, Saitamaar AA font asset/license를 실제 bundle에 넣는다.
+   SUIT는 [sun-typeface/SUIT](https://github.com/sun-typeface/SUIT)(SIL OFL 1.1), MaruBuri는
+   [네이버 한글캠페인](https://hangeul.naver.com/font)(SIL OFL)에서 받고, 새 파일 다운로드는 실행
+   직전 사용자 확인을 거친다. deploy는 CSS가 선언한 asset/license 존재를 기계적으로 검사한다.
+2. graphite/white shell + ReDSTM red signal token으로 CSS를 교체한다.
+3. Home에 이어 읽기, 최근 본 글, 최신 갱신, 장서 진입, crawler freshness를 배치한다.
+   freshness는 release 본문이 아니라 Worker가 노출하는 R2 `uploaded` 기반 `release.json`
+   `Last-Modified` header와 index 최상단 `created_at_raw`로 계산한다([06 §6.1](06_final_product_experience.md)).
+4. empty/loading/offline/release-error/Access-expired 상태를 각각 구현한다.
+5. 반복 crescent/영문 cover 장식을 제거하고 정보 밀도와 hierarchy를 실제 데이터로 만든다.
+
+#### A1.3 responsive navigation
+
+- 320~767px: 장서/검색/저장/설정 bottom navigation
+- reader open: global nav 숨김, 목록/이전/다음/설정 4개 action
+- 768~1199px: collapsible catalog + reader
+- 1200px 이상: 72px rail + 360px catalog + reader
+- safe-area, 44px target, no page-level horizontal scroll
+- 가상 키보드 열림 중 bottom navigation 숨김, 내부 scroll container +
+  `overscroll-behavior-y: contain`으로 pull-to-refresh 오발동 방지
+- `history.scrollRestoration = "manual"`과 앱 복원; sheet/dialog/몰입은 history entry 없이
+  native close request(Android Back)로 닫힘
+- 상태 flush는 `visibilitychange: hidden`/`pagehide`, `unload` 계열 handler 금지
+
+#### A1.4 reader/AA/settings
+
+- prose width/size/line-height/theme preview와 즉시 적용
+- source, bookmark, immersive, collection position, end-of-collection state
+- AA exact font stack, line-height 1.125, nowrap stage scroll, 9~24px, zoom 10~300%
+- pinch/double-click/preset/source color-bg와 per-post mode
+- keyboard navigation, focus visible, reduced motion, screen-reader label
+
+완료 기준:
+
+- [`05`](05_viewer_design.md)의 acceptance와 [`07`](07_reader_and_aa_experience.md)의 fixture를 통과한다.
+- 1440/768/390/320px에서 overflow·toolbar wrap·font fallback이 없다.
+- 실제 Android Chrome에서 search/background restore/AA alignment가 통과한다.
+- 사용자가 live 시각 방향을 최종 확인한다.
+
+### A2 — unattended crawler와 delta publish
+
+목표: 로컬 PC 없이 적은 요청으로 신규/변경 내용을 자동 반영한다.
+
+#### A2.1 incremental discovery
+
+1. listing identity/title/category/comment count 변화를 frontier seed로 사용한다.
+2. views 변화는 detail trigger에서 제외한다.
+3. 공지 제외 연속 known+unchanged를 overlap boundary로 사용한다.
+4. listing/parser warning이 있으면 boundary 조기 종료를 금지한다.
+5. 주 1회 bounded inventory가 boundary 누락을 보완한다.
+
+#### A2.2 46-board cycle
+
+- enabled board를 concurrency 1로 순차 실행
+- run 시작 preflight가 세션과 사이트 도달성을 확인하고, 실패하면 board를 순회하지 않고
+  `site_unreachable`로 끝낸다
+- network/listing failure는 board failure로 기록하고 다음 board 진행
+- 연속 3개 board가 network-class로 실패하면 `site_unreachable`로 run을 조기 종료한다
+- auth/session failure는 전체 cycle 중단; 자동 재로그인은 run당 1회, 최소 간격 30분
+- board별 run/counters와 final summary
+- duplicate process는 shared sync lock으로 차단
+
+#### A2.3 retry/recovery
+
+- AA → 창작 → 팬픽 → 나머지
+- 하루 최대 100건, due retry만 claim
+- 429 `Retry-After` 우선, timeout/5xx는 bounded backoff; 연속 429 3회는 run 조기 종료
+- 404는 서로 다른 run 2회 뒤 missing
+- parse drift/auth는 일반 retry와 분리
+- frontier lease 기본을 900초로 상향한다. 현행 300초는 느린 detail(180초 timeout × 최대 3 시도)
+  경로에서 처리 중 만료될 수 있다
+- `site_unreachable`로 끝난 run의 network 실패는 frontier attempt로 세지 않는다
+- 파라미터 시작값은 [`10 §8.1`](10_oracle_runner_runbook.md)을 따른다
+
+#### A2.4 delta release
+
+1. 이전 verified release와 새 projection의 참조 차이를 계산한다.
+2. 새/변경 post, board/search/collection, versioned manifest만 upload한다.
+3. ledger 불일치 시 full verify로 안전하게 강등한다.
+4. readback/smoke 뒤 pointer를 바꾼다.
+5. remote delete/GC는 최근 2 releases와 7일 rollback window 뒤 별도 작업이다.
+6. 증분 운영 전 현재 코드의 8GB free-only refusal을 projected 20GB/800,000 objects와
+   Cloudflare 연 $20 계약으로 바꾸고 boundary test를 추가한다.
+7. export 계약 확장: viewer가 7/8-field search index를 모두 수용하는 버전을 먼저 배포한 뒤,
+   다음 export부터 search tuple 끝에 `is_aa`를, `release.json` `boards[]`에 `name`/`group_name`을
+   추가한다. 이미 게시된 release는 재작성하지 않고, release 본문에 생성 시각을 넣어 결정론을
+   깨지 않는다([09 Freshness](09_frontend_strategy_and_roadmap.md)).
+
+완료 기준:
+
+- 같은 listing 재실행은 불필요 detail fetch 0 또는 설명 가능한 bounded overlap만 만든다.
+- 한 board 실패가 다른 board를 잃지 않고 auth failure는 즉시 전체 중단한다.
+- 사이트 전체 outage에서 run이 십수 분 안에 `site_unreachable`로 끝나고 frontier attempt가
+  소모되지 않는다.
+- no-change cycle은 R2 data upload/activate를 하지 않는다.
+- 20건 → 100건 → 24시간 canary에서 retry storm, lease leak, WARC partial이 없다.
+- 대표 대형 AA detail이 lease 만료 없이 수집된다.
+
+### A3 — Cloudflare/Oracle control API
+
+목표: [`08`](08_operations_control_plane.md)의 single Worker API로 어디서나 관찰·bounded 제어한다.
+
+작업:
+
+1. `redstm-control` D1과 migration/schema test를 만든다.
+2. `/api/v1/ops/*` browser routes와 `/api/v1/runner/*` machine routes를 분리한다.
+3. Oracle 전용 Access service token/Service Auth policy를 생성·주입한다.
+4. command conditional claim, idempotency, expiry, audit를 구현한다.
+5. claim lease/renew/reclaim, local ledger와 command status 조회를 구현한다.
+6. pause-after-current와 resume-schedule을 idempotent marker action으로 구현한다.
+7. heartbeat/event batch와 10MiB/10,000-event local outbox를 구현한다.
+8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
+9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
+
+완료 기준:
+
+- browser token으로 runner route, service token으로 user command route를 사용할 수 없다.
+- 같은 command 10회 요청과 두 runner poll이 실제 run 하나만 만든다.
+- D1 outage 중 scheduled local cycle과 R2 reader가 계속된다.
+- API/D1/log/DOM에 token, body, title, URL, path가 없다.
+
+### A4 — Oracle runner 설치와 local recovery
+
+목표: 기존 Oracle VM을 ReDSTM의 교체 가능한 active runner로 전환한다.
+
+작업:
+
+1. E source SHA-256과 원격 기존 data/service/listener manifest를 다시 기록한다.
+2. `redstm` user, `/opt/redstm/releases/<sha>`, `/srv/redstm`, root-owned env를 만든다.
+3. pinned uv/Python 3.14, versioned app release와 idempotent deploy/rollback tool을 설치한다.
+4. canonical을 `.partial` transfer → bytes/hash/doctor → atomic activation한다.
+5. systemd oneshot/timer, resource limit, journald retention과 D1 heartbeat/stale 감지를 설치하되
+   timer는 disable한다.
+6. 기존 E verified source와 격리 restore 사본을 재확인한다. 새 외부 backup provider는 만들지 않는다.
+7. A2/A3의 20/100건, duplicate command, D1 outage canary를 Oracle에서 실행한다.
+
+완료 기준:
+
+- fresh release에서 deploy와 previous release rollback이 재현된다.
+- 기존 격리 restore/doctor report가 유효하고 E 사본이 보존된다.
+- SSH 외 새 public listener가 없다.
+- Oracle 장애가 last R2 release 열람을 막지 않는다.
+
+### A5 — shadow, cutover와 정리
+
+1. 24시간 canary 뒤 7일 shadow를 실행한다.
+2. board coverage, request interval/p95, timeout/429, retry/dead, parse drift, disk/RAM, publish/snapshot을
+   매일 report한다.
+3. gate가 green이면 legacy PM2/Nginx/BookToki helper를 stop/disable하고 ReDSTM timer를 enable한다.
+4. 7일 rollback window 동안 legacy application/data를 유지한다.
+5. 외부 backup이 deferred인 동안 legacy data cleanup은 하지 않는다.
+6. instance, boot volume, SSH key, VCN은 정리 대상에서 제외한다.
+
+완료 기준:
+
+- PC가 꺼진 상태에서 schedule → crawl → delta publish → viewer 갱신이 끝난다.
+- `/ops` heartbeat/stale 상태에서 누락/실패가 드러난다.
+- application/R2 rollback과 E source 기반 runner 재구축이 가능하다.
+
+## 5. 기능 우선순위
+
+### Must — 출시 전
+
+- stable identity, responsive reader/AA, Access private read
+- incremental discovery, board cycle, bounded recovery
+- Oracle systemd, delta publish, local recovery evidence
+- `/ops` status와 fixed commands
+- failure/rollback/security/accessibility gate
+
+### Should — 핵심 완료 직후
+
+- Home freshness/continue/recent
+- collection end와 unavailable source 설명
+- command cancel-before-claim, service-token rotation warning
+- R2 storage/object trend와 50%/80% warning
+
+### Evidence가 생길 때만
+
+- reading state device sync
+- full-body search engine
+- automatic new-series grouping
+- same-origin image cache
+- offline bundle
+
+### 하지 않음
+
+- 다중 사용자/social/recommendation
+- public signup/API
+- arbitrary remote shell/DB admin
+- BookToki/범용 source plugin
+- Redis/Celery/React 도입
+- 전체 legacy detail recrawl
+
+## 6. 실행 권한과 사용자 입력
+
+### 6.1 standing approval
+
+사용자는 2026-07-11 다음을 에이전트가 직접 수행하도록 승인했다.
+
+- Cloudflare/Oracle resource와 현재 상태 조회
+- Worker/R2/D1/Access 설정, 배포, migration, smoke와 rollback
+- Oracle SSH 접속, package/user/path/secret file/systemd/deploy tool 구성
+- bounded canary, recovery 검증, monitoring과 failure test
+- 문서 gate를 만족한 application release 교체와 운영 자동화
+- Git commit/push와 GitHub remote source 보존
+
+따라서 위 비파괴·복구 가능한 작업은 매 단계 재승인을 요구하지 않고 진행한다. credential 원문은
+chat/Git/log에 출력하지 않으며 dashboard/API/SSH credential store에서만 다룬다.
+
+### 6.2 hard stop
+
+다음은 broad approval와 별개로 실행 직전 exact 대상·복구점·비용을 기록한다.
+
+- Oracle instance/boot volume/VCN/SSH key 삭제
+- canonical/WARC/backup의 마지막 검증 사본 삭제
+- manifest/rollback window 없는 legacy file 삭제
+- 합의 예산을 넘는 paid plan/resource
+- public Access bypass, 범용 remote execution, 보안 경계 약화
+
+### 6.3 남은 사용자 개입
+
+| 시점 | 입력 |
 |---|---|
-| immutable source | `E:\ReDSTM\backups\legacy-source\redstm-phase0-posts-20260710T114500Z.db`, 28,811,358,208 bytes |
-| source SHA-256 | `e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500` |
-| legacy import output | 12,407,144,448 bytes, SHA-256 `c695e739603669db4f827c8e2e6bf930325dfabb7364104af49828491635281e` (schema v1) |
-| current canonical | `D:\ReDSTM\.data\canonical\archive.sqlite`, 12,407,148,544 bytes |
-| current target schema | v2, 13 tables, capture raw hash partial index |
-| 주요 건수 | boards 46, posts 284,070, comments 3,729,706, collections 18,369 |
-| legacy 보존 확인 | legacy post versions 282,239, placeholder posts 1,831 |
-| 무결성 | `quick_check=ok`, foreign key error 0 |
-| 내용 표본 | deterministic 500건, mismatch 0 |
-| report 결론 | `ok=true`, issues 0 |
-| verified pre-v2 snapshot | `E:\ReDSTM\backups\pre-schema-v2\archive-v1-20260711T045931Z.sqlite`, SHA-256 `945f10716c646027267ca6f0d2cc0e978f932d60abc733784ba8e3e061f0cdb3` |
-| independent v2 backup | `E:\ReDSTM\backups\canonical-v2-20260711\archive-v1.sqlite` |
-| v2 restore doctor | `.data/migration/schema-v2-doctor.json`, quick check/FK/lease/WARC 모두 `ok=true` |
+| A1.2 font 확보 | SUIT/MaruBuri 신규 파일 다운로드 직전 확인(출처·파일명·크기 제시) |
+| A1 acceptance | 실제 Android에서 주관적 읽기/디자인 최종 확인 |
+| paid limit | 연간/월간 합의 예산을 넘는 경우 새 승인 |
+| destructive cleanup | exact manifest를 보고 보존 요구가 있으면 예외 지정 |
 
-따라서 **개발과 local canonical 조회를 시작할 DB는 준비됐다.** 원본 DB는 아직 삭제하지
-않으며 canonical DB만 새 수집의 write target으로 사용한다. Schema v2 적용·검증은 E의 격리
-사본에서 수행한 뒤 검증된 DB를 D의 현재 canonical 위치에 배치했다. Runtime은 E의 DB를 읽거나
-쓰지 않는다.
+Cloudflare와 Oracle 안에서 API/CLI로 만들 수 있는 resource, service token, policy와 secret 주입은
+사용자 수동 작업으로 넘기지 않는다. 구현·배포 시작 전 필수 사용자 입력은 없다. font 다운로드
+확인은 A1.2 해당 시점에만 짧게 받고, 실제 Android의 주관적 acceptance와 hard stop은 구현을
+진행하는 동안 기다리지 않고 마지막 gate에서만 확인한다.
 
-### 1.2 내일 배포 후보와 장기 운영 안정화: 분리
+### 6.4 최종 credential rotation
 
-다음 항목은 migration 완료와 별개의 **내일 배포 후보 gate**다.
+라이브 동작과 rollback이 모두 통과한 뒤 사용자와 함께 다음만 회전한다.
 
-- full static export와 post-export doctor: 완료
-- Worker, private R2 bucket, Access email allow/TOTP MFA와 인증된 shell smoke: 완료
-- local `rclone` 연결, R2 publish, data workflow smoke, pointer rollback과 최종 검증: 대기
+- 대화에 노출된 R2 S3 key pair
+- Oracle runner용 Access service token
+- GitHub와 Oracle에 현재 재사용된 SSH key를 용도별 별도 key로 분리
 
-7일 shadow, 실제 Android, B2/restic, 전체 queue 복구는 장기 운영 안정화 gate다. 물리적으로
-내일까지 끝낼 수 없거나 배포된 read-only viewer 사용을 막지 않으므로 2026-07-12 완료 조건에서
-제외한다. 결론은 **migration/local DB ready, private viewer release pending, production-hardened
-operation pending**이다.
+새 credential 주입 → smoke → old credential revoke 순서를 지켜 downtime을 만들지 않는다.
 
-### 1.3 2026-07-11 구현·canary 진행 증거
-
-- Git baseline과 P0 구현 commit을 생성했고 secret/runtime 산출물 제외를 재검증했다.
-- schema v2 migration, `(raw_sha256, url)` WARC reuse, atomic capture/frontier transition과
-  bounded `sync` command를 구현했다. 최근 전체 검증 기준 Python 76 tests, Ruff, mypy,
-  Node 7 tests와 desktop/mobile Playwright 6 tests가 통과했다.
-- 만료 표시된 기존 session이 authenticated GET에서 유효함을 확인했으며 form login은 하지 않았다.
-- `write_free21`, 1 page/1 post live canary를 별도 schema v2 DB에서 3회 실행했다. 마지막 run
-  `sync-360eca3369704c90b0a787c82c38d77d`는 listing/post 모두 `unchanged`, frontier `done`이었다.
-- 실제 응답에서 author 과수집과 bracket title 손실을 발견해 수정했다. 최종 projection은 author
-  `떠돌이개`, bracket title 보존, comments 4건이며 INFO log에 본문/lease token이 나오지 않는다.
-- canary `doctor`는 SQLite health, lease, WARC validity/reference, `.partial` 검사에서
-  `ok=true`, issues 0이었다. Truncated WARC failure test와 secret-free HTTPS ping wiring도 통과했다.
-- 12,407,144,448-byte snapshot manifest와 격리 restore rehearsal은 hash/count/health 모두
-  `ok=true`다. 그 뒤 canonical을 schema v2로 적용했고 데이터 table count는 전부 동일하다.
-- full deterministic exporter, collection 연속 탐색, Cloudflare Access JWT 검증, `rclone`의
-  pointer-last publish와 bounded legacy queue recovery를 구현했다. Full export는
-  `D:\ReDSTM\.data\static\archive`에 6,079,309,130 bytes/282,289 files로 완료됐고 release count와
-  `source_unchanged=true`가 일치했다. Post-export doctor도 `ok=true`, issues 0이다.
-- Worker와 private Standard R2 bucket을 만들고 Access email allow/TOTP MFA를 적용했다. 비인증
-  차단과 본인 인증 후 shell load는 확인했다. R2 bucket은 아직 0 objects이며 local `rclone`
-  credential 연결, publish와 실제 data workflow smoke는 남아 있다.
-
-## 2. 2026-07-12 완료 기준과 실행 우선순위
-
-`P0`~`P3`는 제품의 장기 단계이고, `T0`~`T3`는 내일 마감을 위한 실행 우선순위다. 마감
-중에는 `T0`/`T1`만 임계 경로로 취급한다.
-
-### 2.1 내일의 Definition of Done
-
-다음을 모두 만족하면 **usable private viewer release candidate**가 완성된 것으로 본다.
-
-1. D canonical의 schema v2 doctor가 계속 `ok=true`이고 검증된 E backup 두 사본이 유지된다.
-2. full export가 exit 0으로 끝나며 `release.json`과 immutable release manifest가 생성된다.
-3. release count가 posts 282,239, comments 3,707,484, unavailable posts 1,831,
-   unavailable comments 22,222, boards 46, collections 18,369와 일치한다. 두 post/comment 합계가
-   canonical 284,070/3,729,706과 일치하고 exporter의 source-unchanged/전체 object 검증이 통과한다.
-4. publisher가 현재 원격 + 신규 upload를 계산해 8,000,000,000 bytes/800,000 objects 이하임을
-   확인한 뒤에만 R2에 pointer-last로 게시한다.
-5. Cloudflare Access가 비인증 요청을 차단하고 본인 인증 후 검색, 일반 글/AA, 댓글,
-   collection 이전·다음, bookmark/progress/state export-import를 사용할 수 있다.
-6. 이전 release pointer로 rollback한 뒤 현재 release로 복귀하는 smoke가 통과한다.
-7. 최종 Python/Node lint·type·unit·Playwright와 canonical doctor를 한 번만 다시 실행한다.
-
-이 목표는 read-only viewer 공개가 아니라 **본인만 접근하는 배포 후보**다. 기존 crawler/scheduler
-중단과 production-hardened 판정은 7일 shadow 이후에 별도로 한다.
-
-### 2.2 현재 실행 보드
-
-| 우선순위 | 작업 | 상태 | 다음 gate |
-|---|---|---|---|
-| T0 | legacy migration, schema v2, snapshot/restore | DONE | E backup 유지, 불필요한 재검증 금지 |
-| T0 | D canonical -> D static full export | DONE | 6,079,309,130 bytes/282,289 files, count/source/doctor 통과 |
-| T0 | Cloudflare CLI OAuth, Standard R2 bucket | DONE | private bucket은 아직 0 objects |
-| T0 | Worker `workers.dev` route | DONE | preview off, R2 binding과 production JWT vars 확인 |
-| T0 | Access app/policy | DONE | email allow/TOTP MFA, 비인증 차단과 인증 shell smoke 확인 |
-| T1 | R2 upload/check, pointer-last publish | WAITING: RCLONE | local bucket-scoped credential 연결 검증 |
-| T1 | production smoke와 pointer rollback | WAITING | publish 완료 |
-| T1 | 최종 전체 test/lint/doctor | READY | publish/smoke/rollback 뒤 1회 |
-| T2 | AA 우선 queue 100건 canary | READY | 배포 smoke 통과 |
-| T2 | full image URL inventory | READY | read-only command 실행, release blocker 아님 |
-| T3 | 7일 shadow, Android, B2/restic, 전체 recovery | DEFERRED | 내일 이후 별도 gate |
-
-현재 DB backup, migration 검증, export, doctor 또는 publish 작업은 돌고 있지 않다. 다음 장시간
-작업은 local `rclone` 연결 검증 뒤 시작할 R2 publish다.
-
-### 2.3 시간 낭비를 막는 규칙
-
-- 동일 입력의 두 번째 full export는 내일 gate가 아니다. fixture 결정성 test와 이번 전수
-  export 자체 검증으로 대체하고, 필요하면 배포 뒤 야간에 실행한다.
-- E의 중복 Phase 0 파일 정리, 새 DB/검색 엔진 검토, UI 확장, 전수 recrawl은 중단한다.
-- R2 publish 중에는 문서와 비경합 검증만 병렬 실행한다.
-- canonical DB에는 동시에 하나의 writer만 허용한다. queue canary는 배포 smoke 뒤 시작한다.
-- 유료 전환 가능성이 보이면 자동 결제하지 않고 중단한다.
-
-장기 단계의 의미는 그대로 유지한다.
-
-- **P0**: 데이터 손실·복구 불능·credential 노출을 막는 선행 작업.
-- **P1**: private viewer를 배포하고 기존 운영을 대체하기 위한 필수 작업.
-- **P2**: 운영 경로가 안정된 뒤 archive coverage를 늘리는 작업.
-- **P3**: 실측이나 실제 사용 요구가 생겼을 때만 하는 선택 작업.
-
-## 3. P0: production 수집 전 blocker
-
-### P0-0. source와 데이터 기준선 고정 (완료)
-
-**목적:** 이후 변경과 데이터 손상을 되돌릴 수 있는 출발점을 만든다.
-
-작업:
-
-1. 현재 untracked source에서 secret/runtime 산출물이 제외되는지 재검증한다.
-2. 사용자 승인 후 현재 source와 docs를 첫 Git baseline으로 commit한다.
-3. SQLite Online Backup으로 canonical DB의 일관된 snapshot을 만든다.
-4. source/canonical/snapshot의 path, bytes, SHA-256, schema version, 생성 시각 manifest를 남긴다.
-5. snapshot을 live canonical과 다른 장치에 복사하고 hash를 다시 계산한다.
-
-완료 기준:
-
-- `git status`로 baseline 이후 변경을 식별할 수 있다.
-- live DB 없이 2차 사본만으로 `quick_check`, FK 검사와 주요 count가 통과한다.
-- legacy source와 현재 canonical은 삭제하지 않는다.
-
-### P0-1. capture ledger와 schema v2 (완료)
-
-**목적:** HTTP 응답, WARC 원문, 정규화 결과와 canonical write를 한 원장으로 추적한다.
-
-작업:
-
-1. capture 결과에 request identity, HTTP status, raw SHA-256, WARC file/record 위치를 기록한다.
-2. `raw_sha256` lookup index로 동일 응답의 중복 WARC 기록 정책을 구현한다.
-3. schema 계약대로 `stored`, `unchanged`, `restricted`, `missing`, `parse_failed`,
-   `fetch_failed`를 저장하고 운영 report에서는 parse drift와 전체 failure를 집계한다.
-4. v1에서 v2로 재실행 가능한 migration과 rollback 전 snapshot gate를 작성한다.
-5. credential/cookie/auth header가 WARC와 ledger에 남지 않는 회귀 테스트를 유지한다.
-
-예상 파일 묶음: `crawler/archive.py`, `crawler/middlewares.py`, `crawler/pipelines.py`,
-`crawler/store.py`, 관련 test 1개. 5개를 넘기면 schema와 capture wiring을 별도 phase로 나눈다.
-
-완료 기준:
-
-- 같은 response를 재수집해도 post version과 WARC가 정책대로 중복되지 않는다.
-- crash 후 `.partial`과 ledger를 `doctor`가 판별할 근거가 남는다.
-- migration 전후 기존 284,070 posts와 3,729,706 comments가 보존된다.
-
-### P0-2. bounded sync vertical slice (1건 live canary 통과)
-
-**목적:** 한 board의 제한된 범위를 안전하게 수집하는 최소 production 경로를 완성한다.
-
-작업:
-
-1. board listing을 읽어 frontier를 idempotent하게 seed한다.
-2. lease claim -> authenticated detail -> parse -> WARC/canonical write -> terminal state를 연결한다.
-3. run당 board, page/post 상한과 단일 실행 lock을 둔다.
-4. 세션은 인증 GET으로 유효성을 확인하고 실패할 때만 form login 1회를 수행한다.
-5. 종료 report에 발견/저장/무변경/restricted/parse drift/retry/dead 건수를 기록한다.
-
-완료 기준:
-
-- test board의 bounded run을 두 번 실행해 두 번째 run이 idempotent하다.
-- 인증 실패와 parse drift가 정상 글 또는 retry로 조용히 오분류되지 않는다.
-- 중단 후 lease recovery로 같은 범위를 완료할 수 있다.
-
-### P0-3. recovery와 무응답 실패 감지 (구현 완료, 외부 dead-man URL 대기)
-
-**목적:** 자동 실행이 멈추거나 부분 실패해도 한 사람이 원인을 확인하고 복구할 수 있게 한다.
-
-작업:
-
-1. `doctor`가 expired lease, 비정상 frontier 상태, orphan `.partial`, DB/WARC 불일치를 보고한다.
-2. retry 횟수와 backoff를 제한하고 auth failure는 retry storm 없이 보류한다.
-3. sync/backup/restore 성공 시에만 Healthchecks 계열 dead-man URL을 ping한다.
-4. log와 report에서 secret, cookie, 본문 원문을 제외한다.
-
-완료 기준:
-
-- lease 만료, truncated WARC, login failure를 각각 주입한 test가 예상 report를 만든다.
-- scheduler 자체가 멈췄을 때 외부 알림이 발생한다.
-
-## 4. P1: production viewer와 cutover
-
-### P1-1. full deterministic export와 release (구현·전수 export·doctor 완료)
-
-전수 산출물은 6,079,309,130 bytes/282,289 files이며 release count, source 불변과 post-export
-doctor `ok=true`를 확인했다.
-
-- 전체 canonical posts/boards/search/collections를 immutable object로 export한다.
-- `releases/{sha256}.json`을 검증한 뒤 `release.json` pointer를 마지막에 교체한다.
-- 이전 pointer만으로 즉시 rollback 가능해야 한다.
-- sample exporter와 동일한 입력에서 byte-for-byte deterministic한지 검증한다.
-- export는 댓글을 `post_id` 순으로 한 번만 읽고 객체별 `fsync`를 피한다. 파생 object는 atomic
-  rename하며 전체 검증 뒤 `release.json`만 durable flush한다.
-
-### P1-2. reader 기능 완결 (구현·desktop/mobile E2E 완료)
-
-- legacy collection 18,369개와 entry 168,102개를 연속 읽기 UI에 연결한다.
-- bookmark/history/progress는 `(board_id, external_post_id)` identity를 유지한다.
-- user-state JSON export/import와 AA font를 desktop/mobile interaction test에 포함한다.
-- 신규 episode 자동 그룹핑은 P3로 남기고 기존 collection 보존부터 끝낸다.
-
-### P1-3. private edge 배포 (인증 인프라 완료, R2 data publish 대기)
-
-Worker, private R2 bucket, Access email allow/TOTP MFA와 인증 shell smoke는 완료했다. Bucket은
-아직 0 objects이며 local `rclone` 연결부터 검증한다.
-
-- private R2에는 serving 파생물만 올리고 canonical DB/WARC는 올리지 않는다.
-- Cloudflare Access에서 본인 account + MFA allow policy를 적용한다.
-- 현재 Worker Basic auth는 local/fallback test용으로만 유지한다.
-- production Worker는 `jose`로 Access JWT의 signature, issuer, audience를 검증하고 preview URL을 끈다.
-- `rclone copy/check` 뒤 선택한 versioned release를 `release.json`으로 마지막에 올린다.
-- release upload 중단, 잘못된 manifest, 이전 release rollback을 실제 환경에서 검증한다.
-
-### P1-4. 독립 backup과 restore (local snapshot/restore 완료, B2 보류)
-
-- SQLite Online Backup snapshot과 WARC를 restic으로 암호화해 B2에 저장한다.
-- R2와 B2의 account/provider failure domain을 분리한다.
-- 격리된 임시 경로로 자동 restore하고 DB health/hash/manifest를 검사한다.
-- restic password와 recovery 절차는 repository 밖 password manager에 보관한다.
-
-### P1-5. 실기기 및 shadow gate
-
-- 실제 Android Chrome에서 21MB full metadata load, 검색, background/restore와 AA 정렬을 확인한다.
-- 실패 시에만 flat NDJSON + typed offset + lazy parse representation을 spike한다.
-- legacy 운영과 7일 shadow 실행해 신규 글, 댓글, restricted, retry 차이를 report한다.
-- shadow와 restore rehearsal 통과 뒤에만 기존 scheduler를 중단한다.
-
-## 5. P2: archive coverage
-
-### P2-1. legacy queue recovery
-
-우선순위는 **AA -> 창작 -> 팬픽 -> 나머지**다. `DOWNLOAD_DELAY=10`, concurrency 1 기준
-33,712건의 이론상 최소는 93.64시간/3.90일이며 listing, retry, cooldown은 별도다.
-
-`scripts.recover_queue`는 due pending/retry를 위 우선순위로 bounded select하고 한 건씩 lease해
-기존 session/parser/WARC/pipeline으로 처리한다. 구현과 fixture gate는 완료했고 실제 100건
-canary는 완료된 full export/doctor 기준선을 보존한 채 배포 smoke 뒤 실행한다.
-
-실행 gate:
-
-- P0 전체와 backup/restore가 통과했다.
-- board별 100건 canary에서 parse drift와 auth failure가 허용 기준 안이다.
-- 매 batch 뒤 inventory와 capture outcome count가 남는다.
-
-### P2-2. image와 direct asset 보존
-
-1. 먼저 same-origin image URL, 응답 크기, 중복률과 dead-link 비율을 inventory한다.
-2. 원문 HTML에는 URL을 보존한다.
-3. 예산과 소멸 위험을 근거로 cache 대상만 결정한다.
-
-전수 image mirror나 hotlink proxy는 inventory 전 구현하지 않는다.
-URL/host/same-origin/중복 count만 기록하는 read-only inventory command는 구현했다. Export I/O가
-끝났으므로 전수 scan은 READY지만 release blocker는 아니다.
-
-## 6. P3: evidence가 있을 때만
-
-- exact normalized series title + unique episode number 기반 신규 collection 연장
-- 실제 title/author/category 검색 부족이 확인될 때 full-body search 비교 spike
-- offline export bundle과 user-state device sync
-- 전체 legacy 282,239 detail 재검증: 이론상 최소 32.7일이므로 별도 승인
-- D1, remote SQLite VFS, Pagefind: 현재 구조가 실측 gate를 실패할 때만 재검토
-
-## 7. 내일까지의 실행 순서
-
-### 7.1 완료된 병렬 준비와 현재 blocker
-
-| Lane | 담당 작업 | 병렬 가능 범위 | 종료 조건 |
-|---|---|---|---|
-| A: data | DONE: full export와 post-export doctor | Cloudflare bootstrap과 병렬 완료 | 6,079,309,130 bytes/282,289 files, doctor `ok=true` |
-| B: edge | DONE: OAuth, R2 bucket, Worker, Access email/TOTP | export와 병렬 완료 | 인증된 shell smoke 확인, bucket 0 objects |
-| C: release | WAITING: local `rclone` credential 연결 검증 | A/B 완료 뒤 | bucket list/size 성공 후 publish 시작 |
-
-Wrangler OAuth와 browser Access 설정은 완료됐다. 현재 secret이 필요한 유일한 blocker는 repo 밖
-사용자 profile의 local `rclone` credential 입력과 연결 검증이다. Token 원문을 CLI 인자, YAML,
-source, Git, log 또는 chat에 기록하지 않는다.
-
-### 7.2 export와 edge 준비가 끝난 뒤 직렬 실행
-
-1. **산출물 gate:** 전체 bytes와 object/count를 기록하고 무료 범위를 다시 확인한다. 범위를
-   넘거나 예상 과금이 0이 아니면 게시를 중단한다.
-2. **publish:** immutable/versioned object를 먼저 `rclone copy/check`하고 `release.json`을
-   마지막에 올린다. 282,239개의 작은 object 때문에 전체 bytes보다 object 수가 upload 시간을
-   지배할 수 있다.
-3. **production smoke:** 비인증 차단과 본인 인증을 각각 확인하고 검색, 일반 글/AA, 댓글,
-   collection, bookmark/progress/state workflow를 확인한다.
-4. **rollback:** 검증된 이전 manifest를 `scripts.publish_static --activate`로 pointer-only
-   교체한 뒤 현재 manifest로 복귀하고 두 release가 모두 열리는지 확인한다.
-5. **최종 gate:** Python/Node 전체 검증과 canonical doctor를 한 번 실행하고 report/docs를
-   확정한다.
-
-### 7.3 배포 뒤 수행하되 내일 완료를 막지 않는 작업
-
-1. AA 우선 queue recovery 100건 canary와 동일 범위 재실행 idempotency
-2. full image URL inventory와 link-only/cache 정책 확정
-3. 무료 dead-man URL이 준비되면 success ping 연결
-4. 7일 shadow 시작. 이 기간에는 기존 scheduler를 유지한다.
-
-### 7.4 시간 예산
-
-| 작업 | 작업 예산 | 일정 위험 |
-|---|---:|---|
-| full export/내부 검증 | DONE: 6,079,309,130 bytes/282,289 files | post-export doctor `ok=true` |
-| Cloudflare OAuth/resource/bootstrap | DONE | Worker/R2/Access/email/TOTP 확인 |
-| R2 upload/check | 1~6시간 예상 | network와 작은 object 282,239개가 지배 |
-| remote smoke/rollback | 30~60분 | Access policy/DNS 반영 지연 |
-| 최종 test/lint/doctor | 30~60분 | 실패 시 해당 회귀만 수정 |
-| AA 100건 canary | 30~60분 | 내일 release의 blocker 아님 |
-
-예상 시간은 deadline 판단용 budget이지 완료 증거가 아니다. 각 gate의 실제 report만 상태를
-`DONE`으로 바꾼다.
-
-## 8. 사용자 승인 또는 외부 준비가 필요한 지점
-
-| 시점 | 필요한 결정/준비 |
-|---|---|
-| 지금/T0 | OAuth/Worker/R2/Access 설정 완료. local `rclone` credential 입력과 연결 검증 필요 |
-| P1-3 | Bucket은 0 objects. publisher hard preflight 통과 뒤에만 실제 upload 진행 |
-| P1-4 | B2/restic은 과금 제외 조건 때문에 현재 보류 |
-| P1-5 | 실제 Android와 7일 shadow는 내일 이후 운영 안정화 gate |
-| P2-1 | 비과금 작업 승인 완료. 배포 뒤 100건 canary부터 bounded 실행 |
-| P3 | 282,239건 전체 detail 재검증 별도 승인 |
-
-credential은 environment secret 또는 배포 platform secret으로 주입한다. ID/PW, session cookie,
-restic password, dead-man URL을 YAML이나 Git에 저장하지 않는다.
-
-## 9. 공통 검증 gate
+## 7. 검증 명령
 
 Python 변경:
 
-```powershell
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy crawler scripts
-```
+    uv run pytest
+    uv run ruff check .
+    uv run ruff format --check .
+    uv run mypy crawler scripts
 
 Edge 변경:
 
-```powershell
-Set-Location edge
-npm test
-npm run check
-npm run test:e2e
-```
+    Set-Location edge
+    npm test
+    npm run check
+    npm run test:e2e
 
-Migration/backup 변경:
+Cloudflare/Oracle 변경:
 
-```powershell
-uv run python -m scripts.verify_migration `
-  --source E:/ReDSTM/backups/legacy-source/redstm-phase0-posts-20260710T114500Z.db `
-  --target .data/canonical/archive.sqlite
-```
+- local/remote migration version 일치
+- Access user/service role negative test
+- R2 object check, data smoke, pointer rollback
+- systemd unit verify, manual canary, timer state
+- E source/격리 restore hash와 doctor
+- secret/path/log regression
 
-모든 phase는 관련 failure test, docs, 실행 report를 같은 변경에서 갱신한다. 검증하지 못한
-외부 환경은 통과로 기록하지 않는다.
+각 phase는 관련 failure test, report와 docs를 같은 작업에서 갱신한다. 외부 환경에서 직접 확인하지
+못한 항목은 DONE으로 기록하지 않는다.
 
-## 10. 중단 조건
+## 8. 상태 변경 규칙
 
-- verified snapshot 없이 schema migration 또는 backfill을 시작하지 않는다.
-- capture ledger와 bounded sync 없이 full backfill을 시작하지 않는다.
-- Access, restore rehearsal, 실제 release rollback 없이 private viewer를 배포 완료로 판정하지 않는다.
-- 7일 shadow는 read-only viewer 배포가 아니라 기존 crawler/scheduler 중단의 선행조건이다.
-- shadow와 rollback 보존 기간이 끝나기 전에 legacy source/scheduler를 삭제하지 않는다.
-- 예상 과금이 0이 아니면 별도 승인 없이 resource 생성·upload를 계속하지 않는다.
+- background process는 report/check/pointer evidence가 있어야 DONE이다.
+- fixture test는 live canary를 대체하지 않는다.
+- shell load는 data workflow smoke를 대체하지 않는다.
+- B2/restic과 외부 dead-man 계정은 사용자 결정으로 현재 완료 조건에서 제외한다.
+- UI 구현은 실제 font load/mobile/AA visual acceptance를 통과해야 완료다.
+- 7일 shadow는 생략하거나 소급 완료 처리하지 않는다.
+- 완료된 phase의 상세 실행 기록은 [`archive`](archive/2026-07-11/README.md)로 옮기고 이 문서는
+  다음 active gate만 유지한다.

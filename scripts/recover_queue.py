@@ -16,7 +16,8 @@ from crawler.session import SessionRefreshError, ensure_session_export
 from crawler.settings import USER_AGENT
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
-from scripts.sync import _capture_summary, _write_report
+from scripts.healthcheck import notify_dead_man
+from scripts.sync import _capture_summary, _run_status, _write_report
 
 
 def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
@@ -33,12 +34,14 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     store = ArchiveStore(archive)
     try:
         initialize_archive(archive)
+        interrupted_runs = store.interrupt_stale_crawl_runs()
         candidates = FrontierStore(archive).recovery_candidates(limit=args.max_posts)
         run_id = store.start_run("retry")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
 
         scheduled = 0
+        failures: list[str] = []
         if candidates:
             session = ensure_session_export(
                 session_path,
@@ -63,15 +66,23 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             process.start(stop_after_crawl=True)
             spider = crawler.spider
             scheduled = int(getattr(spider, "scheduled_posts", 0)) if spider else 0
+            failures = sorted(getattr(spider, "failure_codes", ())) if spider else []
 
         outcomes = _capture_summary(archive, run_id)
-        failed = outcomes.get("parse_failed", 0) + outcomes.get("fetch_failed", 0)
-        status = "partial" if failed else "succeeded"
+        status = _run_status(outcomes, scheduled, failures)
         store.finish_run(
             run_id,
             status=status,
             discovered=len(candidates),
-            summary={"selected_posts": len(candidates), "outcomes": outcomes},
+            summary={
+                "selected_posts": len(candidates),
+                "outcomes": outcomes,
+                "failures": failures,
+                "interrupted_runs": interrupted_runs,
+            },
+        )
+        notify_dead_man(
+            status == "succeeded", os.environ.get("REDSTM_RECOVERY_HEALTHCHECK_URL", "")
         )
         return {
             "ok": status == "succeeded",
@@ -80,6 +91,8 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "selected_posts": len(candidates),
             "scheduled_posts": scheduled,
             "outcomes": outcomes,
+            "failures": failures,
+            "interrupted_runs": interrupted_runs,
             "warc_path": str(warc_path),
         }
     except Exception:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import gzip
 import json
+from compression import zstd
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import scripts.export_static as export_static_module
 from crawler.archive import connect_archive, initialize_archive
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
@@ -157,8 +158,8 @@ def _canonical(path: Path) -> None:
         )
 
 
-def _json_gzip(path: Path) -> Any:
-    return json.loads(gzip.decompress(path.read_bytes()))
+def _json_zstd(path: Path) -> Any:
+    return json.loads(zstd.decompress(path.read_bytes()))
 
 
 def _tree(path: Path) -> dict[str, bytes]:
@@ -169,18 +170,30 @@ def _tree(path: Path) -> dict[str, bytes]:
     }
 
 
-def test_full_canonical_export_is_complete_deterministic_and_reusable(tmp_path: Path) -> None:
+def test_full_canonical_export_is_complete_deterministic_and_reusable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "canonical.sqlite"
     output = tmp_path / "static"
     _canonical(source)
 
-    first = export_static(source, output)
+    first = export_static(source, output, workers=2)
     first_tree = _tree(output)
-    second = export_static(source, output)
+    compression_calls = 0
+    original_compress = export_static_module.compress_static_payload
+
+    def counted_compress(payload: bytes) -> bytes:
+        nonlocal compression_calls
+        compression_calls += 1
+        return original_compress(payload)
+
+    monkeypatch.setattr(export_static_module, "compress_static_payload", counted_compress)
+    second = export_static(source, output, workers=2)
 
     assert first["release_key"] == second["release_key"]
     assert second["objects_written"] == 0
     assert second["objects_reused"] > 0
+    assert compression_calls == 0
     assert _tree(output) == first_tree
     assert validate_release(output, str(first["release_key"])) == {
         "release_key": first["release_key"],
@@ -208,13 +221,13 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(tmp_path: 
     empty_board_ref = next(
         board for board in release["boards"] if board["board_id"] == "write_free21"
     )
-    assert _json_gzip(output / empty_board_ref["object_key"])["posts"] == []
+    assert _json_zstd(output / empty_board_ref["object_key"])["posts"] == []
     prose_board_ref = next(board for board in release["boards"] if board["board_id"] == "ss_temp01")
-    prose_summary = _json_gzip(output / prose_board_ref["object_key"])["posts"][0]
+    prose_summary = _json_zstd(output / prose_board_ref["object_key"])["posts"][0]
     assert prose_summary["object_bytes"] == (output / prose_summary["object_key"]).stat().st_size
     assert len(prose_summary["object_sha256"]) == 64
 
-    collection_payload = _json_gzip(output / release["collections"]["object_key"])
+    collection_payload = _json_zstd(output / release["collections"]["object_key"])
     entries = collection_payload["collections"][0]["entries"]
     assert entries[0]["object_key"].startswith("posts/ss_temp01/1-")
     assert entries[1] == {
@@ -225,7 +238,7 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(tmp_path: 
         "position": 2,
         "title": "보존 불가",
     }
-    assert not list(output.glob("posts/ss_temp01/99-*.json.gz"))
+    assert not list(output.glob("posts/ss_temp01/99-*.json.zst"))
     assert release["unavailable_post_count"] == 1
     assert release["unavailable_comment_count"] == 1
     assert collection_payload["collections"][1]["entries"] == []
@@ -274,3 +287,60 @@ def test_previous_versioned_release_can_be_activated_for_rollback(tmp_path: Path
     assert rollback["previous_release_key"] == second["release_key"]
     assert (output / "release.json").read_bytes() == first_body
     assert validate_release(output, str(first["release_key"]))["post_count"] == 2
+
+
+def test_release_body_carries_no_generation_timestamp(tmp_path: Path) -> None:
+    """release 본문 결정론 guard — freshness는 Worker Last-Modified가 담당한다(docs/09)."""
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    export_static(source, output)
+
+    release = json.loads((output / "release.json").read_bytes())
+    forbidden = {"generated_at", "exported_at", "published_at", "created_at", "timestamp"}
+    assert forbidden.isdisjoint(release.keys())
+
+
+@pytest.mark.xfail(
+    reason="A2.4-7 예정: search tuple 끝에 is_aa 추가 — viewer 7/8-field 수용 먼저 (docs/00 §7.3)",
+    strict=False,
+)
+def test_search_index_appends_is_aa_field(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    export_static(source, output)
+
+    release = json.loads((output / "release.json").read_bytes())
+    search = _json_zstd(output / release["search"]["object_key"])
+    assert search["fields"] == [
+        "board_id",
+        "external_post_id",
+        "title",
+        "author",
+        "category",
+        "created_at_raw",
+        "payload_sha256",
+        "is_aa",
+    ]
+    rows = {(row[0], row[1]): row for row in search["posts"]}
+    assert bool(rows[("aa_a01", 2)][7]) is True
+    assert bool(rows[("ss_temp01", 1)][7]) is False
+
+
+@pytest.mark.xfail(
+    reason="A2.4-7 예정: release.boards에 name/group_name 추가 — filter label 근거 (docs/00 §9.2)",
+    strict=False,
+)
+def test_release_boards_carry_name_and_group(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    export_static(source, output)
+
+    release = json.loads((output / "release.json").read_bytes())
+    boards = {board["board_id"]: board for board in release["boards"]}
+    assert boards["aa_a01"]["name"] == "AA"
+    assert boards["aa_a01"]["group_name"] == "창작"
+    assert boards["write_free21"]["name"] == "빈 게시판"
+    assert boards["write_free21"]["group_name"] is None

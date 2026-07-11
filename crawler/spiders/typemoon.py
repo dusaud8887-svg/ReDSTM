@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator, Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -82,6 +83,22 @@ _COMMENT_DEPTH = re.compile(r"(?:depth|reply)[_-]?(\d+)?", re.IGNORECASE)
 _COMMENT_ID = re.compile(r"(\d+)")
 _MARGIN_LEFT = re.compile(r"margin-left\s*:\s*(\d+)", re.IGNORECASE)
 _AA_STYLE_HINT = re.compile(r"saitamaar|ms\s*(?:p\s*)?gothic|ipamona|mona", re.IGNORECASE)
+
+
+def _retry_after(response: Any, now: datetime) -> datetime | None:
+    raw = response.headers.get("Retry-After") if response is not None else None
+    if not raw:
+        return None
+    text = raw.decode("ascii", "ignore").strip()
+    try:
+        retry_at = (
+            now + timedelta(seconds=int(text)) if text.isdigit() else parsedate_to_datetime(text)
+        )
+    except TypeError, ValueError, OverflowError:
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return min(max(retry_at.astimezone(UTC), now), now + timedelta(days=1))
 
 
 def parse_post_ref(url: str) -> tuple[str, int] | None:
@@ -266,6 +283,9 @@ class TypeMoonSpider(scrapy.Spider):
         self.frontier = FrontierStore(self.archive_path) if self.archive_path is not None else None
         self.store = ArchiveStore(self.archive_path) if self.archive_path is not None else None
         self._seen: set[tuple[str, int]] = set()
+        self._pending_details: list[tuple[str, int]] = []
+        self._detail_in_flight = False
+        self.failure_codes: set[str] = set()
         self.scheduled_posts = 0
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
@@ -311,20 +331,30 @@ class TypeMoonSpider(scrapy.Spider):
             raise ValueError("failed detail request has no frontier lease")
         response = getattr(failure.value, "response", None)
         status = getattr(response, "status", None)
+        status_code = status if isinstance(status, int) else None
+        fetched_at = datetime.now(UTC)
+        error_code = (
+            {401: "auth_required", 403: "auth_required", 404: "not_found", 429: "rate_limited"}.get(
+                status_code, "network_error"
+            )
+            if status_code is not None
+            else "network_error"
+        )
         self.store.record_outcome(
             self.run_id,
             url=request.url,
             outcome="fetch_failed",
-            fetched_at=datetime.now(UTC),
-            http_status=status if isinstance(status, int) else None,
+            fetched_at=fetched_at,
+            http_status=status_code,
             board_id=lease.board_id,
             external_post_id=lease.external_post_id,
-            error_code="network_error",
+            error_code=error_code,
             raw_sha256=request.meta.get("raw_sha256"),
             warc_file=request.meta.get("warc_file"),
             warc_record_id=request.meta.get("warc_record_id"),
             lease=lease,
             frontier_state="retry",
+            retry_after_at=_retry_after(response, fetched_at) if status_code == 429 else None,
         )
 
     def listing_request(
@@ -333,15 +363,21 @@ class TypeMoonSpider(scrapy.Spider):
         return scrapy.Request(
             self.listing_url(board_id, page=page),
             callback=self.parse_listing,
+            errback=self.listing_error if self.store is not None else None,
             cookies=session.as_scrapy_cookies() if session is not None else None,
             headers={"User-Agent": session.user_agent} if session is not None else None,
             meta={"cookiejar": 1, "redstm_capture": True},
         )
 
+    def listing_error(self, failure: Any) -> None:
+        self.failure_codes.add("listing_fetch_failed")
+        self.logger.error("TypeMoon listing request failed: %s", failure.request.url)
+
     def parse_listing(
         self, response: scrapy.http.Response, **_: object
     ) -> Iterable[DiscoveredPostItem | scrapy.Request]:
         if not isinstance(response, scrapy.http.HtmlResponse):
+            self.failure_codes.add("listing_not_html")
             self.logger.error("TypeMoon listing response is not HTML: %s", response.url)
             return
         if self.store is not None and self.run_id is not None:
@@ -354,6 +390,10 @@ class TypeMoonSpider(scrapy.Spider):
                 warc_file=response.meta.get("warc_file"),
                 warc_record_id=response.meta.get("warc_record_id"),
             )
+        if not response.css("tbody"):
+            self.failure_codes.add("listing_parse_failed")
+            self.logger.error("TypeMoon listing table is missing: %s", response.url)
+            return
         for row in response.css("tbody > tr:not(.td-mobile)"):
             link = row.css(".td-subj-wrap a::attr(href)").get()
             if not link:
@@ -389,31 +429,62 @@ class TypeMoonSpider(scrapy.Spider):
                 or self.session is None
                 or item["is_notice"]
                 or identity in self._seen
-                or self.scheduled_posts >= self.max_posts
+                or self.scheduled_posts + len(self._pending_details) >= self.max_posts
             ):
                 continue
             self._seen.add(identity)
             self.frontier.seed(board_id, external_post_id, canonical_url, reopen_done=True)
-            lease = self.frontier.claim_identity(
-                board_id, external_post_id, lease_seconds=self.lease_seconds
-            )
-            if lease is None:
-                continue
-            request = self.detail_request(board_id, external_post_id, self.session)
-            request.meta["frontier_lease"] = lease
-            self.scheduled_posts += 1
-            yield request
+            self._pending_details.append(identity)
 
         page = int(parse_qs(urlparse(response.url).query).get("page", ["1"])[0])
         if (
             self.frontier is not None
             and self.session is not None
             and page < self.max_pages
-            and self.scheduled_posts < self.max_posts
+            and self.scheduled_posts + len(self._pending_details) < self.max_posts
         ):
             yield self.listing_request(
                 self.start_board_id or "", page=page + 1, session=self.session
             )
+        request = self._next_detail_request()
+        if request is not None:
+            yield request
+
+    def _next_detail_request(self) -> scrapy.Request | None:
+        if self._detail_in_flight or self.frontier is None or self.session is None:
+            return None
+        while self._pending_details and self.scheduled_posts < self.max_posts:
+            board_id, external_post_id = self._pending_details.pop(0)
+            lease = self.frontier.claim_identity(
+                board_id, external_post_id, lease_seconds=self.lease_seconds
+            )
+            if lease is None:
+                continue
+            request = self.detail_request(board_id, external_post_id, self.session).replace(
+                callback=self._parse_sync_detail,
+                errback=self._sync_error,
+            )
+            request.meta["frontier_lease"] = lease
+            self._detail_in_flight = True
+            self.scheduled_posts += 1
+            return request
+        return None
+
+    def _parse_sync_detail(
+        self, response: scrapy.http.Response, **kwargs: object
+    ) -> Iterable[CapturedPostItem | scrapy.Request]:
+        yield from self.parse_detail(response, **kwargs)
+        self._detail_in_flight = False
+        request = self._next_detail_request()
+        if request is not None:
+            yield request
+
+    def _sync_error(self, failure: Any) -> Iterable[scrapy.Request]:
+        self.detail_error(failure)
+        self._detail_in_flight = False
+        request = self._next_detail_request()
+        if request is not None:
+            yield request
 
     def parse_detail(
         self, response: scrapy.http.Response, **_: object

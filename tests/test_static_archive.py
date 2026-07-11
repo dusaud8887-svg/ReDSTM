@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import gzip
 import json
+from compression import zstd
 
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import normalize_captured_post
@@ -40,11 +40,11 @@ def test_static_post_is_deterministic_compressed_and_link_first() -> None:
 
     first = build_static_post(post)
     second = build_static_post(post)
-    payload = json.loads(gzip.decompress(first.body))
+    payload = json.loads(zstd.decompress(first.body))
 
     assert first == second
     assert first.summary.object_key == (
-        f"posts/aa_a01/107977-{first.summary.payload_sha256}.json.gz"
+        f"posts/aa_a01/107977-{first.summary.payload_sha256}.json.zst"
     )
     assert payload["schema_version"] == 1
     assert payload["capture_origin"] == "live"

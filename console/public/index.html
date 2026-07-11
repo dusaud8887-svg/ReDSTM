@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ReDSTM Operations Ledger</title>
+  <link rel="stylesheet" href="/console.css">
+  <script type="module" src="/console.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">◐ REDSTM / LOCAL OPERATIONS</p>
+      <h1>운영 장부</h1>
+    </div>
+    <button id="refresh" type="button">상태 새로고침</button>
+  </header>
+
+  <main>
+    <section class="verdict" aria-labelledby="readiness-title">
+      <div id="readiness-mark" class="verdict-mark" aria-hidden="true"></div>
+      <div>
+        <p class="eyebrow">READINESS</p>
+        <h2 id="readiness-title">상태 확인 중</h2>
+        <p id="readiness-reason" class="lede">로컬 archive를 읽고 있습니다.</p>
+      </div>
+      <p id="connection" class="connection" role="status" aria-live="polite">연결 준비</p>
+    </section>
+
+    <section class="ledger" aria-labelledby="archive-title">
+      <header><span>01</span><h2 id="archive-title">Archive 기준선</h2></header>
+      <dl class="metrics">
+        <div><dt>Boards</dt><dd id="boards">—</dd></div>
+        <div><dt>Posts</dt><dd id="posts">—</dd></div>
+        <div><dt>Versions</dt><dd id="versions">—</dd></div>
+        <div><dt>Bytes</dt><dd id="archive-bytes">—</dd></div>
+      </dl>
+      <p id="archive-path" class="path">—</p>
+    </section>
+
+    <div class="columns">
+      <section class="ledger" aria-labelledby="frontier-title">
+        <header><span>02</span><h2 id="frontier-title">Frontier</h2></header>
+        <dl id="frontier" class="frontier"></dl>
+      </section>
+
+      <section class="ledger" aria-labelledby="evidence-title">
+        <header><span>03</span><h2 id="evidence-title">검증 증거</h2></header>
+        <div id="doctor" class="evidence-row"></div>
+        <div id="release" class="evidence-row"></div>
+        <div id="backups" class="evidence-row"></div>
+      </section>
+    </div>
+
+    <section class="ledger" aria-labelledby="queue-title">
+      <header><span>04</span><h2 id="queue-title">조치가 필요한 Board</h2></header>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Board</th><th>Pending</th><th>Retry</th><th>Dead</th></tr></thead>
+          <tbody id="queue-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="ledger" aria-labelledby="runs-title">
+      <header><span>05</span><h2 id="runs-title">최근 Run</h2></header>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>시작</th><th>종류</th><th>상태</th><th>Fetched</th><th>Failed</th></tr></thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>READ ONLY · LOOPBACK ONLY · 명령 실행 기능 없음</footer>
+</body>
+</html>

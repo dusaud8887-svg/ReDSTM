@@ -31,6 +31,14 @@ def _capture_summary(archive: Path, run_id: str) -> dict[str, int]:
     return counts
 
 
+def _run_status(outcomes: dict[str, int], scheduled: int, failures: list[str]) -> str:
+    incomplete = sum(outcomes.values()) != scheduled
+    item_failures = outcomes.get("parse_failed", 0) + outcomes.get("fetch_failed", 0)
+    if not failures and not incomplete and not item_failures:
+        return "succeeded"
+    return "partial" if outcomes else "failed"
+
+
 def _write_report(path: Path, report: dict[str, Any]) -> None:
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +66,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     store = ArchiveStore(archive)
     try:
         initialize_archive(archive)
+        interrupted_runs = store.interrupt_stale_crawl_runs()
         with connect_archive(archive, read_only=True) as connection:
             board = connection.execute(
                 "SELECT 1 FROM boards WHERE board_id = ? AND is_enabled = 1", (args.board,)
@@ -92,16 +101,20 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         )
         process.start(stop_after_crawl=True)
 
-        outcomes = _capture_summary(archive, run_id)
-        failed = outcomes.get("parse_failed", 0) + outcomes.get("fetch_failed", 0)
-        status = "partial" if failed else "succeeded"
         spider = crawler.spider
         discovered = int(getattr(spider, "scheduled_posts", 0)) if spider is not None else 0
+        failures = sorted(getattr(spider, "failure_codes", ())) if spider is not None else []
+        outcomes = _capture_summary(archive, run_id)
+        status = _run_status(outcomes, discovered, failures)
         store.finish_run(
             run_id,
             status=status,
             discovered=discovered,
-            summary={"outcomes": outcomes},
+            summary={
+                "outcomes": outcomes,
+                "failures": failures,
+                "interrupted_runs": interrupted_runs,
+            },
         )
         notify_dead_man(status == "succeeded", os.environ.get("REDSTM_HEALTHCHECK_URL", ""))
         return {
@@ -111,6 +124,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             "board_id": args.board,
             "scheduled_posts": discovered,
             "outcomes": outcomes,
+            "failures": failures,
+            "interrupted_runs": interrupted_runs,
             "warc_path": str(warc_path),
         }
     except Exception:

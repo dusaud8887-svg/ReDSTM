@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from scrapy.http import HtmlResponse, Request
+from scrapy.http import HtmlResponse, Request, Response
 
 from crawler import settings
 from crawler.pipelines import normalize_captured_post
-from crawler.spiders.typemoon import TypeMoonSpider, parse_post_ref
+from crawler.spiders.typemoon import TypeMoonSpider, _retry_after, parse_post_ref
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
 
@@ -33,12 +34,29 @@ def _response(name: str, url: str) -> HtmlResponse:
 def test_policy_settings_and_urls_are_conservative() -> None:
     assert settings.ROBOTSTXT_OBEY is True
     assert settings.DOWNLOAD_DELAY == 10.0
+    assert settings.DOWNLOAD_TIMEOUT == 180
     assert settings.RANDOMIZE_DOWNLOAD_DELAY is False
     assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 1
+    assert settings.RETRY_TIMES == 2
+    assert settings.RETRY_HTTP_CODES == [408, 500, 502, 503, 504, 522, 524]
     assert TypeMoonSpider.listing_url("write_free21") == "https://www.typemoon.net/write_free21"
     assert TypeMoonSpider.listing_url("write_free21", page=2).endswith("?page=2")
     with pytest.raises(ValueError):
         TypeMoonSpider.listing_url("../login")
+
+
+def test_retry_after_is_bounded_and_invalid_values_fall_back() -> None:
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    assert _retry_after(Response("https://example.test", headers={"Retry-After": "600"}), now) == (
+        now + timedelta(minutes=10)
+    )
+    assert _retry_after(
+        Response("https://example.test", headers={"Retry-After": "999999"}), now
+    ) == now + timedelta(days=1)
+    assert (
+        _retry_after(Response("https://example.test", headers={"Retry-After": "invalid"}), now)
+        is None
+    )
 
 
 def test_bounded_start_captures_one_listing() -> None:

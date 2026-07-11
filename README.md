@@ -10,7 +10,8 @@ snapshot/restore 뒤 schema v2로 전환했다. 장기 backup만 `E:\ReDSTM\back
 1. [`docs/README.md`](docs/README.md)
 2. [`docs/00_initial_product_architecture.md`](docs/00_initial_product_architecture.md)
 3. [`docs/04_implementation_plan.md`](docs/04_implementation_plan.md)
-4. [`docs/03_review_validation_20260711.md`](docs/03_review_validation_20260711.md)
+4. [`docs/06_final_product_experience.md`](docs/06_final_product_experience.md)
+5. [`docs/archive/2026-07-11/README.md`](docs/archive/2026-07-11/README.md) — 완료 증거
 
 ## 개발 시작
 
@@ -33,6 +34,7 @@ uv run python -m scripts.recover_queue --help
 uv run python -m scripts.export_static --help
 uv run python -m scripts.publish_static --help
 uv run python -m scripts.inventory_images --help
+uv run python -m scripts.console --help
 ```
 
 Edge viewer 검증:
@@ -43,7 +45,11 @@ npm ci
 npm test
 npm run check
 npm run test:e2e
+npm run deploy
 ```
+
+`npm run deploy`는 unit → syntax → Wrangler strict dry-run → live deploy 순서로 실패 시 즉시
+중단한다. R2 data는 별도 `scripts.publish_static`의 immutable upload/check/pointer-last gate를 쓴다.
 
 TypeMoon ID/PW는 CLI 인자나 YAML에 쓰지 않고 `TYPEMOON_ID`, `TYPEMOON_PASSWORD` secret으로
 process에 주입한다. session 기본 경로는 `.data/private/typemoon-session.json`이다.
@@ -58,8 +64,12 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - canonical SQLite schema, resumable legacy import와 verification command
 - `.partial` atomic close/1GiB rotation WARC
 - raw hash/WARC capture ledger, atomic frontier transition과 bounded authenticated sync
+- listing/run 실패 판정, sync 1건씩 lease, stale run 회수와 explicit timeout/retry policy
+- 429 `Retry-After` frontier defer와 서로 다른 run 2회 확인 404 missing 판정
 - read-only DB/lease/WARC `doctor`와 verified SQLite snapshot command
-- deterministic full gzip post/board/search/collection export와 release rollback
+- archive된 loopback-only read-only Operations Console C0와 capability session/Origin/CSP 경계
+- deterministic zstd level 15 post/board/search/collection export, bounded 병렬·resume와 release rollback
+- 검증된 zstd full `release.json`과 `.partial` 0개 산출물
 - pointer-last `rclone` publish command
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
 - AA -> 창작 -> 팬픽 우선 bounded legacy queue recovery
@@ -68,13 +78,23 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 아직 포함하지 않음:
 
-- scheduler와 장시간 recovery 실행
+- scheduler/D1 heartbeat 실연결, 20/100건 canary, 7일 shadow와 장시간 recovery 실행
+- Access 기반 remote Operations Control Plane과 bounded crawler 제어
 - content-addressed direct asset/blob ledger
-- 실제 Cloudflare R2 bucket/token과 Access application
-- Cloudflare Access cutover와 실제 Android memory gate
-- B2 restic encrypted backup/restore automation
+- R2 baseline upload/check/pointer 검증 완료; authenticated data smoke/rollback 대기
+- 실제 Android memory gate
+- B2/restic 외부 backup은 사용자 결정으로 현재 범위에서 제외
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
+
+현재 crawler는 concurrency 1과 10초 고정 delay의 수동 bounded canary용이다. 별도 DB의 1건 live
+수집은 통과했지만 canonical production sync, 100건 canary와 장기 무인 운전 증거는 없다. network
+정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가 source of truth이며 별도 YAML은
+두지 않는다.
+
+현재 상태를 로컬 화면으로 확인하려면 `uv run python -m scripts.console`을 실행하고 출력된
+`http://127.0.0.1:<port>/#token=...` URL을 같은 machine의 browser에서 연다. C0는 canonical을
+read-only로 열며 command 실행 endpoint가 없다.
 
 ## Container smoke
 

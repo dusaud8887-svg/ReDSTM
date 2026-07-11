@@ -55,6 +55,32 @@ def _post(*, body: str = "body", comment: str = "comment") -> NormalizedPost:
     )
 
 
+def test_stale_crawl_runs_are_interrupted_without_touching_imports(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    sync_run = store.start_run("sync", now=_NOW)
+    retry_run = store.start_run("retry", now=_NOW)
+    import_run = store.start_run("import", now=_NOW)
+
+    assert store.interrupt_stale_crawl_runs(now=_NOW + timedelta(minutes=1)) == 2
+
+    with connect_archive(path, read_only=True) as connection:
+        rows = {
+            row["run_id"]: (row["status"], row["finished_at"], row["summary_json"])
+            for row in connection.execute(
+                "SELECT run_id, status, finished_at, summary_json FROM crawl_runs"
+            )
+        }
+    assert rows[sync_run] == (
+        "interrupted",
+        "2026-07-11T02:01:00+00:00",
+        '{"error":"process_interrupted"}',
+    )
+    assert rows[retry_run] == rows[sync_run]
+    assert rows[import_run] == ("running", None, "{}")
+
+
 def test_store_deduplicates_versions_and_tracks_every_capture(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
@@ -310,3 +336,71 @@ def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
         assert row["state"] == "dead"
         assert row["next_attempt_at"] is None
         assert row["last_error_code"] == "network_error"
+
+
+def test_not_found_requires_two_runs_and_rate_limit_honors_retry_after(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url)
+
+    first_run = store.start_run("sync", now=_NOW)
+    first = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert first is not None
+    store.record_outcome(
+        first_run,
+        url=url,
+        outcome="fetch_failed",
+        fetched_at=_NOW,
+        error_code="not_found",
+        lease=first,
+        frontier_state="retry",
+    )
+    store.finish_run(first_run, status="partial", now=_NOW)
+
+    second_run = store.start_run("sync", now=_NOW + timedelta(minutes=2))
+    second = frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(minutes=2)
+    )
+    assert second is not None
+    store.record_outcome(
+        second_run,
+        url=url,
+        outcome="fetch_failed",
+        fetched_at=_NOW + timedelta(minutes=2),
+        error_code="not_found",
+        lease=second,
+        frontier_state="retry",
+    )
+
+    frontier.seed("ss_temp01", 8, "https://www.typemoon.net/ss_temp01/8")
+    limited = frontier.claim_identity("ss_temp01", 8, lease_seconds=60, now=_NOW)
+    assert limited is not None
+    store.record_outcome(
+        second_run,
+        url=limited.url,
+        outcome="fetch_failed",
+        fetched_at=_NOW,
+        error_code="rate_limited",
+        lease=limited,
+        frontier_state="retry",
+        retry_after_at=_NOW + timedelta(minutes=30),
+    )
+
+    with connect_archive(path, read_only=True) as connection:
+        assert [
+            row["outcome"]
+            for row in connection.execute(
+                "SELECT outcome FROM captures WHERE url = ? ORDER BY id", (url,)
+            )
+        ] == ["fetch_failed", "missing"]
+        rows = {
+            row["external_post_id"]: (row["state"], row["next_attempt_at"])
+            for row in connection.execute(
+                "SELECT external_post_id, state, next_attempt_at FROM crawl_frontier"
+            )
+        }
+    assert rows[7] == ("done", None)
+    assert rows[8] == ("retry", "2026-07-11T02:30:00+00:00")

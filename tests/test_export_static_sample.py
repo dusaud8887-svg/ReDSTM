@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import gzip
 import json
 import sqlite3
+from compression import zstd
 from pathlib import Path
 
 import pytest
@@ -88,7 +88,7 @@ def test_legacy_sample_export_is_read_only_and_reproducible(tmp_path: Path) -> N
     versioned_release = first / first_report["release_object_key"]
     assert versioned_release.read_bytes() == (first / "release.json").read_bytes()
     search_file = first / release["search"]["object_key"]
-    search = json.loads(gzip.decompress(search_file.read_bytes()))
+    search = json.loads(zstd.decompress(search_file.read_bytes()))
     assert search["fields"] == [
         "board_id",
         "external_post_id",
@@ -101,10 +101,10 @@ def test_legacy_sample_export_is_read_only_and_reproducible(tmp_path: Path) -> N
     assert len(search["posts"]) == 3
     assert search["posts"][0][:4] == ["board_b", 3, "셋째", None]
     collection_file = first / release["collections"]["object_key"]
-    collections = json.loads(gzip.decompress(collection_file.read_bytes()))["collections"]
+    collections = json.loads(zstd.decompress(collection_file.read_bytes()))["collections"]
     assert [entry["external_post_id"] for entry in collections[0]["entries"]] == [1, 2]
-    post_file = next((first / "posts" / "board_a").glob("2-*.json.gz"))
-    post = json.loads(gzip.decompress(post_file.read_bytes()))
+    post_file = next((first / "posts" / "board_a").glob("2-*.json.zst"))
+    post = json.loads(zstd.decompress(post_file.read_bytes()))
     assert post["capture_origin"] == "legacy_import"
     assert post["comments"][1]["parent_position"] == 1
     assert post["comments"][1]["depth"] == 1

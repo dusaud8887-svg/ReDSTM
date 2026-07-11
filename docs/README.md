@@ -1,65 +1,126 @@
 # ReDSTM 문서 인덱스
 
-## 문서 우선순위
+- 기준일: 2026-07-11
+- 상태: final target specified; implementation and production gates in progress
+- archive: [`완료 기록`](archive/2026-07-11/README.md)
 
-1. [`00_initial_product_architecture.md`](00_initial_product_architecture.md): 제품 범위, architecture, ADR, migration gate의 source of truth
-2. [`04_implementation_plan.md`](04_implementation_plan.md): 현재 우선순위, 선행조건, 완료 gate와 승인 지점
-3. [`01_phase0_runbook.md`](01_phase0_runbook.md): 완료된 Phase 0 evidence와 승인 기록
-4. [`02_static_edge_feasibility.md`](02_static_edge_feasibility.md): Oracle 제외 후 연 $10 이하 정적 배포 spike 계약
-5. [`03_review_validation_20260711.md`](03_review_validation_20260711.md): 외부 리뷰 독립 재현과 채택·기각 결정 기록
+## 읽는 순서
 
-코드가 공개 동작·schema·설정 계약을 바꾸면 같은 변경에서 관련 문서를 갱신한다.
+1. [`00_initial_product_architecture.md`](00_initial_product_architecture.md)
+   제품 범위, source of truth, topology, data/security/ADR 계약
+2. [`04_implementation_plan.md`](04_implementation_plan.md)
+   현재 판정, 앞으로 할 일, 정확한 순서, 완료 gate, 실행 권한과 사용자 입력
+3. [`06_final_product_experience.md`](06_final_product_experience.md)
+   최종 제품 형태, information architecture, 화면과 end-to-end flow
+4. [`../DESIGN.md`](../DESIGN.md)
+   구현자가 따라야 할 색·서체·공간·responsive·component normative contract
+5. [`05_viewer_design.md`](05_viewer_design.md)
+   레퍼런스 비교, Signal Archive 시각 방향과 frontend acceptance
+6. [`07_reader_and_aa_experience.md`](07_reader_and_aa_experience.md)
+   prose·AA 판면, legacy fidelity, 설정과 navigation
+7. [`08_operations_control_plane.md`](08_operations_control_plane.md)
+   Access/D1 `/ops`, versioned API, machine auth, status/command/audit
+8. [`09_frontend_strategy_and_roadmap.md`](09_frontend_strategy_and_roadmap.md)
+   native-first file layout, library 판단, frontend implementation order
+9. [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md)
+   Oracle runtime, systemd, recovery evidence, canary, cutover와 cleanup
 
-## 현재 단계
+`00`이 제품/architecture의 source of truth이고 `04`가 실행 상태의 source of truth다.
+`05`~`10`은 각각 시각, 제품 경험, reader/AA, operations, frontend, runner의 세부 계약이다.
+상충하면 임의 구현하지 않고 `00`/ADR을 먼저 갱신한다.
 
-Phase 0 evidence gate와 static edge pilot은 통과했다. schema v1 full legacy import와
-`scripts.verify_migration`의 count/sample/health/hash gate도 `ok=true`로 완료했다. 비과금
-P0~P2 작업은 승인됐지만 각 데이터·배포 gate를 통과하기 전에는 production 실행으로 판정하지
-않는다.
+## 최종 배치
 
-현재 실행 순서의 source of truth는 [`04_implementation_plan.md`](04_implementation_plan.md)다.
-DB migration, verified snapshot/restore, canonical schema v2 적용과 full doctor는 완료됐다.
-Canonical과 작업 산출물은 `D:\ReDSTM\.data`, 장기 backup은 `E:\ReDSTM\backups`에 둔다.
-Full static export와 post-export doctor도 완료됐다. 산출물은 6,079,309,130 bytes, 282,289
-files이며 doctor는 `ok=true`다. Worker, private R2 bucket, Access email allow/TOTP MFA와 인증된
-shell smoke까지 완료했지만 R2 bucket은 아직 0 objects다. 2026-07-12 목표는 실제 R2 publish,
-data workflow smoke와 pointer rollback까지다. B2, 실제 Android와 7일 shadow는 그 뒤의
-production hardening이며 내일 release candidate의 blocker가 아니다.
+    TypeMoon
+      → Oracle systemd crawler
+      → canonical SQLite + WARC
+      → changed zstd objects
+      → private R2, release.json last
 
-지금의 임계 경로는 local `rclone` credential 연결을 검증한 뒤 무료 범위를 확인하고
-publish -> data smoke -> rollback -> 최종 검증을 직렬로 수행하는 것이다.
-세부 상태와 중단 조건은 [`04_implementation_plan.md`](04_implementation_plan.md) §2와 §7을 따른다.
+    Browser
+      → Cloudflare Access
+      → Worker Static Assets / Reader
+      → private R2
+      → /ops
 
-현재 가능:
+    Oracle
+      → Access service token outbound HTTPS
+      → Worker /api/v1/runner/*
+      → D1 status/command/audit
 
-- project/toolchain/container smoke 기반
-- canonical SQLite schema/migration, resumable legacy import와 전수 검증 command
-- TypeMoon listing/detail/restricted/comment parser와 bounded listing 진입점
-- `.partial` atomic close/1GiB rotation WARC와 canonical frontier crash recovery
-- authenticated `scripts.sync` bounded command와 atomic capture/frontier transition
-- read-only `scripts.doctor`의 DB/lease/WARC/partial 진단
-- full deterministic post/search/board/collection export와 pointer-last `rclone` publish
-- legacy collection 연속 탐색과 unavailable entry skip
-- AA -> 창작 -> 팬픽 우선 bounded queue recovery command
-- Cloudflare Access JWT signature/issuer/audience 검증과 Basic local fallback
-- stable post identity 기반 user-state JSON export/import와 Saitamaar reader
-- dependency/license 검증
+자동 schedule의 source는 Oracle systemd다. Cloudflare D1은 작은 control plane일 뿐 archive나
+canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마지막 R2 release 열람이
+계속되며, Oracle에는 inbound application API를 열지 않는다.
 
-현재 금지 또는 보류:
+## 현재 판정
 
-- scheduler 기반 incremental sync와 무제한 full backfill
-- 기존 scheduler 중단
-- 100건 canary 전 장시간 production queue recovery
-- R2 data workflow smoke와 rollback 전 private viewer 배포 완료 판정
-- 7일 shadow 전 기존 crawler/scheduler cutover
-- 별도 승인 없는 유료 resource와 B2/restic 작업
+### 완료
 
-## 문서 추가 기준
+- verified legacy source와 schema v2 canonical/independent local restore
+- bounded crawler, session/parser/WARC/frontier, retry/failure regression
+- deterministic gzip/zstd level 15 full export와 count 검증
+- Worker Static Assets, private R2, Access email/MFA와 authenticated shell
+- R2 baseline 5,148,165,450 bytes/282,289 objects, check 차이 0와 pointer 검증
+- legacy collection, general/AA reader behavior, local user-state export/import
+- local loopback read-only Operations C0
+- Oracle read-only audit, target runbook, ADR-014/015
+- Signal Archive 디자인·제품·API의 최종 문서 계약
 
-새 문서는 독립적인 운영 계약이나 검증 절차가 생길 때만 추가한다. 구현 중 임시 메모, 중복 architecture 설명, 완료 후 가치가 없는 진행 로그는 만들지 않는다.
+세부 증거와 당시 조건은 [`archive/2026-07-11`](archive/2026-07-11/README.md)에 보존한다.
 
-다음 문서는 실제 운영 계약이 생기는 해당 Phase에서만 추가한다.
+### 현재 gate
 
-- Phase 3: reader interaction/visual acceptance 명세
-- Phase 4: backup/restore runbook
-- 배포 확정 시: 선택한 platform 운영 runbook
+R2 baseline publish는 완료됐다. 로그인된 Chrome의 authenticated data smoke, remote pointer
+rollback/복귀와 최종 test가 남아 있다.
+
+### 구현 필요
+
+우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
+
+1. R2 live data activate/smoke/rollback
+2. stable identity와 Signal Archive mobile-first frontend
+3. incremental discovery, 46-board cycle, bounded recovery와 delta publish
+4. versioned Access/D1 control API와 `/ops`
+5. Oracle deploy/systemd, local recovery 확인과 canary
+6. 7일 shadow, cutover, manifest cleanup과 실제 Android acceptance
+
+## 확정된 UX·기술 결정
+
+- visual: graphite/white surface + ReDSTM red signal; old purple glass/moon 장식 금지
+- font: SUIT UI/title, MaruBuri prose, Saitamaar AA
+- mobile navigation: 장서/검색/저장/설정; reader에서는 목록/이전/다음/설정
+- route: 장서 `/`, 검색 `/search`, 저장 `/saved`, 설정 `/settings`, Reader `/read/{board}/{id}`
+- desktop: 72px rail + 360px catalog + reader
+- browser identity: `board_id:external_post_id`; object key 저장 금지
+- deep link: SPA `not_found_handling`으로 shell 반환; 이전 hash link는 stable URL로 replace
+- freshness: `release.json` 본문 결정론 유지, Worker `Last-Modified` header 기반
+- export 확장: search tuple `is_aa`·release `boards[].name/group_name`은 viewer 하위호환 먼저
+- frontend: plain HTML/CSS/ES modules; framework/UI kit 추가 없음
+- control: Worker `/api/v1` 한 경계, Access user/service role 분리
+- command: sync/retry/publish/pause/resume fixed action만; shell/path/restore/delete 금지
+- crawler: concurrency 1, 10초 하한 delay(감속 전용 autothrottle), outage 조기 중단, systemd
+  automation, delta publish; 파라미터 표는 `10 §8.1`
+- access: private 유지; live 확인은 로그인된 Chrome, 자동 E2E는 local Worker 사용
+- backup: B2/restic은 현재 범위에서 제외, E verified source 유지
+- budget: Cloudflare 연 $20, projected R2 20GB/800,000 objects hard stop
+
+## 실행 권한
+
+사용자는 Cloudflare와 Oracle의 조회, resource/Access/R2/D1/Worker 설정, SSH application/systemd
+구성, 배포, canary, recovery 검증, Git commit/push와 rollback을 에이전트가 직접 수행하도록 승인했다.
+비파괴·복구 가능한 작업은 반복 승인을 요구하지 않는다.
+
+GitHub CLI login과 remote read는 확인됐다. 현재 GitHub/Oracle이 같은 SSH key를 재사용하므로
+최종 credential rotation에서 용도별 key로 분리한다. 구현 시작 전 필수 사용자 입력은 없다.
+
+instance/volume/network, 마지막 검증 사본, manifest 없는 data 삭제와 합의 예산 초과는 hard stop이다.
+credential 원문은 docs/chat/Git/log에 기록하지 않는다. 전체 경계는
+[04 실행 권한](04_implementation_plan.md)과 [08 안전 경계](08_operations_control_plane.md)을 따른다.
+
+## 문서 유지 규칙
+
+- 완료된 실행 일지와 spike는 날짜별 archive로 이동한다.
+- active 문서에는 current contract와 다음 gate만 둔다.
+- 공개 동작, schema, API, setting, permission이 바뀌면 같은 변경에서 docs를 갱신한다.
+- 외부 환경에서 직접 검증하지 못한 항목을 DONE으로 쓰지 않는다.
+- 임시 메모와 중복 architecture 문서를 추가하지 않는다.

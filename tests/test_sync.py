@@ -15,7 +15,7 @@ from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man, ping_success
-from scripts.sync import _capture_summary
+from scripts.sync import _capture_summary, _run_status
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
 
@@ -140,6 +140,60 @@ def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
         ).fetchone()
         assert tuple(capture) == ("fetch_failed", "network_error")
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "retry"
+
+
+def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    run_id = ArchiveStore(path).start_run("sync")
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=run_id,
+        session=_session(),
+        max_posts=2,
+    )
+    url = "https://www.typemoon.net/write_free21"
+    response = HtmlResponse(
+        url,
+        request=Request(url),
+        body=b"""
+        <table><tbody>
+          <tr><td class='td-subj-wrap'><a href='/write_free21/1'>
+            <span class='subject'>one</span></a></td></tr>
+          <tr><td class='td-subj-wrap'><a href='/write_free21/2'>
+            <span class='subject'>two</span></a></td></tr>
+        </tbody></table>
+        """,
+        encoding="utf-8",
+    )
+
+    requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
+
+    assert len(requests) == 1
+    with connect_archive(path, read_only=True) as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT external_post_id, state FROM crawl_frontier ORDER BY external_post_id"
+            )
+        ] == [(1, "running"), (2, "pending")]
+
+
+def test_listing_failure_and_incomplete_capture_cannot_succeed() -> None:
+    spider = TypeMoonSpider()
+    response = HtmlResponse(
+        "https://www.typemoon.net/write_free21",
+        request=Request("https://www.typemoon.net/write_free21"),
+        body=b"<html><body>maintenance</body></html>",
+        encoding="utf-8",
+    )
+
+    assert list(spider.parse_listing(response)) == []
+    assert spider.failure_codes == {"listing_parse_failed"}
+    assert _run_status({}, 0, sorted(spider.failure_codes)) == "failed"
+    assert _run_status({"stored": 1}, 2, []) == "partial"
+    assert _run_status({"stored": 1}, 1, []) == "succeeded"
 
 
 def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:

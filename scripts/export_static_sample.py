@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import sqlite3
 from collections import defaultdict
+from compression import zstd
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,7 @@ _SEARCH_FIELDS = [
     "created_at_raw",
     "payload_sha256",
 ]
+_COMPRESSION_LEVEL = 15
 
 
 def _json_bytes(value: object) -> bytes:
@@ -52,10 +53,10 @@ def _json_bytes(value: object) -> bytes:
     ).encode()
 
 
-def _write_gzip_object(output: Path, prefix: str, payload: bytes) -> tuple[str, str, int]:
+def _write_zstd_object(output: Path, prefix: str, payload: bytes) -> tuple[str, str, int]:
     payload_sha256 = hashlib.sha256(payload).hexdigest()
-    key = f"{prefix}-{payload_sha256}.json.gz"
-    body = gzip.compress(payload, compresslevel=6, mtime=0)
+    key = f"{prefix}-{payload_sha256}.json.zst"
+    body = zstd.compress(payload, level=_COMPRESSION_LEVEL)
     target = output / key
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(body)
@@ -207,7 +208,7 @@ def export_static_sample(source: Path, output: Path, *, sample_size: int) -> dic
                 ],
             }
         )
-        key, manifest_sha256, _ = _write_gzip_object(
+        key, manifest_sha256, _ = _write_zstd_object(
             output, f"boards/{board_id}/manifest", manifest
         )
         board_manifests.append(
@@ -245,7 +246,7 @@ def export_static_sample(source: Path, output: Path, *, sample_size: int) -> dic
     search_payload = _json_bytes(
         {"schema_version": 1, "fields": _SEARCH_FIELDS, "posts": search_posts}
     )
-    search_key, search_sha256, search_bytes = _write_gzip_object(
+    search_key, search_sha256, search_bytes = _write_zstd_object(
         output, "search/title-author", search_payload
     )
 
@@ -273,7 +274,7 @@ def export_static_sample(source: Path, output: Path, *, sample_size: int) -> dic
     collection_payload = _json_bytes(
         {"schema_version": 1, "collections": list(collections.values())}
     )
-    collection_key, collection_sha256, collection_bytes = _write_gzip_object(
+    collection_key, collection_sha256, collection_bytes = _write_zstd_object(
         output, "collections/all", collection_payload
     )
 

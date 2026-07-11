@@ -49,6 +49,20 @@ class ArchiveStore:
             )
         return run_id
 
+    def interrupt_stale_crawl_runs(self, *, now: datetime | None = None) -> int:
+        finished_at = _timestamp(now or datetime.now(UTC))
+        with connect_archive(self.path) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE crawl_runs
+                SET status = 'interrupted', finished_at = ?,
+                    summary_json = '{"error":"process_interrupted"}'
+                WHERE status = 'running' AND kind IN ('sync', 'retry')
+                """,
+                (finished_at,),
+            )
+        return cursor.rowcount
+
     def store_post(
         self,
         run_id: str,
@@ -187,10 +201,21 @@ class ArchiveStore:
         warc_record_id: str | None = None,
         lease: FrontierLease | None = None,
         frontier_state: str = "done",
+        retry_after_at: datetime | None = None,
     ) -> int:
         fetched_at_text = _timestamp(fetched_at)
+        if retry_after_at is not None and retry_after_at.tzinfo is None:
+            raise ValueError("retry_after_at must be timezone-aware")
         with connect_archive(self.path) as connection:
             self._require_running_run(connection, run_id)
+            if error_code == "not_found":
+                previous = connection.execute(
+                    "SELECT 1 FROM captures WHERE entity_type = 'post' AND url = ? "
+                    "AND error_code = 'not_found' AND run_id <> ? LIMIT 1",
+                    (url, run_id),
+                ).fetchone()
+                if previous is not None:
+                    outcome, frontier_state = "missing", "done"
             post_id = None
             if board_id is not None and external_post_id is not None:
                 row = connection.execute(
@@ -234,6 +259,8 @@ class ArchiveStore:
                         state = "dead"
                     else:
                         next_attempt_at = retry_backoff(lease.attempts, fetched_at)
+                        if retry_after_at is not None:
+                            next_attempt_at = max(next_attempt_at, retry_after_at.astimezone(UTC))
                 transition_lease(
                     connection,
                     lease,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import os
@@ -11,6 +10,8 @@ import sys
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator
+from compression import zstd
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import groupby
 from pathlib import Path, PurePosixPath
@@ -18,7 +19,12 @@ from typing import Any, Literal, cast
 
 from crawler.archive import APPLICATION_ID, SCHEMA_VERSION, connect_archive, decompress_body
 from crawler.pipelines import NormalizedComment, NormalizedPost
-from crawler.static_archive import StaticPostSummary, build_static_post, summary_dict
+from crawler.static_archive import (
+    StaticPostSummary,
+    build_static_post_payload,
+    compress_static_payload,
+    summary_dict,
+)
 
 _SEARCH_FIELDS = [
     "board_id",
@@ -29,6 +35,7 @@ _SEARCH_FIELDS = [
     "created_at_raw",
     "payload_sha256",
 ]
+_COMPRESSION_LEVEL = 15
 
 
 def _json_bytes(value: object) -> bytes:
@@ -84,6 +91,47 @@ class _ObjectWriter:
         self.written += 1
 
 
+@dataclass(frozen=True, slots=True)
+class _PostTask:
+    output: Path
+    post_id: int
+    created_at_source: str
+    post: NormalizedPost
+    capture_origin: Literal["live", "legacy_import", "reparse"]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedPost:
+    post_id: int
+    created_at_source: str
+    summary: StaticPostSummary
+    payload: bytes
+    body: bytes
+    reused: bool
+
+
+def _prepare_static_post(task: _PostTask) -> _PreparedPost:
+    payload = build_static_post_payload(task.post, capture_origin=task.capture_origin)
+    target = task.output / _safe_key(payload.summary.object_key)
+    reused = target.is_file()
+    body = target.read_bytes() if reused else compress_static_payload(payload.payload)
+    if reused:
+        try:
+            existing_payload = zstd.decompress(body)
+        except zstd.ZstdError as error:
+            raise RuntimeError(f"invalid existing object: {payload.summary.object_key}") from error
+        if existing_payload != payload.payload:
+            raise RuntimeError(f"immutable object differs: {payload.summary.object_key}")
+    return _PreparedPost(
+        task.post_id,
+        task.created_at_source,
+        payload.summary,
+        payload.payload,
+        body,
+        reused,
+    )
+
+
 def _object_ref(key: str, payload: bytes, body: bytes) -> dict[str, object]:
     return {
         "object_key": key,
@@ -93,10 +141,10 @@ def _object_ref(key: str, payload: bytes, body: bytes) -> dict[str, object]:
     }
 
 
-def _write_gzip_object(writer: _ObjectWriter, prefix: str, payload: bytes) -> dict[str, object]:
+def _write_zstd_object(writer: _ObjectWriter, prefix: str, payload: bytes) -> dict[str, object]:
     payload_sha256 = _sha256(payload)
-    key = f"{prefix}-{payload_sha256}.json.gz"
-    body = gzip.compress(payload, compresslevel=6, mtime=0)
+    key = f"{prefix}-{payload_sha256}.json.zst"
+    body = zstd.compress(payload, level=_COMPRESSION_LEVEL)
     writer.write(key, body)
     return _object_ref(key, payload, body)
 
@@ -180,9 +228,9 @@ def _read_ref(root: Path, ref: object) -> tuple[dict[str, Any], bytes]:
     if ref.get("object_sha256") != _sha256(body):
         raise ValueError(f"object hash mismatch: {key}")
     try:
-        payload = gzip.decompress(body)
-    except (EOFError, gzip.BadGzipFile) as error:
-        raise ValueError(f"invalid gzip object: {key}") from error
+        payload = zstd.decompress(body)
+    except zstd.ZstdError as error:
+        raise ValueError(f"invalid Zstandard object: {key}") from error
     if ref.get("payload_sha256") != _sha256(payload):
         raise ValueError(f"payload hash mismatch: {key}")
     try:
@@ -325,7 +373,9 @@ def activate_release(root: Path, release: str) -> dict[str, Any]:
     return {**validation, "previous_release_key": previous_key}
 
 
-def export_static(source: Path, output: Path) -> dict[str, Any]:
+def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, Any]:
+    if workers < 1:
+        raise ValueError("workers must be positive")
     source = source.expanduser().resolve(strict=True)
     if not source.is_file():
         raise FileNotFoundError(f"not a file: {source}")
@@ -358,56 +408,71 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
         unavailable_comment_count = int(unavailable_counts["comment_count"])
         comment_groups = iter(_grouped_comments(connection))
         current_comments = next(comment_groups, None)
-        for row in connection.execute(
-            """
-            SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
-                   p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
-                   p.views, p.is_aa, v.content_sha256, v.capture_origin,
-                   v.body_html_zstd, v.body_text_zstd, v.comments_sha256, v.warc_record_id
-            FROM posts AS p
-            JOIN post_versions AS v ON v.id = p.latest_version_id
-            ORDER BY p.id
-            """
-        ):
-            current_post_id = int(row["post_id"])
-            if current_comments is not None and current_comments[0] < current_post_id:
-                raise ValueError(
-                    f"comments reference post without latest version: {current_comments[0]}"
+
+        def post_tasks() -> Iterator[_PostTask]:
+            nonlocal current_comments
+            for row in connection.execute(
+                """
+                SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
+                       p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
+                       p.views, p.is_aa, v.content_sha256, v.capture_origin,
+                       v.body_html_zstd, v.body_text_zstd, v.comments_sha256, v.warc_record_id
+                FROM posts AS p
+                JOIN post_versions AS v ON v.id = p.latest_version_id
+                ORDER BY p.id
+                """
+            ):
+                current_post_id = int(row["post_id"])
+                if current_comments is not None and current_comments[0] < current_post_id:
+                    raise ValueError(
+                        f"comments reference post without latest version: {current_comments[0]}"
+                    )
+                comments: tuple[NormalizedComment, ...] = ()
+                if current_comments is not None and current_comments[0] == current_post_id:
+                    comments = current_comments[1]
+                    current_comments = next(comment_groups, None)
+                origin = str(row["capture_origin"])
+                if origin not in {"live", "legacy_import", "reparse"}:
+                    raise ValueError(f"unsupported capture origin: {origin}")
+                yield _PostTask(
+                    output,
+                    current_post_id,
+                    str(row["created_at_source"] or ""),
+                    _post_from_row(row, comments),
+                    cast(Literal["live", "legacy_import", "reparse"], origin),
                 )
-            comments: tuple[NormalizedComment, ...] = ()
-            if current_comments is not None and current_comments[0] == current_post_id:
-                comments = current_comments[1]
-                current_comments = next(comment_groups, None)
-            post = _post_from_row(row, comments)
-            origin = str(row["capture_origin"])
-            if origin not in {"live", "legacy_import", "reparse"}:
-                raise ValueError(f"unsupported capture origin: {origin}")
-            static_post = build_static_post(
-                post,
-                capture_origin=cast(Literal["live", "legacy_import", "reparse"], origin),
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            prepared_posts = executor.map(
+                _prepare_static_post,
+                post_tasks(),
+                buffersize=workers * 2,
             )
-            writer.write(static_post.summary.object_key, static_post.body)
-            payload = gzip.decompress(static_post.body)
-            post_ref = {
-                **summary_dict(static_post.summary),
-                **_object_ref(static_post.summary.object_key, payload, static_post.body),
-            }
-            board_posts[post.board_id].append(post_ref)
-            search_rows.append((str(row["created_at_source"] or ""), static_post.summary))
-            object_key_by_post_id[int(row["post_id"])] = static_post.summary.object_key
-            comment_count += len(post.comments)
-            if len(search_rows) % 1000 == 0:
-                print(
-                    json.dumps(
-                        {
-                            "exported_posts": len(search_rows),
-                            "objects_written": writer.written,
-                            "objects_reused": writer.reused,
-                        }
-                    ),
-                    file=sys.stderr,
-                    flush=True,
-                )
+            for prepared in prepared_posts:
+                if prepared.reused:
+                    writer.reused += 1
+                else:
+                    writer.write(prepared.summary.object_key, prepared.body)
+                post_ref = {
+                    **summary_dict(prepared.summary),
+                    **_object_ref(prepared.summary.object_key, prepared.payload, prepared.body),
+                }
+                board_posts[prepared.summary.board_id].append(post_ref)
+                search_rows.append((prepared.created_at_source, prepared.summary))
+                object_key_by_post_id[prepared.post_id] = prepared.summary.object_key
+                comment_count += prepared.summary.comment_count
+                if len(search_rows) % 1000 == 0:
+                    print(
+                        json.dumps(
+                            {
+                                "exported_posts": len(search_rows),
+                                "objects_written": writer.written,
+                                "objects_reused": writer.reused,
+                            }
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
 
         if current_comments is not None:
             raise ValueError(
@@ -432,7 +497,7 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
                     "posts": posts,
                 }
             )
-            ref = _write_gzip_object(writer, f"boards/{board_id}/manifest", payload)
+            ref = _write_zstd_object(writer, f"boards/{board_id}/manifest", payload)
             board_refs.append({"board_id": board_id, "post_count": len(posts), **ref})
 
         ordered_search = sorted(
@@ -459,7 +524,7 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             }
         )
         search_ref = {
-            **_write_gzip_object(writer, "search/title-author", search_payload),
+            **_write_zstd_object(writer, "search/title-author", search_payload),
             "post_count": len(ordered_search),
         }
 
@@ -510,7 +575,7 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             collection_entry_count += 1
         collection_payload = _json_bytes({"schema_version": 1, "collections": collections})
         collection_ref = {
-            **_write_gzip_object(writer, "collections/all", collection_payload),
+            **_write_zstd_object(writer, "collections/all", collection_payload),
             "collection_count": len(collections),
             "entry_count": collection_entry_count,
         }
@@ -557,6 +622,7 @@ def _parse_args() -> argparse.Namespace:
     export = commands.add_parser("export")
     export.add_argument("source", type=Path)
     export.add_argument("--output", type=Path, required=True)
+    export.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
     activate = commands.add_parser("activate")
     activate.add_argument("output", type=Path)
     activate.add_argument("release")
@@ -566,7 +632,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     if args.command == "export":
-        report = export_static(args.source, args.output)
+        report = export_static(args.source, args.output, workers=args.workers)
     else:
         report = activate_release(args.output, args.release)
     print(json.dumps(report, ensure_ascii=False, indent=2))

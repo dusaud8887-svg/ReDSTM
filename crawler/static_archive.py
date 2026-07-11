@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
+from compression import zstd
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
@@ -12,6 +12,7 @@ from scrapy import Selector
 from crawler.pipelines import NormalizedPost
 
 _TYPEMOON_HOSTS = {"typemoon.net", "www.typemoon.net"}
+_COMPRESSION_LEVEL = 15
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,11 +36,21 @@ class StaticPostObject:
     body: bytes = field(repr=False)
 
 
-def build_static_post(
+@dataclass(frozen=True, slots=True)
+class StaticPostPayload:
+    summary: StaticPostSummary
+    payload: bytes = field(repr=False)
+
+
+def compress_static_payload(payload: bytes) -> bytes:
+    return zstd.compress(payload, level=_COMPRESSION_LEVEL)
+
+
+def build_static_post_payload(
     post: NormalizedPost,
     *,
     capture_origin: Literal["live", "legacy_import", "reparse"] = "live",
-) -> StaticPostObject:
+) -> StaticPostPayload:
     payload = {
         "schema_version": 1,
         "source": "typemoon",
@@ -77,7 +88,7 @@ def build_static_post(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
     ).encode()
     payload_sha256 = hashlib.sha256(encoded).hexdigest()
-    object_key = f"posts/{post.board_id}/{post.external_post_id}-{payload_sha256}.json.gz"
+    object_key = f"posts/{post.board_id}/{post.external_post_id}-{payload_sha256}.json.zst"
     summary = StaticPostSummary(
         board_id=post.board_id,
         external_post_id=post.external_post_id,
@@ -91,7 +102,16 @@ def build_static_post(
         comment_count=len(post.comments),
         payload_sha256=payload_sha256,
     )
-    return StaticPostObject(summary, gzip.compress(encoded, compresslevel=6, mtime=0))
+    return StaticPostPayload(summary, encoded)
+
+
+def build_static_post(
+    post: NormalizedPost,
+    *,
+    capture_origin: Literal["live", "legacy_import", "reparse"] = "live",
+) -> StaticPostObject:
+    payload = build_static_post_payload(post, capture_origin=capture_origin)
+    return StaticPostObject(payload.summary, compress_static_payload(payload.payload))
 
 
 def summary_dict(summary: StaticPostSummary) -> dict[str, object]:
