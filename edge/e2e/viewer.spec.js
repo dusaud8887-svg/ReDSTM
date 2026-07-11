@@ -77,6 +77,10 @@ async function useCollectionFixture(page) {
   });
 }
 
+async function useAccessExpiredFixture(page) {
+  await page.route("**/archive/**", (route) => route.fulfill({ status: 403, body: "expired" }));
+}
+
 async function openPost(page, key) {
   await page.goto(stableUrl(key));
   await expect(page.locator("#archive-state")).toHaveText("보존본");
@@ -112,6 +116,12 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page).toHaveURL(/\/read\/board_a\/3$/);
+  if (testInfo.project.name === "medium") {
+    await expect(page.locator("body")).toHaveClass(/catalog-collapsed/);
+    await expect(page.locator(".catalog")).toBeHidden();
+    await page.locator("#catalog-toggle").click();
+    await expect(page.locator(".catalog")).toBeVisible();
+  }
   if (page.viewportSize().width <= 760) {
     await expect(page.locator(".catalog")).toBeHidden();
     await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-reader.png` });
@@ -162,6 +172,11 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await openPost(page, standaloneKey);
   await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = 300; });
   await expect(page.locator("#reading-progress")).not.toHaveCSS("width", "0px");
+  if (page.viewportSize().width < 760) {
+    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+    await page.locator("#archive-body p").nth(10).click();
+    await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+  }
   await page.keyboard.press("f");
   await expect(page.locator("body")).toHaveClass(/immersive/);
   await page.keyboard.press("Escape");
@@ -170,6 +185,10 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("/");
   await expect(page.locator("#search-input")).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".result-item").first()).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#reader")).toBeVisible();
 });
 
 test("searches and renders a real AA post", async ({ page }, testInfo) => {
@@ -261,4 +280,22 @@ test("distinguishes a missing preserved object", async ({ page }) => {
   await page.goto("/read/board_a/404");
   await expect(page.locator("#archive-state")).toHaveText("본문 오류");
   await expect(page.locator("#empty-reader")).toContainText("현재 보존본에서 글을 찾을 수 없습니다");
+});
+
+test("distinguishes Access expiry from an archive failure", async ({ page }) => {
+  await useAccessExpiredFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("로그인 필요");
+  await expect(page.locator("#home-title")).toHaveText("로그인이 만료되었습니다");
+  await expect(page.locator("#home-action")).toHaveText("다시 로그인");
+});
+
+test("shows an offline recovery state", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await expect(page.locator("#archive-state")).toHaveText("오프라인");
+  await expect(page.locator("#home-title")).toHaveText("오프라인입니다");
+  await expect(page.locator("#home-action")).toHaveText("다시 시도");
 });

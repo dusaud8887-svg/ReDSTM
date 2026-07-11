@@ -34,6 +34,7 @@ const elements = Object.fromEntries(
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings",
     "post-settings-actions", "settings-bookmark", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
+    "catalog-toggle", "home-action",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -59,6 +60,7 @@ let postController;
 let pinchDistance = 0;
 let zoomFeedbackTimer;
 let zoomPersistTimer;
+let lastReaderScroll = 0;
 let latestPosts = [];
 let publishedAt = null;
 const workerRequests = new Map();
@@ -232,6 +234,7 @@ function renderCover(
   title = "다시 읽고 싶은 기록을 한곳에서 찾으세요.",
   description = "사라질 수 있는 이야기와 AA를 원형에 가깝게 보존합니다.",
   showContinue = true,
+  actionLabel = "",
 ) {
   elements.reader.hidden = true;
   elements["empty-reader"].hidden = false;
@@ -244,6 +247,8 @@ function renderCover(
   elements["home-freshness"].textContent = published
     ? `마지막 보존 ${published}${newest ? ` · 최신 기록 ${newest}` : ""}`
     : "마지막 갱신 확인 중";
+  elements["home-action"].hidden = !actionLabel;
+  elements["home-action"].textContent = actionLabel;
   const latest = historyEntries[0]?.summary;
   elements["continue-reading"].hidden = !latest || !showContinue;
   if (latest) {
@@ -254,6 +259,30 @@ function renderCover(
   renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.");
 }
 
+function requireArchiveResponse(response, message) {
+  if (
+    response.status === 401 || response.status === 403 || response.redirected ||
+    String(response.url ?? "").includes("/cdn-cgi/access/")
+  ) {
+    const error = new Error("Cloudflare Access session expired");
+    error.code = "access_expired";
+    throw error;
+  }
+  if (!response.ok) throw new Error(message);
+}
+
+function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없음") {
+  const offline = error?.code === "offline" || !navigator.onLine;
+  const expired = error?.code === "access_expired";
+  const title = offline ? "오프라인입니다" : expired ? "로그인이 만료되었습니다" : fallbackTitle;
+  const message = offline
+    ? "네트워크 연결을 확인한 뒤 다시 시도하세요."
+    : expired ? "보호된 장서를 계속 보려면 다시 로그인하세요." : error?.message ?? "알 수 없는 오류";
+  elements["archive-state"].textContent = offline ? "오프라인" : expired ? "로그인 필요" : "연결 오류";
+  elements["result-status"].textContent = message;
+  renderCover(title, message, false, expired ? "다시 로그인" : "다시 시도");
+}
+
 function openMobileReader() {
   document.body.classList.remove("home-open");
   document.body.classList.add("reader-open");
@@ -261,6 +290,7 @@ function openMobileReader() {
 
 function closeMobileReader(focusSearch = currentDestination !== "library") {
   document.body.classList.remove("reader-open");
+  document.body.classList.remove("reader-controls-hidden");
   document.body.classList.toggle("home-open", currentDestination === "library");
   if (focusSearch) elements["search-input"].focus({ preventScroll: true });
 }
@@ -281,6 +311,8 @@ function showDestination(destination, navigate = true) {
   currentDestination = destination;
   currentSummary = null;
   currentPayload = null;
+  document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
+  elements["catalog-toggle"].setAttribute("aria-expanded", "true");
   elements["post-settings-actions"].hidden = true;
   renderCover();
   closeMobileReader(destination === "search");
@@ -353,14 +385,16 @@ function handleWorkerMessage({ data }) {
   const pending = workerRequests.get(data.id);
   if (pending) {
     workerRequests.delete(data.id);
-    if (data.type === "error") pending.reject(new Error(data.message));
+    if (data.type === "error") {
+      const error = new Error(data.message);
+      error.code = data.code;
+      pending.reject(error);
+    }
     else pending.resolve(data.summaries);
     return;
   }
   if (data.type === "error") {
-    elements["archive-state"].textContent = "연결 오류";
-    elements["result-status"].textContent = data.message;
-    renderCover("아카이브를 열 수 없음", data.message, false);
+    renderArchiveError({ code: data.code, message: data.message });
     return;
   }
   if (data.type === "ready") {
@@ -451,14 +485,14 @@ function renderResults(posts, status) {
 
 async function loadCollections() {
   const releaseResponse = await fetch("/archive/release.json");
-  if (!releaseResponse.ok) throw new Error(`release 응답 ${releaseResponse.status}`);
+  requireArchiveResponse(releaseResponse, `release 응답 ${releaseResponse.status}`);
   const release = await releaseResponse.json();
   const objectKey = release?.collections?.object_key;
   if (release.schema_version !== 1 || typeof objectKey !== "string") {
     throw new Error("지원하지 않는 컬렉션 release 형식");
   }
   const response = await fetch(`/archive/${objectKey}`);
-  if (!response.ok) throw new Error(`컬렉션 응답 ${response.status}`);
+  requireArchiveResponse(response, `컬렉션 응답 ${response.status}`);
   const payload = await response.json();
   if (payload?.schema_version !== 1 || !Array.isArray(payload.collections)) {
     throw new Error("지원하지 않는 컬렉션 형식");
@@ -532,14 +566,14 @@ async function loadPost(summary, navigate = true) {
     const resolved = summary?.object_key ? summary : (await resolvePosts([summary]))[0];
     if (!resolved?.object_key) throw new Error("현재 보존본에서 글을 찾을 수 없습니다");
     const response = await fetch(`/archive/${resolved.object_key}`, { signal: postController.signal });
-    if (!response.ok) throw new Error(response.status === 404 ? "보존 객체가 없습니다" : `본문 응답 ${response.status}`);
+    requireArchiveResponse(response, response.status === 404 ? "보존 객체가 없습니다" : `본문 응답 ${response.status}`);
     const payload = await response.json();
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
     showPost(payload, resolved, navigate);
   } catch (error) {
     if (error.name !== "AbortError") {
-      renderCover("본문을 열 수 없음", error.message, false);
-      elements["archive-state"].textContent = "본문 오류";
+      renderArchiveError(error, "본문을 열 수 없음");
+      if (error.code !== "access_expired" && navigator.onLine) elements["archive-state"].textContent = "본문 오류";
     }
   } finally {
     elements["reader-pane"].removeAttribute("aria-busy");
@@ -563,6 +597,11 @@ function showPost(payload, suppliedSummary, navigate) {
     views: post.views,
   };
   elements["reading-progress"].style.width = "0%";
+  lastReaderScroll = 0;
+  document.body.classList.remove("reader-controls-hidden");
+  const collapseCatalog = matchMedia("(min-width: 760px) and (max-width: 899px)").matches;
+  document.body.classList.toggle("catalog-collapsed", collapseCatalog);
+  elements["catalog-toggle"].setAttribute("aria-expanded", String(!collapseCatalog));
   elements["empty-reader"].hidden = true;
   elements.reader.hidden = false;
   elements["reader-kicker"].textContent = [post.board_id, post.category].filter(Boolean).join(" · ");
@@ -657,7 +696,7 @@ function rememberHistory(summary) {
 }
 
 function isNarrowScreen() {
-  return matchMedia("(max-width: 760px)").matches;
+  return matchMedia("(max-width: 759px)").matches;
 }
 
 function readingPosition() {
@@ -666,6 +705,7 @@ function readingPosition() {
 
 function restoreReadingPosition(summary) {
   const position = historyEntries.find((entry) => samePost(entry.summary, summary))?.scroll ?? 0;
+  lastReaderScroll = position;
   elements["reader-pane"].scrollTop = position;
 }
 
@@ -734,6 +774,16 @@ function updateTabs() {
   }
 }
 
+function focusResult(offset) {
+  const buttons = [...elements["result-list"].querySelectorAll(".result-item")];
+  if (!buttons.length || (isNarrowScreen() && document.body.classList.contains("reader-open"))) return;
+  const current = buttons.indexOf(document.activeElement);
+  const next = current < 0
+    ? (offset > 0 ? 0 : buttons.length - 1)
+    : Math.max(0, Math.min(buttons.length - 1, current + offset));
+  buttons[next].focus({ preventScroll: false });
+}
+
 elements["result-list"].addEventListener("click", (event) => {
   const button = event.target.closest(".result-item");
   if (button) loadPost(renderedResults[Number(button.dataset.index)]);
@@ -743,6 +793,12 @@ elements["continue-reading"].addEventListener("click", () => {
   if (latest) loadPost(latest);
 });
 elements["browse-all"].addEventListener("click", () => showDestination("search"));
+elements["home-action"].addEventListener("click", () => location.reload());
+elements["catalog-toggle"].addEventListener("click", () => {
+  const collapsed = document.body.classList.toggle("catalog-collapsed");
+  elements["catalog-toggle"].setAttribute("aria-expanded", String(!collapsed));
+  elements["catalog-toggle"].ariaLabel = collapsed ? "목록 펼치기" : "목록 접기";
+});
 elements["catalog-back"].addEventListener("click", () => {
   if (history.state?.redstmReader) history.back();
   else {
@@ -796,7 +852,20 @@ for (const [id, offset] of [["end-previous", -1], ["end-next", 1]]) {
 elements["reader-pane"].addEventListener("scroll", () => {
   queueScrollSave();
   updateReadingProgress();
+  const current = elements["reader-pane"].scrollTop;
+  const delta = current - lastReaderScroll;
+  if (isNarrowScreen() && document.body.classList.contains("reader-open")) {
+    if (current > 120 && delta > 8) document.body.classList.add("reader-controls-hidden");
+    else if (delta < -8) document.body.classList.remove("reader-controls-hidden");
+  }
+  lastReaderScroll = current;
 }, { passive: true });
+elements["reader-pane"].addEventListener("pointerup", (event) => {
+  if (document.body.classList.contains("reader-controls-hidden") &&
+      !event.target.closest("a, button, input, select, textarea")) {
+    document.body.classList.remove("reader-controls-hidden");
+  }
+});
 
 elements["theme-toggle"].addEventListener("click", () => {
   settings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -934,6 +1003,12 @@ elements["import-state-file"].addEventListener("change", async () => {
 });
 
 document.addEventListener("keydown", (event) => {
+  const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");
+  if (catalogArrow && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    event.preventDefault();
+    focusResult(event.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
   if (event.target.closest("input, select, textarea, button, [contenteditable]")) return;
   if (event.key === "/") {
     event.preventDefault();
@@ -951,8 +1026,10 @@ document.addEventListener("keydown", (event) => {
     setImmersive(false);
   }
 });
+document.addEventListener("focusin", () => document.body.classList.remove("reader-controls-hidden"));
 
 history.scrollRestoration = "manual";
+window.addEventListener("offline", () => renderArchiveError({ code: "offline" }));
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") persistUserState();
 });

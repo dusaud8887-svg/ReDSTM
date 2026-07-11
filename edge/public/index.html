@@ -37,6 +37,9 @@
     </aside>
 
     <header class="app-bar">
+      <button class="catalog-toggle" id="catalog-toggle" type="button" aria-label="목록 접기" aria-expanded="true">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".5"/><circle cx="4" cy="12" r=".5"/><circle cx="4" cy="18" r=".5"/></svg>
+      </button>
       <strong>ReDSTM</strong>
       <div class="archive-facts" aria-live="polite">
         <span id="archive-count">—</span>
@@ -77,6 +80,7 @@
             <h1 id="home-title">다시 읽고 싶은 기록을<br>한곳에서 찾으세요.</h1>
             <p class="home-copy cover-copy">사라질 수 있는 이야기와 AA를 원형에 가깝게 보존합니다.</p>
             <div class="home-facts"><strong id="empty-count">—</strong><span>보존된 글</span><span id="home-freshness">마지막 갱신 확인 중</span></div>
+            <button class="home-action" id="home-action" type="button" hidden>다시 시도</button>
           </header>
           <button class="continue-reading" id="continue-reading" type="button" hidden>
             <span>이어서 읽기</span><strong id="continue-title"></strong><small id="continue-meta"></small>
