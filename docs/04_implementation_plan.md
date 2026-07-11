@@ -200,6 +200,11 @@ metadata 비교, 공지 제외 연속 20건 경계, warning/`--inventory` 우회
 - board별 run/counters와 final summary
 - duplicate process는 shared sync lock으로 차단
 
+상태(2026-07-12): local core 구현 완료, Oracle canary와 30분 재로그인 throttle은 남았다.
+`d52f63a`/`d71663f`에서 network/auth preflight 분류, 1회 session 검증, enabled board 순차 subprocess,
+board별 원자 report, parse failure 이월, auth 즉시 중단과 연속 network 3회 breaker를 구현했다.
+Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 사용한다.
+
 #### A2.3 retry/recovery
 
 - AA → 창작 → 팬픽 → 나머지
@@ -211,6 +216,11 @@ metadata 비교, 공지 제외 연속 20건 경계, warning/`--inventory` 우회
   경로에서 처리 중 만료될 수 있다
 - `site_unreachable`로 끝난 run의 network 실패는 frontier attempt로 세지 않는다
 - 파라미터 시작값은 [`10 §8.1`](10_oracle_runner_runbook.md)을 따른다
+
+상태(2026-07-12): local core 구현 완료, live 20/100건·대형 AA canary 전이다. 기존 priority/due
+claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage network attempt
+복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
+dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다.
 
 #### A2.4 delta release
 

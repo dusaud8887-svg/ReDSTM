@@ -149,8 +149,8 @@ R2 writer key와 Access service token은 별도 credential file로만
 
 ### G1. 실제 incremental discovery
 
-현재 `scripts.sync`는 한 board의 최신 범위를 매번 다시 detail fetch한다. 다음을 구현해 이미 아는
-최신 20건을 6시간마다 전부 재요청하지 않게 한다.
+상태(2026-07-12): `b3e83e1`로 local 구현·회귀 검증 완료, Oracle canary 전이다. 다음 계약으로 이미
+아는 최신 20건을 6시간마다 전부 재요청하지 않는다.
 
 1. listing metadata에서 새 identity 또는 title/category/comment count 변경만 frontier에 넣는다.
 2. views처럼 자연히 계속 변하는 값은 detail 재수집 trigger로 쓰지 않는다.
@@ -163,6 +163,10 @@ R2 writer key와 Access service token은 별도 credential file로만
 46개 enabled board를 별도 수동 명령 없이 순차 실행하는 한 command를 추가한다. command는 board별
 결과를 분리 기록하고 network/listing failure는 다음 board로 넘기되, session/auth failure는 전체
 cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Celery/Redis를 추가하지 않는다.
+
+상태(2026-07-12): `scripts.crawl_cycle` local core와 failure test 완료, Oracle canary 및 systemd 연결
+전이다. 세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와 outage
+attempt 복원을 적용한다. 30분 재로그인 throttle은 timer 활성화 전 남은 gate다.
 
 ### G3. delta release/publish
 
