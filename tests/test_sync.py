@@ -412,3 +412,9 @@ def test_dead_man_ping_skips_partial_and_failed_runs(monkeypatch: pytest.MonkeyP
     assert opened == []
     notify_dead_man(True, url)
     assert opened == [url]
+
+    def unavailable(request: UrlRequest, timeout: int) -> Response:
+        raise OSError("monitor unavailable")
+
+    monkeypatch.setattr("scripts.healthcheck.urlopen", unavailable)
+    notify_dead_man(True, url)

@@ -20,4 +20,7 @@ def notify_dead_man(succeeded: bool, url: str) -> None:
     # The dead-man contract pings only fully successful work so that a streak
     # of partial failures still raises the external alert.
     if url and succeeded:
-        ping_success(url)
+        try:
+            ping_success(url)
+        except RuntimeError:
+            pass
