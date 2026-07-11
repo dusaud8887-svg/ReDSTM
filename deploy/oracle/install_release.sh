@@ -67,7 +67,7 @@ install_release() {
     chown -R redstm:redstm "$staging"
     sudo -u redstm env HOME=/srv/redstm/home UV_CACHE_DIR=/srv/redstm/cache UV_NO_CONFIG=1 \
       /usr/local/bin/uv sync --frozen --no-dev --managed-python --directory "$staging"
-    sudo -u redstm "$staging/.venv/bin/python" -c \
+    sudo -u redstm env PYTHONPATH="$staging" "$staging/.venv/bin/python" -c \
       'import crawler.archive, scripts.control_runner'
     mv -- "$staging" "$target"
   fi
@@ -90,7 +90,8 @@ install_release() {
   systemd-analyze verify /etc/systemd/system/redstm-control.service \
     /etc/systemd/system/redstm-control.timer
   systemctl daemon-reload
-  sudo -u redstm "$CURRENT/.venv/bin/python" -c 'import scripts.control_runner'
+  sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" -c \
+    'import scripts.control_runner'
   rm -f -- "$archive"
   if [[ "$0" == "/tmp/redstm-install-release.sh" ]]; then
     rm -f -- "$0"
@@ -152,7 +153,8 @@ rollback_release() {
   systemd-analyze verify /etc/systemd/system/redstm-control.service \
     /etc/systemd/system/redstm-control.timer
   systemctl daemon-reload
-  sudo -u redstm "$CURRENT/.venv/bin/python" -c 'import scripts.control_runner'
+  sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" -c \
+    'import scripts.control_runner'
   printf 'rollback=%s\n' "$(basename "$previous")"
 }
 
