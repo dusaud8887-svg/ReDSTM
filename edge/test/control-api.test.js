@@ -35,6 +35,9 @@ function database(handler) {
         run() {
           return handler("run", sql, parameters);
         },
+        all() {
+          return handler("all", sql, parameters);
+        },
       };
       return statement;
     },
@@ -205,6 +208,144 @@ test("heartbeat and overview expose only bounded status", async () => {
   );
   assert.equal(overview.status, 200);
   assert.equal((await overview.json()).data.active_commands, 0);
+});
+
+test("pages runs with an opaque keyset cursor and latest event", async () => {
+  const rows = [
+    {
+      run_id: "run-003",
+      kind: "scheduled",
+      source: "systemd",
+      state: "succeeded",
+      started_at: "2026-07-12T03:00:00Z",
+      event_sequence: 2,
+      event_step: "publishing",
+      event_state: "succeeded",
+      event_recorded_at: "2026-07-12T03:01:00Z",
+      event_counters_json: '{"changed_posts":1}',
+    },
+    {
+      run_id: "run-002",
+      kind: "scheduled",
+      source: "systemd",
+      state: "succeeded",
+      started_at: "2026-07-12T02:00:00Z",
+    },
+  ];
+  let parameters;
+  const env = {
+    CONTROL_DB: database((method, sql, values) => {
+      assert.equal(method, "all");
+      assert.match(sql, /LEFT JOIN run_events/);
+      parameters = values;
+      return { results: rows };
+    }),
+  };
+  const first = await controlApiResponse(
+    request("/api/v1/ops/runs?limit=1"),
+    env,
+    { role: "user", subject: "reader" },
+  );
+  assert.equal(first.status, 200);
+  const page = (await first.json()).data;
+  assert.equal(page.items.length, 1);
+  assert.deepEqual(page.items[0].latest_event.counters, { changed_posts: 1 });
+  assert.match(page.next_cursor, /^[a-zA-Z0-9_-]+$/);
+  assert.deepEqual(parameters, [2]);
+
+  const second = await controlApiResponse(
+    request(`/api/v1/ops/runs?limit=1&cursor=${page.next_cursor}`),
+    env,
+    { role: "user", subject: "reader" },
+  );
+  assert.equal(second.status, 200);
+  assert.deepEqual(parameters, [rows[0].started_at, rows[0].started_at, rows[0].run_id, 2]);
+});
+
+test("pages filtered board summaries without exposing source data", async () => {
+  let parameters;
+  const env = {
+    CONTROL_DB: database((method, sql, values) => {
+      assert.equal(method, "all");
+      assert.match(sql, /last_outcome = \?/);
+      parameters = values;
+      return {
+        results: [{
+          board_id: "aa",
+          last_outcome: "succeeded",
+          pending: 2,
+          warning_code: null,
+          upstream_url: "https://must-not-leak.example",
+        }],
+      };
+    }),
+  };
+  const response = await controlApiResponse(
+    request("/api/v1/ops/boards?state=succeeded&limit=5"),
+    env,
+    { role: "user", subject: "reader" },
+  );
+  assert.equal(response.status, 200);
+  const data = (await response.json()).data;
+  assert.equal(data.items[0].pending, 2);
+  assert.equal("upstream_url" in data.items[0], false);
+  assert.deepEqual(parameters, ["succeeded", 6]);
+});
+
+test("returns bounded release metadata from the private R2 pointer", async () => {
+  const manifest = {
+    schema_version: 1,
+    post_count: 10,
+    comment_count: 20,
+    board_count: 2,
+    collection_count: 1,
+    collection_entry_count: 3,
+    unavailable_post_count: 4,
+    unavailable_comment_count: 5,
+    boards: [{ object_key: "must-not-leak.json.zst" }],
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const env = {
+    ARCHIVE: {
+      get(key) {
+        assert.equal(key, "release.json");
+        return {
+          size: bytes.byteLength,
+          uploaded: new Date("2026-07-12T00:00:00Z"),
+          arrayBuffer: async () => bytes.buffer,
+        };
+      },
+    },
+    CONTROL_DB: database((method, sql) => {
+      assert.equal(method, "first");
+      assert.match(sql, /release_id <> \?/);
+      return { release_id: "previous-release", finished_at: "2026-07-11T00:00:00Z" };
+    }),
+  };
+  const response = await controlApiResponse(
+    request("/api/v1/ops/releases"),
+    env,
+    { role: "user", subject: "reader" },
+  );
+  assert.equal(response.status, 200);
+  const data = (await response.json()).data;
+  assert.equal(data.current.counts.post_count, 10);
+  assert.equal(data.previous.release_id, "previous-release");
+  assert.equal(JSON.stringify(data).includes("must-not-leak"), false);
+});
+
+test("rejects malformed page controls before storage", async () => {
+  const env = {
+    CONTROL_DB: database(() => assert.fail("D1 must not be called")),
+  };
+  const limit = await controlApiResponse(
+    request("/api/v1/ops/runs?limit=51"), env, { role: "user", subject: "reader" },
+  );
+  assert.equal(limit.status, 400);
+  const cursor = await controlApiResponse(
+    request("/api/v1/ops/boards?cursor=%25"), env, { role: "user", subject: "reader" },
+  );
+  assert.equal(cursor.status, 400);
 });
 
 test("starts a run and command link in one D1 batch", async () => {
