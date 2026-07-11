@@ -49,6 +49,16 @@ def test_doctor_reports_failures_without_sensitive_capture_data(tmp_path: Path) 
             """,
             (_NOW.isoformat(timespec="seconds"),),
         )
+        connection.execute(
+            """
+            INSERT INTO captures (
+                run_id, url, entity_type, fetched_at, outcome, warc_file
+            ) VALUES ('missing-run', 'https://secret.example/post/8', 'post', ?, 'stored',
+                      'truncated.warc.gz')
+            """,
+            (_NOW.isoformat(timespec="seconds"),),
+        )
+    (warc_dir / "truncated.warc.gz").write_bytes(b"not a WARC")
     (warc_dir / "interrupted.warc.gz.partial").write_bytes(b"partial")
 
     report = inspect_archive(archive, warc_dir, now=_NOW)
@@ -59,10 +69,12 @@ def test_doctor_reports_failures_without_sensitive_capture_data(tmp_path: Path) 
         "sqlite_health_failed",
         "expired_running_leases",
         "missing_warc_files",
+        "invalid_warc_files",
         "orphan_partial_warcs",
     ]
     assert report["checks"]["expired_running_leases"]["count"] == 1
     assert report["checks"]["missing_warc_files"]["count"] == 1
+    assert report["checks"]["invalid_warc_files"]["count"] == 1
     assert report["checks"]["orphan_partial_warcs"]["count"] == 1
     assert "secret-token" not in rendered
     assert "secret.example" not in rendered

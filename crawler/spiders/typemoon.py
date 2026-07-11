@@ -47,8 +47,8 @@ _TITLE_SELECTORS = (
     ".view-title::text",
 )
 _AUTHOR_SELECTORS = (
-    "span.sv_wrap > a::text",
     "div.view-info-box span.sv_wrap > a::text",
+    "article.board-view span.sv_wrap > a::text",
     ".board-view-nick::text",
     ".sv_member::text",
 )
@@ -81,7 +81,6 @@ _COMMENT_ITEMS = ".view-comment-item, .view-comment-no-item, .cmt-item, .comment
 _COMMENT_DEPTH = re.compile(r"(?:depth|reply)[_-]?(\d+)?", re.IGNORECASE)
 _COMMENT_ID = re.compile(r"(\d+)")
 _MARGIN_LEFT = re.compile(r"margin-left\s*:\s*(\d+)", re.IGNORECASE)
-_TITLE_BADGE = re.compile(r"^\[[^\]]+\]\s*")
 _AA_STYLE_HINT = re.compile(r"saitamaar|ms\s*(?:p\s*)?gothic|ipamona|mona", re.IGNORECASE)
 
 
@@ -105,7 +104,7 @@ def _first_text(
     for rule in rules:
         values = [value.strip() for value in selector.css(rule).getall() if value.strip()]
         if values:
-            return " ".join(values)
+            return values[0]
     return None
 
 
@@ -477,6 +476,9 @@ class TypeMoonSpider(scrapy.Spider):
         assert title is not None
         assert content is not None
         category = _category(response)
+        normalized_title = title
+        if category:
+            normalized_title = re.sub(rf"^\[{re.escape(category)}\]\s*", "", title).strip() or title
         body_html = content.get()
         body_text = "\n".join(content.css("::text").getall()).strip()
         yield CapturedPostItem(
@@ -484,7 +486,7 @@ class TypeMoonSpider(scrapy.Spider):
             external_post_id=external_post_id,
             canonical_url=canonical_url,
             outcome="stored",
-            title=_TITLE_BADGE.sub("", title).strip() or title,
+            title=normalized_title,
             author=_first_text(response, _AUTHOR_SELECTORS),
             category=category,
             created_at_raw=_first_text(response, _DATE_SELECTORS),

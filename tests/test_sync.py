@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from scrapy import Request
 from scrapy.http import HtmlResponse
 
@@ -13,7 +14,7 @@ from crawler.items import CapturedPostItem
 from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
-from scripts.sync import _capture_summary
+from scripts.sync import _capture_summary, _ping_success
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
 
@@ -73,7 +74,7 @@ def _run_fixture(path: Path, run_id: str) -> None:
     )
     [item] = list(spider.parse_detail(detail))
     assert isinstance(item, CapturedPostItem)
-    ArchivePipeline(path, run_id).process_item(item, spider)
+    ArchivePipeline(path, run_id).process_item(item)
 
 
 def test_bounded_sync_fixture_is_idempotent_across_runs(tmp_path: Path) -> None:
@@ -138,3 +139,22 @@ def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
         ).fetchone()
         assert tuple(capture) == ("fetch_failed", "network_error")
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "retry"
+
+
+def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+
+    class Response:
+        def close(self) -> None:
+            pass
+
+    def open_request(request: Request, timeout: int) -> Response:
+        opened.append(request.full_url)
+        assert timeout == 15
+        return Response()
+
+    monkeypatch.setattr("scripts.sync.urlopen", open_request)
+    _ping_success("https://hc.example.test/uuid")
+    assert opened == ["https://hc.example.test/uuid"]
+    with pytest.raises(ValueError, match="credential-free HTTPS"):
+        _ping_success("https://user:secret@hc.example.test/uuid")

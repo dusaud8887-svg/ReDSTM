@@ -133,6 +133,25 @@ def test_restricted_phrase_inside_real_content_is_stored() -> None:
     assert item["outcome"] == "stored"
 
 
+def test_bracketed_series_title_is_preserved_without_category_badge() -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    response = HtmlResponse(
+        url=url,
+        body=(
+            "<article class='board-view'><h4><strong>[Fate] 1화</strong></h4>"
+            "<div class='view-info-box'><span class='sv_wrap'><a>작성자</a></span></div>"
+            "<div class='wr-content'>본문</div></article>"
+        ).encode(),
+        encoding="utf-8",
+        request=Request(url=url),
+    )
+
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+
+    assert item["title"] == "[Fate] 1화"
+    assert item["author"] == "작성자"
+
+
 def test_login_form_structure_is_auth_failure_without_phrase_match() -> None:
     url = "https://www.typemoon.net/write_free21/62068"
     response = HtmlResponse(

@@ -43,6 +43,24 @@
 
 결론은 **migration/local DB ready, production operation not ready**다.
 
+### 1.3 2026-07-11 구현·canary 진행 증거
+
+- Git baseline과 P0 구현 commit을 생성했고 secret/runtime 산출물 제외를 재검증했다.
+- schema v2 migration, `(raw_sha256, url)` WARC reuse, atomic capture/frontier transition과
+  bounded `sync` command를 구현했다. Python 63 tests, Ruff, mypy와 Node 6 tests가 통과했다.
+- 만료 표시된 기존 session이 authenticated GET에서 유효함을 확인했으며 form login은 하지 않았다.
+- `write_free21`, 1 page/1 post live canary를 별도 schema v2 DB에서 3회 실행했다. 마지막 run
+  `sync-360eca3369704c90b0a787c82c38d77d`는 listing/post 모두 `unchanged`, frontier `done`이었다.
+- 실제 응답에서 author 과수집과 bracket title 손실을 발견해 수정했다. 최종 projection은 author
+  `떠돌이개`, bracket title 보존, comments 4건이며 INFO log에 본문/lease token이 나오지 않는다.
+- canary `doctor`는 SQLite health, lease, WARC validity/reference, `.partial` 검사에서
+  `ok=true`, issues 0이었다. Truncated WARC failure test와 secret-free HTTPS ping wiring도 통과했다.
+- D 드라이브 snapshot은 복사가 끝났고 중복 source health 검사 때문에 지연되어, 검증 범위를
+  snapshot full health 1회로 수정한 `--resume-partial` background finalize를 진행 중이다.
+
+아직 canonical `E:\ReDSTM\canonical\archive-v1.sqlite`는 schema v1이다. Snapshot manifest가
+`ok=true`로 확정되기 전에는 schema v2를 적용하지 않는다.
+
 ## 2. 우선순위 규칙
 
 - **P0**: 데이터 손실·복구 불능·credential 노출을 막는 선행 작업. 끝나기 전 production crawl 금지.
@@ -55,7 +73,7 @@
 
 ## 3. P0: production 수집 전 blocker
 
-### P0-0. source와 데이터 기준선 고정
+### P0-0. source와 데이터 기준선 고정 (진행 중)
 
 **목적:** 이후 변경과 데이터 손상을 되돌릴 수 있는 출발점을 만든다.
 
@@ -73,7 +91,7 @@
 - live DB 없이 2차 사본만으로 `quick_check`, FK 검사와 주요 count가 통과한다.
 - legacy source와 현재 canonical은 삭제하지 않는다.
 
-### P0-1. capture ledger와 schema v2
+### P0-1. capture ledger와 schema v2 (구현·canary 완료, canonical 적용 대기)
 
 **목적:** HTTP 응답, WARC 원문, 정규화 결과와 canonical write를 한 원장으로 추적한다.
 
@@ -81,7 +99,8 @@
 
 1. capture 결과에 request identity, HTTP status, raw SHA-256, WARC file/record 위치를 기록한다.
 2. `raw_sha256` lookup index로 동일 응답의 중복 WARC 기록 정책을 구현한다.
-3. `stored`, `unchanged`, `restricted`, `parse_drift`, `failed`를 명시적 terminal outcome으로 둔다.
+3. schema 계약대로 `stored`, `unchanged`, `restricted`, `missing`, `parse_failed`,
+   `fetch_failed`를 저장하고 운영 report에서는 parse drift와 전체 failure를 집계한다.
 4. v1에서 v2로 재실행 가능한 migration과 rollback 전 snapshot gate를 작성한다.
 5. credential/cookie/auth header가 WARC와 ledger에 남지 않는 회귀 테스트를 유지한다.
 
@@ -94,7 +113,7 @@
 - crash 후 `.partial`과 ledger를 `doctor`가 판별할 근거가 남는다.
 - migration 전후 기존 284,070 posts와 3,729,706 comments가 보존된다.
 
-### P0-2. bounded sync vertical slice
+### P0-2. bounded sync vertical slice (1건 live canary 통과)
 
 **목적:** 한 board의 제한된 범위를 안전하게 수집하는 최소 production 경로를 완성한다.
 
@@ -112,7 +131,7 @@
 - 인증 실패와 parse drift가 정상 글 또는 retry로 조용히 오분류되지 않는다.
 - 중단 후 lease recovery로 같은 범위를 완료할 수 있다.
 
-### P0-3. recovery와 무응답 실패 감지
+### P0-3. recovery와 무응답 실패 감지 (구현 완료, 외부 dead-man URL 대기)
 
 **목적:** 자동 실행이 멈추거나 부분 실패해도 한 사람이 원인을 확인하고 복구할 수 있게 한다.
 
@@ -196,17 +215,16 @@
 
 ## 7. 바로 진행할 작업 순서
 
-1. **P0-0:** Git baseline 승인, canonical snapshot/manifest와 독립 2차 사본 검증
-2. **P0-1:** capture ledger/schema v2 설계·migration·회귀 테스트
-3. **P0-2:** 한 board/제한 건수의 bounded sync vertical slice
-4. **P0-3:** `doctor`, failure injection, dead-man ping
-5. **P1-1:** full deterministic export와 release rollback
+1. **P0-0:** background snapshot manifest `ok=true` 확인
+2. **P0-1:** canonical에 schema v2 적용 후 count/health/index 재검증
+3. **P0-3:** truncated WARC failure test와 무료 dead-man ping 연결
+4. **P1-1:** full deterministic export와 release rollback
+5. **P1-2:** collection 연속 읽기 완결
 
 ## 8. 사용자 승인 또는 외부 준비가 필요한 지점
 
 | 시점 | 필요한 결정/준비 |
 |---|---|
-| P0-0 시작 | 첫 Git baseline commit 승인, 독립 local 사본 위치 확인 |
 | P1-3 시작 | Cloudflare account의 Access/R2 resource와 secret 등록 |
 | P1-4 시작 | B2 account, 소액 과금 허용, restic password 보관 위치 |
 | P1-5 | 실제 Android 기기 검증 |

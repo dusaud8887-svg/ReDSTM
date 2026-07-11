@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from filelock import FileLock, Timeout
 from scrapy.crawler import CrawlerProcess
@@ -41,6 +43,16 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
         os.replace(partial, path)
     finally:
         partial.unlink(missing_ok=True)
+
+
+def _ping_success(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("healthcheck URL must be credential-free HTTPS")
+    try:
+        urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=15).close()
+    except OSError as error:
+        raise RuntimeError("healthcheck success ping failed") from error
 
 
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:
@@ -102,6 +114,9 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             discovered=discovered,
             summary={"outcomes": outcomes},
         )
+        healthcheck_url = os.environ.get("REDSTM_HEALTHCHECK_URL", "")
+        if healthcheck_url:
+            _ping_success(healthcheck_url)
         return {
             "ok": status == "succeeded",
             "run_id": run_id,

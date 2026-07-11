@@ -13,6 +13,7 @@ AUTOTHROTTLE_ENABLED = False
 RETRY_TIMES = 2
 COOKIES_ENABLED = True
 TELNETCONSOLE_ENABLED = False
+LOG_LEVEL = "INFO"
 
 DOWNLOADER_MIDDLEWARES = {"crawler.middlewares.WarcCaptureMiddleware": 595}
 ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}

@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self
 
-from scrapy import Spider
 from scrapy.crawler import Crawler
 from scrapy.exceptions import NotConfigured
 
@@ -40,7 +39,7 @@ class ArchivePipeline:
             raise NotConfigured("REDSTM_RUN_ID is not configured")
         return cls(archive_path, run_id)
 
-    def process_item(self, item: Any, spider: Spider) -> Any:
+    def process_item(self, item: Any) -> Any:
         if not isinstance(item, CapturedPostItem):
             return item
 

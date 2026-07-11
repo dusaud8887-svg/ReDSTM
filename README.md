@@ -26,7 +26,8 @@ uv run pytest
 uv run ruff check .
 uv run mypy crawler scripts
 uv run python -m scripts.refresh_typemoon_session --help
-uv run scrapy crawl typemoon -a board_id=write_free21
+uv run python -m scripts.sync --help
+uv run python -m scripts.doctor --help
 ```
 
 Edge viewer 검증:
@@ -51,6 +52,8 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - SQLite frontier lease와 interrupted recovery
 - canonical SQLite schema, resumable legacy import와 verification command
 - `.partial` atomic close/1GiB rotation WARC
+- raw hash/WARC capture ledger, atomic frontier transition과 bounded authenticated sync
+- read-only DB/lease/WARC `doctor`와 verified SQLite snapshot command
 - deterministic gzip post/board/search/collection sample export
 - private R2 object를 읽는 authenticated Worker viewer
 - stable post identity user-state export/import와 vendored Saitamaar font
@@ -58,8 +61,8 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 아직 포함하지 않음:
 
-- full sync/backfill/doctor command와 scheduler
-- content-addressed WARC/blob ledger
+- backfill command와 scheduler
+- content-addressed direct asset/blob ledger
 - 실제 Cloudflare R2 bucket/token과 배포 workflow
 - Cloudflare Access cutover와 실제 Android memory gate
 - B2 restic encrypted backup/restore automation

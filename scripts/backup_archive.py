@@ -46,7 +46,9 @@ def _evidence(path: Path, *, check_health: bool) -> dict[str, Any]:
     }
 
 
-def create_backup(source: Path, snapshot: Path, manifest: Path) -> dict[str, Any]:
+def create_backup(
+    source: Path, snapshot: Path, manifest: Path, *, resume_partial: bool = False
+) -> dict[str, Any]:
     source = source.expanduser().resolve(strict=True)
     snapshot = snapshot.expanduser().resolve()
     manifest = manifest.expanduser().resolve()
@@ -59,15 +61,20 @@ def create_backup(source: Path, snapshot: Path, manifest: Path) -> dict[str, Any
     manifest.parent.mkdir(parents=True, exist_ok=True)
     snapshot_partial = snapshot.with_name(f"{snapshot.name}.partial")
     manifest_partial = manifest.with_name(f"{manifest.name}.partial")
-    if snapshot_partial.exists() or manifest_partial.exists():
+    if manifest_partial.exists():
+        raise FileExistsError("partial backup output already exists")
+    if resume_partial and not snapshot_partial.exists():
+        raise FileNotFoundError("snapshot partial does not exist")
+    if not resume_partial and snapshot_partial.exists():
         raise FileExistsError("partial backup output already exists")
 
     try:
-        with (
-            closing(connect_archive(source, read_only=True)) as source_connection,
-            closing(sqlite3.connect(snapshot_partial)) as snapshot_connection,
-        ):
-            source_connection.backup(snapshot_connection, pages=4096, sleep=0.05)
+        if not resume_partial:
+            with (
+                closing(connect_archive(source, read_only=True)) as source_connection,
+                closing(sqlite3.connect(snapshot_partial)) as snapshot_connection,
+            ):
+                source_connection.backup(snapshot_connection, pages=4096, sleep=0.05)
 
         source_evidence = _evidence(source, check_health=False)
         snapshot_evidence = _evidence(snapshot_partial, check_health=True)
@@ -97,7 +104,8 @@ def create_backup(source: Path, snapshot: Path, manifest: Path) -> dict[str, Any
         os.replace(manifest_partial, manifest)
         return report
     except Exception:
-        snapshot_partial.unlink(missing_ok=True)
+        if not resume_partial:
+            snapshot_partial.unlink(missing_ok=True)
         manifest_partial.unlink(missing_ok=True)
         raise
 
@@ -107,12 +115,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("source", type=Path)
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--resume-partial", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
-    report = create_backup(args.source, args.snapshot, args.manifest)
+    report = create_backup(
+        args.source, args.snapshot, args.manifest, resume_partial=args.resume_partial
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

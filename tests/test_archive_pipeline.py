@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from scrapy import Spider
 
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
@@ -60,7 +59,7 @@ def test_pipeline_stores_post_and_completes_lease_atomically(tmp_path: Path) -> 
     lease = _claim(frontier, 1)
 
     item = _item(lease, "stored")
-    assert pipeline.process_item(item, Spider("test")) is item
+    assert pipeline.process_item(item) is item
 
     with connect_archive(path) as connection:
         capture = connection.execute(
@@ -89,7 +88,7 @@ def test_pipeline_records_terminal_outcome_without_warning_text(
     pipeline, frontier, run_id = _setup(path)
     lease = _claim(frontier, 2)
 
-    pipeline.process_item(_item(lease, outcome), Spider("test"))
+    pipeline.process_item(_item(lease, outcome))
 
     with connect_archive(path) as connection:
         capture = connection.execute(
@@ -114,7 +113,7 @@ def test_pipeline_rejects_mismatched_lease_before_writing(tmp_path: Path) -> Non
     item["external_post_id"] = 4
 
     with pytest.raises(ValueError, match="does not match"):
-        pipeline.process_item(item, Spider("test"))
+        pipeline.process_item(item)
 
     with connect_archive(path) as connection:
         assert (

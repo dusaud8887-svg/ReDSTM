@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from warcio.archiveiterator import ArchiveIterator  # type: ignore[import-untyped]
+
 from crawler.archive import APPLICATION_ID, SCHEMA_VERSION, archive_health, connect_archive
 
 
@@ -65,11 +67,28 @@ def inspect_archive(
                 )
                 if not _warc_path(str(row["warc_file"]), warc_dir).is_file()
             ]
+            referenced_warcs = {
+                _warc_path(str(row["warc_file"]), warc_dir)
+                for row in connection.execute(
+                    "SELECT DISTINCT warc_file FROM captures WHERE warc_file IS NOT NULL"
+                )
+            }
+            invalid_warcs = []
+            for path in sorted(referenced_warcs):
+                if not path.is_file():
+                    continue
+                try:
+                    with path.open("rb") as stream:
+                        if not any(True for _ in ArchiveIterator(stream)):
+                            invalid_warcs.append(path.name)
+                except Exception:
+                    invalid_warcs.append(path.name)
     except sqlite3.Error:
         health = {"error": "sqlite_error"}
         health_ok = False
         expired_leases = []
         missing_warcs = []
+        invalid_warcs = []
         issues.append("sqlite_health_failed")
 
     orphan_partials = [
@@ -79,6 +98,8 @@ def inspect_archive(
         issues.append("expired_running_leases")
     if missing_warcs:
         issues.append("missing_warc_files")
+    if invalid_warcs:
+        issues.append("invalid_warc_files")
     if orphan_partials:
         issues.append("orphan_partial_warcs")
 
@@ -98,6 +119,11 @@ def inspect_archive(
                 "ok": not missing_warcs,
                 "count": len(missing_warcs),
                 "items": missing_warcs,
+            },
+            "invalid_warc_files": {
+                "ok": not invalid_warcs,
+                "count": len(invalid_warcs),
+                "items": invalid_warcs,
             },
             "orphan_partial_warcs": {
                 "ok": not orphan_partials,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -35,3 +36,18 @@ def test_create_backup_verifies_snapshot_and_refuses_overwrite(tmp_path: Path) -
 
     with pytest.raises(FileExistsError):
         create_backup(source, snapshot, manifest)
+
+
+def test_resume_partial_verifies_without_recopying(tmp_path: Path) -> None:
+    source = tmp_path / "source.sqlite"
+    snapshot = tmp_path / "snapshot.sqlite"
+    manifest = tmp_path / "snapshot.manifest.json"
+    initialize_archive(source)
+    partial = snapshot.with_name(f"{snapshot.name}.partial")
+    shutil.copyfile(source, partial)
+
+    report = create_backup(source, snapshot, manifest, resume_partial=True)
+
+    assert report["ok"] is True
+    assert snapshot.exists()
+    assert not partial.exists()
