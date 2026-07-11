@@ -17,7 +17,7 @@
 
 | 항목 | 결과 |
 |---|---|
-| immutable source | `artifacts/phase0/private/redstm-phase0-posts-20260710T114500Z.db`, 28,811,358,208 bytes |
+| immutable source | `E:\ReDSTM\backups\legacy-source\redstm-phase0-posts-20260710T114500Z.db`, 28,811,358,208 bytes |
 | source SHA-256 | `e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500` |
 | legacy import output | 12,407,144,448 bytes, SHA-256 `c695e739603669db4f827c8e2e6bf930325dfabb7364104af49828491635281e` (schema v1) |
 | current canonical | `D:\ReDSTM\.data\canonical\archive.sqlite`, 12,407,148,544 bytes |
@@ -269,7 +269,7 @@ Migration/backup 변경:
 
 ```powershell
 uv run python -m scripts.verify_migration `
-  --source artifacts/phase0/private/redstm-phase0-posts-20260710T114500Z.db `
+  --source E:/ReDSTM/backups/legacy-source/redstm-phase0-posts-20260710T114500Z.db `
   --target .data/canonical/archive.sqlite
 ```
 
