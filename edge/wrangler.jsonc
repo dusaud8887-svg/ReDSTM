@@ -20,5 +20,17 @@
       "binding": "ARCHIVE",
       "bucket_name": "redstm-archive"
     }
-  ]
+  ],
+  "d1_databases": [
+    {
+      "binding": "CONTROL_DB",
+      "database_name": "redstm-control",
+      "database_id": "997d0196-c136-410c-b11a-69eff7dc1a75",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1
+  }
 }
