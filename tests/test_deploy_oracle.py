@@ -77,6 +77,7 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
 
     assert "systemctl enable" not in installer
     assert '"uv ${UV_VERSION}" ||' in installer
+    assert installer.count("UV_NO_CONFIG=1") == 2
     assert "/home/ubuntu" not in installer
     assert "pm2" not in installer
     assert "nginx" not in installer

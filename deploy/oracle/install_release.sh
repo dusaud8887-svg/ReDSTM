@@ -54,7 +54,7 @@ install_release() {
   install -d -o root -g redstm -m 0750 /etc/redstm
   install -o root -g root -m 0755 "$0" /opt/redstm/install_release.sh
   install_uv
-  sudo -u redstm env HOME=/srv/redstm/home UV_CACHE_DIR=/srv/redstm/cache \
+  sudo -u redstm env HOME=/srv/redstm/home UV_CACHE_DIR=/srv/redstm/cache UV_NO_CONFIG=1 \
     /usr/local/bin/uv python install 3.14
 
   local target="${RELEASES}/${release}" staging="${RELEASES}/${release}.partial"
@@ -65,7 +65,7 @@ install_release() {
     install -d -o redstm -g redstm -m 0750 "$staging"
     tar --extract --gzip --file "$archive" --directory "$staging" --no-same-owner
     chown -R redstm:redstm "$staging"
-    sudo -u redstm env HOME=/srv/redstm/home UV_CACHE_DIR=/srv/redstm/cache \
+    sudo -u redstm env HOME=/srv/redstm/home UV_CACHE_DIR=/srv/redstm/cache UV_NO_CONFIG=1 \
       /usr/local/bin/uv sync --frozen --no-dev --managed-python --directory "$staging"
     sudo -u redstm "$staging/.venv/bin/python" -c \
       'import crawler.archive, scripts.control_runner'
