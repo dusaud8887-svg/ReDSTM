@@ -300,6 +300,12 @@ B2/restic 외부 backup은 2026-07-11 사용자 결정으로 현재 범위에서
 - current Oracle file/service/port manifest와 삭제 후보 bytes를 report로 남긴다.
 - 이 단계는 원격 stop/delete/write를 하지 않는다.
 
+상태(2026-07-12): E legacy source 28,811,358,208 bytes를 백그라운드 read-only hash해 기존
+`e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500`과 재일치했다. Oracle
+read-only 조회는 Ubuntu 22.04/2 CPU/956MiB RAM/4GiB swap/root 약 103GB free, legacy project
+50GB, `db-backups` 27GB, enabled `nginx.service`/`pm2-ubuntu.service`를 확인했다. listener 전체
+manifest와 remote data file hash는 아직이며 stop/delete/write는 수행하지 않았다.
+
 ### Phase O1 — application install
 
 - 전용 user/path, pinned uv/Python 3.14와 versioned release를 설치한다.

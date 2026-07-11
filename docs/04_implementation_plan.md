@@ -271,9 +271,10 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 
 상태(2026-07-12): remote D1 migration 2개와 Worker `c47b2e58` 배포, `7787ca24` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
-ingest + 10MiB/10,000-event outbox/transport가 구현됐고 전체 Python 120 tests와 Edge 30 tests를
+ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체 Python
+125 tests와 Edge 30 tests를
 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두 302다. 3의 별도 Access service identity와
-인증 role smoke, Oracle dispatcher/marker 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3 전체는
+인증 role smoke, Oracle 설치/systemd 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3 전체는
 DONE이 아니다.
 
 완료 기준:
@@ -297,6 +298,12 @@ DONE이 아니다.
    timer는 disable한다.
 6. 기존 E verified source와 격리 restore 사본을 재확인한다. 새 외부 backup provider는 만들지 않는다.
 7. A2/A3의 20/100건, duplicate command, D1 outage canary를 Oracle에서 실행한다.
+
+상태(2026-07-12): O0 read-only 재확인 중이다. E legacy source 28,811,358,208 bytes의 SHA-256은
+`e16203a7...5500`으로 기존 기록과 다시 일치했다. Oracle은 Ubuntu 22.04, 2 CPU, RAM 956MiB,
+swap 4GiB, root free 약 103GB이며 기존 legacy 50GB와 DB backup 27GB, enabled Nginx/PM2를
+보존 중이다. ReDSTM 경로/user/service 설치, listener 전체 manifest, application deploy는 아직
+수행하지 않았다.
 
 완료 기준:
 
