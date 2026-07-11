@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from http import HTTPStatus
 from io import BytesIO
@@ -13,6 +14,8 @@ from scrapy.exceptions import NotConfigured
 from scrapy.http import Request, Response
 from warcio.statusandheaders import StatusAndHeaders  # type: ignore[import-untyped]
 from warcio.warcwriter import WARCWriter  # type: ignore[import-untyped]
+
+from crawler.store import ArchiveStore
 
 _CAPTURE_PATH = re.compile(r"^/[a-z0-9_]+(?:/[0-9]+)?$")
 _TYPEMOON_HOSTS = {"typemoon.net", "www.typemoon.net"}
@@ -59,32 +62,43 @@ def _response_headers(response: Response) -> list[tuple[str, str]]:
 
 
 class WarcCaptureMiddleware:
-    def __init__(self, path: Path, max_bytes: int = 1 << 30) -> None:
+    def __init__(
+        self, path: Path, max_bytes: int = 1 << 30, archive_path: Path | None = None
+    ) -> None:
         if max_bytes < 1:
             raise ValueError("WARC max_bytes must be positive")
         if not (path.name.endswith(".warc") or path.name.endswith(".warc.gz")):
             raise ValueError("WARC path must end with .warc or .warc.gz")
         self.path = path
         self.max_bytes = max_bytes
+        self.archive_path = archive_path
         self._part = 0
         self._final_path: Path | None = None
         self._partial_path: Path | None = None
         self._stream: BinaryIO | None = None
         self._writer: WARCWriter | None = None
+        self._seen: dict[tuple[str, str], tuple[str, str]] = {}
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> Self:
         configured_path = crawler.settings.get("REDSTM_WARC_PATH")
         if not isinstance(configured_path, str) or not configured_path:
             raise NotConfigured("REDSTM_WARC_PATH is not configured")
-        middleware = cls(Path(configured_path), crawler.settings.getint("REDSTM_WARC_MAX_BYTES"))
+        configured_archive = crawler.settings.get("REDSTM_ARCHIVE_PATH")
+        archive_path = (
+            Path(configured_archive)
+            if isinstance(configured_archive, str) and configured_archive
+            else None
+        )
+        middleware = cls(
+            Path(configured_path), crawler.settings.getint("REDSTM_WARC_MAX_BYTES"), archive_path
+        )
         crawler.signals.connect(middleware.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(middleware.spider_closed, signal=signals.spider_closed)
         return middleware
 
     def spider_opened(self, spider: Spider) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._open_part()
 
     def spider_closed(self, spider: Spider, reason: str) -> None:
         self._close_part()
@@ -120,6 +134,17 @@ class WarcCaptureMiddleware:
     def process_response(self, request: Request, response: Response) -> Response:
         if not _is_allowed_capture(request):
             return response
+        raw_sha256 = hashlib.sha256(response.body).hexdigest()
+        request.meta["raw_sha256"] = raw_sha256
+        reference = self._seen.get((request.url, raw_sha256))
+        if reference is None and self.archive_path is not None and self.archive_path.is_file():
+            reference = ArchiveStore(self.archive_path).find_warc_capture(raw_sha256, request.url)
+            if reference is not None and not Path(reference[0]).is_file():
+                reference = None
+        if reference is not None:
+            request.meta["warc_file"], request.meta["warc_record_id"] = reference
+            request.meta["warc_reused"] = True
+            return response
         if self._writer is None:
             self._open_part()
         assert self._stream is not None
@@ -140,7 +165,12 @@ class WarcCaptureMiddleware:
         )
         self._writer.write_record(record)
         request.meta["warc_record_id"] = record.rec_headers.get_header("WARC-Record-ID")
-        request.meta["warc_file"] = str(self._final_path)
+        request.meta["warc_file"] = str(self._final_path.resolve())
+        request.meta["warc_reused"] = False
+        self._seen[(request.url, raw_sha256)] = (
+            request.meta["warc_file"],
+            request.meta["warc_record_id"],
+        )
         if self._stream.tell() >= self.max_bytes:
             self._close_part()
         return response

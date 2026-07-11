@@ -6,7 +6,7 @@ import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from http.cookiejar import CookieJar
+from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.error import HTTPError, URLError
@@ -60,7 +60,9 @@ class SessionExport:
         return [cookie.as_scrapy_cookie() for cookie in self.cookies]
 
 
-def load_session_export(path: str | Path, *, now: datetime | None = None) -> SessionExport:
+def load_session_export(
+    path: str | Path, *, now: datetime | None = None, allow_expired: bool = False
+) -> SessionExport:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("session export must be a JSON object")
@@ -73,7 +75,7 @@ def load_session_export(path: str | Path, *, now: datetime | None = None) -> Ses
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
         raise ValueError("current time must include a timezone")
-    if current >= expires_at:
+    if current >= expires_at and not allow_expired:
         raise ValueError("session export has expired")
 
     user_agent = _text(payload.get("user_agent"), "user_agent")
@@ -89,6 +91,67 @@ def load_session_export(path: str | Path, *, now: datetime | None = None) -> Ses
         raise ValueError("session export contains duplicate cookies")
 
     return SessionExport(cookies, created_at, expires_at, user_agent)
+
+
+def ensure_session_export(
+    path: str | Path,
+    *,
+    user_id: str,
+    password: str,
+    user_agent: str,
+    now: datetime | None = None,
+    timeout: float = 30.0,
+) -> SessionExport:
+    try:
+        session = load_session_export(path, now=now, allow_expired=True)
+    except OSError, ValueError:
+        session = None
+    if session is not None and _session_is_authenticated(session, timeout=timeout):
+        return session
+    return refresh_session_export(
+        path,
+        user_id=user_id,
+        password=password,
+        user_agent=user_agent,
+        now=now,
+        timeout=timeout,
+    )
+
+
+def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool:
+    cookie_jar = CookieJar()
+    for cookie in session.cookies:
+        cookie_jar.set_cookie(
+            Cookie(
+                version=0,
+                name=cookie.name,
+                value=cookie.value,
+                port=None,
+                port_specified=False,
+                domain=cookie.domain,
+                domain_specified=True,
+                domain_initial_dot=cookie.domain.startswith("."),
+                path=cookie.path,
+                path_specified=True,
+                secure=cookie.secure,
+                expires=None,
+                discard=True,
+                comment=None,
+                comment_url=None,
+                rest={"HttpOnly": ""} if cookie.http_only else {},
+                rfc2109=False,
+            )
+        )
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    try:
+        home_html = _read_html(
+            opener.open(
+                Request(_BASE_URL, headers={"User-Agent": session.user_agent}), timeout=timeout
+            )
+        )
+    except (HTTPError, URLError, OSError) as error:
+        raise SessionRefreshError("TypeMoon session validation request failed") from error
+    return _has_logout_link(home_html)
 
 
 def refresh_session_export(

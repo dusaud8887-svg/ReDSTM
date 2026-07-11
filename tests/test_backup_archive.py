@@ -26,6 +26,8 @@ def test_create_backup_verifies_snapshot_and_refuses_overwrite(tmp_path: Path) -
     report = create_backup(source, snapshot, manifest)
 
     assert report["ok"] is True
+    assert report["source"]["health"] is None
+    assert report["snapshot"]["health"]["quick_check"] == ["ok"]
     assert snapshot.exists()
     assert json.loads(manifest.read_text(encoding="utf-8"))["snapshot"]["sha256"]
     with connect_archive(snapshot, read_only=True) as connection:

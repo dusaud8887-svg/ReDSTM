@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x52445354  # RDST
 BODY_COMPRESSION_LEVEL = 3
 
@@ -204,6 +204,12 @@ BEGIN
 END;
 """
 
+_SCHEMA_V2 = """
+CREATE INDEX captures_raw_sha256_idx
+    ON captures(raw_sha256, url)
+    WHERE raw_sha256 IS NOT NULL AND warc_file IS NOT NULL AND warc_record_id IS NOT NULL;
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class Migration:
@@ -215,7 +221,7 @@ class Migration:
         return hashlib.sha256(self.sql.encode()).hexdigest()
 
 
-MIGRATIONS = (Migration(SCHEMA_VERSION, _SCHEMA_V1),)
+MIGRATIONS = (Migration(1, _SCHEMA_V1), Migration(2, _SCHEMA_V2))
 
 
 def compress_body(value: str) -> bytes:

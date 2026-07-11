@@ -19,7 +19,14 @@ def _response(name: str, url: str) -> HtmlResponse:
         url=url,
         body=body,
         encoding="utf-8",
-        request=Request(url=url),
+        request=Request(
+            url=url,
+            meta={
+                "raw_sha256": "a" * 64,
+                "warc_file": "capture.warc.gz",
+                "warc_record_id": "<urn:uuid:test>",
+            },
+        ),
     )
 
 
@@ -88,6 +95,9 @@ def test_detail_and_comments_use_explicit_selectors() -> None:
     assert len(items) == 1
     post = items[0]
     assert post["outcome"] == "stored"
+    assert post["http_status"] == 200
+    assert post["raw_sha256"] == "a" * 64
+    assert post["warc_file"] == "capture.warc.gz"
     assert post["title"] == "대표 상세 게시물"
     assert post["category"] == "창작"
     assert post["views"] == 1234
@@ -123,7 +133,7 @@ def test_restricted_phrase_inside_real_content_is_stored() -> None:
     assert item["outcome"] == "stored"
 
 
-def test_login_form_structure_is_restricted_without_phrase_match() -> None:
+def test_login_form_structure_is_auth_failure_without_phrase_match() -> None:
     url = "https://www.typemoon.net/write_free21/62068"
     response = HtmlResponse(
         url=url,
@@ -133,7 +143,9 @@ def test_login_form_structure_is_restricted_without_phrase_match() -> None:
         request=Request(url=url),
     )
 
-    assert list(TypeMoonSpider().parse_detail(response))[0]["outcome"] == "restricted"
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+    assert item["outcome"] == "fetch_failed"
+    assert item["warnings"] == ["auth_required"]
 
 
 def test_root_aa_class_alone_does_not_force_aa_mode() -> None:

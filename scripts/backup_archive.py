@@ -36,12 +36,12 @@ def _table_counts(path: Path) -> dict[str, int]:
         }
 
 
-def _evidence(path: Path) -> dict[str, Any]:
+def _evidence(path: Path, *, check_health: bool) -> dict[str, Any]:
     return {
         "path": str(path),
         "bytes": path.stat().st_size,
         "sha256": _sha256(path),
-        "health": archive_health(path),
+        "health": archive_health(path) if check_health else None,
         "counts": _table_counts(path),
     }
 
@@ -69,8 +69,8 @@ def create_backup(source: Path, snapshot: Path, manifest: Path) -> dict[str, Any
         ):
             source_connection.backup(snapshot_connection, pages=4096, sleep=0.05)
 
-        source_evidence = _evidence(source)
-        snapshot_evidence = _evidence(snapshot_partial)
+        source_evidence = _evidence(source, check_health=False)
+        snapshot_evidence = _evidence(snapshot_partial, check_health=True)
         issues: list[str] = []
         if source_evidence["counts"] != snapshot_evidence["counts"]:
             issues.append("table counts differ")

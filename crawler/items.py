@@ -41,4 +41,8 @@ class CapturedPostItem(scrapy.Item):
     is_aa = scrapy.Field()
     comments = scrapy.Field()
     warnings = scrapy.Field()
+    http_status = scrapy.Field()
+    raw_sha256 = scrapy.Field()
+    warc_file = scrapy.Field()
     warc_record_id = scrapy.Field()
+    frontier_lease = scrapy.Field()

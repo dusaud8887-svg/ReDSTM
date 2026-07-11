@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from crawler.archive import connect_archive, decompress_body, initialize_archive
+from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.store import ArchiveStore
@@ -76,6 +79,11 @@ def test_store_deduplicates_versions_and_tracks_every_capture(tmp_path: Path) ->
     assert first.changed is True
     assert second.changed is False
     assert first.version_id == second.version_id
+    assert store.find_warc_capture("a" * 64, "https://www.typemoon.net/ss_temp01/7") == (
+        "capture.warc.gz",
+        "<urn:uuid:test>",
+    )
+    assert store.find_warc_capture("a" * 64, "https://www.typemoon.net/ss_temp01/8") is None
     with connect_archive(path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 2
@@ -132,6 +140,10 @@ def test_outcome_updates_availability_and_finish_run_counters(tmp_path: Path) ->
         raw_sha256="a" * 64,
         warc_file="capture.warc.gz",
     )
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
     store.record_outcome(
         run_id,
         url="https://www.typemoon.net/ss_temp01/7",
@@ -140,6 +152,12 @@ def test_outcome_updates_availability_and_finish_run_counters(tmp_path: Path) ->
         http_status=200,
         board_id="ss_temp01",
         external_post_id=7,
+        raw_sha256="b" * 64,
+        warc_file="restricted.warc.gz",
+        warc_record_id="<urn:uuid:restricted>",
+        error_code="permission_denied",
+        lease=lease,
+        frontier_state="dead",
     )
     store.finish_run(run_id, status="succeeded", discovered=1, now=_NOW + timedelta(minutes=2))
 
@@ -154,3 +172,57 @@ def test_outcome_updates_availability_and_finish_run_counters(tmp_path: Path) ->
         ).fetchone()
         assert run is not None
         assert tuple(run) == ("succeeded", 1, 2, 1, 0, 0)
+        capture = connection.execute(
+            "SELECT raw_sha256, warc_file, warc_record_id FROM captures ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert tuple(capture) == (
+            "b" * 64,
+            "restricted.warc.gz",
+            "<urn:uuid:restricted>",
+        )
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "dead"
+
+
+def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url)
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+
+    stale = FrontierLease(
+        board_id=lease.board_id,
+        external_post_id=lease.external_post_id,
+        url=lease.url,
+        attempts=lease.attempts,
+        lease_token="stale",
+        lease_expires_at=lease.lease_expires_at,
+    )
+    with pytest.raises(RuntimeError, match="stale or missing frontier lease"):
+        store.store_post(
+            run_id,
+            _post(),
+            captured_at=_NOW,
+            raw_sha256="a" * 64,
+            warc_file="capture.warc.gz",
+            lease=stale,
+        )
+
+    with connect_archive(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
+
+    store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="capture.warc.gz",
+        lease=lease,
+    )
+    with connect_archive(path) as connection:
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"

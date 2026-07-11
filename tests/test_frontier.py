@@ -68,3 +68,26 @@ def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
         store.complete(old_lease)
     store.complete(recovered[0])
     assert store.claim(limit=1, lease_seconds=60, now=started_at + timedelta(minutes=3)) == []
+
+
+def test_reopen_done_and_claim_only_requested_identity(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    first_url = "https://www.typemoon.net/write_free21/1"
+    second_url = "https://www.typemoon.net/write_free21/2"
+    store.seed("write_free21", 1, first_url)
+    store.seed("write_free21", 2, second_url)
+    first = store.claim_identity("write_free21", 1, lease_seconds=60)
+    assert first is not None
+    store.complete(first)
+
+    assert store.claim_identity("write_free21", 1, lease_seconds=60) is None
+    store.seed("write_free21", 1, first_url, reopen_done=True)
+    reopened = store.claim_identity("write_free21", 1, lease_seconds=60)
+    assert reopened is not None
+    assert reopened.attempts == 1
+
+    second = store.claim_identity("write_free21", 2, lease_seconds=60)
+    assert second is not None
+    assert second.external_post_id == 2

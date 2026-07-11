@@ -77,7 +77,27 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
     with connect_archive(path) as connection:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+
+
+def test_schema_v2_indexes_raw_capture_hash(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    initialize_archive(path)
+    with connect_archive(path) as connection:
+        _board(connection, "ss_temp01")
+        connection.execute("DROP INDEX captures_raw_sha256_idx")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 2")
+        connection.execute("PRAGMA user_version = 1")
+
+    initialize_archive(path)
+
+    with connect_archive(path) as connection:
+        index = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name = 'captures_raw_sha256_idx'"
+        ).fetchone()
+        assert index is not None
+        assert "raw_sha256" in index["sql"]
+        assert connection.execute("SELECT COUNT(*) FROM boards").fetchone()[0] == 1
 
 
 def test_body_compression_round_trip() -> None:

@@ -12,7 +12,12 @@ from urllib.parse import parse_qs
 import pytest
 
 import crawler.session as session_module
-from crawler.session import SessionRefreshError, load_session_export, refresh_session_export
+from crawler.session import (
+    SessionRefreshError,
+    ensure_session_export,
+    load_session_export,
+    refresh_session_export,
+)
 from crawler.spiders.typemoon import TypeMoonSpider
 
 
@@ -147,6 +152,32 @@ def test_refresh_session_submits_once_and_writes_loadable_export(
     assert session.expires_at == datetime(2026, 7, 11, 16, tzinfo=UTC)
     assert "secret" not in repr(session)
     assert load_session_export(path, now=now).cookies[0].name == "PHPSESSID"
+
+
+def test_expired_export_is_validated_before_form_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "private" / "session.json"
+    now = datetime(2026, 7, 11, 12, tzinfo=UTC)
+
+    with _login_server(monkeypatch) as (state, _):
+        refresh_session_export(
+            path,
+            user_id="member",
+            password="correct",
+            user_agent="ReDSTM-test/1.0",
+            now=now,
+        )
+        session = ensure_session_export(
+            path,
+            user_id="member",
+            password="correct",
+            user_agent="ReDSTM-test/1.0",
+            now=datetime(2026, 7, 11, 17, tzinfo=UTC),
+        )
+
+    assert state["post_count"] == 1
+    assert session.cookies[0].value == "secret"
 
 
 def test_refresh_failure_preserves_existing_export_and_hides_password(

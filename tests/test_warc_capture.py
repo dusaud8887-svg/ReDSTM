@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scrapy.http import HtmlResponse, Request
 from warcio.archiveiterator import ArchiveIterator  # type: ignore[import-untyped]
 
 from crawler import settings
+from crawler.archive import initialize_archive
 from crawler.middlewares import WarcCaptureMiddleware
 from crawler.spiders.typemoon import TypeMoonSpider
+from crawler.store import ArchiveStore
 
 
 def test_warc_capture_keeps_raw_response_without_secrets(tmp_path: Path) -> None:
@@ -56,6 +60,8 @@ def test_warc_capture_keeps_raw_response_without_secrets(tmp_path: Path) -> None
 
     assert request.meta["warc_record_id"].startswith("<urn:uuid:")
     assert request.meta["warc_file"] == str(path)
+    assert request.meta["raw_sha256"] == hashlib.sha256(compressed_body).hexdigest()
+    assert request.meta["warc_reused"] is False
     assert not list(tmp_path.glob("*.partial"))
     uncompressed = gzip.decompress(path.read_bytes())
     for secret in (
@@ -96,6 +102,70 @@ def test_warc_capture_accepts_nonstandard_status_codes(tmp_path: Path) -> None:
     with path.open("rb") as stream:
         record = next(ArchiveIterator(stream))
         assert record.http_headers.get_statuscode() == "522"
+
+
+def test_warc_capture_reuses_same_url_and_raw_body(tmp_path: Path) -> None:
+    path = tmp_path / "capture.warc.gz"
+    spider = TypeMoonSpider()
+    middleware = WarcCaptureMiddleware(path)
+    middleware.spider_opened(spider)
+
+    first = Request("https://www.typemoon.net/write_free21/62068", meta={"redstm_capture": True})
+    second = Request(first.url, meta={"redstm_capture": True})
+    middleware.process_response(first, HtmlResponse(first.url, request=first, body=b"same"))
+    middleware.process_response(second, HtmlResponse(second.url, request=second, body=b"same"))
+    middleware.spider_closed(spider, "finished")
+
+    assert second.meta["warc_reused"] is True
+    assert second.meta["warc_record_id"] == first.meta["warc_record_id"]
+    with path.open("rb") as stream:
+        assert sum(1 for _ in ArchiveIterator(stream)) == 1
+
+
+def test_warc_capture_reuses_prior_ledger_record_only_while_file_exists(tmp_path: Path) -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    body = b"same"
+    existing = tmp_path / "existing.warc.gz"
+    spider = TypeMoonSpider()
+    first = Request(url, meta={"redstm_capture": True})
+    writer = WarcCaptureMiddleware(existing)
+    writer.spider_opened(spider)
+    writer.process_response(first, HtmlResponse(url, request=first, body=body))
+    writer.spider_closed(spider, "finished")
+
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    store = ArchiveStore(archive)
+    run_id = store.start_run("sync")
+    store.record_outcome(
+        run_id,
+        url=url,
+        outcome="restricted",
+        fetched_at=datetime.now(UTC),
+        raw_sha256=first.meta["raw_sha256"],
+        warc_file=str(existing),
+        warc_record_id=first.meta["warc_record_id"],
+    )
+
+    reused_path = tmp_path / "reused.warc.gz"
+    reused_request = Request(url, meta={"redstm_capture": True})
+    reused = WarcCaptureMiddleware(reused_path, archive_path=archive)
+    reused.spider_opened(spider)
+    reused.process_response(reused_request, HtmlResponse(url, request=reused_request, body=body))
+    reused.spider_closed(spider, "finished")
+    assert reused_request.meta["warc_reused"] is True
+    assert not reused_path.exists()
+
+    existing.unlink()
+    replacement_request = Request(url, meta={"redstm_capture": True})
+    replacement = WarcCaptureMiddleware(reused_path, archive_path=archive)
+    replacement.spider_opened(spider)
+    replacement.process_response(
+        replacement_request, HtmlResponse(url, request=replacement_request, body=body)
+    )
+    replacement.spider_closed(spider, "finished")
+    assert replacement_request.meta["warc_reused"] is False
+    assert reused_path.exists()
 
 
 def test_warc_middleware_runs_before_http_decompression() -> None:

@@ -15,6 +15,7 @@ COOKIES_ENABLED = True
 TELNETCONSOLE_ENABLED = False
 
 DOWNLOADER_MIDDLEWARES = {"crawler.middlewares.WarcCaptureMiddleware": 595}
+ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}
 REDSTM_WARC_PATH = ".data/warc/capture.warc.gz"
 REDSTM_WARC_MAX_BYTES = 1 << 30
 

@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator, Iterable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import scrapy
 from parsel import Selector
 
+from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
+from crawler.store import ArchiveStore
 
 _BASE_URL = "https://www.typemoon.net"
 _BOARD_ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
@@ -127,11 +132,15 @@ def _category(
     return value
 
 
-def _looks_restricted(response: scrapy.http.HtmlResponse) -> bool:
+def _has_login_form(response: scrapy.http.HtmlResponse) -> bool:
     if response.css("form[action*='login_check.php']"):
         return True
     if response.css("input[name='mb_id']") and response.css("input[name='mb_password']"):
         return True
+    return False
+
+
+def _looks_restricted(response: scrapy.http.HtmlResponse) -> bool:
     visible_text = " ".join(response.css("body ::text").getall()).casefold()
     return any(phrase.casefold() in visible_text for phrase in _RESTRICTED_PHRASES)
 
@@ -229,16 +238,41 @@ class TypeMoonSpider(scrapy.Spider):
     name = "typemoon"
     allowed_domains = ["typemoon.net", "www.typemoon.net"]
 
-    def __init__(self, board_id: str | None = None) -> None:
+    def __init__(
+        self,
+        board_id: str | None = None,
+        *,
+        archive_path: str | Path | None = None,
+        run_id: str | None = None,
+        session: SessionExport | None = None,
+        max_pages: int = 1,
+        max_posts: int = 20,
+        lease_seconds: int = 300,
+    ) -> None:
         super().__init__()
         if board_id is not None and not _BOARD_ID_PATTERN.fullmatch(board_id):
             raise ValueError(f"invalid TypeMoon board id: {board_id!r}")
         self.start_board_id = board_id
+        self.archive_path = Path(archive_path) if archive_path is not None else None
+        self.run_id = run_id
+        self.session = session
+        self.max_pages = int(max_pages)
+        self.max_posts = int(max_posts)
+        self.lease_seconds = int(lease_seconds)
+        if min(self.max_pages, self.max_posts, self.lease_seconds) < 1:
+            raise ValueError("max_pages, max_posts, and lease_seconds must be positive")
+        configured = (self.archive_path is not None, self.run_id is not None, session is not None)
+        if any(configured) and not all(configured):
+            raise ValueError("archive_path, run_id, and session must be configured together")
+        self.frontier = FrontierStore(self.archive_path) if self.archive_path is not None else None
+        self.store = ArchiveStore(self.archive_path) if self.archive_path is not None else None
+        self._seen: set[tuple[str, int]] = set()
+        self.scheduled_posts = 0
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
         if self.start_board_id is None:
             raise ValueError("board_id spider argument is required")
-        yield self.listing_request(self.start_board_id)
+        yield self.listing_request(self.start_board_id, session=self.session)
 
     @staticmethod
     def listing_url(board_id: str, *, page: int = 1) -> str:
@@ -263,24 +297,64 @@ class TypeMoonSpider(scrapy.Spider):
         return scrapy.Request(
             self.detail_url(board_id, external_post_id),
             callback=self.parse_detail,
+            errback=self.detail_error if self.store is not None else None,
             cookies=session.as_scrapy_cookies(),
             headers={"User-Agent": session.user_agent},
             meta={"cookiejar": 1, "redstm_capture": True},
         )
 
-    def listing_request(self, board_id: str, *, page: int = 1) -> scrapy.Request:
+    def detail_error(self, failure: Any) -> None:
+        if self.store is None or self.run_id is None:
+            return
+        request = failure.request
+        lease = request.meta.get("frontier_lease")
+        if not isinstance(lease, FrontierLease):
+            raise ValueError("failed detail request has no frontier lease")
+        response = getattr(failure.value, "response", None)
+        status = getattr(response, "status", None)
+        self.store.record_outcome(
+            self.run_id,
+            url=request.url,
+            outcome="fetch_failed",
+            fetched_at=datetime.now(UTC),
+            http_status=status if isinstance(status, int) else None,
+            board_id=lease.board_id,
+            external_post_id=lease.external_post_id,
+            error_code="network_error",
+            raw_sha256=request.meta.get("raw_sha256"),
+            warc_file=request.meta.get("warc_file"),
+            warc_record_id=request.meta.get("warc_record_id"),
+            lease=lease,
+            frontier_state="retry",
+        )
+
+    def listing_request(
+        self, board_id: str, *, page: int = 1, session: SessionExport | None = None
+    ) -> scrapy.Request:
         return scrapy.Request(
             self.listing_url(board_id, page=page),
             callback=self.parse_listing,
-            meta={"redstm_capture": True},
+            cookies=session.as_scrapy_cookies() if session is not None else None,
+            headers={"User-Agent": session.user_agent} if session is not None else None,
+            meta={"cookiejar": 1, "redstm_capture": True},
         )
 
     def parse_listing(
         self, response: scrapy.http.Response, **_: object
-    ) -> Iterable[DiscoveredPostItem]:
+    ) -> Iterable[DiscoveredPostItem | scrapy.Request]:
         if not isinstance(response, scrapy.http.HtmlResponse):
             self.logger.error("TypeMoon listing response is not HTML: %s", response.url)
             return
+        if self.store is not None and self.run_id is not None:
+            self.store.record_listing(
+                self.run_id,
+                url=response.url,
+                fetched_at=datetime.now(UTC),
+                http_status=response.status,
+                raw_sha256=response.meta.get("raw_sha256"),
+                warc_file=response.meta.get("warc_file"),
+                warc_record_id=response.meta.get("warc_record_id"),
+            )
         for row in response.css("tbody > tr:not(.td-mobile)"):
             link = row.css(".td-subj-wrap a::attr(href)").get()
             if not link:
@@ -295,7 +369,7 @@ class TypeMoonSpider(scrapy.Spider):
             if not title:
                 self.logger.warning("Skipping TypeMoon row without title: %s", canonical_url)
                 continue
-            yield DiscoveredPostItem(
+            item = DiscoveredPostItem(
                 board_id=board_id,
                 external_post_id=external_post_id,
                 canonical_url=canonical_url,
@@ -308,6 +382,38 @@ class TypeMoonSpider(scrapy.Spider):
                 created_at_raw=_first_text(row, (".td-date::text",)),
                 comment_count=_integer(row.css(".td-comment::text").get()),
                 is_notice="board-notice" in row.attrib.get("class", ""),
+            )
+            yield item
+            identity = (board_id, external_post_id)
+            if (
+                self.frontier is None
+                or self.session is None
+                or item["is_notice"]
+                or identity in self._seen
+                or self.scheduled_posts >= self.max_posts
+            ):
+                continue
+            self._seen.add(identity)
+            self.frontier.seed(board_id, external_post_id, canonical_url, reopen_done=True)
+            lease = self.frontier.claim_identity(
+                board_id, external_post_id, lease_seconds=self.lease_seconds
+            )
+            if lease is None:
+                continue
+            request = self.detail_request(board_id, external_post_id, self.session)
+            request.meta["frontier_lease"] = lease
+            self.scheduled_posts += 1
+            yield request
+
+        page = int(parse_qs(urlparse(response.url).query).get("page", ["1"])[0])
+        if (
+            self.frontier is not None
+            and self.session is not None
+            and page < self.max_pages
+            and self.scheduled_posts < self.max_posts
+        ):
+            yield self.listing_request(
+                self.start_board_id or "", page=page + 1, session=self.session
             )
 
     def parse_detail(
@@ -322,8 +428,25 @@ class TypeMoonSpider(scrapy.Spider):
             return
         board_id, external_post_id = post_ref
         canonical_url = f"{_BASE_URL}/{board_id}/{external_post_id}"
+        capture_metadata = {
+            "http_status": response.status,
+            "raw_sha256": response.meta.get("raw_sha256"),
+            "warc_file": response.meta.get("warc_file"),
+            "warc_record_id": response.meta.get("warc_record_id"),
+            "frontier_lease": response.meta.get("frontier_lease"),
+        }
         title = _first_text(response, _TITLE_SELECTORS)
         content = _content_root(response)
+        if content is None and _has_login_form(response):
+            yield CapturedPostItem(
+                board_id=board_id,
+                external_post_id=external_post_id,
+                canonical_url=canonical_url,
+                outcome="fetch_failed",
+                warnings=["auth_required"],
+                **capture_metadata,
+            )
+            return
         if content is None and _looks_restricted(response):
             yield CapturedPostItem(
                 board_id=board_id,
@@ -331,7 +454,7 @@ class TypeMoonSpider(scrapy.Spider):
                 canonical_url=canonical_url,
                 outcome="restricted",
                 warnings=[],
-                warc_record_id=response.meta.get("warc_record_id"),
+                **capture_metadata,
             )
             return
 
@@ -347,7 +470,7 @@ class TypeMoonSpider(scrapy.Spider):
                 canonical_url=canonical_url,
                 outcome="parse_failed",
                 warnings=warnings,
-                warc_record_id=response.meta.get("warc_record_id"),
+                **capture_metadata,
             )
             return
 
@@ -371,5 +494,5 @@ class TypeMoonSpider(scrapy.Spider):
             is_aa=_is_aa(board_id, category, content),
             comments=_comments(response),
             warnings=[],
-            warc_record_id=response.meta.get("warc_record_id"),
+            **capture_metadata,
         )

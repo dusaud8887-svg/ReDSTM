@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from crawler.archive import compress_body, connect_archive
+from crawler.frontier import FrontierLease, complete_lease, transition_lease
 from crawler.pipelines import NormalizedPost
 
 
@@ -52,6 +53,7 @@ class ArchiveStore:
         warc_file: str | None,
         http_status: int = 200,
         parser_version: str = "1",
+        lease: FrontierLease | None = None,
     ) -> StoreResult:
         captured_at_text = _timestamp(captured_at)
         with connect_archive(self.path) as connection:
@@ -159,6 +161,8 @@ class ArchiveStore:
                 ),
             )
             assert capture_cursor.lastrowid is not None
+            if lease is not None:
+                complete_lease(connection, lease)
             return StoreResult(post_id, version_id, capture_cursor.lastrowid, changed)
 
     def record_outcome(
@@ -172,8 +176,11 @@ class ArchiveStore:
         board_id: str | None = None,
         external_post_id: int | None = None,
         error_code: str | None = None,
+        raw_sha256: str | None = None,
         warc_file: str | None = None,
         warc_record_id: str | None = None,
+        lease: FrontierLease | None = None,
+        frontier_state: str = "done",
     ) -> int:
         fetched_at_text = _timestamp(fetched_at)
         with connect_archive(self.path) as connection:
@@ -196,8 +203,8 @@ class ArchiveStore:
                 """
                 INSERT INTO captures (
                     run_id, url, entity_type, post_id, fetched_at, http_status, outcome,
-                    warc_file, warc_record_id, error_code
-                ) VALUES (?, ?, 'post', ?, ?, ?, ?, ?, ?, ?)
+                    raw_sha256, warc_file, warc_record_id, error_code
+                ) VALUES (?, ?, 'post', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -206,13 +213,77 @@ class ArchiveStore:
                     fetched_at_text,
                     http_status,
                     outcome,
+                    raw_sha256,
                     warc_file,
                     warc_record_id,
                     error_code,
                 ),
             )
             assert cursor.lastrowid is not None
+            if lease is not None:
+                transition_lease(
+                    connection,
+                    lease,
+                    state=frontier_state,
+                    error_code=error_code,
+                )
             return cursor.lastrowid
+
+    def record_listing(
+        self,
+        run_id: str,
+        *,
+        url: str,
+        fetched_at: datetime,
+        http_status: int,
+        raw_sha256: str | None,
+        warc_file: str | None,
+        warc_record_id: str | None,
+    ) -> int:
+        fetched_at_text = _timestamp(fetched_at)
+        with connect_archive(self.path) as connection:
+            self._require_running_run(connection, run_id)
+            previous = connection.execute(
+                "SELECT 1 FROM captures WHERE entity_type = 'listing' AND url = ? "
+                "AND raw_sha256 = ? LIMIT 1",
+                (url, raw_sha256),
+            ).fetchone()
+            cursor = connection.execute(
+                """
+                INSERT INTO captures (
+                    run_id, url, entity_type, fetched_at, http_status, outcome,
+                    raw_sha256, warc_file, warc_record_id
+                ) VALUES (?, ?, 'listing', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    url,
+                    fetched_at_text,
+                    http_status,
+                    "unchanged" if previous is not None else "stored",
+                    raw_sha256,
+                    warc_file,
+                    warc_record_id,
+                ),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+    def find_warc_capture(self, raw_sha256: str, url: str) -> tuple[str, str] | None:
+        with connect_archive(self.path, read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT warc_file, warc_record_id
+                FROM captures
+                WHERE raw_sha256 = ? AND url = ?
+                  AND warc_file IS NOT NULL AND warc_record_id IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+                """,
+                (raw_sha256, url),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["warc_file"]), str(row["warc_record_id"])
 
     def finish_run(
         self,
