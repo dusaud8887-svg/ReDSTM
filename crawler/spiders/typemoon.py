@@ -14,7 +14,7 @@ from parsel import Selector
 from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
-from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS
+from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, REDSTM_LISTING_TIMEOUT_SECONDS
 from crawler.store import ArchiveStore
 
 _BASE_URL = "https://www.typemoon.net"
@@ -84,6 +84,7 @@ _COMMENT_DEPTH = re.compile(r"(?:depth|reply)[_-]?(\d+)?", re.IGNORECASE)
 _COMMENT_ID = re.compile(r"(\d+)")
 _MARGIN_LEFT = re.compile(r"margin-left\s*:\s*(\d+)", re.IGNORECASE)
 _AA_STYLE_HINT = re.compile(r"saitamaar|ms\s*(?:p\s*)?gothic|ipamona|mona", re.IGNORECASE)
+_OVERLAP_UNCHANGED = 20
 
 
 def _retry_after(response: Any, now: datetime) -> datetime | None:
@@ -265,6 +266,7 @@ class TypeMoonSpider(scrapy.Spider):
         max_pages: int = 1,
         max_posts: int = 20,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
+        inventory: bool = False,
     ) -> None:
         super().__init__()
         if board_id is not None and not _BOARD_ID_PATTERN.fullmatch(board_id):
@@ -276,6 +278,7 @@ class TypeMoonSpider(scrapy.Spider):
         self.max_pages = int(max_pages)
         self.max_posts = int(max_posts)
         self.lease_seconds = int(lease_seconds)
+        self.inventory = bool(inventory)
         if min(self.max_pages, self.max_posts, self.lease_seconds) < 1:
             raise ValueError("max_pages, max_posts, and lease_seconds must be positive")
         configured = (self.archive_path is not None, self.run_id is not None, session is not None)
@@ -286,6 +289,9 @@ class TypeMoonSpider(scrapy.Spider):
         self._seen: set[tuple[str, int]] = set()
         self._pending_details: list[tuple[str, int]] = []
         self._detail_in_flight = False
+        self._unchanged_streak = 0
+        self._listing_warning = False
+        self._boundary_reached = False
         self.failure_codes: set[str] = set()
         self.scheduled_posts = 0
 
@@ -367,7 +373,11 @@ class TypeMoonSpider(scrapy.Spider):
             errback=self.listing_error if self.store is not None else None,
             cookies=session.as_scrapy_cookies() if session is not None else None,
             headers={"User-Agent": session.user_agent} if session is not None else None,
-            meta={"cookiejar": 1, "redstm_capture": True},
+            meta={
+                "cookiejar": 1,
+                "redstm_capture": True,
+                "download_timeout": REDSTM_LISTING_TIMEOUT_SECONDS,
+            },
         )
 
     def listing_error(self, failure: Any) -> None:
@@ -395,18 +405,23 @@ class TypeMoonSpider(scrapy.Spider):
             self.failure_codes.add("listing_parse_failed")
             self.logger.error("TypeMoon listing table is missing: %s", response.url)
             return
+        discovered: list[DiscoveredPostItem] = []
+        page_warning = False
         for row in response.css("tbody > tr:not(.td-mobile)"):
             link = row.css(".td-subj-wrap a::attr(href)").get()
             if not link:
+                page_warning = True
                 continue
             canonical_url = response.urljoin(link)
             post_ref = parse_post_ref(canonical_url)
             if post_ref is None:
+                page_warning = True
                 self.logger.warning("Skipping unrecognized TypeMoon post URL: %s", canonical_url)
                 continue
             board_id, external_post_id = post_ref
             title = _first_text(row, (".td-subj-wrap .subject::text", ".td-subj-wrap strong::text"))
             if not title:
+                page_warning = True
                 self.logger.warning("Skipping TypeMoon row without title: %s", canonical_url)
                 continue
             item = DiscoveredPostItem(
@@ -423,12 +438,37 @@ class TypeMoonSpider(scrapy.Spider):
                 comment_count=_integer(row.css(".td-comment::text").get()),
                 is_notice="board-notice" in row.attrib.get("class", ""),
             )
+            discovered.append(item)
+
+        self._listing_warning = self._listing_warning or page_warning
+        for item in discovered:
             yield item
+            board_id = str(item["board_id"])
+            external_post_id = int(item["external_post_id"])
             identity = (board_id, external_post_id)
+            if item["is_notice"]:
+                continue
+            unchanged = self.frontier is not None and self.frontier.listing_is_unchanged(
+                board_id,
+                external_post_id,
+                title=str(item["title"]),
+                category=item.get("category"),
+                comment_count=int(item["comment_count"]),
+            )
+            if unchanged:
+                self._unchanged_streak += 1
+                if (
+                    not self.inventory
+                    and not self._listing_warning
+                    and self._unchanged_streak >= _OVERLAP_UNCHANGED
+                ):
+                    self._boundary_reached = True
+                    break
+                continue
+            self._unchanged_streak = 0
             if (
                 self.frontier is None
                 or self.session is None
-                or item["is_notice"]
                 or identity in self._seen
                 or self.scheduled_posts + len(self._pending_details) >= self.max_posts
             ):
@@ -443,6 +483,7 @@ class TypeMoonSpider(scrapy.Spider):
             and self.session is not None
             and page < self.max_pages
             and self.scheduled_posts + len(self._pending_details) < self.max_posts
+            and not self._boundary_reached
         ):
             yield self.listing_request(
                 self.start_board_id or "", page=page + 1, session=self.session

@@ -132,6 +132,26 @@ class FrontierStore:
                 ),
             )
 
+    def listing_is_unchanged(
+        self,
+        board_id: str,
+        external_post_id: int,
+        *,
+        title: str,
+        category: str | None,
+        comment_count: int,
+    ) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT title, category, comment_count
+                FROM posts
+                WHERE board_id = ? AND external_post_id = ?
+                """,
+                (board_id, external_post_id),
+            ).fetchone()
+        return row is not None and tuple(row) == (title, category, comment_count)
+
     def claim_identity(
         self,
         board_id: str,

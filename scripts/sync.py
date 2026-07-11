@@ -98,6 +98,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             max_pages=args.max_pages,
             max_posts=args.max_posts,
             lease_seconds=args.lease_seconds,
+            inventory=args.inventory,
         )
         process.start(stop_after_crawl=True)
 
@@ -148,6 +149,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pages", type=int, default=1)
     parser.add_argument("--max-posts", type=int, default=20)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
+    parser.add_argument("--inventory", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_pages, args.max_posts, args.lease_seconds) < 1:
