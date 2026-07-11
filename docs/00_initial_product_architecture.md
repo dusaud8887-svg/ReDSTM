@@ -553,7 +553,8 @@ profile에서만 pinned container로 사용한다.
 
 ### 7.2 SQLite schema
 
-schema v1 SQL은 `crawler/archive.py`의 hash 검증된 `MIGRATIONS`가 source of truth다. SQLite
+schema SQL은 `crawler/archive.py`의 hash 검증된 `MIGRATIONS`가 source of truth다. v1이 전체
+schema를 만들고 v2는 WARC 재사용을 위한 capture `(raw_sha256, url)` partial index를 더한다. SQLite
 `STRICT` table, foreign key, latest-version 소유권 trigger, frontier lease CHECK를 사용하며 같은
 migration version의 SQL hash가 달라지면 DB open을 거부한다. 아래는 외부 계약이다.
 
@@ -892,8 +893,14 @@ quality_rejected
 storage_error
 ```
 
+- restricted 판정은 content root가 없는 응답에서만 login form/field 구조와 안내 구문으로
+  결정한다. content root가 있으면 구문은 본문 인용으로 보고 정상 저장한다
+  ([`03_review_validation_20260711.md`](03_review_validation_20260711.md)).
 - `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
 - `permission_denied`는 retry storm을 만들지 않고 session 확인 후 보류한다.
+- frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
+  6시간에서 멈춘다. `network_error`는 5회 시도 후 `dead`로 전이하며, `auth_required`는
+  session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
 - 429는 `Retry-After`를 우선하고 전체 source cooldown을 적용한다.
 
@@ -1157,6 +1164,9 @@ session은 archive와 분리해 필요 시 별도 암호화 backup한다. archiv
 ```
 
 live SQLite 파일과 `-wal`을 단순 복사하지 않는다. SQLite는 live DB를 위한 Online Backup API를 제공한다. [SQLite Backup API](https://www.sqlite.org/backup.html)
+
+중단된 backup의 `--resume-partial` finalize는 snapshot 생성 이후 source가 변하지 않았다는
+전제에서만 유효하다. canonical에 write가 있었다면 resume하지 않고 새 snapshot을 만든다.
 
 ### 12.3 보존 정책
 
@@ -1486,6 +1496,17 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - 근거: `workers.dev` Access는 custom domain 없이 사용할 수 있고 account MFA로 shared Basic secret을 제거한다. 고정 집 IP는 매 run 다른 GitHub-hosted IP보다 TypeMoon account/session 위험이 낮다.
 - fallback: local/emergency Worker Basic auth와 Tailscale reader
 - 재검토 조건: Access free policy가 개인 사용을 막거나 self-hosted runner 가용성이 sync SLO를 반복 위반함
+
+### ADR-012: R2 serving object의 zstd 전송 포맷
+
+- 결정: 승인 (2026-07-11, 초기 gzip-6 결정을 대체)
+- 근거: 첫 R2 publish 전(bucket 0 objects)이 content-addressed immutable key 구조에서 유일한
+  무비용 전환 시점이며, zstd level 15가 R2 무료 한도 headroom과 브라우저 해제 속도에서 유리함
+- 제약: `Content-Encoding: zstd`는 Chromium 123+/Firefox 126+ 전용이고 Safari/iOS(WebKit)를
+  지원하지 않음. 단일 사용자(Windows/Android Chrome)의 의도된 제약으로 수용함
+- 계약: object key 확장자(`.json.zst`)는 exporter와 browser가 공유하며, user-state는 이전
+  gz 확장자 export 파일을 계속 import함. 세부는 [`02_static_edge_feasibility.md`](02_static_edge_feasibility.md) §3
+- 재검토 조건: WebKit 계열 사용 요구가 생기거나 level 15 재export 시간이 release 일정을 반복 위협함
 
 ## 17. 확정된 사용자 결정
 
