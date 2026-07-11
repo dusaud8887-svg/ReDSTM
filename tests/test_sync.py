@@ -8,6 +8,7 @@ import pytest
 from scrapy import Request
 from scrapy.http import HtmlResponse
 
+from crawler import settings as crawler_settings
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.items import CapturedPostItem
@@ -15,7 +16,9 @@ from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man, ping_success
+from scripts.recover_queue import _parse_args as parse_recovery_args
 from scripts.sync import _capture_summary, _run_status
+from scripts.sync import _parse_args as parse_sync_args
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
 
@@ -194,6 +197,23 @@ def test_listing_failure_and_incomplete_capture_cannot_succeed() -> None:
     assert _run_status({}, 0, sorted(spider.failure_codes)) == "failed"
     assert _run_status({"stored": 1}, 2, []) == "partial"
     assert _run_status({"stored": 1}, 1, []) == "succeeded"
+
+
+def test_slow_detail_defaults_keep_rate_and_lease_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    archive.touch()
+    assert crawler_settings.DOWNLOAD_DELAY == 10.0
+    assert crawler_settings.AUTOTHROTTLE_ENABLED is True
+    assert crawler_settings.AUTOTHROTTLE_MAX_DELAY == 60.0
+    assert crawler_settings.DOWNLOAD_MAXSIZE == 64 << 20
+    assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 900
+
+    monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
+    assert parse_sync_args().lease_seconds == 900
+    monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
+    assert parse_recovery_args().lease_seconds == 900
 
 
 def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:

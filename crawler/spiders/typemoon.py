@@ -14,6 +14,7 @@ from parsel import Selector
 from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
+from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS
 from crawler.store import ArchiveStore
 
 _BASE_URL = "https://www.typemoon.net"
@@ -263,7 +264,7 @@ class TypeMoonSpider(scrapy.Spider):
         session: SessionExport | None = None,
         max_pages: int = 1,
         max_posts: int = 20,
-        lease_seconds: int = 300,
+        lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
     ) -> None:
         super().__init__()
         if board_id is not None and not _BOARD_ID_PATTERN.fullmatch(board_id):
@@ -581,7 +582,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         archive_path: str | Path,
         run_id: str,
         session: SessionExport,
-        lease_seconds: int = 300,
+        lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
     ) -> None:
         self._candidates = iter(candidates)
         super().__init__(

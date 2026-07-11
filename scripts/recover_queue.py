@@ -13,7 +13,7 @@ from scrapy.utils.project import get_project_settings
 from crawler.archive import initialize_archive
 from crawler.frontier import FrontierStore
 from crawler.session import SessionRefreshError, ensure_session_export
-from crawler.settings import USER_AGENT
+from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man
@@ -112,7 +112,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
     parser.add_argument("--max-posts", type=int, default=20)
-    parser.add_argument("--lease-seconds", type=int, default=300)
+    parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_posts, args.lease_seconds) < 1:
