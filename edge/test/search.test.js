@@ -133,3 +133,38 @@ test("worker exposes release metadata, exact totals, and stable identity resolut
   });
   assert.equal(messages.at(-1).type, "error");
 });
+
+test("worker identifies an expired Access session", async (context) => {
+  const messages = [];
+  let onMessage;
+  const previousSelf = globalThis.self;
+  const previousFetch = globalThis.fetch;
+  globalThis.self = {
+    addEventListener(type, handler) {
+      if (type === "message") onMessage = handler;
+    },
+    postMessage(message) {
+      messages.push(message);
+    },
+  };
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    redirected: true,
+    url: "https://example.cloudflareaccess.com/cdn-cgi/access/login",
+  });
+  context.after(() => {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+    globalThis.fetch = previousFetch;
+  });
+
+  await import("../public/search-worker.js?access-expiry-test");
+  await onMessage({ data: { type: "init", id: 1 } });
+  assert.deepEqual(messages.at(-1), {
+    type: "error",
+    id: 1,
+    code: "access_expired",
+    message: "Cloudflare Access session expired",
+  });
+});

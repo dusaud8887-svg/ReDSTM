@@ -2,16 +2,28 @@ import { findPost, prepareSearch, searchPosts } from "./search-core.js";
 
 let indexPromise;
 
+function requireArchiveResponse(response, message) {
+  if (
+    response.status === 401 || response.status === 403 || response.redirected ||
+    String(response.url ?? "").includes("/cdn-cgi/access/")
+  ) {
+    const error = new Error("Cloudflare Access session expired");
+    error.code = "access_expired";
+    throw error;
+  }
+  if (!response.ok) throw new Error(message);
+}
+
 async function loadIndex() {
   const releaseResponse = await fetch("/archive/release.json");
-  if (!releaseResponse.ok) throw new Error("Release manifest could not be loaded");
+  requireArchiveResponse(releaseResponse, "Release manifest could not be loaded");
   const release = await releaseResponse.json();
   if (release.schema_version !== 1 || !release.search?.object_key) {
     throw new Error("Release manifest has no supported search index");
   }
 
   const searchResponse = await fetch(`/archive/${release.search.object_key}`);
-  if (!searchResponse.ok) throw new Error("Search index could not be loaded");
+  requireArchiveResponse(searchResponse, "Search index could not be loaded");
   const index = prepareSearch(await searchResponse.json());
   const lastModified = releaseResponse.headers.get("Last-Modified");
   const publishedAt = lastModified && !Number.isNaN(Date.parse(lastModified))
@@ -79,6 +91,7 @@ self.addEventListener("message", async ({ data }) => {
     self.postMessage({
       type: "error",
       id,
+      code: error?.code ?? "release_error",
       message: error instanceof Error ? error.message : "Search worker failed",
     });
   }
