@@ -133,3 +133,40 @@ def test_empty_recovery_writes_success_report_without_session_request(
     assert report["outcomes"] == {}
     assert report["interrupted_runs"] == 1
     assert pings == [True]
+
+
+def test_recovery_report_includes_capture_failure_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    frontier = FrontierStore(archive)
+    frontier.seed("aa_a01", 62068, "https://www.typemoon.net/aa_a01/62068")
+    monkeypatch.setattr(
+        "scripts.recover_queue.ensure_session_export", lambda *args, **kwargs: _session()
+    )
+    monkeypatch.setattr("scripts.recover_queue.CrawlerProcess.start", lambda self, **kwargs: None)
+    monkeypatch.setattr(
+        "scripts.recover_queue._capture_failure_codes",
+        lambda archive, run_id: ["auth_required"],
+    )
+
+    report = run_recovery(
+        Namespace(
+            archive=archive,
+            session=tmp_path / "session.json",
+            warc_dir=tmp_path / "warc",
+            max_posts=1,
+            lease_seconds=60,
+        )
+    )
+
+    assert report["ok"] is False
+    assert report["failures"] == ["auth_required"]

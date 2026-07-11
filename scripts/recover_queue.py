@@ -17,7 +17,7 @@ from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man
-from scripts.sync import _capture_summary, _run_status, _write_report
+from scripts.sync import _capture_failure_codes, _capture_summary, _run_status, _write_report
 
 
 def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
@@ -66,7 +66,10 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             process.start(stop_after_crawl=True)
             spider = crawler.spider
             scheduled = int(getattr(spider, "scheduled_posts", 0)) if spider else 0
-            failures = sorted(getattr(spider, "failure_codes", ())) if spider else []
+            failures = sorted(
+                set(getattr(spider, "failure_codes", ()))
+                | set(_capture_failure_codes(archive, run_id))
+            )
 
         outcomes = _capture_summary(archive, run_id)
         status = _run_status(outcomes, scheduled, failures)
