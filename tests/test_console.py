@@ -47,41 +47,43 @@ def test_console_is_loopback_authenticated_and_read_only(tmp_path: Path) -> None
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host = server.expected_host
-    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    client = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
     try:
-        connection.request("GET", "/api/status")
-        response = connection.getresponse()
+        client.request("GET", "/api/status")
+        response = client.getresponse()
         assert response.status == 401
         assert response.getheader("Access-Control-Allow-Origin") is None
-        assert "frame-ancestors 'none'" in response.getheader("Content-Security-Policy")
+        content_security_policy = response.getheader("Content-Security-Policy")
+        assert content_security_policy is not None
+        assert "frame-ancestors 'none'" in content_security_policy
         response.read()
 
         body = json.dumps({"token": "test-token"})
-        connection.request(
+        client.request(
             "POST",
             "/api/session",
             body,
             {"Content-Type": "application/json", "Origin": "https://evil.test"},
         )
-        response = connection.getresponse()
+        response = client.getresponse()
         assert response.status == 403
         response.read()
 
-        connection.request(
+        client.request(
             "POST",
             "/api/session",
             body,
             {"Content-Type": "application/json", "Origin": f"http://{host}"},
         )
-        response = connection.getresponse()
+        response = client.getresponse()
         assert response.status == 204
         cookie = response.getheader("Set-Cookie")
         assert cookie is not None
         assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
         response.read()
 
-        connection.request("GET", "/api/status", headers={"Cookie": cookie.split(";", 1)[0]})
-        response = connection.getresponse()
+        client.request("GET", "/api/status", headers={"Cookie": cookie.split(";", 1)[0]})
+        response = client.getresponse()
         assert response.status == 200
         status = json.loads(response.read())
         assert status["readiness"]["state"] == "Ready"
@@ -89,22 +91,22 @@ def test_console_is_loopback_authenticated_and_read_only(tmp_path: Path) -> None
         assert status["frontier"]["pending"] == 1
         assert status["release"]["comments"] == 2
 
-        connection.request(
+        client.request(
             "POST",
             "/api/run",
             "{}",
             {"Origin": f"http://{host}", "Content-Type": "application/json"},
         )
-        response = connection.getresponse()
+        response = client.getresponse()
         assert response.status == 404
         response.read()
 
-        connection.request("GET", "/../pyproject.toml")
-        response = connection.getresponse()
+        client.request("GET", "/../pyproject.toml")
+        response = client.getresponse()
         assert response.status == 404
         response.read()
     finally:
-        connection.close()
+        client.close()
         server.shutdown()
         server.server_close()
         thread.join(5)

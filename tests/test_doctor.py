@@ -6,6 +6,8 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from crawler.archive import initialize_archive
 from scripts.doctor import inspect_archive, main
 
@@ -81,7 +83,7 @@ def test_doctor_reports_failures_without_sensitive_capture_data(tmp_path: Path) 
 
 
 def test_doctor_cli_writes_atomic_failure_report(
-    tmp_path: Path, monkeypatch: object, capsys: object
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     archive = tmp_path / "archive.sqlite"
     warc_dir = tmp_path / "warc"

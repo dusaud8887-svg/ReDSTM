@@ -152,7 +152,24 @@ def test_recovery_report_includes_capture_failure_codes(
     monkeypatch.setattr(
         "scripts.recover_queue.ensure_session_export", lambda *args, **kwargs: _session()
     )
-    monkeypatch.setattr("scripts.recover_queue.CrawlerProcess.start", lambda self, **kwargs: None)
+
+    class FakeCrawler:
+        spider = None
+
+    class FakeProcess:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        def create_crawler(self, spider: object) -> FakeCrawler:
+            return FakeCrawler()
+
+        def crawl(self, crawler: FakeCrawler, **kwargs: object) -> None:
+            pass
+
+        def start(self, *, stop_after_crawl: bool) -> None:
+            pass
+
+    monkeypatch.setattr("scripts.recover_queue.CrawlerProcess", FakeProcess)
     monkeypatch.setattr(
         "scripts.recover_queue._capture_failure_codes",
         lambda archive, run_id: ["auth_required"],

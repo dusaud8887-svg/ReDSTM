@@ -79,9 +79,13 @@ def test_parse_post_ref_supports_short_and_query_urls() -> None:
 
 def test_parse_current_listing_shape() -> None:
     spider = TypeMoonSpider()
-    items = list(
-        spider.parse_listing(_response("listing.html", "https://www.typemoon.net/write_free21"))
-    )
+    items = [
+        item
+        for item in spider.parse_listing(
+            _response("listing.html", "https://www.typemoon.net/write_free21")
+        )
+        if not isinstance(item, Request)
+    ]
 
     assert len(items) == 2
     assert items[0]["is_notice"] is True
