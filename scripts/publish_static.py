@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
+from compression import zstd
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -29,6 +31,133 @@ def _current_release(root: Path) -> str:
     if not pointer.is_file():
         raise ValueError("release.json is missing")
     return f"releases/{hashlib.sha256(pointer.read_bytes()).hexdigest()}.json"
+
+
+def _ledger_path(root: Path) -> Path:
+    return root.parent / f".{root.name}.publish-ledger.json"
+
+
+def _object_key(ref: object) -> str:
+    if not isinstance(ref, dict) or not isinstance(ref.get("object_key"), str):
+        raise ValueError("invalid release object reference")
+    key = str(ref["object_key"])
+    path = PurePosixPath(key)
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_./-]+", key)
+        or path.is_absolute()
+        or not path.parts
+        or ".." in path.parts
+        or str(path) != key
+    ):
+        raise ValueError("invalid release object key")
+    return key
+
+
+def _release_object_keys(root: Path, body: bytes) -> set[str]:
+    manifest = json.loads(body)
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+        raise ValueError("unsupported release manifest")
+    release_key = f"releases/{hashlib.sha256(body).hexdigest()}.json"
+    boards = manifest.get("boards", [])
+    if not isinstance(boards, list):
+        raise ValueError("invalid release boards")
+    keys = {release_key}
+    for ref in [*boards, manifest.get("search"), manifest.get("collections")]:
+        if ref is not None:
+            keys.add(_object_key(ref))
+    for ref in boards:
+        key = _object_key(ref)
+        compressed = (root / key).read_bytes()
+        if (
+            ref.get("object_bytes") != len(compressed)
+            or ref.get("object_sha256") != hashlib.sha256(compressed).hexdigest()
+        ):
+            raise ValueError("board object does not match release")
+        try:
+            payload = zstd.decompress(compressed)
+        except zstd.ZstdError as error:
+            raise ValueError("invalid board object") from error
+        if ref.get("payload_sha256") != hashlib.sha256(payload).hexdigest():
+            raise ValueError("board payload does not match release")
+        board = json.loads(payload)
+        posts = board.get("posts") if isinstance(board, dict) else None
+        if not isinstance(posts, list):
+            raise ValueError("invalid board manifest")
+        keys.update(_object_key(post) for post in posts)
+    return keys
+
+
+def _delta_plan(
+    root: Path,
+    target: str,
+    previous_body: bytes,
+    release_body: bytes,
+) -> tuple[list[str], dict[str, int]] | None:
+    previous_key = f"releases/{hashlib.sha256(previous_body).hexdigest()}.json"
+    previous_path = root / previous_key
+    if not previous_path.is_file() or previous_path.read_bytes() != previous_body:
+        return None
+    try:
+        ledger = json.loads(_ledger_path(root).read_text(encoding="utf-8"))
+        if (
+            not isinstance(ledger, dict)
+            or ledger.get("schema_version") != 1
+            or ledger.get("remote") != target
+            or ledger.get("release_key") != previous_key
+            or type(ledger.get("remote_bytes")) is not int
+            or type(ledger.get("remote_objects")) is not int
+            or ledger["remote_bytes"] < 0
+            or ledger["remote_objects"] < 0
+        ):
+            return None
+        keys = sorted(
+            _release_object_keys(root, release_body)
+            - _release_object_keys(root, previous_body)
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    new_bytes = sum((root / key).stat().st_size for key in keys)
+    projected_bytes = (
+        int(ledger["remote_bytes"]) + new_bytes + len(release_body) - len(previous_body)
+    )
+    projected_objects = int(ledger["remote_objects"]) + len(keys)
+    if projected_bytes > _MAX_R2_BYTES or projected_objects > _MAX_R2_OBJECTS:
+        raise RuntimeError(
+            "R2 publishing budget limit exceeded: "
+            f"projected_bytes={projected_bytes}, projected_objects={projected_objects}"
+        )
+    return keys, {
+        "remote_bytes_before": int(ledger["remote_bytes"]),
+        "remote_objects_before": int(ledger["remote_objects"]),
+        "new_bytes": new_bytes,
+        "new_objects": len(keys),
+        "projected_remote_bytes": projected_bytes,
+        "projected_remote_objects": projected_objects,
+    }
+
+
+def _write_ledger(root: Path, target: str, release_key: str, budget: dict[str, int]) -> None:
+    ledger = _ledger_path(root)
+    partial = ledger.with_suffix(f"{ledger.suffix}.partial")
+    try:
+        partial.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "remote": target,
+                    "release_key": release_key,
+                    "remote_bytes": budget["projected_remote_bytes"],
+                    "remote_objects": budget["projected_remote_objects"],
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.replace(partial, ledger)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def _r2_budget_preflight(
@@ -145,34 +274,66 @@ def publish_static(
         }
 
     common = {"check": True}
-    budget = _r2_budget_preflight(
-        root,
-        target,
-        pointer_bytes=len(release_body),
-        runner=runner,
+    delta = (
+        _delta_plan(root, target, remote_pointer, release_body)
+        if remote_pointer is not None
+        else None
     )
-
-    runner(
-        [
-            "rclone",
-            "copy",
-            str(root),
+    if delta is None:
+        mode = "publish"
+        budget = _r2_budget_preflight(
+            root,
             target,
-            "--exclude",
-            "/release.json",
-            "--immutable",
-            "--checkers",
-            "16",
-            "--transfers",
-            "16",
-            "--fast-list",
-        ],
-        **common,
-    )
-    runner(
-        ["rclone", "check", str(root), target, "--exclude", "/release.json", "--one-way"],
-        **common,
-    )
+            pointer_bytes=len(release_body),
+            runner=runner,
+        )
+        runner(
+            [
+                "rclone",
+                "copy",
+                str(root),
+                target,
+                "--exclude",
+                "/release.json",
+                "--immutable",
+                "--checkers",
+                "16",
+                "--transfers",
+                "16",
+                "--fast-list",
+            ],
+            **common,
+        )
+        runner(
+            ["rclone", "check", str(root), target, "--exclude", "/release.json", "--one-way"],
+            **common,
+        )
+    else:
+        mode = "delta"
+        keys, budget = delta
+        with TemporaryDirectory(prefix="redstm-r2-delta-") as temporary:
+            files = Path(temporary) / "files.txt"
+            files.write_text("\n".join(keys) + "\n", encoding="utf-8")
+            runner(
+                [
+                    "rclone",
+                    "copy",
+                    str(root),
+                    target,
+                    "--files-from",
+                    str(files),
+                    "--immutable",
+                    "--checkers",
+                    "16",
+                    "--transfers",
+                    "16",
+                ],
+                **common,
+            )
+            runner(
+                ["rclone", "check", str(root), target, "--files-from", str(files), "--one-way"],
+                **common,
+            )
     runner(
         ["rclone", "copyto", str(root / release_key), pointer_target, "--no-check-dest"],
         **common,
@@ -184,12 +345,18 @@ def publish_static(
     ).stdout
     if remote_pointer != release_body:
         raise RuntimeError("remote release pointer verification failed")
+    try:
+        _write_ledger(root, target, release_key, budget)
+        ledger_written = True
+    except OSError:
+        ledger_written = False
     return {
         **validation,
         **budget,
         "remote": target,
         "pointer_verified": True,
-        "mode": "publish",
+        "ledger_written": ledger_written,
+        "mode": mode,
     }
 
 

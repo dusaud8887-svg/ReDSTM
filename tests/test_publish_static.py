@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
+from compression import zstd
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,10 +19,40 @@ from scripts.publish_static import (
 def _release(root: Path) -> tuple[str, bytes]:
     body = b'{"schema_version":1}\n'
     key = f"releases/{hashlib.sha256(body).hexdigest()}.json"
-    (root / "releases").mkdir(parents=True)
+    (root / "releases").mkdir(parents=True, exist_ok=True)
     (root / key).write_bytes(body)
     (root / "release.json").write_bytes(body)
     return key, body
+
+
+def _graph_release(root: Path, marker: str) -> tuple[str, bytes, set[str]]:
+    post_key = f"posts/write/1-{marker * 64}.json.zst"
+    (root / post_key).parent.mkdir(parents=True, exist_ok=True)
+    (root / post_key).write_bytes(marker.encode())
+    board_payload = json.dumps(
+        {"schema_version": 1, "board_id": "write", "posts": [{"object_key": post_key}]},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    board_body = zstd.compress(board_payload, level=15)
+    board_payload_sha = hashlib.sha256(board_payload).hexdigest()
+    board_key = f"boards/write/manifest-{board_payload_sha}.json.zst"
+    (root / board_key).parent.mkdir(parents=True, exist_ok=True)
+    (root / board_key).write_bytes(board_body)
+    board_ref = {
+        "object_key": board_key,
+        "payload_sha256": board_payload_sha,
+        "object_sha256": hashlib.sha256(board_body).hexdigest(),
+        "object_bytes": len(board_body),
+    }
+    body = (
+        json.dumps({"schema_version": 1, "boards": [board_ref]}, sort_keys=True) + "\n"
+    ).encode()
+    key = f"releases/{hashlib.sha256(body).hexdigest()}.json"
+    (root / "releases").mkdir(parents=True, exist_ok=True)
+    (root / key).write_bytes(body)
+    (root / "release.json").write_bytes(body)
+    return key, body, {key, board_key, post_key}
 
 
 def test_publish_validates_objects_before_writing_pointer(
@@ -42,7 +74,10 @@ def test_publish_validates_objects_before_writing_pointer(
     )
     monkeypatch.setattr(
         "scripts.publish_static._r2_budget_preflight",
-        lambda *args, **kwargs: {"projected_remote_bytes": 100},
+        lambda *args, **kwargs: {
+            "projected_remote_bytes": 100,
+            "projected_remote_objects": 10,
+        },
     )
     report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
 
@@ -50,6 +85,7 @@ def test_publish_validates_objects_before_writing_pointer(
     assert commands[1][commands[1].index("--exclude") + 1] == "/release.json"
     assert commands[3][3] == "r2:redstm-archive/release.json"
     assert report["pointer_verified"] is True
+    assert report["ledger_written"] is True
     assert report["mode"] == "publish"
 
 
@@ -75,6 +111,55 @@ def test_publish_is_noop_when_remote_pointer_matches(
     assert report["new_bytes"] == report["new_objects"] == 0
 
 
+def test_publish_uses_verified_local_delta_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous_key, previous_body, previous_keys = _graph_release(tmp_path, "a")
+    release_key, release_body, release_keys = _graph_release(tmp_path, "b")
+    ledger = tmp_path.parent / f".{tmp_path.name}.publish-ledger.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "remote": "r2:redstm-archive",
+                "release_key": previous_key,
+                "remote_bytes": 1000,
+                "remote_objects": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    copied: list[str] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        if command[1] == "copy" and "--files-from" in command:
+            files = Path(command[command.index("--files-from") + 1])
+            copied.extend(files.read_text(encoding="utf-8").splitlines())
+        pointer_checks = sum(item[1] == "cat" for item in commands)
+        return SimpleNamespace(
+            stdout=release_body if command[1] == "cat" and pointer_checks == 2 else previous_body
+        )
+
+    monkeypatch.setattr(
+        "scripts.publish_static.validate_release",
+        lambda root, release: {"release_key": release_key, "post_count": 1},
+    )
+    monkeypatch.setattr(
+        "scripts.publish_static._r2_budget_preflight",
+        lambda *args, **kwargs: pytest.fail("verified delta must not full-scan R2"),
+    )
+
+    report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
+
+    assert [command[1] for command in commands] == ["cat", "copy", "check", "copyto", "cat"]
+    assert set(copied) == release_keys - previous_keys
+    assert report["mode"] == "delta"
+    assert report["ledger_written"] is True
+    assert report["new_objects"] == 3
+
+
 def test_failed_remote_check_never_writes_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -93,7 +178,10 @@ def test_failed_remote_check_never_writes_pointer(
     )
     monkeypatch.setattr(
         "scripts.publish_static._r2_budget_preflight",
-        lambda *args, **kwargs: {"projected_remote_bytes": 100},
+        lambda *args, **kwargs: {
+            "projected_remote_bytes": 100,
+            "projected_remote_objects": 10,
+        },
     )
     with pytest.raises(subprocess.CalledProcessError):
         publish_static(tmp_path, "r2:redstm-archive", runner=run)
