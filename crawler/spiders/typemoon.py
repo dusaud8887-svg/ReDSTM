@@ -474,7 +474,9 @@ class TypeMoonSpider(scrapy.Spider):
             ):
                 continue
             self._seen.add(identity)
-            self.frontier.seed(board_id, external_post_id, canonical_url, reopen_done=True)
+            self.frontier.seed(
+                board_id, external_post_id, str(item["canonical_url"]), reopen_done=True
+            )
             self._pending_details.append(identity)
 
         page = int(parse_qs(urlparse(response.url).query).get("page", ["1"])[0])

@@ -46,3 +46,11 @@ class CapturedPostItem(scrapy.Item):
     warc_file = scrapy.Field()
     warc_record_id = scrapy.Field()
     frontier_lease = scrapy.Field()
+
+    def __repr__(self) -> str:
+        return (
+            "CapturedPostItem("
+            f"board_id={self.get('board_id')!r}, "
+            f"external_post_id={self.get('external_post_id')!r}, "
+            f"outcome={self.get('outcome')!r})"
+        )

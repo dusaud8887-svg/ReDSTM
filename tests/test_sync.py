@@ -327,9 +327,30 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
         assert [
             tuple(row)
             for row in connection.execute(
-                "SELECT external_post_id, state FROM crawl_frontier ORDER BY external_post_id"
+                "SELECT external_post_id, url, state FROM crawl_frontier ORDER BY external_post_id"
             )
-        ] == [(1, "running"), (2, "pending")]
+        ] == [
+            (1, "https://www.typemoon.net/write_free21/1", "running"),
+            (2, "https://www.typemoon.net/write_free21/2", "pending"),
+        ]
+
+
+def test_captured_post_repr_never_logs_content() -> None:
+    item = CapturedPostItem(
+        board_id="aa_19",
+        external_post_id=1,
+        canonical_url="https://www.typemoon.net/aa_19/1",
+        outcome="stored",
+        title="secret title",
+        body_html="<p>secret body</p>",
+        comments=[{"content_text": "secret comment"}],
+    )
+
+    rendered = repr(item)
+
+    assert rendered == "CapturedPostItem(board_id='aa_19', external_post_id=1, outcome='stored')"
+    assert "secret" not in rendered
+    assert "secret" not in str(item)
 
 
 def test_listing_failure_and_incomplete_capture_cannot_succeed() -> None:
