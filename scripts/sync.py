@@ -55,6 +55,13 @@ def _ping_success(url: str) -> None:
         raise RuntimeError("healthcheck success ping failed") from error
 
 
+def _notify_dead_man(status: str, url: str) -> None:
+    # The dead-man contract pings only fully successful runs so that a streak
+    # of partial failures still raises the external alert.
+    if url and status == "succeeded":
+        _ping_success(url)
+
+
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
     session_path = args.session.expanduser().resolve()
@@ -114,9 +121,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             discovered=discovered,
             summary={"outcomes": outcomes},
         )
-        healthcheck_url = os.environ.get("REDSTM_HEALTHCHECK_URL", "")
-        if healthcheck_url:
-            _ping_success(healthcheck_url)
+        _notify_dead_man(status, os.environ.get("REDSTM_HEALTHCHECK_URL", ""))
         return {
             "ok": status == "succeeded",
             "run_id": run_id,

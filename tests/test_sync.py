@@ -14,7 +14,7 @@ from crawler.items import CapturedPostItem
 from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
-from scripts.sync import _capture_summary, _ping_success
+from scripts.sync import _capture_summary, _notify_dead_man, _ping_success
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
 
@@ -158,3 +158,23 @@ def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyP
     assert opened == ["https://hc.example.test/uuid"]
     with pytest.raises(ValueError, match="credential-free HTTPS"):
         _ping_success("https://user:secret@hc.example.test/uuid")
+
+
+def test_dead_man_ping_skips_partial_and_failed_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+
+    class Response:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "scripts.sync.urlopen",
+        lambda request, timeout: opened.append(request.full_url) or Response(),
+    )
+    url = "https://hc.example.test/uuid"
+    _notify_dead_man("partial", url)
+    _notify_dead_man("failed", url)
+    _notify_dead_man("succeeded", "")
+    assert opened == []
+    _notify_dead_man("succeeded", url)
+    assert opened == [url]
