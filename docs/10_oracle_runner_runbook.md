@@ -122,9 +122,10 @@ Dockerfile은 reproducible smoke와 emergency container fallback으로 유지한
 /srv/redstm/static/                 content-addressed serving derivatives
 /srv/redstm/snapshots/              bounded local backup staging
 /srv/redstm/reports/                secret-free JSON reports
-/etc/redstm/typemoon.env            root:redstm, 0640
-/etc/redstm/r2.env                  root:redstm, 0640
-/etc/redstm/access.env              root:redstm, 0640
+/srv/redstm/private/session.json    redstm:redstm, 0600
+/etc/redstm/access.env              root:redstm, 0640; TypeMoon + Access service env
+/etc/redstm/rclone.conf             root:redstm, 0640; bucket-scoped R2 remote
+/etc/systemd/journald.conf.d/redstm.conf  root:root, 0644
 ```
 
 Git, deployment manifest와 journal에는 secret 값을 쓰지 않는다. TypeMoon credential, session,
@@ -140,6 +141,8 @@ R2 writer key와 Access service token은 별도 credential file로만
 - `Nice=10`, backup/export에는 idle I/O priority를 사용한다.
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.
+  `deploy/oracle/redstm-journald.conf`는 persistent 1GiB, runtime 256MiB, 14일/1일 file rotation을
+  적용한다. canary 종료 뒤 설치·검증하고 민감 본문이 남은 과거 실패 journal은 회전 후 폐기한다.
 - archived C0 Operations Console은 Oracle 장애 조사 때만 `127.0.0.1`에서 수동 실행하며,
   일상 상태 확인과 제한 명령은 Access 보호 `/ops`를 사용한다.
 - D1 poll/event 실패는 automatic cycle을 중단하지 않고 local outbox에 bounded 저장한다.
