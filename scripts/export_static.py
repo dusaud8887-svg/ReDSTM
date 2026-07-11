@@ -49,7 +49,7 @@ def _safe_key(key: object) -> str:
     return key
 
 
-def _atomic_replace(target: Path, body: bytes) -> None:
+def _atomic_replace(target: Path, body: bytes, *, durable: bool = False) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         dir=target.parent, prefix=f".{target.name}.", suffix=".partial"
@@ -58,8 +58,9 @@ def _atomic_replace(target: Path, body: bytes) -> None:
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
+            if durable:
+                stream.flush()
+                os.fsync(stream.fileno())
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -310,7 +311,7 @@ def activate_release(root: Path, release: str) -> dict[str, Any]:
     if pointer.is_file():
         previous_body = pointer.read_bytes()
         previous_key = f"releases/{_sha256(previous_body)}.json"
-    _atomic_replace(pointer, release_body)
+    _atomic_replace(pointer, release_body, durable=True)
     return {**validation, "previous_release_key": previous_key}
 
 
