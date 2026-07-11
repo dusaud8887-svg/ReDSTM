@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from crawler.archive import connect_archive, decompress_body, initialize_archive
-from crawler.frontier import FrontierLease, FrontierStore
+from crawler.frontier import MAX_NETWORK_ATTEMPTS, FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.store import ArchiveStore
@@ -226,3 +226,87 @@ def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
     )
     with connect_archive(path) as connection:
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"
+
+
+def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+
+    first = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert first is not None
+    store.record_outcome(
+        run_id,
+        url=first.url,
+        outcome="fetch_failed",
+        fetched_at=_NOW,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code="network_error",
+        lease=first,
+        frontier_state="retry",
+    )
+    with connect_archive(path) as connection:
+        row = connection.execute("SELECT state, next_attempt_at FROM crawl_frontier").fetchone()
+        assert row["state"] == "retry"
+        assert row["next_attempt_at"] == "2026-07-11T02:02:00+00:00"
+
+    def _escalated(attempts: int, token: str) -> FrontierLease:
+        expires_at = _NOW + timedelta(minutes=5)
+        with connect_archive(path) as connection:
+            connection.execute(
+                """
+                UPDATE crawl_frontier
+                SET state = 'running', attempts = ?, lease_token = ?, lease_expires_at = ?
+                WHERE board_id = 'ss_temp01' AND external_post_id = 7
+                """,
+                (attempts, token, expires_at.isoformat(timespec="seconds")),
+            )
+        return FrontierLease(
+            board_id="ss_temp01",
+            external_post_id=7,
+            url="https://www.typemoon.net/ss_temp01/7",
+            attempts=attempts,
+            lease_token=token,
+            lease_expires_at=expires_at,
+        )
+
+    held = _escalated(MAX_NETWORK_ATTEMPTS + 4, "auth-token")
+    store.record_outcome(
+        run_id,
+        url=held.url,
+        outcome="fetch_failed",
+        fetched_at=_NOW,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code="auth_required",
+        lease=held,
+        frontier_state="retry",
+    )
+    with connect_archive(path) as connection:
+        row = connection.execute("SELECT state, next_attempt_at FROM crawl_frontier").fetchone()
+        assert row["state"] == "retry"
+        assert row["next_attempt_at"] == "2026-07-11T08:00:00+00:00"
+
+    capped = _escalated(MAX_NETWORK_ATTEMPTS, "network-token")
+    store.record_outcome(
+        run_id,
+        url=capped.url,
+        outcome="fetch_failed",
+        fetched_at=_NOW,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code="network_error",
+        lease=capped,
+        frontier_state="retry",
+    )
+    with connect_archive(path) as connection:
+        row = connection.execute(
+            "SELECT state, next_attempt_at, last_error_code FROM crawl_frontier"
+        ).fetchone()
+        assert row["state"] == "dead"
+        assert row["next_attempt_at"] is None
+        assert row["last_error_code"] == "network_error"

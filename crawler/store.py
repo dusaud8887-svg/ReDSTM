@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from crawler.archive import compress_body, connect_archive
-from crawler.frontier import FrontierLease, complete_lease, transition_lease
+from crawler.frontier import (
+    MAX_NETWORK_ATTEMPTS,
+    FrontierLease,
+    complete_lease,
+    retry_backoff,
+    transition_lease,
+)
 from crawler.pipelines import NormalizedPost
 
 
@@ -221,11 +227,19 @@ class ArchiveStore:
             )
             assert cursor.lastrowid is not None
             if lease is not None:
+                state = frontier_state
+                next_attempt_at = None
+                if state == "retry":
+                    if error_code == "network_error" and lease.attempts >= MAX_NETWORK_ATTEMPTS:
+                        state = "dead"
+                    else:
+                        next_attempt_at = retry_backoff(lease.attempts, fetched_at)
                 transition_lease(
                     connection,
                     lease,
-                    state=frontier_state,
+                    state=state,
                     error_code=error_code,
+                    next_attempt_at=next_attempt_at,
                 )
             return cursor.lastrowid
 
@@ -304,7 +318,7 @@ class ArchiveStore:
                     SUM(outcome = 'stored') AS changed,
                     SUM(outcome = 'unchanged') AS unchanged,
                     SUM(outcome IN ('parse_failed', 'fetch_failed')) AS failed
-                FROM captures WHERE run_id = ?
+                FROM captures WHERE run_id = ? AND entity_type = 'post'
                 """,
                 (run_id,),
             ).fetchone()

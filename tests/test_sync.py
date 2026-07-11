@@ -105,7 +105,7 @@ def test_bounded_sync_fixture_is_idempotent_across_runs(tmp_path: Path) -> None:
             == 2
         )
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"
-    assert _capture_summary(path, second_run) == {"unchanged": 2}
+    assert _capture_summary(path, second_run) == {"unchanged": 1}
 
 
 def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:

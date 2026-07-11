@@ -25,6 +25,20 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
+# Network failures die after this many attempts; auth failures stay in retry
+# with backoff because recovering the session may need operator action.
+MAX_NETWORK_ATTEMPTS = 5
+_BACKOFF_BASE_SECONDS = 120
+_BACKOFF_CAP_SECONDS = 6 * 60 * 60
+
+
+def retry_backoff(attempts: int, now: datetime) -> datetime:
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    delay = min(_BACKOFF_BASE_SECONDS * 2 ** (attempts - 1), _BACKOFF_CAP_SECONDS)
+    return now.astimezone(UTC) + timedelta(seconds=delay)
+
+
 def transition_lease(
     connection: sqlite3.Connection,
     lease: FrontierLease,

@@ -25,7 +25,7 @@ def _capture_summary(archive: Path, run_id: str) -> dict[str, int]:
             str(row["outcome"]): int(row["count"])
             for row in connection.execute(
                 "SELECT outcome, COUNT(*) AS count FROM captures "
-                "WHERE run_id = ? GROUP BY outcome ORDER BY outcome",
+                "WHERE run_id = ? AND entity_type = 'post' GROUP BY outcome ORDER BY outcome",
                 (run_id,),
             )
         }
