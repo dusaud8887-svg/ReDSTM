@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
@@ -56,10 +56,21 @@ _WARNING_CODES = {
     "network_error": "site_unreachable",
 }
 _PUBLISH_INTERVAL_SECONDS = 24 * 60 * 60
+_SCHEDULE_HOURS = (0, 6, 12, 18, 24)
 
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _next_scheduled_at(now: datetime | None = None) -> str:
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    anchor = current.replace(hour=0, minute=17, second=0, microsecond=0)
+    return next(
+        (anchor + timedelta(hours=hours)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        for hours in _SCHEDULE_HOURS
+        if anchor + timedelta(hours=hours) > current
+    )
 
 
 def _integer(value: Any) -> int:
@@ -604,6 +615,7 @@ class ControlRunner:
             "runner_version": self.profile.runner_version,
             "state": state,
             "disk_free_bytes": shutil.disk_usage(self.profile.state_dir).free,
+            "next_scheduled_at": _next_scheduled_at(),
         }
         if run_id is not None:
             payload.update(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -9,7 +10,7 @@ import pytest
 
 from crawler.archive import connect_archive, initialize_archive
 from scripts.control_client import ControlClient
-from scripts.control_runner import ControlRunner, RunnerProfile
+from scripts.control_runner import ControlRunner, RunnerProfile, _next_scheduled_at
 from scripts.control_store import ControlStore
 
 
@@ -78,6 +79,18 @@ def _command(action: str) -> dict[str, Any]:
         "requested_at": "2026-07-12T00:00:00.000Z",
         "expires_at": "2026-07-12T00:15:00.000Z",
     }
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (datetime(2026, 7, 12, 0, 16, tzinfo=UTC), "2026-07-12T00:17:00Z"),
+        (datetime(2026, 7, 12, 0, 17, tzinfo=UTC), "2026-07-12T06:17:00Z"),
+        (datetime(2026, 7, 12, 23, 0, tzinfo=UTC), "2026-07-13T00:17:00Z"),
+    ],
+)
+def test_next_schedule_uses_the_systemd_base_slots(now: datetime, expected: str) -> None:
+    assert _next_scheduled_at(now) == expected
 
 
 def test_pause_marker_is_idempotent_and_reported(tmp_path: Path) -> None:

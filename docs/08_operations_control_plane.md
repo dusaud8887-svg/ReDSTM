@@ -150,6 +150,8 @@ authorization test는 URL prefix 전체와 unknown method를 포함한다.
 ### 5.4 통신 효율과 장애 복구
 
 - idle heartbeat/claim은 60초, active heartbeat는 30초가 기본이다.
+- heartbeat의 `next_scheduled_at`은 systemd UTC base slot(00/06/12/18:17) 중 다음 값이다.
+  실제 시작은 `RandomizedDelaySec=15m` 범위 안에서 늦어질 수 있다.
 - browser는 active run일 때 15초, idle일 때 60초 poll하고 hidden tab에서는 중단한다.
 - event는 step 전환 즉시 또는 최대 50개/30초 단위로 batch한다. post별 event는 보내지 않는다.
 - D1은 prepared statement와 transactional `batch()`로 claim+audit, event upsert를 묶는다.
