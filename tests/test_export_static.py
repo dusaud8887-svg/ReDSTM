@@ -301,10 +301,6 @@ def test_release_body_carries_no_generation_timestamp(tmp_path: Path) -> None:
     assert forbidden.isdisjoint(release.keys())
 
 
-@pytest.mark.xfail(
-    reason="A2.4-7 예정: search tuple 끝에 is_aa 추가 — viewer 7/8-field 수용 먼저 (docs/00 §7.3)",
-    strict=False,
-)
 def test_search_index_appends_is_aa_field(tmp_path: Path) -> None:
     source = tmp_path / "canonical.sqlite"
     output = tmp_path / "static"
@@ -328,10 +324,36 @@ def test_search_index_appends_is_aa_field(tmp_path: Path) -> None:
     assert bool(rows[("ss_temp01", 1)][7]) is False
 
 
-@pytest.mark.xfail(
-    reason="A2.4-7 예정: release.boards에 name/group_name 추가 — filter label 근거 (docs/00 §9.2)",
-    strict=False,
-)
+def test_validator_keeps_seven_field_release_rollback_compatible(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    export_static(source, output)
+    release = json.loads((output / "release.json").read_bytes())
+    search = _json_zstd(output / release["search"]["object_key"])
+    search["fields"].pop()
+    for row in search["posts"]:
+        row.pop()
+    payload = export_static_module._json_bytes(search)
+    body = zstd.compress(payload, level=15)
+    payload_sha256 = export_static_module._sha256(payload)
+    object_key = f"search/title-author-{payload_sha256}.json.zst"
+    (output / object_key).write_bytes(body)
+    release["search"].update(
+        {
+            "object_key": object_key,
+            "payload_sha256": payload_sha256,
+            "object_sha256": export_static_module._sha256(body),
+            "object_bytes": len(body),
+        }
+    )
+    release_body = export_static_module._json_bytes(release)
+    release_key = f"releases/{export_static_module._sha256(release_body)}.json"
+    (output / release_key).write_bytes(release_body)
+
+    assert validate_release(output, release_key)["post_count"] == 2
+
+
 def test_release_boards_carry_name_and_group(tmp_path: Path) -> None:
     source = tmp_path / "canonical.sqlite"
     output = tmp_path / "static"

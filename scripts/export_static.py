@@ -35,6 +35,7 @@ _SEARCH_FIELDS = [
     "created_at_raw",
     "payload_sha256",
 ]
+_SEARCH_FIELDS_WITH_AA = [*_SEARCH_FIELDS, "is_aa"]
 _COMPRESSION_LEVEL = 15
 
 
@@ -305,12 +306,22 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
 
     search, _ = _read_ref(root, manifest.get("search"))
     search_rows = search.get("posts")
-    if search.get("fields") != _SEARCH_FIELDS or not isinstance(search_rows, list):
+    search_fields = search.get("fields")
+    if search_fields not in (_SEARCH_FIELDS, _SEARCH_FIELDS_WITH_AA) or not isinstance(
+        search_rows, list
+    ):
         raise ValueError("invalid search index")
+    assert isinstance(search_fields, list)
     search_posts = {
         (str(row[0]), int(row[1]), str(row[6]))
         for row in search_rows
-        if isinstance(row, list) and len(row) == len(_SEARCH_FIELDS)
+        if isinstance(row, list)
+        and len(row) == len(search_fields)
+        and (
+            search_fields == _SEARCH_FIELDS
+            or isinstance(row[7], bool)
+            or row[7] in (0, 1)
+        )
     }
     if len(search_posts) != len(search_rows) or search_posts != board_posts:
         raise ValueError("search index does not match board manifests")
@@ -498,7 +509,15 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
                 }
             )
             ref = _write_zstd_object(writer, f"boards/{board_id}/manifest", payload)
-            board_refs.append({"board_id": board_id, "post_count": len(posts), **ref})
+            board_refs.append(
+                {
+                    "board_id": board_id,
+                    "name": board["name"],
+                    "group_name": board["group_name"],
+                    "post_count": len(posts),
+                    **ref,
+                }
+            )
 
         ordered_search = sorted(
             search_rows,
@@ -508,7 +527,7 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
         search_payload = _json_bytes(
             {
                 "schema_version": 1,
-                "fields": _SEARCH_FIELDS,
+                "fields": _SEARCH_FIELDS_WITH_AA,
                 "posts": [
                     [
                         summary.board_id,
@@ -518,6 +537,7 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
                         summary.category,
                         summary.created_at_raw,
                         summary.payload_sha256,
+                        summary.is_aa,
                     ]
                     for _, summary in ordered_search
                 ],
