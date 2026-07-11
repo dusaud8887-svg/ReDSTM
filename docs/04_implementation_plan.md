@@ -21,8 +21,8 @@
 | live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
-| unattended crawl | local core/systemd source 구현, Oracle 1건 통과·20건 background canary 실행 중 | IN PROGRESS |
-| Oracle | application `d23ce20...`, canonical/R2/TypeMoon/1건 canary 완료; Access/20·100/timer 전 | IN PROGRESS |
+| unattended crawl | local core/systemd source 구현, Oracle 1건·20건 bounded partial 통과 | IN PROGRESS |
+| Oracle | application `d23ce20...`, canonical/R2/TypeMoon/1·20건 완료; Access/100/timer 전 | IN PROGRESS |
 | remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
@@ -322,9 +322,10 @@ expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 
 interrupted staging retry도 같은 release까지 구현·배포됐고 현재 root free는 약 85GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입했고 owner/mode를 검증했다.
 Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. `write_free21` 1건 canary는 stored 1,
-failure 0, frontier done, WARC partial 0으로 통과했고 20건 상한 canary는 resource-bounded systemd
-background unit에서 실행 중이다. **남음** — Access service credential, 20→100건·delta publish,
-D1 outage/duplicate command 검증이다.
+failure 0, frontier done, WARC partial 0으로 통과했다. 20건 상한은 48분 28초 동안 scheduled 13,
+stored 12, network retry 1, dead 0과 WARC partial 0으로 전체 중단 없이 끝났고, 이전 결함 run의
+expired `aa_19` lease도 정상 reclaim 후 stored/done으로 복구했다. **남음** — Access service credential,
+100건 recovery·delta publish, D1 outage/duplicate command 검증이다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.
 
 완료 기준:
