@@ -1,7 +1,7 @@
 # Viewer 시각·UX 디자인 방향
 
-- 상태: Accepted redesign; live implementation pending
-- 기준일: 2026-07-11
+- 상태: Accepted redesign; local implementation verified, live/device acceptance pending
+- 기준일: 2026-07-12
 - 범위: Edge Reader와 Operations의 시각 방향, mobile shell, typography, interaction quality
 - normative token: [DESIGN.md](../DESIGN.md)
 - 상위 제품 계약: [06 final product](06_final_product_experience.md)

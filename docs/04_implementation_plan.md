@@ -1,7 +1,7 @@
 # ReDSTM 최종 구현·출시 계획
 
 - 상태: Active source of execution truth
-- 기준일: 2026-07-11
+- 기준일: 2026-07-12
 - 범위: 현재 검증된 데이터/코드에서 완전 자동 private archive로 가는 남은 작업
 - 제품 계약: [`00`](00_initial_product_architecture.md)
 - 완료 증거: [`archive/2026-07-11`](archive/2026-07-11/README.md)
@@ -18,8 +18,8 @@
 | static release | zstd level 15 full release, 282,239 readable posts, `.partial` 0 | DONE |
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
-| live data | authenticated data smoke와 remote rollback | READY |
-| current UI | 기능 shell은 있으나 시각·모바일·정보 구조 acceptance 불합격 | REWORK |
+| live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
+| current UI | Signal Archive local 구현/fixture 완료, live·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | overlap discovery, 46-board cycle, delta publish, scheduler | NOT READY |
 | Oracle | 읽기 전용 조사와 target runbook 완료, ReDSTM mutation 미시작 | PLANNED |
@@ -27,12 +27,12 @@
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
-현재 결론은 **데이터 기반과 bounded crawler는 준비됐지만, live data activation·frontend 재설계·
-Oracle 자동화·remote operations가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
+현재 결론은 **데이터 기반과 local frontend는 준비됐지만, authenticated live 검증·Oracle 자동화·
+remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-현재 baseline 검증은 Python 87 tests, Node 10 tests, Ruff check/format과 mypy가 통과했다.
-Playwright self-contained fixture는 15건 통과했고 local R2에 seed하지 않은 실제 AA/prose object
+현재 baseline 검증은 Python 87 tests, Node 15 tests, Ruff check/format과 mypy가 통과했다.
+Playwright self-contained fixture는 1440/768/390/320px 20건 통과했고 local R2에 seed하지 않은 실제 AA/prose object
 6건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의 authenticated live smoke에서 확인한다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
@@ -81,8 +81,10 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 3. [완료] versioned manifest와 `release.json` pointer 검증.
 4. 로그인된 Chrome으로 live Home/search/prose/AA/comment/collection을 smoke한다. 자동 E2E는
    local Worker에서 실행하며 테스트를 위해 Any/Everyone/Bypass policy를 만들지 않는다.
-5. 이전 pointer rollback 후 현재 pointer 복귀를 실제 R2에서 검증한다.
-6. Python/Node unit, type/lint, Playwright와 canonical doctor를 한 번 실행한다.
+5. [완료] synthetic versioned manifest로 이전 pointer rollback 후 현재 pointer 복귀를 실제 R2에서
+   검증했다. 증거: `.data/operations/a0-pointer-rollback-20260712.json`.
+6. [완료] Python 87, Node 15, Ruff/mypy와 canonical doctor를 실행했다. doctor 증거:
+   `.data/operations/a0-doctor-20260712.json`.
 
 완료 기준:
 
@@ -155,6 +157,18 @@ mobile-first 제품으로 교체한다.
 - 1440/768/390/320px에서 overflow·toolbar wrap·font fallback이 없다.
 - 실제 Android Chrome에서 search/background restore/AA alignment가 통과한다.
 - 사용자가 live 시각 방향을 최종 확인한다.
+
+현재 구현 판정(2026-07-12):
+
+- A1.1 stable identity, v1 migration, stable route/hash migration, SPA fallback과 release resolve는 구현·test 완료다.
+- A1.2 self-host font/license gate, graphite/red shell, 실제 Home data/freshness와 장식 제거는 완료다.
+- A1.3 72/360 wide shell, 768 medium, 390/320 single-plane/bottom navigation, safe-area,
+  keyboard nav hide, manual scroll restore와 pagehide flush는 local fixture를 통과했다.
+- A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation과 import preview는 구현됐다.
+- 남은 gate는 offline과 Access-expired의 별도 복구 UI, medium catalog collapse, Arrow/Enter result navigation,
+  live Access smoke, 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
+- 코드 증거: `53163e7`, `bda49e1`, `b76c4fe`, `c6fc25c`, `230a00b`; local gate는 Node 15,
+  Playwright 20, font/license check와 `wrangler deploy --dry-run --strict` 통과다.
 
 ### A2 — unattended crawler와 delta publish
 
