@@ -203,13 +203,14 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy command의 암묵적 부작용으로
 넣지 않는다.
 
-상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 release
-`c52647f82ce8a48bd9239bb1fa83db0aa3edf278`을 배포했다. resumable transfer는 remote offset 재개,
+상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 application
+release `d23ce2050fab21bd1ef211bea6861baf6480ee86`을 배포했다. resumable transfer는 remote offset 재개,
 unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
 full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결과는 `ok=true`, schema v2,
 application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
-missing/invalid/orphan WARC 0이다. root free는 약 85GB다. **남음** — secret 주입과 manual canary다.
+missing/invalid/orphan WARC 0이다. root free는 약 85GB다. R2/TypeMoon credential은 주입·권한과
+bucket 접근을 검증했다. **남음** — Access service credential과 20/100건·delta canary다.
 control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
 
 ### G5. Operations client
@@ -334,13 +335,14 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - Access service token route-role과 D1 status/event smoke를 검증한다.
 - timer 없이 manual canary만 실행한다.
 
-상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit, release
-`c52647f82ce8a48bd9239bb1fa83db0aa3edf278`, resumable canonical transfer와 atomic activation,
+상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit,
+application `d23ce2050fab21bd1ef211bea6861baf6480ee86`, resumable canonical transfer와 atomic activation,
 위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 85GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
-Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. **남음** — Access service-token 주입과 route-role/D1
-smoke, 비정상 TLS EOF 대응 release 배포 뒤 1→20건 manual canary다. control/schedule timer는
-disabled/inactive 상태를 유지한다.
+Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. `write_free21` 1건 canary는 269.8초,
+stored 1/failure 0/frontier done, 최대 메모리 약 92MB와 WARC partial 0으로 통과했다. 20건 canary는
+systemd background unit에서 실행 중이다. **남음** — Access service-token route-role/D1 smoke와
+20→100건·delta canary다. control/schedule timer는 disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow
 

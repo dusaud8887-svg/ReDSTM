@@ -81,7 +81,9 @@ offline/Access-expired 복구, control API와 responsive Operations를 포함한
 authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다. Oracle은
 versioned application, resumable canonical activation과 full doctor까지 통과했다. control/schedule
 timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 bucket-scoped R2 조회는
-통과했으며 Access service credential, session EOF 대응 release 배포와 manual canary가 남았다.
+통과했다. application `d23ce2050fab21bd1ef211bea6861baf6480ee86`에서 `write_free21` 1건
+stored canary, frontier `done`, WARC partial 0과 본문 비노출도 통과했고 20건 canary가 background
+실행 중이다. Access service credential, 20/100건·delta canary가 남았다.
 
 ### 구현 필요
 
@@ -89,7 +91,7 @@ timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 b
 
 1. R2 authenticated live data smoke
 2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
-3. Oracle Access secret 주입과 incremental 1/20/100건·실제 delta publish canary
+3. Oracle Access secret 주입과 incremental 20/100건·실제 delta publish canary
 4. Access user/service role smoke와 live `/ops` acceptance
 5. 24시간 canary, 7일 shadow, cutover와 실제 Android acceptance
 

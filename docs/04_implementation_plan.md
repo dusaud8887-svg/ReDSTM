@@ -185,13 +185,17 @@ mobile-first 제품으로 교체한다.
 4. listing/parser warning이 있으면 boundary 조기 종료를 금지한다.
 5. 주 1회 bounded inventory가 boundary 누락을 보완한다.
 
-상태(2026-07-12): local 구현 완료, Oracle canary 전이다. `b3e83e1`에서 views를 제외한 listing
+상태(2026-07-12): local 구현 완료, Oracle canary 진행 중이다. `b3e83e1`에서 views를 제외한 listing
 metadata 비교, 공지 제외 연속 20건 경계와 warning/`--inventory` 우회를 구현했다. Oracle canary에서
 원 사이트 listing이 60초 뒤 timeout되고 약 109초 뒤 비정상 TLS EOF로 끝나는 것을 실측해 listing
 timeout을 120초로 바꾸고 `DOWNLOAD_FAIL_ON_DATALOSS=false`를 명시했다. `python -m` 실행이
 `scrapy.cfg`를 자동 로드하지 않던 문제도 고쳐 sync/recovery가 concurrency/delay/AutoThrottle/WARC/
 pipeline 설정을 명시적으로 적용한다. 동일 재실행 detail 0건·metadata 변경 재개방을 포함한 crawler
 관련 test와 Ruff/mypy가 통과했다.
+Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 frontier seed 결함도 발견해
+`d23ce20`에서 item별 canonical URL로 고정했다. pipeline의 item 예외 repr은 body/title/comment를
+출력하지 않게 제한했다. `write_free21` 1건은 269.8초에 stored/frontier done, failure 0,
+최대 메모리 약 92MB와 WARC partial 0으로 통과했다.
 
 #### A2.2 46-board cycle
 
@@ -309,17 +313,18 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 7. A2/A3의 20/100건, duplicate command, D1 outage canary를 Oracle에서 실행한다.
 
 상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
-pinned uv/Python 3.14,
-versioned deploy/rollback과 release `c52647f82ce8a48bd9239bb1fa83db0aa3edf278` 배포를 마쳤다.
+pinned uv/Python 3.14, versioned deploy/rollback과 application release
+`d23ce2050fab21bd1ef211bea6861baf6480ee86` 배포를 마쳤다.
 canonical 12,407,148,544 bytes를 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했고
 doctor는 `ok=true`, schema v2, application ID 1380209492, `quick_check=ok`, foreign key 0,
 expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 별도 원격 hash는 약
 8분이 걸렸으며 transfer/staging partial은 남지 않았다. canonical 재개·unaligned chunk 복구와
 interrupted staging retry도 같은 release까지 구현·배포됐고 현재 root free는 약 85GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입했고 owner/mode를 검증했다.
-Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. 첫 1건 canary는 원 사이트가 본문 뒤 TLS EOF를
-정상 종료하지 않는 현상을 재현해 위 session 조기 종료 수정의 배포 전 gate로 남겼다. **남음** — Access
-service credential, 수정 release 배포와 1→20→100건 manual canary, D1 outage/duplicate command 검증이다.
+Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. `write_free21` 1건 canary는 stored 1,
+failure 0, frontier done, WARC partial 0으로 통과했고 20건 상한 canary는 resource-bounded systemd
+background unit에서 실행 중이다. **남음** — Access service credential, 20→100건·delta publish,
+D1 outage/duplicate command 검증이다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.
 
 완료 기준:
