@@ -6,10 +6,14 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from scripts.export_static import validate_release
+
+_MAX_R2_BYTES = 8_000_000_000
+_MAX_R2_OBJECTS = 800_000
 
 
 def _remote_target(remote: str, runner: Any) -> str:
@@ -25,6 +29,85 @@ def _current_release(root: Path) -> str:
     if not pointer.is_file():
         raise ValueError("release.json is missing")
     return f"releases/{hashlib.sha256(pointer.read_bytes()).hexdigest()}.json"
+
+
+def _r2_budget_preflight(
+    root: Path,
+    target: str,
+    *,
+    pointer_bytes: int,
+    runner: Any,
+) -> dict[str, int]:
+    remote_raw = runner(
+        ["rclone", "size", target, "--json"],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    try:
+        remote = json.loads(remote_raw)
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("invalid rclone size response") from error
+    if not isinstance(remote, dict):
+        raise RuntimeError("invalid rclone size response")
+    remote_bytes = remote.get("bytes")
+    remote_objects = remote.get("count")
+    if type(remote_bytes) is not int or remote_bytes < 0:
+        raise RuntimeError("invalid remote byte count")
+    if type(remote_objects) is not int or remote_objects < 0:
+        raise RuntimeError("invalid remote object count")
+
+    new_bytes = 0
+    new_objects = 0
+    with TemporaryDirectory(prefix="redstm-r2-preflight-") as temporary:
+        missing = Path(temporary) / "missing.txt"
+        runner(
+            [
+                "rclone",
+                "copy",
+                str(root),
+                target,
+                "--exclude",
+                "/release.json",
+                "--immutable",
+                "--dry-run",
+                "--missing-on-dst",
+                str(missing),
+                "--checkers",
+                "16",
+                "--fast-list",
+                "--stats",
+                "0",
+                "--log-level",
+                "ERROR",
+            ],
+            check=True,
+        )
+        if missing.is_file():
+            for raw_key in missing.read_text(encoding="utf-8").splitlines():
+                key = PurePosixPath(raw_key)
+                if key.is_absolute() or not key.parts or ".." in key.parts:
+                    raise RuntimeError(f"invalid rclone object key: {raw_key!r}")
+                local = root.joinpath(*key.parts)
+                if not local.is_file():
+                    raise RuntimeError(f"rclone reported missing local object: {raw_key}")
+                new_bytes += local.stat().st_size
+                new_objects += 1
+
+    projected_bytes = remote_bytes + new_bytes + pointer_bytes
+    projected_objects = remote_objects + new_objects + 1
+    if projected_bytes > _MAX_R2_BYTES or projected_objects > _MAX_R2_OBJECTS:
+        raise RuntimeError(
+            "R2 free-tier safety limit exceeded: "
+            f"projected_bytes={projected_bytes}, projected_objects={projected_objects}"
+        )
+    return {
+        "remote_bytes_before": remote_bytes,
+        "remote_objects_before": remote_objects,
+        "new_bytes": new_bytes,
+        "new_objects": new_objects,
+        "projected_remote_bytes": projected_bytes,
+        "projected_remote_objects": projected_objects,
+    }
 
 
 def publish_static(
@@ -43,6 +126,12 @@ def publish_static(
     release_body = (root / release_key).read_bytes()
     target = _remote_target(remote, runner)
     common = {"check": True}
+    budget = _r2_budget_preflight(
+        root,
+        target,
+        pointer_bytes=len(release_body),
+        runner=runner,
+    )
 
     runner(
         [
@@ -57,6 +146,7 @@ def publish_static(
             "16",
             "--transfers",
             "16",
+            "--fast-list",
         ],
         **common,
     )
@@ -76,7 +166,7 @@ def publish_static(
     ).stdout
     if remote_pointer != release_body:
         raise RuntimeError("remote release pointer verification failed")
-    return {**validation, "remote": target, "pointer_verified": True}
+    return {**validation, **budget, "remote": target, "pointer_verified": True}
 
 
 def activate_remote_release(

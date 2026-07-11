@@ -7,7 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.publish_static import activate_remote_release, publish_static
+from scripts.publish_static import (
+    _r2_budget_preflight,
+    activate_remote_release,
+    publish_static,
+)
 
 
 def _release(root: Path) -> tuple[str, bytes]:
@@ -33,6 +37,10 @@ def test_publish_validates_objects_before_writing_pointer(
         "scripts.publish_static.validate_release",
         lambda root, release: {"release_key": release_key, "post_count": 2},
     )
+    monkeypatch.setattr(
+        "scripts.publish_static._r2_budget_preflight",
+        lambda *args, **kwargs: {"projected_remote_bytes": 100},
+    )
     report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
 
     assert [command[1] for command in commands] == ["copy", "check", "copyto", "cat"]
@@ -56,6 +64,10 @@ def test_failed_remote_check_never_writes_pointer(
     monkeypatch.setattr(
         "scripts.publish_static.validate_release",
         lambda root, release: {"release_key": release_key},
+    )
+    monkeypatch.setattr(
+        "scripts.publish_static._r2_budget_preflight",
+        lambda *args, **kwargs: {"projected_remote_bytes": 100},
     )
     with pytest.raises(subprocess.CalledProcessError):
         publish_static(tmp_path, "r2:redstm-archive", runner=run)
@@ -103,3 +115,22 @@ def test_activate_rejects_unknown_remote_release(tmp_path: Path) -> None:
         )
 
     assert [command[1] for command in commands] == ["cat"]
+
+
+def test_budget_preflight_blocks_before_free_tier_margin(tmp_path: Path) -> None:
+    (tmp_path / "new.bin").write_bytes(b"x" * 200)
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        if command[1] == "size":
+            return SimpleNamespace(stdout=b'{"count":799999,"bytes":7999999900}')
+        missing = Path(command[command.index("--missing-on-dst") + 1])
+        missing.write_text("new.bin\n", encoding="utf-8")
+        return SimpleNamespace(stdout=b"")
+
+    with pytest.raises(RuntimeError, match="free-tier safety limit exceeded"):
+        _r2_budget_preflight(
+            tmp_path,
+            "r2:redstm-archive",
+            pointer_bytes=100,
+            runner=run,
+        )

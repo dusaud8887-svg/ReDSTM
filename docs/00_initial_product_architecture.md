@@ -1079,7 +1079,8 @@ D: workspace-local canonical SQLite
 
 - Worker Free: 100,000 request/day, 10ms CPU/request
 - R2 Standard: 10GB-month 무료, 이후 $0.015/GB-month, egress 무료
-- current base 계획값 11.82GB: 반올림 가정 약 $0.36/year
+- publisher는 현재 원격 사용량과 dry-run 신규 object를 합산하고 8,000,000,000 bytes 또는
+  800,000 objects를 넘으면 실제 upload 전에 실패한다. 무료량의 20%를 운영 여유로 남긴다.
 - app shell은 같은 Worker Static Assets에 두고 archive object만 R2에 저장
 - R2 object key는 content hash/revision을 포함하고 release manifest만 교체
 
@@ -1109,6 +1110,8 @@ static 작업 산출물은 `D:\ReDSTM\.data`에서 운영한다. `E:\ReDSTM\back
   audience를 검증한다. Preview URL은 끄고 Basic auth는 local/emergency fallback에만 쓴다.
 - cookie, password, login POST body, API token은 YAML, log, WARC, artifact에 넣지 않는다.
 - production bucket/token 생성 전 local gate 결과와 연 $10 budget을 다시 확인한다.
+- Cloudflare budget alert는 hard cap이 아니므로 비용 방어 근거로 사용하지 않는다. 초과 방지는
+  publisher preflight의 8GB/800,000-object hard refusal을 기준으로 한다.
 
 ### 11.4 fallback: home server + Tailscale
 

@@ -83,7 +83,8 @@ operation pending**이다.
 3. release count가 posts 282,239, comments 3,707,484, unavailable posts 1,831,
    unavailable comments 22,222, boards 46, collections 18,369와 일치한다. 두 post/comment 합계가
    canonical 284,070/3,729,706과 일치하고 exporter의 source-unchanged/전체 object 검증이 통과한다.
-4. 실제 산출물 크기가 계정의 무료 범위임을 확인한 뒤에만 R2에 pointer-last로 게시한다.
+4. publisher가 현재 원격 + 신규 upload를 계산해 8,000,000,000 bytes/800,000 objects 이하임을
+   확인한 뒤에만 R2에 pointer-last로 게시한다.
 5. Cloudflare Access가 비인증 요청을 차단하고 본인 인증 후 검색, 일반 글/AA, 댓글,
    collection 이전·다음, bookmark/progress/state export-import를 사용할 수 있다.
 6. 이전 release pointer로 rollback한 뒤 현재 release로 복귀하는 smoke가 통과한다.
@@ -98,8 +99,9 @@ operation pending**이다.
 |---|---|---|---|
 | T0 | legacy migration, schema v2, snapshot/restore | DONE | E backup 유지, 불필요한 재검증 금지 |
 | T0 | D canonical -> D static full export | RUNNING | exit 0, `release.json`, count/source 검증 |
-| T0 | Cloudflare CLI OAuth | BLOCKED: USER | 사용자가 Wrangler browser Allow 완료 |
-| T0 | R2 bucket, Access app/policy, Worker deploy | READY | OAuth 후 무료 범위에서 즉시 진행 |
+| T0 | Cloudflare CLI OAuth, Standard R2 bucket | DONE | bucket 0 bytes/0 objects에서 시작 |
+| T0 | Worker `workers.dev` route | BLOCKED: USER | account subdomain 등록 뒤 deploy 완료 |
+| T0 | Access app/policy | WAITING | Worker route 생성 후 본인 allow policy 적용 |
 | T1 | R2 upload/check, pointer-last publish | WAITING | export와 Cloudflare resource 완료 |
 | T1 | production smoke와 pointer rollback | WAITING | publish 완료 |
 | T1 | 최종 전체 test/lint/doctor | READY | code/config 변경과 export 종료 후 1회 |
