@@ -36,7 +36,9 @@ class StaticPostObject:
 
 
 def build_static_post(
-    post: NormalizedPost, *, capture_origin: Literal["live", "legacy_import"] = "live"
+    post: NormalizedPost,
+    *,
+    capture_origin: Literal["live", "legacy_import", "reparse"] = "live",
 ) -> StaticPostObject:
     payload = {
         "schema_version": 1,
@@ -69,7 +71,7 @@ def build_static_post(
             }
             for comment in post.comments
         ],
-        "assets": _image_references(post),
+        "assets": extract_image_references(post.body_html, post.canonical_url),
     }
     encoded = (
         json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
@@ -96,13 +98,13 @@ def summary_dict(summary: StaticPostSummary) -> dict[str, object]:
     return asdict(summary)
 
 
-def _image_references(post: NormalizedPost) -> list[dict[str, object]]:
+def extract_image_references(body_html: str, canonical_url: str) -> list[dict[str, object]]:
     references: list[dict[str, object]] = []
-    for position, node in enumerate(Selector(text=post.body_html).css("img"), start=1):
+    for position, node in enumerate(Selector(text=body_html).css("img"), start=1):
         source_url = node.attrib.get("src", "").strip()
         if not source_url:
             continue
-        resolved_url = urljoin(post.canonical_url, source_url)
+        resolved_url = urljoin(canonical_url, source_url)
         parsed = urlsplit(resolved_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             continue
