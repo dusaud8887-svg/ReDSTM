@@ -1,4 +1,4 @@
-import { prepareSearch, searchPosts } from "./search-core.js";
+import { findPost, prepareSearch, searchPosts } from "./search-core.js";
 
 let indexPromise;
 
@@ -12,27 +12,66 @@ async function loadIndex() {
 
   const searchResponse = await fetch(`/archive/${release.search.object_key}`);
   if (!searchResponse.ok) throw new Error("Search index could not be loaded");
-  return prepareSearch(await searchResponse.json());
+  const index = prepareSearch(await searchResponse.json());
+  const lastModified = releaseResponse.headers.get("Last-Modified");
+  const publishedAt = lastModified && !Number.isNaN(Date.parse(lastModified))
+    ? new Date(lastModified).toISOString()
+    : null;
+  const releaseBoards = new Map(
+    (Array.isArray(release.boards) ? release.boards : []).map((board) => [board.board_id, board]),
+  );
+  const boardMetadata = index.boards.map((boardId) => {
+    const board = releaseBoards.get(boardId) ?? {};
+    return {
+      board_id: boardId,
+      name: typeof board.name === "string" ? board.name : boardId,
+      group_name: typeof board.group_name === "string" ? board.group_name : "",
+      post_count: Number.isInteger(board.post_count) ? board.post_count : null,
+    };
+  });
+  return { index, publishedAt, boardMetadata };
 }
 
 self.addEventListener("message", async ({ data }) => {
   const id = data?.id;
   try {
     indexPromise ??= loadIndex();
-    const index = await indexPromise;
+    const { index, publishedAt, boardMetadata } = await indexPromise;
     if (data?.type === "init") {
-      self.postMessage({ type: "ready", id, boards: index.boards, count: index.rows.length });
+      self.postMessage({
+        type: "ready",
+        id,
+        boards: index.boards,
+        boardMetadata,
+        count: index.rows.length,
+        hasIsAa: index.hasIsAa,
+        recentPosts: searchPosts(index, { limit: 6 }).posts,
+        publishedAt,
+      });
       return;
     }
     if (data?.type === "search") {
       const started = performance.now();
-      const posts = searchPosts(index, data);
+      const { posts, total } = searchPosts(index, data);
       self.postMessage({
         type: "results",
         id,
         posts,
+        total,
         elapsedMs: performance.now() - started,
       });
+      return;
+    }
+    if (data?.type === "resolve") {
+      if (!Array.isArray(data.identities) || data.identities.length > 500) {
+        throw new Error("Resolve identities must be an array of at most 500 items");
+      }
+      const summaries = data.identities.map((identity) => {
+        const match = /^([a-z0-9_]+):([1-9]\d*)$/.exec(identity);
+        if (!match) throw new Error("Invalid stable post identity");
+        return findPost(index, match[1], Number(match[2]));
+      });
+      self.postMessage({ type: "resolved", id, summaries });
       return;
     }
     throw new Error("Unsupported search worker message");

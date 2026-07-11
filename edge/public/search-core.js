@@ -7,6 +7,7 @@ export const SEARCH_FIELDS = [
   "created_at_raw",
   "payload_sha256",
 ];
+const SEARCH_FIELDS_WITH_AA = [...SEARCH_FIELDS, "is_aa"];
 
 function normalize(value) {
   return String(value ?? "")
@@ -15,51 +16,101 @@ function normalize(value) {
 }
 
 export function prepareSearch(payload) {
+  const hasIsAa = JSON.stringify(payload?.fields) === JSON.stringify(SEARCH_FIELDS_WITH_AA);
   if (
     payload?.schema_version !== 1 ||
-    JSON.stringify(payload.fields) !== JSON.stringify(SEARCH_FIELDS) ||
+    (!hasIsAa && JSON.stringify(payload.fields) !== JSON.stringify(SEARCH_FIELDS)) ||
     !Array.isArray(payload.posts)
   ) {
     throw new Error("Unsupported search index schema");
   }
 
   const terms = [];
+  const categories = [];
+  const modes = [];
   const boards = new Set();
+  const identities = new Map();
   for (const row of payload.posts) {
     if (
       !Array.isArray(row) ||
-      row.length !== SEARCH_FIELDS.length ||
+      row.length !== payload.fields.length ||
       typeof row[0] !== "string" ||
       !Number.isInteger(row[1]) ||
-      !/^[0-9a-f]{64}$/.test(row[6])
+      !/^[0-9a-f]{64}$/.test(row[6]) ||
+      (hasIsAa && typeof row[7] !== "boolean" && row[7] !== 0 && row[7] !== 1)
     ) {
       throw new Error("Invalid search index row");
     }
     boards.add(row[0]);
     terms.push(normalize([row[0], row[2], row[3], row[4]].join(" ")));
+    categories.push(normalize(row[4]));
+    modes.push(hasIsAa ? Boolean(row[7]) : null);
+    identities.set(`${row[0]}:${row[1]}`, row);
   }
-  return { rows: payload.posts, terms, boards: [...boards].sort() };
+  return {
+    rows: payload.posts,
+    terms,
+    categories,
+    modes,
+    boards: [...boards].sort(),
+    hasIsAa,
+    identities,
+  };
 }
 
-function result(row) {
+function result(row, hasIsAa) {
   return {
     ...Object.fromEntries(SEARCH_FIELDS.map((field, index) => [field, row[index]])),
+    is_aa: hasIsAa ? Boolean(row[7]) : undefined,
     object_key: `posts/${row[0]}/${row[1]}-${row[6]}.json.zst`,
   };
 }
 
-export function searchPosts(index, { query = "", boardId = "", limit = 100 } = {}) {
+export function searchPosts(
+  index,
+  {
+    query = "",
+    boardId = "",
+    category = "",
+    mode = "all",
+    sort = "latest",
+    limit = 100,
+  } = {},
+) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     throw new Error("Search result limit must be between 1 and 200");
   }
+  if (!new Set(["all", "aa", "prose"]).has(mode)) {
+    throw new Error("Unsupported search mode");
+  }
+  if (mode !== "all" && !index.hasIsAa) {
+    throw new Error("Search mode is unavailable for this release");
+  }
+  if (!new Set(["latest", "oldest"]).has(sort)) {
+    throw new Error("Unsupported search sort");
+  }
   const tokens = normalize(query).trim().split(/\s+/).filter(Boolean);
-  const matches = [];
-  for (let position = 0; position < index.rows.length; position += 1) {
+  const normalizedCategory = normalize(category);
+  const posts = [];
+  let total = 0;
+  const start = sort === "latest" ? 0 : index.rows.length - 1;
+  const end = sort === "latest" ? index.rows.length : -1;
+  const step = sort === "latest" ? 1 : -1;
+  for (let position = start; position !== end; position += step) {
     const row = index.rows[position];
     if (boardId && row[0] !== boardId) continue;
+    if (normalizedCategory && index.categories[position] !== normalizedCategory) continue;
+    const isAa = index.modes[position];
+    if ((mode === "aa" && !isAa) || (mode === "prose" && isAa)) continue;
     if (tokens.some((token) => !index.terms[position].includes(token))) continue;
-    matches.push(result(row));
-    if (matches.length === limit) break;
+    total += 1;
+    if (posts.length < limit) posts.push(result(row, index.hasIsAa));
   }
-  return matches;
+  return { posts, total };
+}
+
+export function findPost(index, boardId, externalPostId) {
+  if (typeof boardId !== "string" || !Number.isInteger(externalPostId)) return null;
+  const row = index.identities.get(`${boardId}:${externalPostId}`);
+  return row ? result(row, index.hasIsAa) : null;
 }
