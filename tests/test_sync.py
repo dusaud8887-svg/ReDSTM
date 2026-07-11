@@ -364,6 +364,12 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
 
     monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
     assert parse_sync_args().lease_seconds == 900
+    assert parse_sync_args().session_prevalidated is False
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sync", "--archive", str(archive), "--board", "write", "--session-prevalidated"],
+    )
+    assert parse_sync_args().session_prevalidated is True
     monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
     assert parse_recovery_args().lease_seconds == 900
 

@@ -30,6 +30,10 @@ class SessionRefreshError(RuntimeError):
     pass
 
 
+class SessionNetworkError(SessionRefreshError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class SessionCookie:
     name: str
@@ -150,7 +154,7 @@ def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool
             )
         )
     except (HTTPError, URLError, OSError) as error:
-        raise SessionRefreshError("TypeMoon session validation request failed") from error
+        raise SessionNetworkError("TypeMoon session validation request failed") from error
     return _has_logout_link(home_html)
 
 
@@ -207,7 +211,7 @@ def refresh_session_export(
     except SessionRefreshError:
         raise
     except (HTTPError, URLError, OSError) as error:
-        raise SessionRefreshError("TypeMoon session refresh request failed") from error
+        raise SessionNetworkError("TypeMoon session refresh request failed") from error
 
     if not _has_logout_link(home_html):
         raise SessionRefreshError("TypeMoon authentication could not be verified")

@@ -13,6 +13,7 @@ import pytest
 
 import crawler.session as session_module
 from crawler.session import (
+    SessionNetworkError,
     SessionRefreshError,
     ensure_session_export,
     load_session_export,
@@ -178,6 +179,25 @@ def test_expired_export_is_validated_before_form_login(
 
     assert state["post_count"] == 1
     assert session.cookies[0].value == "secret"
+
+
+def test_session_network_failure_is_distinct_from_auth_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OfflineOpener:
+        def open(self, request: object, timeout: float) -> object:
+            raise OSError("offline")
+
+    monkeypatch.setattr(session_module, "build_opener", lambda *handlers: OfflineOpener())
+
+    with pytest.raises(SessionNetworkError, match="validation request failed"):
+        ensure_session_export(
+            _session_file(tmp_path),
+            user_id="member",
+            password="secret",
+            user_agent="ReDSTM-test/1.0",
+            now=datetime(2026, 7, 11, 12, tzinfo=UTC),
+        )
 
 
 def test_refresh_failure_preserves_existing_export_and_hides_password(

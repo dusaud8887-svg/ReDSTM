@@ -11,7 +11,7 @@ from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 
 from crawler.archive import connect_archive, initialize_archive
-from crawler.session import SessionRefreshError, ensure_session_export
+from crawler.session import SessionRefreshError, ensure_session_export, load_session_export
 from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
@@ -74,11 +74,15 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         if board is None:
             raise ValueError("board is missing or disabled in the canonical archive")
 
-        session = ensure_session_export(
-            session_path,
-            user_id=os.environ.get("TYPEMOON_ID", ""),
-            password=os.environ.get("TYPEMOON_PASSWORD", ""),
-            user_agent=USER_AGENT,
+        session = (
+            load_session_export(session_path)
+            if args.session_prevalidated
+            else ensure_session_export(
+                session_path,
+                user_id=os.environ.get("TYPEMOON_ID", ""),
+                password=os.environ.get("TYPEMOON_PASSWORD", ""),
+                user_agent=USER_AGENT,
+            )
         )
         run_id = store.start_run("sync")
         warc_dir.mkdir(parents=True, exist_ok=True)
@@ -150,6 +154,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-posts", type=int, default=20)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
+    parser.add_argument("--session-prevalidated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_pages, args.max_posts, args.lease_seconds) < 1:
