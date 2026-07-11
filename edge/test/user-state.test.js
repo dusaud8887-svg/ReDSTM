@@ -7,7 +7,7 @@ const defaults = { theme: "system", proseSize: 18, lineHeight: 1.8, proseWidth: 
 const summary = (hash) => ({
   board_id: "write_free21",
   external_post_id: 62068,
-  object_key: `posts/write_free21/62068-${hash.repeat(64)}.json.gz`,
+  object_key: `posts/write_free21/62068-${hash.repeat(64)}.json.zst`,
 });
 
 test("user state follows stable post identity and imports the newest entry", () => {
@@ -40,4 +40,18 @@ test("user state follows stable post identity and imports the newest entry", () 
     defaults,
   );
   assert.equal(rejected.history.length, 0);
+});
+
+test("state exported before the zstd switch keeps its gz object keys importable", () => {
+  const legacy = {
+    ...summary("d"),
+    object_key: `posts/write_free21/62068-${"d".repeat(64)}.json.gz`,
+  };
+  const imported = importUserState(
+    exportUserState(defaults, [], [{ summary: legacy, savedAt: "2026-07-11T00:00:00Z" }]),
+    { history: [], bookmarks: [] },
+    defaults,
+  );
+  assert.equal(imported.bookmarks.length, 1);
+  assert.equal(imported.bookmarks[0].summary.object_key, legacy.object_key);
 });

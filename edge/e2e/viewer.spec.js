@@ -3,15 +3,15 @@ import { mkdir } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
 const aaKey = process.env.REDSTM_AA_KEY ||
-  "posts/aa_19/351495-b43dec5cddddbd48c627717b51523ab02a6ac989e8634312ba1e4937b614bf19.json.gz";
+  "posts/aa_19/351495-b43dec5cddddbd48c627717b51523ab02a6ac989e8634312ba1e4937b614bf19.json.zst";
 const proseKey = process.env.REDSTM_PROSE_KEY ||
-  "posts/ss_19/189648-9a700c99351f57b2298b4420f20df3663329666c1149e873c2f396ea1fe7266d.json.gz";
+  "posts/ss_19/189648-9a700c99351f57b2298b4420f20df3663329666c1149e873c2f396ea1fe7266d.json.zst";
 const firstHash = "1".repeat(64);
 const secondHash = "2".repeat(64);
 const standaloneHash = "3".repeat(64);
-const firstKey = `posts/board_a/1-${firstHash}.json.gz`;
-const secondKey = `posts/board_a/2-${secondHash}.json.gz`;
-const standaloneKey = `posts/board_a/3-${standaloneHash}.json.gz`;
+const firstKey = `posts/board_a/1-${firstHash}.json.zst`;
+const secondKey = `posts/board_a/2-${secondHash}.json.zst`;
+const standaloneKey = `posts/board_a/3-${standaloneHash}.json.zst`;
 
 function postPayload(id, title) {
   return {
@@ -29,10 +29,10 @@ async function useCollectionFixture(page) {
   const payloads = new Map([
     ["release.json", {
       schema_version: 1,
-      search: { object_key: "search/e2e.json.gz" },
-      collections: { object_key: "collections/e2e.json.gz" },
+      search: { object_key: "search/e2e.json.zst" },
+      collections: { object_key: "collections/e2e.json.zst" },
     }],
-    ["search/e2e.json.gz", {
+    ["search/e2e.json.zst", {
       schema_version: 1,
       fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256"],
       posts: [
@@ -41,7 +41,7 @@ async function useCollectionFixture(page) {
         ["board_a", 1, "첫째", "작성자", null, "2026-07-11", firstHash],
       ],
     }],
-    ["collections/e2e.json.gz", {
+    ["collections/e2e.json.zst", {
       schema_version: 1,
       collections: [{
         id: 1, board_id: "board_a", kind: "series", title: "테스트 연작",

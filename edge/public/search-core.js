@@ -44,7 +44,7 @@ export function prepareSearch(payload) {
 function result(row) {
   return {
     ...Object.fromEntries(SEARCH_FIELDS.map((field, index) => [field, row[index]])),
-    object_key: `posts/${row[0]}/${row[1]}-${row[6]}.json.gz`,
+    object_key: `posts/${row[0]}/${row[1]}-${row[6]}.json.zst`,
   };
 }
 

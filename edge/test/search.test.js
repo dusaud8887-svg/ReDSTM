@@ -20,7 +20,7 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.deepEqual(searchPosts(index, { query: "fate 달빛" }).map((post) => post.external_post_id), [3]);
   assert.deepEqual(searchPosts(index, { query: "작가", boardId: "aa" }).map((post) => post.external_post_id), [2]);
   assert.deepEqual(searchPosts(index, { limit: 2 }).map((post) => post.external_post_id), [3, 2]);
-  assert.equal(searchPosts(index, { limit: 1 })[0].object_key, `posts/write/3-${"a".repeat(64)}.json.gz`);
+  assert.equal(searchPosts(index, { limit: 1 })[0].object_key, `posts/write/3-${"a".repeat(64)}.json.zst`);
   assert.throws(() => searchPosts(index, { limit: 0 }), /between 1 and 200/);
   assert.throws(() => prepareSearch({ ...payload, fields: [] }), /schema/);
 });

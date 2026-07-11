@@ -24,7 +24,7 @@ ReDSTM은 여러 무료 SaaS를 연결한 웹 서비스가 아니라 **한 사�
   -> Scrapy: discover -> frontier batch -> collect
   -> warcio: 변경된 원문 응답을 WARC 1.1로 보존
   -> nh3: 본문/댓글을 sanitize
-  -> deterministic exporter: content-addressed gzip object + release manifest
+  -> deterministic exporter: content-addressed zstd object + release manifest
 
 private R2
   -> posts/boards/search/collections immutable objects
@@ -50,14 +50,14 @@ Cloudflare Worker
 3. **수집은 Python, 배포 viewer는 표준 HTML/CSS/ES module + 작은 Worker다.** runtime 간 API나 DB 공유는 없고 immutable 파일 계약만 공유한다.
 4. **검증된 바퀴는 적극 재사용한다.** 기존 DSOTM의 순수 도메인 코드/CSS/fixture와 유지보수되는 외부 library를 선별 이식하되, framework와 compatibility 계층을 통째로 복사하지 않는다.
 5. **crawler는 Scrapy 기반 Python command다.** Scrapy가 HTTP/session/retry/throttle을, `warcio`가 WARC를, `nh3`가 HTML sanitize를 맡는다. Celery, RabbitMQ, Redis는 넣지 않는다.
-6. **배포 viewer는 private R2의 gzip object를 읽는다.** bucket direct URL은 공개하지 않고 Worker binding만 사용한다.
+6. **배포 viewer는 private R2의 zstd object를 읽는다.** bucket direct URL은 공개하지 않고 Worker binding만 사용한다.
 7. **R2 serving과 B2 암호화 backup을 공급자까지 분리한다.** serving release rollback과 restic retention을 섞지 않는다.
 8. **원문 WARC와 canonical SQLite가 보존 source of truth다.** 배포 object와 search index는 언제든 재생성 가능한 파생물이다.
 9. **fallback은 home server + Tailscale다.** edge gate나 비용 상한이 깨질 때 동일 static object 또는 local SQLite reader를 올리며 Oracle은 쓰지 않는다.
 
 이 결정은 초기 Northflank + PostgreSQL + RabbitMQ + Pages 분산안과 Django persistent-volume
 배포안을 폐기한다. Cloudflare는 viewer gate와 object storage만 담당하고 crawler나 canonical DB를
-호스팅하지 않으므로 공급자 종속은 표준 gzip JSON/WARC export와 local 원장으로 제한된다.
+호스팅하지 않으므로 공급자 종속은 표준 zstd(RFC 8878) JSON/WARC export와 local 원장으로 제한된다.
 
 ## 1. 문제 정의
 
@@ -188,7 +188,7 @@ listing discover
 - legacy body 500건을 WARC gzip으로 만든 하한 proxy는 raw의 20.58%였고 전체 기존 본문 1회분 하한은 약 5.23GiB다. full response shell, header, listing, asset, 향후 version은 포함하지 않은 하한이다.
 
 Phase 0 static-edge gate 통과 후 local canonical DB는 유지하면서 sanitized 본문을 재생성 가능한
-content-addressed gzip 배포물로 내보내는 결정을 채택했다.
+content-addressed 압축 배포물로 내보내는 결정을 채택했다.
 
 ### 2.5 외부 기술 검증
 
@@ -467,7 +467,7 @@ control은 실제 필요가 생길 때 별도 인증 설계 후 추가한다.
 local Windows/Linux runner
   Python 3.14 + Scrapy/warcio/nh3
   canonical SQLite + WARC + optional same-origin blob
-  deterministic gzip exporter
+  deterministic zstd exporter
             │ upload immutable objects, verify hash
             ▼
 private R2 ── release.json written last
@@ -482,7 +482,7 @@ browser (plain ES modules, search Web Worker, localStorage state)
 - deployed reader는 immutable JSON object만 읽고 remote write를 하지 않는다.
 - crawler와 viewer는 database API가 아니라 versioned file schema를 공유한다.
 - signed URL/CORS 없이 Worker의 private R2 binding으로 같은 origin에서 streaming한다.
-- canonical SQLite가 손상되거나 배포 공급자가 바뀌어도 release object는 표준 gzip JSON이다.
+- canonical SQLite가 손상되거나 배포 공급자가 바뀌어도 release object는 표준 zstd JSON(RFC 8878)이다.
 - single user state는 `localStorage`와 JSON export/import로 보존하며 동기화 요구가 생기기 전 D1을 추가하지 않는다.
 
 ### 6.3 process와 publish 규칙
@@ -617,8 +617,8 @@ UNIQUE(post_id, content_sha256, comments_sha256)
 첫 2,000 legacy posts/23,002 comments 실측에서 plain UTF-8 version body schema는 1,095,524,352
 bytes였다. 같은 UTF-8 payload는 gzip-6 21.41%/17.943초, Python 3.14 표준 zstd-3
 20.38%/3.730초였고 zstd schema DB는 231,505,920 bytes로 78.87% 작아졌다. local canonical
-DB는 browser compatibility가 필요 없으므로 zstd-3 BLOB을 쓰고, R2 static object는 계속
-deterministic gzip을 쓴다. 근거는 `canonical-schema-spike-20260711.json`이다.
+DB는 zstd-3 BLOB을 쓰고, R2 static object는 2026-07-11 결정 이후 zstd level 15를 쓴다
+([`02_static_edge_feasibility.md`](02_static_edge_feasibility.md) §3의 브라우저 제약 참고). 근거는 `canonical-schema-spike-20260711.json`이다.
 
 #### `comments`
 
@@ -708,7 +708,7 @@ payload pointer일 뿐이다. 설정 화면은 versioned state JSON export/impor
 ### 7.3 검색
 
 P0는 본문 FTS 없이 title/author/category/board substring만 제공한다. exporter는 다음 compact
-tuple을 최신순으로 `search/title-author-{sha256}.json.gz`에 쓴다.
+tuple을 최신순으로 `search/title-author-{sha256}.json.zst`에 쓴다.
 
 ```text
 board_id, external_post_id, title, author, category, created_at_raw, payload_sha256
@@ -977,7 +977,7 @@ Worker Static Assets가 `index.html`, `app.css`, 표준 ES module을 같은 배�
 `run_worker_first=true`로 모든 asset에 인증을 적용한다. browser JS 책임은 다음뿐이다.
 
 - search Web Worker 초기화와 250ms debounce
-- 선택한 gzip JSON post fetch와 sanitized body/comment HTML 렌더
+- 선택한 zstd JSON post fetch와 sanitized body/comment HTML 렌더
 - stable post identity 기반 prose/AA typography, theme, bookmark/history/scroll `localStorage`
 - versioned user-state JSON export/import
 - image lazy-load와 실패 link, 이전/다음, setting dialog
@@ -1065,14 +1065,14 @@ silent failure SLO는 sync/backup/restore dead-man check가 예정 시간+grace 
 
 ### 11.1 1순위 pilot: Worker + private R2
 
-배포 artifact는 실행 중인 database가 아니라 immutable gzip object와 release manifest다.
+배포 artifact는 실행 중인 database가 아니라 immutable zstd object와 release manifest다.
 Cloudflare Worker가 단일 사용자 인증과 private R2 streaming만 담당한다. 상세 수치와 gate는
 [`02_static_edge_feasibility.md`](02_static_edge_feasibility.md)를 따른다.
 
 ```text
 D: workspace-local canonical SQLite
   -> deterministic exporter
-  -> gzip post/board/search/collection objects + release manifest
+  -> zstd post/board/search/collection objects + release manifest
   -> private R2
   -> Access-protected Worker reader
 ```
@@ -1527,4 +1527,4 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 
 ## 19. 최종 한 줄
 
-**ReDSTM은 TypeMoon 하나를 local SQLite/WARC로 보존하고, 재생성 가능한 gzip release를 private R2와 작은 Worker로 읽는 개인 아카이빙 장치다.**
+**ReDSTM은 TypeMoon 하나를 local SQLite/WARC로 보존하고, 재생성 가능한 zstd release를 private R2와 작은 Worker로 읽는 개인 아카이빙 장치다.**

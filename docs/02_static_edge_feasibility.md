@@ -11,19 +11,19 @@ P0 배포는 **Cloudflare Worker + private R2 정적 archive**로 진행한다.
 
 ```text
 local migration / scheduled crawler
-  -> sanitize + gzip export
+  -> sanitize + zstd export
   -> private R2
-       posts/{board}/{id}-{content_hash}.json.gz
-       boards/{board}/manifest-{revision}.json.gz
-       search/title-author-{revision}.json.gz
-       collections/{revision}.json.gz
+       posts/{board}/{id}-{content_hash}.json.zst
+       boards/{board}/manifest-{revision}.json.zst
+       search/title-author-{revision}.json.zst
+       collections/{revision}.json.zst
   -> immutable release manifest + hash
 
 browser
   -> workers.dev Cloudflare Access
   -> static reader shell
   -> Worker R2 binding
-  -> gzip JSON을 browser가 자동 해제
+  -> zstd JSON을 browser가 자동 해제
 ```
 
 배포물에는 원격으로 write하는 주 DB를 두지 않는다. 로컬 canonical SQLite는 migration,
@@ -54,13 +54,25 @@ browser
 
 ## 3. 저장 포맷
 
-배포 객체는 UTF-8 JSON을 gzip-6으로 압축하고 `Content-Encoding: gzip`으로 반환한다.
-브라우저 호환성이 필요하므로 zstd를 기본 전송 포맷으로 쓰지 않는다.
+배포 객체는 UTF-8 JSON을 zstd level 15로 압축하고 `Content-Encoding: zstd`로 반환한다.
 Worker는 이미 압축된 R2 bytes를 다시 압축하지 않도록 Cloudflare
 [`Response.encodeBody: "manual"`](https://developers.cloudflare.com/workers/runtime-apis/response/)을
 사용한다.
 
-2,000 post body text 실측:
+**2026-07-11 전송 포맷 결정 변경:** 초기 spike는 브라우저 호환성 때문에 gzip-6을 채택했으나,
+첫 R2 publish 전(bucket 0 objects)에 zstd로 전환했다. content-addressed immutable key 때문에
+이후 전환은 전체 재업로드와 이중 저장을 만들므로 지금이 유일한 무비용 전환 시점이다. 근거는
+R2 무료 한도 headroom과 브라우저 해제 속도다. 이 결정의 제약:
+
+- `Content-Encoding: zstd`는 Chromium 123+와 Firefox 126+만 해제한다. **Safari/iOS(WebKit)
+  전체에서 viewer가 동작하지 않으며**, 단일 사용자(Windows/Android Chrome)의 의도된 제약이다.
+- Worker는 `Accept-Encoding` 협상 없이 zstd를 반환한다. 미지원 브라우저 요구가 생기면
+  gzip 병행이 아니라 이 결정 자체를 재검토한다.
+- object key 확장자(`.json.zst`)는 exporter와 browser(search key 재구성, user-state 검증)가
+  공유하는 계약이다. user-state는 이전 gz 확장자 export 파일도 계속 import한다.
+- zstd(RFC 8878)는 표준 포맷이므로 data-exit 계약은 유지된다.
+
+2,000 post body text 실측(초기 spike, gzip 채택 당시):
 
 | 포맷 | bytes | 원문 대비 | 시간 |
 |---|---:|---:|---:|
@@ -68,8 +80,8 @@ Worker는 이미 압축된 R2 bytes를 다시 압축하지 않도록 Cloudflare
 | gzip-6 | 38,428,461 | 24.57% | 2.104s |
 | Python 3.14 zstd-3 | 37,649,293 | 24.07% | 0.633s |
 
-zstd는 2.0% 작고 빠르지만 browser content decoding 호환성보다 이득이 작다. local backup이나
-중간 산출물에는 zstd를 다시 검토할 수 있다.
+level 15는 level 3보다 압축 시간이 크게 늘어나므로 282k object 전수 재export 시간이 배포
+임계 경로에 들어간다. 재export가 일정을 위협하면 level을 낮추는 것이 우선 대응이다.
 
 실제 compact legacy sample export는 post 2,000건과 comment 25,636건을 search와 versioned
 release를 포함한 2,042개 파일, 44,332,961 bytes로 만들었다. search object는 186,784 bytes,

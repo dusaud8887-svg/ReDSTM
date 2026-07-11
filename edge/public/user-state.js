@@ -1,5 +1,7 @@
 const boardPattern = /^[a-z0-9_]+$/;
-const objectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.gz$/;
+// Accept both extensions so state files exported before the zstd transport
+// switch keep importing; the current exporter emits .json.zst keys.
+const objectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const themes = new Set(["system", "light", "dark"]);
 
 export function postIdentity(summary) {
