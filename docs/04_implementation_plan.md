@@ -236,9 +236,12 @@ dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않�
    추가한다. 이미 게시된 release는 재작성하지 않고, release 본문에 생성 시각을 넣어 결정론을
    깨지 않는다([09 Freshness](09_frontend_strategy_and_roadmap.md)).
 
-상태(2026-07-12): `acd89b7`에서 remote pointer가 동일하면 `rclone cat` 1회 뒤 `mode=noop`으로
-끝나 upload/check/activate와 거짓 freshness 갱신을 막았다. 변경 릴리스의 참조 차이 upload,
-ledger 강등, smoke rollback과 GC는 아직 구현 전이다.
+상태(2026-07-12): local delta core 완료, authenticated Worker smoke rollback·Oracle canary·GC는
+남았다. `acd89b7`은 동일 pointer를 `mode=noop`으로 끝내고, `47977f3`은 새 export에 `is_aa`와
+board 표시명을 추가하면서 7-field rollback 호환을 유지한다. `c66aa3b`은 verified local ledger와
+remote pointer가 맞을 때 새 post/board/search/collection/versioned release만 `--files-from`으로
+upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20GB/800,000-object hard stop은
+두 경로에서 동일하다.
 
 완료 기준:
 

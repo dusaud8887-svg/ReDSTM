@@ -170,9 +170,10 @@ attempt 복원을 적용한다. 30분 재로그인 throttle은 timer 활성화 �
 
 ### G3. delta release/publish
 
-현재 exporter는 content-addressed object를 재사용하지만 전체 canonical과 약 28만 local/remote
-object를 다시 scan한다. 첫 baseline publish 이후에는 이전 verified release와 새 release의 참조
-차이를 계산해 새 post object, 변경된 board/search/collection object와 release manifest만 올린다.
+상태(2026-07-12): `c66aa3b`로 local delta upload/readback과 ledger mismatch full-verify 강등을
+구현했다. authenticated Worker smoke rollback과 Oracle canary 전이며, GC는 7일 window 뒤 A5다.
+첫 baseline publish 이후에는 이전 verified release와 새 release의 참조 차이를 계산해 새 post
+object, 변경된 board/search/collection object와 release manifest만 올린다.
 
 - remote delete 없이 append + pointer-last가 기본이다.
 - 새 object는 size/hash readback을 통과한 뒤에만 `release.json`을 바꾼다.
