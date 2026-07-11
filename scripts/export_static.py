@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator
@@ -375,6 +376,18 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             search_rows.append((str(row["created_at_source"] or ""), static_post.summary))
             object_key_by_post_id[int(row["post_id"])] = static_post.summary.object_key
             comment_count += len(post.comments)
+            if len(search_rows) % 1000 == 0:
+                print(
+                    json.dumps(
+                        {
+                            "exported_posts": len(search_rows),
+                            "objects_written": writer.written,
+                            "objects_reused": writer.reused,
+                        }
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
 
         if current_comments is not None:
             raise ValueError(

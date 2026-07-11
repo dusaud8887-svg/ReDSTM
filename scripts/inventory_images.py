@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,18 @@ def inventory_images(archive: Path) -> dict[str, Any]:
                 occurrences = record["occurrences"]
                 assert isinstance(occurrences, int)
                 record["occurrences"] = occurrences + 1
+            if post_count % 10_000 == 0:
+                print(
+                    json.dumps(
+                        {
+                            "scanned_posts": post_count,
+                            "image_references": reference_count,
+                            "unique_image_urls": len(images),
+                        }
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     after = archive.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
