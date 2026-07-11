@@ -12,7 +12,7 @@ from typing import Any
 
 from scripts.export_static import validate_release
 
-_MAX_R2_BYTES = 8_000_000_000
+_MAX_R2_BYTES = 20_000_000_000
 _MAX_R2_OBJECTS = 800_000
 
 
@@ -97,7 +97,7 @@ def _r2_budget_preflight(
     projected_objects = remote_objects + new_objects + 1
     if projected_bytes > _MAX_R2_BYTES or projected_objects > _MAX_R2_OBJECTS:
         raise RuntimeError(
-            "R2 free-tier safety limit exceeded: "
+            "R2 publishing budget limit exceeded: "
             f"projected_bytes={projected_bytes}, projected_objects={projected_objects}"
         )
     return {

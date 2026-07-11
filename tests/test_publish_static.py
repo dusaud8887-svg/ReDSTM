@@ -117,20 +117,35 @@ def test_activate_rejects_unknown_remote_release(tmp_path: Path) -> None:
     assert [command[1] for command in commands] == ["cat"]
 
 
-def test_budget_preflight_blocks_before_free_tier_margin(tmp_path: Path) -> None:
-    (tmp_path / "new.bin").write_bytes(b"x" * 200)
-
+@pytest.mark.parametrize(
+    ("remote_bytes", "remote_objects", "blocked"),
+    [
+        (19_999_999_999, 0, False),
+        (20_000_000_000, 0, True),
+        (0, 799_999, False),
+        (0, 800_000, True),
+    ],
+    ids=["bytes-at-limit", "bytes-over-limit", "objects-at-limit", "objects-over-limit"],
+)
+def test_budget_preflight_enforces_byte_and_object_boundaries(
+    tmp_path: Path, remote_bytes: int, remote_objects: int, blocked: bool
+) -> None:
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         if command[1] == "size":
-            return SimpleNamespace(stdout=b'{"count":799999,"bytes":7999999900}')
-        missing = Path(command[command.index("--missing-on-dst") + 1])
-        missing.write_text("new.bin\n", encoding="utf-8")
+            body = f'{{"count":{remote_objects},"bytes":{remote_bytes}}}'.encode()
+            return SimpleNamespace(stdout=body)
         return SimpleNamespace(stdout=b"")
 
-    with pytest.raises(RuntimeError, match="free-tier safety limit exceeded"):
-        _r2_budget_preflight(
+    def preflight() -> dict[str, int]:
+        return _r2_budget_preflight(
             tmp_path,
             "r2:redstm-archive",
-            pointer_bytes=100,
+            pointer_bytes=1,
             runner=run,
         )
+
+    if blocked:
+        with pytest.raises(RuntimeError, match="publishing budget limit exceeded"):
+            preflight()
+    else:
+        preflight()
