@@ -76,6 +76,7 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     timer = (root / "deploy" / "oracle" / "redstm-control.timer").read_text(encoding="utf-8")
 
     assert "systemctl enable" not in installer
+    assert '"uv ${UV_VERSION}" ||' in installer
     assert "/home/ubuntu" not in installer
     assert "pm2" not in installer
     assert "nginx" not in installer

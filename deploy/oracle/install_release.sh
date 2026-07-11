@@ -16,16 +16,23 @@ validate_release() {
 }
 
 install_uv() {
-  if [[ -x /usr/local/bin/uv ]] && \
-    [[ "$(/usr/local/bin/uv --version)" == "uv ${UV_VERSION} "* ]]; then
-    return
+  if [[ -x /usr/local/bin/uv ]]; then
+    local current_version
+    current_version="$(/usr/local/bin/uv --version)"
+    if [[ "$current_version" == "uv ${UV_VERSION}" || \
+      "$current_version" == "uv ${UV_VERSION} "* ]]; then
+      return
+    fi
   fi
   local installer="/tmp/uv-${UV_VERSION}-install.sh"
   curl --fail --silent --show-error --location \
     "https://astral.sh/uv/${UV_VERSION}/install.sh" --output "$installer"
   UV_UNMANAGED_INSTALL=/usr/local/bin UV_NO_MODIFY_PATH=1 sh "$installer"
   rm -f -- "$installer"
-  [[ "$(/usr/local/bin/uv --version)" == "uv ${UV_VERSION} "* ]] || fail "uv version mismatch"
+  local installed_version
+  installed_version="$(/usr/local/bin/uv --version)"
+  [[ "$installed_version" == "uv ${UV_VERSION}" || \
+    "$installed_version" == "uv ${UV_VERSION} "* ]] || fail "uv version mismatch"
 }
 
 install_release() {
