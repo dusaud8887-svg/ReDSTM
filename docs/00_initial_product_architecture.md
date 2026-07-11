@@ -492,7 +492,8 @@ browser (plain ES modules, search Web Worker, localStorage state)
 - login session reuse가 우선이며 만료 시 form POST는 run당 한 번만 시도하고 실패하면 중단한다.
 - export는 immutable post/board/search/versioned release를 먼저 쓴다.
 - upload 후 size/hash와 참조 대상 존재를 확인하고 `release.json`을 마지막에 교체한다.
-- rollback은 보존된 `releases/{sha256}.json` bytes를 `release.json`에 다시 쓰는 작업이다.
+- rollback은 원격의 content-addressed manifest bytes를 확인한 뒤 `--activate`로 `release.json`만
+  다시 쓰는 작업이다. 전체 object copy/check를 반복하지 않는다.
 
 ### 6.4 scheduler
 
@@ -790,6 +791,7 @@ uv run python -m scripts.backup_archive ARCHIVE --snapshot SNAPSHOT --manifest M
 uv run python -m scripts.restore_archive SNAPSHOT --manifest MANIFEST --target TARGET
 uv run python -m scripts.export_static export ARCHIVE --output TARGET
 uv run python -m scripts.publish_static TARGET --remote r2:redstm-archive
+uv run python -m scripts.publish_static TARGET --remote r2:redstm-archive --activate releases/{sha256}.json
 uv run python -m scripts.inventory_images ARCHIVE --output REPORT
 uv run python -m scripts.benchmark_full_search SOURCE --output TARGET
 uv run python -m scripts.verify_migration SOURCE --target TARGET --output REPORT

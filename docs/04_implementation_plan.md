@@ -306,8 +306,8 @@ npm exec wrangler login
    지배할 수 있다.
 3. **production smoke:** 비인증 차단과 본인 인증을 각각 확인하고 검색, 일반 글/AA, 댓글,
    collection, bookmark/progress/state workflow를 확인한다.
-4. **rollback:** 이전 pointer -> 현재 pointer 순으로 실제 교체하고 두 release가 모두 열리는지
-   확인한다.
+4. **rollback:** 검증된 이전 manifest를 `scripts.publish_static --activate`로 pointer-only
+   교체한 뒤 현재 manifest로 복귀하고 두 release가 모두 열리는지 확인한다.
 5. **최종 gate:** Python/Node 전체 검증과 canonical doctor를 한 번 실행하고 report/docs를
    확정한다.
 

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.publish_static import publish_static
+from scripts.publish_static import activate_remote_release, publish_static
 
 
 def _release(root: Path) -> tuple[str, bytes]:
@@ -61,3 +61,45 @@ def test_failed_remote_check_never_writes_pointer(
         publish_static(tmp_path, "r2:redstm-archive", runner=run)
 
     assert [command[1] for command in commands] == ["copy", "check"]
+
+
+def test_activate_existing_release_only_writes_pointer(tmp_path: Path) -> None:
+    release_key, body = _release(tmp_path)
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(stdout=body if command[1] == "cat" else b"")
+
+    report = activate_remote_release(
+        tmp_path,
+        "r2:redstm-archive",
+        release_key,
+        runner=run,
+    )
+
+    assert [command[1] for command in commands] == ["cat", "copyto", "cat"]
+    assert commands[0][2] == f"r2:redstm-archive/{release_key}"
+    assert commands[1][2] == f"r2:redstm-archive/{release_key}"
+    assert commands[1][3] == "r2:redstm-archive/release.json"
+    assert report["mode"] == "activate"
+    assert report["pointer_verified"] is True
+
+
+def test_activate_rejects_unknown_remote_release(tmp_path: Path) -> None:
+    release_key, _ = _release(tmp_path)
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(stdout=b"wrong release")
+
+    with pytest.raises(RuntimeError, match="versioned release verification"):
+        activate_remote_release(
+            tmp_path,
+            "r2:redstm-archive",
+            release_key,
+            runner=run,
+        )
+
+    assert [command[1] for command in commands] == ["cat"]
