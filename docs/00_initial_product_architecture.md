@@ -1223,8 +1223,8 @@ Gate:
 
 ### 13.3 Phase 1: archive kernel
 
-상태: 부분 완료. schema/importer/parser/store/frontier, bounded listing, WARC rotation은 구현했다.
-`sync`/`backfill`/`doctor`, capture ledger와 blob은 남아 있다.
+상태: 부분 완료. schema/importer/parser/store/frontier, bounded listing/sync, WARC rotation,
+capture ledger와 `doctor`는 구현했다. 무제한 backfill은 배포 이후 gate로 남아 있다.
 
 - 최소 schema/migration 작성
 - legacy importer
@@ -1274,9 +1274,12 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 
 ### 13.5 Phase 3: viewer
 
-상태: 구현 완료, 외부 gate 대기. Full canonical exporter, collection 연속 읽기, unavailable entry
-skip, stable user-state, Saitamaar와 desktop/mobile Playwright를 구현했다. 전수 export가 실행
-중이며 실제 Android와 Cloudflare Access/R2 gate는 남아 있다.
+상태: 구현과 local export 완료, R2 data publish gate 대기. Full canonical exporter, collection
+연속 읽기, unavailable entry skip, stable user-state, Saitamaar와 desktop/mobile Playwright를
+구현했다. 전수 export와 post-export doctor는 완료했고 산출물은 6,079,309,130 bytes/282,289
+files다. Worker/private R2 bucket/Access email allow/TOTP MFA와 인증된 shell smoke도 완료했다.
+R2 bucket은 아직 0 objects이며 local `rclone` 연결, data publish/smoke, remote rollback과 실제
+Android gate가 남아 있다.
 
 Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링한다. 원문 version이
 없는 unavailable placeholder 1,831개와 그 댓글 22,222개는 canonical에 보존하고 release manifest의
@@ -1507,10 +1510,11 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] Browsertrix sample WACZ + ReplayWeb.page offline replay
 [x] THIRD_PARTY_NOTICES source/tag/license 작성
 [x] uv lock/check와 Python 3.14 container build
-[x] Worker/R2 static edge search/reader/rollback gate
+[x] local Worker/R2 static edge search/reader/rollback gate
 [x] Oracle/Northflank 제외와 edge pilot 결정
-[ ] R2 private serving bucket과 최소 권한 token 준비
-[ ] `workers.dev` Access 본인 account + MFA policy 준비
+[x] R2 private serving bucket과 bucket-scoped Object R/W token 생성
+[ ] bucket-scoped token의 local `rclone` 연결과 R2 publish/data smoke/remote rollback
+[x] `workers.dev` Access 본인 email allow + TOTP MFA policy와 인증 shell smoke
 [ ] B2 private bucket과 restic 전용 S3-compatible key 준비
 [ ] restic recovery password 별도 보관
 [x] Phase 1 schema v1 + zstd body ADR 확정

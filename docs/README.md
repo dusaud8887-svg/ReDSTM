@@ -20,12 +20,14 @@ P0~P2 작업은 승인됐지만 각 데이터·배포 gate를 통과하기 전�
 현재 실행 순서의 source of truth는 [`04_implementation_plan.md`](04_implementation_plan.md)다.
 DB migration, verified snapshot/restore, canonical schema v2 적용과 full doctor는 완료됐다.
 Canonical과 작업 산출물은 `D:\ReDSTM\.data`, 장기 backup은 `E:\ReDSTM\backups`에 둔다.
-Full static export는 background 실행 중이다. 2026-07-12 목표는 Access로 보호된 private
-read-only viewer의 실제 R2 배포, smoke와 pointer rollback까지다. B2, 실제 Android와 7일
-shadow는 그 뒤의 production hardening이며 내일 release candidate의 blocker가 아니다.
+Full static export와 post-export doctor도 완료됐다. 산출물은 6,079,309,130 bytes, 282,289
+files이며 doctor는 `ok=true`다. Worker, private R2 bucket, Access email allow/TOTP MFA와 인증된
+shell smoke까지 완료했지만 R2 bucket은 아직 0 objects다. 2026-07-12 목표는 실제 R2 publish,
+data workflow smoke와 pointer rollback까지다. B2, 실제 Android와 7일 shadow는 그 뒤의
+production hardening이며 내일 release candidate의 blocker가 아니다.
 
-지금의 임계 경로는 export 완료·검증과 Cloudflare CLI OAuth/resource bootstrap을 병렬로 끝낸
-뒤, 무료 범위를 확인하고 publish -> smoke -> rollback -> 최종 검증을 직렬로 수행하는 것이다.
+지금의 임계 경로는 local `rclone` credential 연결을 검증한 뒤 무료 범위를 확인하고
+publish -> data smoke -> rollback -> 최종 검증을 직렬로 수행하는 것이다.
 세부 상태와 중단 조건은 [`04_implementation_plan.md`](04_implementation_plan.md) §2와 §7을 따른다.
 
 현재 가능:
@@ -48,7 +50,7 @@ shadow는 그 뒤의 production hardening이며 내일 release candidate의 bloc
 - scheduler 기반 incremental sync와 무제한 full backfill
 - 기존 scheduler 중단
 - 100건 canary 전 장시간 production queue recovery
-- Access/R2 실제 smoke와 rollback 전 private viewer 배포 완료 판정
+- R2 data workflow smoke와 rollback 전 private viewer 배포 완료 판정
 - 7일 shadow 전 기존 crawler/scheduler cutover
 - 별도 승인 없는 유료 resource와 B2/restic 작업
 

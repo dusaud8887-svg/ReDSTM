@@ -41,9 +41,9 @@
 
 다음 항목은 migration 완료와 별개의 **내일 배포 후보 gate**다.
 
-- full static export 완료·검증
-- 실제 Cloudflare Access/R2 배포와 pointer rollback
-- 인증 전후 reader 핵심 workflow smoke
+- full static export와 post-export doctor: 완료
+- Worker, private R2 bucket, Access email allow/TOTP MFA와 인증된 shell smoke: 완료
+- local `rclone` 연결, R2 publish, data workflow smoke, pointer rollback과 최종 검증: 대기
 
 7일 shadow, 실제 Android, B2/restic, 전체 queue 복구는 장기 운영 안정화 gate다. 물리적으로
 내일까지 끝낼 수 없거나 배포된 read-only viewer 사용을 막지 않으므로 2026-07-12 완료 조건에서
@@ -66,8 +66,12 @@ operation pending**이다.
 - 12,407,144,448-byte snapshot manifest와 격리 restore rehearsal은 hash/count/health 모두
   `ok=true`다. 그 뒤 canonical을 schema v2로 적용했고 데이터 table count는 전부 동일하다.
 - full deterministic exporter, collection 연속 탐색, Cloudflare Access JWT 검증, `rclone`의
-  pointer-last publish와 bounded legacy queue recovery를 구현했다. Schema v2 doctor는
-  `ok=true`이며 full export는 `D:\ReDSTM\.data\static\archive`에서 background 실행 중이다.
+  pointer-last publish와 bounded legacy queue recovery를 구현했다. Full export는
+  `D:\ReDSTM\.data\static\archive`에 6,079,309,130 bytes/282,289 files로 완료됐고 release count와
+  `source_unchanged=true`가 일치했다. Post-export doctor도 `ok=true`, issues 0이다.
+- Worker와 private Standard R2 bucket을 만들고 Access email allow/TOTP MFA를 적용했다. 비인증
+  차단과 본인 인증 후 shell load는 확인했다. R2 bucket은 아직 0 objects이며 local `rclone`
+  credential 연결, publish와 실제 data workflow smoke는 남아 있다.
 
 ## 2. 2026-07-12 완료 기준과 실행 우선순위
 
@@ -98,27 +102,27 @@ operation pending**이다.
 | 우선순위 | 작업 | 상태 | 다음 gate |
 |---|---|---|---|
 | T0 | legacy migration, schema v2, snapshot/restore | DONE | E backup 유지, 불필요한 재검증 금지 |
-| T0 | D canonical -> D static full export | RUNNING | exit 0, `release.json`, count/source 검증 |
-| T0 | Cloudflare CLI OAuth, Standard R2 bucket | DONE | bucket 0 bytes/0 objects에서 시작 |
-| T0 | Worker `workers.dev` route | BLOCKED: USER | account subdomain 등록 뒤 deploy 완료 |
-| T0 | Access app/policy | WAITING | Worker route 생성 후 본인 allow policy 적용 |
-| T1 | R2 upload/check, pointer-last publish | WAITING | export와 Cloudflare resource 완료 |
+| T0 | D canonical -> D static full export | DONE | 6,079,309,130 bytes/282,289 files, count/source/doctor 통과 |
+| T0 | Cloudflare CLI OAuth, Standard R2 bucket | DONE | private bucket은 아직 0 objects |
+| T0 | Worker `workers.dev` route | DONE | preview off, R2 binding과 production JWT vars 확인 |
+| T0 | Access app/policy | DONE | email allow/TOTP MFA, 비인증 차단과 인증 shell smoke 확인 |
+| T1 | R2 upload/check, pointer-last publish | WAITING: RCLONE | local bucket-scoped credential 연결 검증 |
 | T1 | production smoke와 pointer rollback | WAITING | publish 완료 |
-| T1 | 최종 전체 test/lint/doctor | READY | code/config 변경과 export 종료 후 1회 |
-| T2 | AA 우선 queue 100건 canary | READY | exporter가 DB read를 닫고 배포 smoke 통과 |
-| T2 | full image URL inventory | READY | export I/O 종료 |
+| T1 | 최종 전체 test/lint/doctor | READY | publish/smoke/rollback 뒤 1회 |
+| T2 | AA 우선 queue 100건 canary | READY | 배포 smoke 통과 |
+| T2 | full image URL inventory | READY | read-only command 실행, release blocker 아님 |
 | T3 | 7일 shadow, Android, B2/restic, 전체 recovery | DEFERRED | 내일 이후 별도 gate |
 
-현재 DB backup이나 migration 검증 작업은 돌고 있지 않다. 장시간 background 작업은 full export
-하나뿐이며, export가 끝날 때까지 canonical write와 같은 디스크를 전수 스캔하는 작업은 열지 않는다.
+현재 DB backup, migration 검증, export, doctor 또는 publish 작업은 돌고 있지 않다. 다음 장시간
+작업은 local `rclone` 연결 검증 뒤 시작할 R2 publish다.
 
 ### 2.3 시간 낭비를 막는 규칙
 
 - 동일 입력의 두 번째 full export는 내일 gate가 아니다. fixture 결정성 test와 이번 전수
   export 자체 검증으로 대체하고, 필요하면 배포 뒤 야간에 실행한다.
 - E의 중복 Phase 0 파일 정리, 새 DB/검색 엔진 검토, UI 확장, 전수 recrawl은 중단한다.
-- export 대기 중에는 Cloudflare bootstrap과 문서/배포 준비만 병렬 실행한다.
-- canonical DB에는 동시에 하나의 writer만 허용한다. queue canary는 exporter 종료 뒤 시작한다.
+- R2 publish 중에는 문서와 비경합 검증만 병렬 실행한다.
+- canonical DB에는 동시에 하나의 writer만 허용한다. queue canary는 배포 smoke 뒤 시작한다.
 - 유료 전환 가능성이 보이면 자동 결제하지 않고 중단한다.
 
 장기 단계의 의미는 그대로 유지한다.
@@ -206,7 +210,10 @@ operation pending**이다.
 
 ## 4. P1: production viewer와 cutover
 
-### P1-1. full deterministic export와 release (구현 완료, 전수 export 실행 중)
+### P1-1. full deterministic export와 release (구현·전수 export·doctor 완료)
+
+전수 산출물은 6,079,309,130 bytes/282,289 files이며 release count, source 불변과 post-export
+doctor `ok=true`를 확인했다.
 
 - 전체 canonical posts/boards/search/collections를 immutable object로 export한다.
 - `releases/{sha256}.json`을 검증한 뒤 `release.json` pointer를 마지막에 교체한다.
@@ -222,7 +229,10 @@ operation pending**이다.
 - user-state JSON export/import와 AA font를 desktop/mobile interaction test에 포함한다.
 - 신규 episode 자동 그룹핑은 P3로 남기고 기존 collection 보존부터 끝낸다.
 
-### P1-3. private edge 배포 (로컬 구현 완료, Cloudflare 인증 대기)
+### P1-3. private edge 배포 (인증 인프라 완료, R2 data publish 대기)
+
+Worker, private R2 bucket, Access email allow/TOTP MFA와 인증 shell smoke는 완료했다. Bucket은
+아직 0 objects이며 local `rclone` 연결부터 검증한다.
 
 - private R2에는 serving 파생물만 올리고 canonical DB/WARC는 올리지 않는다.
 - Cloudflare Access에서 본인 account + MFA allow policy를 적용한다.
@@ -254,7 +264,7 @@ operation pending**이다.
 
 `scripts.recover_queue`는 due pending/retry를 위 우선순위로 bounded select하고 한 건씩 lease해
 기존 session/parser/WARC/pipeline으로 처리한다. 구현과 fixture gate는 완료했고 실제 100건
-canary는 full export와 canonical doctor 완료 뒤 실행한다.
+canary는 완료된 full export/doctor 기준선을 보존한 채 배포 smoke 뒤 실행한다.
 
 실행 gate:
 
@@ -269,8 +279,8 @@ canary는 full export와 canonical doctor 완료 뒤 실행한다.
 3. 예산과 소멸 위험을 근거로 cache 대상만 결정한다.
 
 전수 image mirror나 hotlink proxy는 inventory 전 구현하지 않는다.
-URL/host/same-origin/중복 count만 기록하는 read-only inventory command는 구현했다. 전수 scan은
-full export의 I/O가 끝난 뒤 D canonical에서 다시 실행한다.
+URL/host/same-origin/중복 count만 기록하는 read-only inventory command는 구현했다. Export I/O가
+끝났으므로 전수 scan은 READY지만 release blocker는 아니다.
 
 ## 6. P3: evidence가 있을 때만
 
@@ -282,23 +292,17 @@ full export의 I/O가 끝난 뒤 D canonical에서 다시 실행한다.
 
 ## 7. 내일까지의 실행 순서
 
-### 7.1 지금 병렬 실행
+### 7.1 완료된 병렬 준비와 현재 blocker
 
 | Lane | 담당 작업 | 병렬 가능 범위 | 종료 조건 |
 |---|---|---|---|
-| A: data | 실행 중인 full export를 중단 없이 완료 | Cloudflare bootstrap과 병렬 | process exit 0, `release.json`, count/source 검증 |
-| B: edge | Wrangler OAuth -> R2 bucket -> Access app/policy -> Worker deploy | export와 병렬 | preview off, Access binding과 R2 binding 확인 |
-| C: release QA | smoke checklist와 이전 pointer 준비 | A/B와 병렬 | 실제 배포 직후 실행 가능한 상태 |
+| A: data | DONE: full export와 post-export doctor | Cloudflare bootstrap과 병렬 완료 | 6,079,309,130 bytes/282,289 files, doctor `ok=true` |
+| B: edge | DONE: OAuth, R2 bucket, Worker, Access email/TOTP | export와 병렬 완료 | 인증된 shell smoke 확인, bucket 0 objects |
+| C: release | WAITING: local `rclone` credential 연결 검증 | A/B 완료 뒤 | bucket list/size 성공 후 publish 시작 |
 
-Cloudflare 계정 가입만으로 CLI가 인증된 것은 아니다. 사용자가 지금 완료해야 하는 유일한
-blocking action은 다음 browser OAuth다.
-
-```powershell
-Set-Location edge
-npm exec wrangler login
-```
-
-비밀번호를 CLI 인자, YAML, source, Git, `rclone.conf`에 기록하지 않는다.
+Wrangler OAuth와 browser Access 설정은 완료됐다. 현재 secret이 필요한 유일한 blocker는 repo 밖
+사용자 profile의 local `rclone` credential 입력과 연결 검증이다. Token 원문을 CLI 인자, YAML,
+source, Git, log 또는 chat에 기록하지 않는다.
 
 ### 7.2 export와 edge 준비가 끝난 뒤 직렬 실행
 
@@ -325,8 +329,8 @@ npm exec wrangler login
 
 | 작업 | 작업 예산 | 일정 위험 |
 |---|---:|---|
-| full export/내부 검증 | background 실행 계속 | DB 크기와 최종 전수 검증에 따라 변동 |
-| Cloudflare OAuth/resource/bootstrap | 20~60분 + 사용자 OAuth | browser 승인이 없으면 중단 |
+| full export/내부 검증 | DONE: 6,079,309,130 bytes/282,289 files | post-export doctor `ok=true` |
+| Cloudflare OAuth/resource/bootstrap | DONE | Worker/R2/Access/email/TOTP 확인 |
 | R2 upload/check | 1~6시간 예상 | network와 작은 object 282,239개가 지배 |
 | remote smoke/rollback | 30~60분 | Access policy/DNS 반영 지연 |
 | 최종 test/lint/doctor | 30~60분 | 실패 시 해당 회귀만 수정 |
@@ -339,8 +343,8 @@ npm exec wrangler login
 
 | 시점 | 필요한 결정/준비 |
 |---|---|
-| 지금/T0 | Cloudflare 가입 완료. Wrangler OAuth browser 로그인·Allow는 아직 필요 |
-| P1-3 | 실제 R2/Access/Worker resource는 OAuth 뒤 생성·검증. 예상 과금 0일 때만 진행 |
+| 지금/T0 | OAuth/Worker/R2/Access 설정 완료. local `rclone` credential 입력과 연결 검증 필요 |
+| P1-3 | Bucket은 0 objects. publisher hard preflight 통과 뒤에만 실제 upload 진행 |
 | P1-4 | B2/restic은 과금 제외 조건 때문에 현재 보류 |
 | P1-5 | 실제 Android와 7일 shadow는 내일 이후 운영 안정화 gate |
 | P2-1 | 비과금 작업 승인 완료. 배포 뒤 100건 canary부터 bounded 실행 |
