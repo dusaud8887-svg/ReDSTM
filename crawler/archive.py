@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from compression import zstd
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -291,7 +292,7 @@ def initialize_archive(path: str | Path) -> None:
 
 
 def archive_health(path: str | Path) -> dict[str, Any]:
-    with connect_archive(path, read_only=True) as connection:
+    with closing(connect_archive(path, read_only=True)) as connection:
         quick_check = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
         foreign_key_errors = [tuple(row) for row in connection.execute("PRAGMA foreign_key_check")]
         tables = {
