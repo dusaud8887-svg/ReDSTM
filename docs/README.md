@@ -74,8 +74,9 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 
 R2 baseline publish와 remote pointer rollback/복귀는 완료됐다. 로그인된 Chrome의 authenticated
 production data smoke가 A0의 마지막 gate다. A1은 local 구현과 fixture가 끝났으며,
-offline/Access-expired 복구와 control API를 포함한 version `c47b2e58-0019-4c0c-8695-6c7836919950`가
-배포됐다. authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다. Oracle은
+offline/Access-expired 복구, control API와 responsive Operations를 포함한 version
+`cefea2fb-e1fd-4195-abe3-8710ddb8a7df`가 배포됐다. `c47b2e58` rollback/복귀도 통과했으며
+authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다. Oracle은
 versioned application과 6시간 schedule unit 배포, 구버전 rollback/복귀까지 통과했고
 canonical·Access secret·canary 전이다.
 

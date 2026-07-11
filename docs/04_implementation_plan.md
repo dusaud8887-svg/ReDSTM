@@ -23,7 +23,7 @@
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | overlap discovery, 46-board cycle, daily-bounded delta publish, systemd source 구현; live canary 전 | IN PROGRESS |
 | Oracle | versioned application install·양방향 release rollback 통과; canonical/secret/timer 전 | IN PROGRESS |
-| remote operations | Access/D1 API와 responsive `/ops` local 구현; service identity/live smoke 전 | IN PROGRESS |
+| remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
@@ -272,7 +272,7 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): remote D1 migration 2개와 Worker `c47b2e58` 배포, `7787ca24` rollback/복귀
+상태(2026-07-12): remote D1 migration 2개와 Worker `cefea2fb` 배포, `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
 Python 131 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두

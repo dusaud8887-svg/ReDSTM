@@ -95,13 +95,14 @@ spacing:
 
 # ReDSTM Design System
 
-- 상태: Accepted target; current live visual acceptance failed
+- 상태: Signal Archive implemented and deployed; authenticated user acceptance pending
 - 기준일: 2026-07-12
 - 적용 대상: Edge Reader, remote Operations, local fallback console
 - 근거: [viewer design](docs/05_viewer_design.md)
 
-이 파일은 mood board가 아니라 색·서체·공간·responsive behavior의 normative contract다. 현재 live
-화면의 warm paper + violet + crescent 방향은 사용자 검토에서 거절됐으며 유지 대상이 아니다.
+이 파일은 mood board가 아니라 색·서체·공간·responsive behavior의 normative contract다. 이전
+warm paper + violet + crescent 방향은 사용자 검토에서 거절됐고, 현재 graphite/red Reader와
+Operations candidate가 live 배포됐다. authenticated 사용자 acceptance 전까지 시각 gate는 열려 있다.
 
 ## 1. 방향
 

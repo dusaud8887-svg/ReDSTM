@@ -1,6 +1,6 @@
 # Frontend 구현 전략·채택 판단
 
-- 상태: Reader and Operations implemented locally; live authentication/mobile acceptance pending
+- 상태: Reader and Operations deployed; authenticated/mobile acceptance pending
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
