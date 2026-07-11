@@ -21,8 +21,8 @@
 | live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
-| unattended crawl | overlap discovery, 46-board cycle, daily-bounded delta publish, systemd source 구현; live canary 전 | IN PROGRESS |
-| Oracle | release `c52647f...`, canonical activation/doctor 완료; secret/timer/canary 전 | IN PROGRESS |
+| unattended crawl | local core/systemd source 구현, Oracle 1건 통과·20건 background canary 실행 중 | IN PROGRESS |
+| Oracle | application `d23ce20...`, canonical/R2/TypeMoon/1건 canary 완료; Access/20·100/timer 전 | IN PROGRESS |
 | remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
