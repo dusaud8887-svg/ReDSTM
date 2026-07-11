@@ -18,7 +18,7 @@ from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man, ping_success
 from scripts.recover_queue import _parse_args as parse_recovery_args
-from scripts.sync import _capture_summary, _run_status
+from scripts.sync import _capture_failure_codes, _capture_summary, _run_status
 from scripts.sync import _parse_args as parse_sync_args
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
@@ -290,6 +290,7 @@ def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
         ).fetchone()
         assert tuple(capture) == ("fetch_failed", "network_error")
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "retry"
+    assert _capture_failure_codes(path, run_id) == ["network_error"]
 
 
 def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:

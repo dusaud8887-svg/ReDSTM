@@ -31,6 +31,18 @@ def _capture_summary(archive: Path, run_id: str) -> dict[str, int]:
     return counts
 
 
+def _capture_failure_codes(archive: Path, run_id: str) -> list[str]:
+    with connect_archive(archive, read_only=True) as connection:
+        return [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT DISTINCT error_code FROM captures "
+                "WHERE run_id = ? AND error_code IS NOT NULL ORDER BY error_code",
+                (run_id,),
+            )
+        ]
+
+
 def _run_status(outcomes: dict[str, int], scheduled: int, failures: list[str]) -> str:
     incomplete = sum(outcomes.values()) != scheduled
     item_failures = outcomes.get("parse_failed", 0) + outcomes.get("fetch_failed", 0)
@@ -108,7 +120,9 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
 
         spider = crawler.spider
         discovered = int(getattr(spider, "scheduled_posts", 0)) if spider is not None else 0
-        failures = sorted(getattr(spider, "failure_codes", ())) if spider is not None else []
+        failures = sorted(
+            set(getattr(spider, "failure_codes", ())) | set(_capture_failure_codes(archive, run_id))
+        )
         outcomes = _capture_summary(archive, run_id)
         status = _run_status(outcomes, discovered, failures)
         store.finish_run(
@@ -167,7 +181,14 @@ def main() -> int:
     try:
         report = run_sync(args)
     except (OSError, RuntimeError, SessionRefreshError, ValueError) as error:
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        report = {
+            "ok": False,
+            "error": type(error).__name__,
+            "message": str(error),
+        }
+        if args.output is not None:
+            _write_report(args.output, report)
+        print(json.dumps(report, ensure_ascii=False))
         return 1
     if args.output is not None:
         _write_report(args.output, report)
