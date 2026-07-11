@@ -269,11 +269,12 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): 1, 2, 4의 local core와 browser read, conditional claim/expiry, heartbeat lease,
-monotonic board summary, run/event/finish, marker command finish까지 구현했다. 5는 Worker reclaim까지,
-7은 Worker ingest까지 완료했으며 Oracle local ledger/outbox는 아직이다. 3의 별도 Access service
-identity, remote D1 migration/deploy, 6의 Oracle marker 동작, 8의 `/ops` UI, 9의 live/failure gate는
-진행 전이므로 A3 전체는 DONE이 아니다.
+상태(2026-07-12): remote D1 migration 2개와 Worker `c47b2e58` 배포, `7787ca24` rollback/복귀
+rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
+ingest + 10MiB/10,000-event outbox/transport가 구현됐고 전체 Python 120 tests와 Edge 30 tests를
+통과했다. 비인증 `/`, deep link, ops, runner, health는 모두 302다. 3의 별도 Access service identity와
+인증 role smoke, Oracle dispatcher/marker 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3 전체는
+DONE이 아니다.
 
 완료 기준:
 
@@ -386,13 +387,15 @@ chat/Git/log에 출력하지 않으며 dashboard/API/SSH credential store에서�
 |---|---|
 | A1.2 font 확보 | SUIT/MaruBuri 신규 파일 다운로드 직전 확인(출처·파일명·크기 제시) |
 | A1 acceptance | 실제 Android에서 주관적 읽기/디자인 최종 확인 |
+| A3 runner Access | `Access: Apps and Policies Write`, `Access: Service Tokens Write` API token을 임시 주입하거나 로그인된 Chrome 사용을 명시적으로 허용 |
 | paid limit | 연간/월간 합의 예산을 넘는 경우 새 승인 |
 | destructive cleanup | exact manifest를 보고 보존 요구가 있으면 예외 지정 |
 
-Cloudflare와 Oracle 안에서 API/CLI로 만들 수 있는 resource, service token, policy와 secret 주입은
-사용자 수동 작업으로 넘기지 않는다. 구현·배포 시작 전 필수 사용자 입력은 없다. font 다운로드
-확인은 A1.2 해당 시점에만 짧게 받고, 실제 Android의 주관적 acceptance와 hard stop은 구현을
-진행하는 동안 기다리지 않고 마지막 gate에서만 확인한다.
+Cloudflare와 Oracle 안에서 현재 자격증명으로 API/CLI 생성 가능한 resource와 secret 주입은 사용자
+수동 작업으로 넘기지 않는다. 다만 2026-07-12 Wrangler OAuth에는 Access 권한이 없어 위 A3 입력 중
+하나는 필요하다. 그 전까지 fail-closed runner route와 나머지 구현·Oracle 준비는 계속한다. font
+다운로드 확인은 A1.2 해당 시점에만 짧게 받고, 실제 Android의 주관적 acceptance와 hard stop은
+구현을 진행하는 동안 기다리지 않고 마지막 gate에서만 확인한다.
 
 ### 6.4 최종 credential rotation
 

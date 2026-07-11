@@ -1,11 +1,16 @@
 # Operations Control Plane 사양
 
-- 상태: Accepted target; C0 완료, A3 Worker/D1 local core 구현, live Access/Oracle 연동 전
+- 상태: Accepted target; C0 완료, A3 Worker/D1 live 배포, runner Access/Oracle 연동 전
 - 기준일: 2026-07-12
 - product UX: [06](06_final_product_experience.md)
 - frontend: [09](09_frontend_strategy_and_roadmap.md)
 - runner: [10](10_oracle_runner_runbook.md)
 - completed C0: [archive record](archive/2026-07-11/08_local_operations_console_c0.md)
+
+Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 Worker `c47b2e58`을 배포했다.
+이전 `7787ca24` 100% rollback → Access 302 → `c47b2e58` 복귀를 재현했다. 비인증 Reader/deep
+link/ops/runner/health는 모두 302다. 별도 runner Access app/service token과 user/service 인증 role
+smoke 전이므로 A3 완료로 보지 않는다.
 
 ## 1. 목적
 
