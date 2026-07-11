@@ -2,6 +2,7 @@
 
 - 상태: Active execution plan
 - 기준일: 2026-07-11
+- 마감 목표: 2026-07-12 private read-only viewer release candidate
 - 적용 범위: schema v2 canonical 이후 production 수집·백업·배포 준비
 - 상위 계약: [`00_initial_product_architecture.md`](00_initial_product_architecture.md)
 
@@ -32,24 +33,29 @@
 | v2 restore doctor | `.data/migration/schema-v2-doctor.json`, quick check/FK/lease/WARC 모두 `ok=true` |
 
 따라서 **개발과 local canonical 조회를 시작할 DB는 준비됐다.** 원본 DB는 아직 삭제하지
-않으며 canonical DB만 새 수집의 write target으로 사용한다.
+않으며 canonical DB만 새 수집의 write target으로 사용한다. Schema v2 적용·검증은 E의 격리
+사본에서 수행한 뒤 검증된 DB를 D의 현재 canonical 위치에 배치했다. Runtime은 E의 DB를 읽거나
+쓰지 않는다.
 
-### 1.2 production archive 운영: 준비 미완료
+### 1.2 내일 배포 후보와 장기 운영 안정화: 분리
 
-다음 항목은 migration 완료와 별개의 운영 gate다.
+다음 항목은 migration 완료와 별개의 **내일 배포 후보 gate**다.
 
-- full static export 검증과 실제 Cloudflare Access/R2 배포·rollback
-- queue recovery의 board별 100건 canary와 7일 shadow
-- B2 restic backup, dead-man monitoring, 실제 Android 검증
+- full static export 완료·검증
+- 실제 Cloudflare Access/R2 배포와 pointer rollback
+- 인증 전후 reader 핵심 workflow smoke
 
-결론은 **migration/local DB ready, production operation not ready**다.
+7일 shadow, 실제 Android, B2/restic, 전체 queue 복구는 장기 운영 안정화 gate다. 물리적으로
+내일까지 끝낼 수 없거나 배포된 read-only viewer 사용을 막지 않으므로 2026-07-12 완료 조건에서
+제외한다. 결론은 **migration/local DB ready, private viewer release pending, production-hardened
+operation pending**이다.
 
 ### 1.3 2026-07-11 구현·canary 진행 증거
 
 - Git baseline과 P0 구현 commit을 생성했고 secret/runtime 산출물 제외를 재검증했다.
 - schema v2 migration, `(raw_sha256, url)` WARC reuse, atomic capture/frontier transition과
-  bounded `sync` command를 구현했다. Python 76 tests, Ruff, mypy, Node 7 tests와
-  desktop/mobile Playwright 6 tests가 통과했다.
+  bounded `sync` command를 구현했다. 최근 전체 검증 기준 Python 76 tests, Ruff, mypy,
+  Node 7 tests와 desktop/mobile Playwright 6 tests가 통과했다.
 - 만료 표시된 기존 session이 authenticated GET에서 유효함을 확인했으며 form login은 하지 않았다.
 - `write_free21`, 1 page/1 post live canary를 별도 schema v2 DB에서 3회 실행했다. 마지막 run
   `sync-360eca3369704c90b0a787c82c38d77d`는 listing/post 모두 `unchanged`, frontier `done`이었다.
@@ -63,15 +69,61 @@
   pointer-last publish와 bounded legacy queue recovery를 구현했다. Schema v2 doctor는
   `ok=true`이며 full export는 `D:\ReDSTM\.data\static\archive`에서 background 실행 중이다.
 
-## 2. 우선순위 규칙
+## 2. 2026-07-12 완료 기준과 실행 우선순위
 
-- **P0**: 데이터 손실·복구 불능·credential 노출을 막는 선행 작업. 끝나기 전 production crawl 금지.
-- **P1**: private viewer를 배포하고 기존 운영을 대체하기 위한 필수 작업. 끝나기 전 cutover 금지.
+`P0`~`P3`는 제품의 장기 단계이고, `T0`~`T3`는 내일 마감을 위한 실행 우선순위다. 마감
+중에는 `T0`/`T1`만 임계 경로로 취급한다.
+
+### 2.1 내일의 Definition of Done
+
+다음을 모두 만족하면 **usable private viewer release candidate**가 완성된 것으로 본다.
+
+1. D canonical의 schema v2 doctor가 계속 `ok=true`이고 검증된 E backup 두 사본이 유지된다.
+2. full export가 exit 0으로 끝나며 `release.json`과 immutable release manifest가 생성된다.
+3. release count가 posts 282,239, comments 3,729,706, boards 46, collections 18,369와 일치하고
+   exporter의 source-unchanged/전체 object 검증이 통과한다.
+4. 실제 산출물 크기가 계정의 무료 범위임을 확인한 뒤에만 R2에 pointer-last로 게시한다.
+5. Cloudflare Access가 비인증 요청을 차단하고 본인 인증 후 검색, 일반 글/AA, 댓글,
+   collection 이전·다음, bookmark/progress/state export-import를 사용할 수 있다.
+6. 이전 release pointer로 rollback한 뒤 현재 release로 복귀하는 smoke가 통과한다.
+7. 최종 Python/Node lint·type·unit·Playwright와 canonical doctor를 한 번만 다시 실행한다.
+
+이 목표는 read-only viewer 공개가 아니라 **본인만 접근하는 배포 후보**다. 기존 crawler/scheduler
+중단과 production-hardened 판정은 7일 shadow 이후에 별도로 한다.
+
+### 2.2 현재 실행 보드
+
+| 우선순위 | 작업 | 상태 | 다음 gate |
+|---|---|---|---|
+| T0 | legacy migration, schema v2, snapshot/restore | DONE | E backup 유지, 불필요한 재검증 금지 |
+| T0 | D canonical -> D static full export | RUNNING | exit 0, `release.json`, count/source 검증 |
+| T0 | Cloudflare CLI OAuth | BLOCKED: USER | 사용자가 Wrangler browser Allow 완료 |
+| T0 | R2 bucket, Access app/policy, Worker deploy | READY | OAuth 후 무료 범위에서 즉시 진행 |
+| T1 | R2 upload/check, pointer-last publish | WAITING | export와 Cloudflare resource 완료 |
+| T1 | production smoke와 pointer rollback | WAITING | publish 완료 |
+| T1 | 최종 전체 test/lint/doctor | READY | code/config 변경과 export 종료 후 1회 |
+| T2 | AA 우선 queue 100건 canary | READY | exporter가 DB read를 닫고 배포 smoke 통과 |
+| T2 | full image URL inventory | READY | export I/O 종료 |
+| T3 | 7일 shadow, Android, B2/restic, 전체 recovery | DEFERRED | 내일 이후 별도 gate |
+
+현재 DB backup이나 migration 검증 작업은 돌고 있지 않다. 장시간 background 작업은 full export
+하나뿐이며, export가 끝날 때까지 canonical write와 같은 디스크를 전수 스캔하는 작업은 열지 않는다.
+
+### 2.3 시간 낭비를 막는 규칙
+
+- 동일 입력의 두 번째 full export는 내일 gate가 아니다. fixture 결정성 test와 이번 전수
+  export 자체 검증으로 대체하고, 필요하면 배포 뒤 야간에 실행한다.
+- E의 중복 Phase 0 파일 정리, 새 DB/검색 엔진 검토, UI 확장, 전수 recrawl은 중단한다.
+- export 대기 중에는 Cloudflare bootstrap과 문서/배포 준비만 병렬 실행한다.
+- canonical DB에는 동시에 하나의 writer만 허용한다. queue canary는 exporter 종료 뒤 시작한다.
+- 유료 전환 가능성이 보이면 자동 결제하지 않고 중단한다.
+
+장기 단계의 의미는 그대로 유지한다.
+
+- **P0**: 데이터 손실·복구 불능·credential 노출을 막는 선행 작업.
+- **P1**: private viewer를 배포하고 기존 운영을 대체하기 위한 필수 작업.
 - **P2**: 운영 경로가 안정된 뒤 archive coverage를 늘리는 작업.
 - **P3**: 실측이나 실제 사용 요구가 생겼을 때만 하는 선택 작업.
-
-각 작업은 앞 작업의 acceptance gate를 통과한 뒤 시작한다. 여러 대규모 기능을 동시에 열지
-않고, 한 번에 복구 가능한 vertical slice 하나를 끝낸다.
 
 ## 3. P0: production 수집 전 blocker
 
@@ -225,21 +277,70 @@ full export의 I/O가 끝난 뒤 D canonical에서 다시 실행한다.
 - 전체 legacy 282,239 detail 재검증: 이론상 최소 32.7일이므로 별도 승인
 - D1, remote SQLite VFS, Pagefind: 현재 구조가 실측 gate를 실패할 때만 재검토
 
-## 7. 바로 진행할 작업 순서
+## 7. 내일까지의 실행 순서
 
-1. **P1-1:** background full export 완료, release 전수 검증과 동일 입력 재실행 확인
-2. **P1-3:** 사용자 Cloudflare OAuth 완료 후 free Worker/R2/Access resource와 rollback 검증
-3. **P2-1:** AA board 100건 recovery canary 후 창작·팬픽 순서로 확대
-4. **P2-2:** D canonical image inventory 완료 후 link-only/cache 정책 확정
+### 7.1 지금 병렬 실행
+
+| Lane | 담당 작업 | 병렬 가능 범위 | 종료 조건 |
+|---|---|---|---|
+| A: data | 실행 중인 full export를 중단 없이 완료 | Cloudflare bootstrap과 병렬 | process exit 0, `release.json`, count/source 검증 |
+| B: edge | Wrangler OAuth -> R2 bucket -> Access app/policy -> Worker deploy | export와 병렬 | preview off, Access binding과 R2 binding 확인 |
+| C: release QA | smoke checklist와 이전 pointer 준비 | A/B와 병렬 | 실제 배포 직후 실행 가능한 상태 |
+
+Cloudflare 계정 가입만으로 CLI가 인증된 것은 아니다. 사용자가 지금 완료해야 하는 유일한
+blocking action은 다음 browser OAuth다.
+
+```powershell
+Set-Location edge
+npm exec wrangler login
+```
+
+비밀번호를 CLI 인자, YAML, source, Git, `rclone.conf`에 기록하지 않는다.
+
+### 7.2 export와 edge 준비가 끝난 뒤 직렬 실행
+
+1. **산출물 gate:** 전체 bytes와 object/count를 기록하고 무료 범위를 다시 확인한다. 범위를
+   넘거나 예상 과금이 0이 아니면 게시를 중단한다.
+2. **publish:** immutable/versioned object를 먼저 `rclone copy/check`하고 `release.json`을
+   마지막에 올린다. 282,239개의 작은 object 때문에 전체 bytes보다 object 수가 upload 시간을
+   지배할 수 있다.
+3. **production smoke:** 비인증 차단과 본인 인증을 각각 확인하고 검색, 일반 글/AA, 댓글,
+   collection, bookmark/progress/state workflow를 확인한다.
+4. **rollback:** 이전 pointer -> 현재 pointer 순으로 실제 교체하고 두 release가 모두 열리는지
+   확인한다.
+5. **최종 gate:** Python/Node 전체 검증과 canonical doctor를 한 번 실행하고 report/docs를
+   확정한다.
+
+### 7.3 배포 뒤 수행하되 내일 완료를 막지 않는 작업
+
+1. AA 우선 queue recovery 100건 canary와 동일 범위 재실행 idempotency
+2. full image URL inventory와 link-only/cache 정책 확정
+3. 무료 dead-man URL이 준비되면 success ping 연결
+4. 7일 shadow 시작. 이 기간에는 기존 scheduler를 유지한다.
+
+### 7.4 시간 예산
+
+| 작업 | 작업 예산 | 일정 위험 |
+|---|---:|---|
+| full export/내부 검증 | background 실행 계속 | DB 크기와 최종 전수 검증에 따라 변동 |
+| Cloudflare OAuth/resource/bootstrap | 20~60분 + 사용자 OAuth | browser 승인이 없으면 중단 |
+| R2 upload/check | 1~6시간 예상 | network와 작은 object 282,239개가 지배 |
+| remote smoke/rollback | 30~60분 | Access policy/DNS 반영 지연 |
+| 최종 test/lint/doctor | 30~60분 | 실패 시 해당 회귀만 수정 |
+| AA 100건 canary | 30~60분 | 내일 release의 blocker 아님 |
+
+예상 시간은 deadline 판단용 budget이지 완료 증거가 아니다. 각 gate의 실제 report만 상태를
+`DONE`으로 바꾼다.
 
 ## 8. 사용자 승인 또는 외부 준비가 필요한 지점
 
 | 시점 | 필요한 결정/준비 |
 |---|---|
-| P1-3 시작 | 열린 Wrangler OAuth 창에서 Cloudflare 로그인·Allow 완료 |
-| P1-4 시작 | B2 account, 소액 과금 허용, restic password 보관 위치 |
-| P1-5 | 실제 Android 기기 검증 |
-| P2-1 | goal에서 비과금 작업 승인됨. 100건 canary gate 통과 후 bounded batch로 계속 |
+| 지금/T0 | Cloudflare 가입 완료. Wrangler OAuth browser 로그인·Allow는 아직 필요 |
+| P1-3 | 실제 R2/Access/Worker resource는 OAuth 뒤 생성·검증. 예상 과금 0일 때만 진행 |
+| P1-4 | B2/restic은 과금 제외 조건 때문에 현재 보류 |
+| P1-5 | 실제 Android와 7일 shadow는 내일 이후 운영 안정화 gate |
+| P2-1 | 비과금 작업 승인 완료. 배포 뒤 100건 canary부터 bounded 실행 |
 | P3 | 282,239건 전체 detail 재검증 별도 승인 |
 
 credential은 environment secret 또는 배포 platform secret으로 주입한다. ID/PW, session cookie,
@@ -280,5 +381,7 @@ uv run python -m scripts.verify_migration `
 
 - verified snapshot 없이 schema migration 또는 backfill을 시작하지 않는다.
 - capture ledger와 bounded sync 없이 full backfill을 시작하지 않는다.
-- Access, restore rehearsal, 실제 release rollback 없이 production viewer로 cutover하지 않는다.
-- 7일 shadow와 rollback 보존 기간이 끝나기 전에 legacy source/scheduler를 삭제하지 않는다.
+- Access, restore rehearsal, 실제 release rollback 없이 private viewer를 배포 완료로 판정하지 않는다.
+- 7일 shadow는 read-only viewer 배포가 아니라 기존 crawler/scheduler 중단의 선행조건이다.
+- shadow와 rollback 보존 기간이 끝나기 전에 legacy source/scheduler를 삭제하지 않는다.
+- 예상 과금이 0이 아니면 별도 승인 없이 resource 생성·upload를 계속하지 않는다.
