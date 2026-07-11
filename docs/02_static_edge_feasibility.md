@@ -141,8 +141,9 @@ P0 정책:
 GitHub-hosted runner는 test/lint와 credential 없는 publish에 사용한다. crawler를 Worker용
 TypeScript로 다시 작성하지 않는다. sync/backup/restore 성공은 외부 dead-man check에 ping한다.
 
-현재 Worker 코드는 local emulator와 emergency fallback용 Basic auth다. production 배포 시 Access를
-먼저 활성화하고 인증 경계를 검증하기 전에는 Basic secret을 제거하거나 공개 배포하지 않는다.
+Worker는 production에서 `Cf-Access-Jwt-Assertion`의 signature, issuer, audience를 검증한다.
+Basic auth는 local emulator와 emergency fallback에만 쓰고 preview URL은 비활성화한다. 실제
+Access application과 MFA allow policy를 확인하기 전에는 공개 배포하지 않는다.
 
 ## 7. Spike gate
 
@@ -159,6 +160,9 @@ TypeScript로 다시 작성하지 않는다. sync/backup/restore 성공은 외�
 - [x] stable post identity user-state JSON export/import
 - [x] Saitamaar asset 실제 desktop/mobile browser load
 - [x] deterministic collection sample object와 release 참조
+- [x] full canonical exporter와 collection 연속 탐색 구현
+- [x] Access JWT cryptographic validation과 preview URL 비활성화
+- [x] `rclone` immutable upload/check와 pointer-last publish command
 - [ ] 실제 Android Chrome에서 full search memory/background restore
 - [ ] production `workers.dev` Access 본인 account + MFA 검증
 - [ ] B2 restic backup에서 빈 directory restore rehearsal
@@ -172,9 +176,9 @@ immutable object `private, immutable`이었다. 이 과정에서 full GET을 206
 pre-compressed body를 이중 gzip하던 응답을 수정했다.
 
 Playwright 1.61.1과 설치된 Chrome으로 desktop 1440x900, Pixel 7 viewport에서 실제 R2 sample의
-Korean search, prose/AA, comment, setting dialog, bookmark, scroll restore와 document width를
-검증한 4개 E2E가 통과했다. CSS가 HTML `hidden` 속성을 덮던 결함과 mobile scroll container
-오판을 이 과정에서 수정했다.
+Korean search, prose/AA, comment, setting dialog, bookmark, scroll restore, collection navigation과
+document width를 검증한 6개 E2E가 통과했다. CSS가 HTML `hidden` 속성을 덮던 결함, mobile scroll
+container 오판과 unavailable collection entry 처리 결함을 이 과정에서 수정했다.
 
 exporter는 immutable `releases/{release_sha256}.json`을 쓴 뒤 `release.json`을 마지막에 쓴다.
 local R2에서 pointer를 2,000건 release → 이전 100건 → 2,000건으로 바꿨을 때 Worker count도

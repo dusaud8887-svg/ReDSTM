@@ -2,7 +2,7 @@
 
 - 상태: Active execution plan
 - 기준일: 2026-07-11
-- 적용 범위: schema v1 migration 이후 production 수집·백업·배포 준비
+- 적용 범위: schema v2 canonical 이후 production 수집·백업·배포 준비
 - 상위 계약: [`00_initial_product_architecture.md`](00_initial_product_architecture.md)
 
 이 문서는 **다음에 무엇을 어떤 순서로 구현할지**를 관리한다. 제품 범위와 구조를 바꾸는
@@ -20,13 +20,15 @@
 | immutable source | `artifacts/phase0/private/redstm-phase0-posts-20260710T114500Z.db`, 28,811,358,208 bytes |
 | source SHA-256 | `e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500` |
 | canonical target | `E:\ReDSTM\canonical\archive-v1.sqlite`, 12,407,144,448 bytes |
-| target SHA-256 | `c695e739603669db4f827c8e2e6bf930325dfabb7364104af49828491635281e` |
-| target schema | v1, 13 tables |
+| import target SHA-256 | `c695e739603669db4f827c8e2e6bf930325dfabb7364104af49828491635281e` (schema v1) |
+| current target schema | v2, 13 tables, capture raw hash partial index |
 | 주요 건수 | boards 46, posts 284,070, comments 3,729,706, collections 18,369 |
 | legacy 보존 확인 | legacy post versions 282,239, placeholder posts 1,831 |
 | 무결성 | `quick_check=ok`, foreign key error 0 |
 | 내용 표본 | deterministic 500건, mismatch 0 |
 | report 결론 | `ok=true`, issues 0 |
+| verified snapshot | `.data/backups/archive-v1-20260711T045931Z.sqlite`, SHA-256 `945f10716c646027267ca6f0d2cc0e978f932d60abc733784ba8e3e061f0cdb3` |
+| restore rehearsal | `.data/restore-rehearsal/archive-v1.sqlite`, hash/count/health 일치, `ok=true` |
 
 따라서 **개발과 local canonical 조회를 시작할 DB는 준비됐다.** 원본 DB는 아직 삭제하지
 않으며 canonical DB만 새 수집의 write target으로 사용한다.
@@ -35,10 +37,8 @@
 
 다음 항목은 migration 완료와 별개의 운영 gate다.
 
-- canonical DB의 검증된 독립 2차 사본과 자동 restore rehearsal
-- response hash, WARC 위치, 저장 결과를 연결하는 capture ledger와 schema migration
-- listing부터 detail 저장까지 닫힌 `sync` command, retry 정책과 `doctor`
-- 실제 Cloudflare Access/R2 배포와 release rollback
+- full static export 검증과 실제 Cloudflare Access/R2 배포·rollback
+- queue recovery의 board별 100건 canary와 7일 shadow
 - B2 restic backup, dead-man monitoring, 실제 Android 검증
 
 결론은 **migration/local DB ready, production operation not ready**다.
@@ -47,7 +47,8 @@
 
 - Git baseline과 P0 구현 commit을 생성했고 secret/runtime 산출물 제외를 재검증했다.
 - schema v2 migration, `(raw_sha256, url)` WARC reuse, atomic capture/frontier transition과
-  bounded `sync` command를 구현했다. Python 63 tests, Ruff, mypy와 Node 6 tests가 통과했다.
+  bounded `sync` command를 구현했다. Python 76 tests, Ruff, mypy, Node 7 tests와
+  desktop/mobile Playwright 6 tests가 통과했다.
 - 만료 표시된 기존 session이 authenticated GET에서 유효함을 확인했으며 form login은 하지 않았다.
 - `write_free21`, 1 page/1 post live canary를 별도 schema v2 DB에서 3회 실행했다. 마지막 run
   `sync-360eca3369704c90b0a787c82c38d77d`는 listing/post 모두 `unchanged`, frontier `done`이었다.
@@ -55,11 +56,11 @@
   `떠돌이개`, bracket title 보존, comments 4건이며 INFO log에 본문/lease token이 나오지 않는다.
 - canary `doctor`는 SQLite health, lease, WARC validity/reference, `.partial` 검사에서
   `ok=true`, issues 0이었다. Truncated WARC failure test와 secret-free HTTPS ping wiring도 통과했다.
-- D 드라이브 snapshot은 복사가 끝났고 중복 source health 검사 때문에 지연되어, 검증 범위를
-  snapshot full health 1회로 수정한 `--resume-partial` background finalize를 진행 중이다.
-
-아직 canonical `E:\ReDSTM\canonical\archive-v1.sqlite`는 schema v1이다. Snapshot manifest가
-`ok=true`로 확정되기 전에는 schema v2를 적용하지 않는다.
+- 12,407,144,448-byte snapshot manifest와 격리 restore rehearsal은 hash/count/health 모두
+  `ok=true`다. 그 뒤 canonical을 schema v2로 적용했고 데이터 table count는 전부 동일하다.
+- full deterministic exporter, collection 연속 탐색, Cloudflare Access JWT 검증, `rclone`의
+  pointer-last publish와 bounded legacy queue recovery를 구현했다. Full export와 schema v2
+  canonical doctor는 background 실행 중이다.
 
 ## 2. 우선순위 규칙
 
@@ -73,7 +74,7 @@
 
 ## 3. P0: production 수집 전 blocker
 
-### P0-0. source와 데이터 기준선 고정 (진행 중)
+### P0-0. source와 데이터 기준선 고정 (완료)
 
 **목적:** 이후 변경과 데이터 손상을 되돌릴 수 있는 출발점을 만든다.
 
@@ -91,7 +92,7 @@
 - live DB 없이 2차 사본만으로 `quick_check`, FK 검사와 주요 count가 통과한다.
 - legacy source와 현재 canonical은 삭제하지 않는다.
 
-### P0-1. capture ledger와 schema v2 (구현·canary 완료, canonical 적용 대기)
+### P0-1. capture ledger와 schema v2 (완료)
 
 **목적:** HTTP 응답, WARC 원문, 정규화 결과와 canonical write를 한 원장으로 추적한다.
 
@@ -149,28 +150,32 @@
 
 ## 4. P1: production viewer와 cutover
 
-### P1-1. full deterministic export와 release
+### P1-1. full deterministic export와 release (구현 완료, 전수 export 실행 중)
 
 - 전체 canonical posts/boards/search/collections를 immutable object로 export한다.
 - `releases/{sha256}.json`을 검증한 뒤 `release.json` pointer를 마지막에 교체한다.
 - 이전 pointer만으로 즉시 rollback 가능해야 한다.
 - sample exporter와 동일한 입력에서 byte-for-byte deterministic한지 검증한다.
+- export는 댓글을 `post_id` 순으로 한 번만 읽고 객체별 `fsync`를 피한다. 파생 object는 atomic
+  rename하며 전체 검증 뒤 `release.json`만 durable flush한다.
 
-### P1-2. reader 기능 완결
+### P1-2. reader 기능 완결 (구현·desktop/mobile E2E 완료)
 
 - legacy collection 18,369개와 entry 168,102개를 연속 읽기 UI에 연결한다.
 - bookmark/history/progress는 `(board_id, external_post_id)` identity를 유지한다.
 - user-state JSON export/import와 AA font를 desktop/mobile interaction test에 포함한다.
 - 신규 episode 자동 그룹핑은 P3로 남기고 기존 collection 보존부터 끝낸다.
 
-### P1-3. private edge 배포
+### P1-3. private edge 배포 (로컬 구현 완료, Cloudflare 인증 대기)
 
 - private R2에는 serving 파생물만 올리고 canonical DB/WARC는 올리지 않는다.
 - Cloudflare Access에서 본인 account + MFA allow policy를 적용한다.
 - 현재 Worker Basic auth는 local/fallback test용으로만 유지한다.
+- production Worker는 `jose`로 Access JWT의 signature, issuer, audience를 검증하고 preview URL을 끈다.
+- `rclone copy/check` 뒤 선택한 versioned release를 `release.json`으로 마지막에 올린다.
 - release upload 중단, 잘못된 manifest, 이전 release rollback을 실제 환경에서 검증한다.
 
-### P1-4. 독립 backup과 restore
+### P1-4. 독립 backup과 restore (local snapshot/restore 완료, B2 보류)
 
 - SQLite Online Backup snapshot과 WARC를 restic으로 암호화해 B2에 저장한다.
 - R2와 B2의 account/provider failure domain을 분리한다.
@@ -191,6 +196,10 @@
 우선순위는 **AA -> 창작 -> 팬픽 -> 나머지**다. `DOWNLOAD_DELAY=10`, concurrency 1 기준
 33,712건의 이론상 최소는 93.64시간/3.90일이며 listing, retry, cooldown은 별도다.
 
+`scripts.recover_queue`는 due pending/retry를 위 우선순위로 bounded select하고 한 건씩 lease해
+기존 session/parser/WARC/pipeline으로 처리한다. 구현과 fixture gate는 완료했고 실제 100건
+canary는 full export와 canonical doctor 완료 뒤 실행한다.
+
 실행 gate:
 
 - P0 전체와 backup/restore가 통과했다.
@@ -204,6 +213,8 @@
 3. 예산과 소멸 위험을 근거로 cache 대상만 결정한다.
 
 전수 image mirror나 hotlink proxy는 inventory 전 구현하지 않는다.
+URL/host/same-origin/중복 count만 기록하는 read-only inventory command는 구현했다. 전수 scan은
+canonical doctor와 full export의 I/O가 끝난 뒤 verified snapshot에서 다시 실행한다.
 
 ## 6. P3: evidence가 있을 때만
 
@@ -215,20 +226,20 @@
 
 ## 7. 바로 진행할 작업 순서
 
-1. **P0-0:** background snapshot manifest `ok=true` 확인
-2. **P0-1:** canonical에 schema v2 적용 후 count/health/index 재검증
-3. **P0-3:** truncated WARC failure test와 무료 dead-man ping 연결
-4. **P1-1:** full deterministic export와 release rollback
-5. **P1-2:** collection 연속 읽기 완결
+1. **P0 검증 종료:** background schema v2 canonical doctor 결과 확인
+2. **P1-1:** background full export 완료, release 전수 검증과 동일 입력 재실행 확인
+3. **P1-3:** 사용자 Cloudflare OAuth 완료 후 free Worker/R2/Access resource와 rollback 검증
+4. **P2-1:** AA board 100건 recovery canary 후 창작·팬픽 순서로 확대
+5. **P2-2:** verified snapshot image inventory 완료 후 link-only/cache 정책 확정
 
 ## 8. 사용자 승인 또는 외부 준비가 필요한 지점
 
 | 시점 | 필요한 결정/준비 |
 |---|---|
-| P1-3 시작 | Cloudflare account의 Access/R2 resource와 secret 등록 |
+| P1-3 시작 | 열린 Wrangler OAuth 창에서 Cloudflare 로그인·Allow 완료 |
 | P1-4 시작 | B2 account, 소액 과금 허용, restic password 보관 위치 |
 | P1-5 | 실제 Android 기기 검증 |
-| P2-1 | 33,712건 장시간 authenticated backfill 실행 승인 |
+| P2-1 | goal에서 비과금 작업 승인됨. 100건 canary gate 통과 후 bounded batch로 계속 |
 | P3 | 282,239건 전체 detail 재검증 별도 승인 |
 
 credential은 environment secret 또는 배포 platform secret으로 주입한다. ID/PW, session cookie,

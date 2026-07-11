@@ -782,14 +782,20 @@ viewer에 직접 렌더링하지 않는다.
 ### 8.1 명령 표면
 
 ```text
-uv run scrapy crawl typemoon -a board_id=write_free21  # bounded listing/WARC verification
-uv run python -m scripts.export_static_sample SOURCE --output TARGET
+uv run python -m scripts.sync --archive ARCHIVE --board BOARD --max-posts 20
+uv run python -m scripts.recover_queue --archive ARCHIVE --max-posts 100
+uv run python -m scripts.doctor ARCHIVE --warc-dir WARC_DIR
+uv run python -m scripts.backup_archive ARCHIVE --snapshot SNAPSHOT --manifest MANIFEST
+uv run python -m scripts.restore_archive SNAPSHOT --manifest MANIFEST --target TARGET
+uv run python -m scripts.export_static export ARCHIVE --output TARGET
+uv run python -m scripts.publish_static TARGET --remote r2:redstm-archive
+uv run python -m scripts.inventory_images ARCHIVE --output REPORT
 uv run python -m scripts.benchmark_full_search SOURCE --output TARGET
 uv run python -m scripts.verify_migration SOURCE --target TARGET --output REPORT
-uv run python -m scripts.<sync|backfill|doctor|backup|restore>  # Phase 1 target
 ```
 
-이 이상 command를 P0에 추가하지 않는다.
+수집 writer인 sync/recovery는 동일 canonical archive의 `.sync.lock`으로 충돌을 막는다.
+나머지는 immutable/read-only 파생 작업이며 무제한 backfill command는 두지 않는다.
 
 ### 8.2 모듈 경계
 
@@ -803,8 +809,8 @@ crawler/
   frontier.py            DB lease batch와 interrupted 복구
   settings.py            concurrency/retry/delay/cookie 정책
   static_archive.py      deterministic post schema
-scripts/                 profile, migration, export, backup command
-edge/src/                auth + R2 streaming Worker
+scripts/                 profile, migration, sync/recovery, export/publish, backup/restore command
+edge/src/                Access JWT/Basic fallback auth + R2 streaming Worker
 edge/public/             static reader, search Web Worker, user-state, CSS/font
 ```
 
@@ -1086,15 +1092,17 @@ private repository는 test/lint와 credential 없는 publish에 사용하고 wor
 
 - crawler를 Worker TypeScript로 다시 작성하지 않음
 - 한 run에서 유효 session reuse, 필요 시 login form 1회만 제출
-- changed post/board manifest만 upload
-- upload 완료 뒤 hash 검증 후 release manifest를 마지막에 교체
+- changed post/board manifest만 `rclone copy --immutable`로 upload
+- `rclone check` 완료 뒤 versioned release bytes를 `release.json`으로 마지막에 교체
 - 이전 release manifest를 보존해 rollback
 
 ### 11.3 secret과 배포 선언
 
 - Git에 넣는 YAML에는 schedule, command, permission과 secret 이름만 둔다.
 - TypeMoon ID/PW는 GitHub Actions 또는 self-hosted runner secret에 둔다.
-- R2 API token은 Cloudflare/local secret store에 두고 viewer는 `workers.dev` Cloudflare Access의 본인 account + MFA policy로 제한한다.
+- R2 API token은 Cloudflare/local secret store에 둔다. Viewer는 `workers.dev` Cloudflare Access의
+  본인 account + MFA policy로 제한하고 Worker도 `Cf-Access-Jwt-Assertion`의 signature, issuer,
+  audience를 검증한다. Preview URL은 끄고 Basic auth는 local/emergency fallback에만 쓴다.
 - cookie, password, login POST body, API token은 YAML, log, WARC, artifact에 넣지 않는다.
 - production bucket/token 생성 전 local gate 결과와 연 $10 budget을 다시 확인한다.
 
@@ -1259,15 +1267,16 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 
 ### 13.5 Phase 3: viewer
 
-상태: 부분 완료. shell/search/reader, stable user-state export/import, Saitamaar asset과 collection
-sample object는 구현했다. full canonical export, collection 연속 읽기와 실제 Android gate는 남아 있다.
+상태: 구현 완료, 외부 gate 대기. Full canonical exporter, collection 연속 읽기, unavailable entry
+skip, stable user-state, Saitamaar와 desktop/mobile Playwright를 구현했다. 전수 export가 실행
+중이며 실제 Android와 Cloudflare Access/R2 gate는 남아 있다.
 
 - Worker Static Assets shell과 reader JS/CSS 구현
 - compact metadata search Web Worker
 - R2 post/search/release object streaming
 - bookmark/history/scroll local state
 - stable post identity migration과 user-state JSON export/import
-- legacy collection export와 exact-match 신규 episode 연장
+- legacy collection export와 연속 탐색
 - mobile/desktop visual verification
 
 Gate:
@@ -1280,6 +1289,9 @@ Gate:
 - untrusted HTML security test 통과
 
 ### 13.6 Phase 4: backup/restore
+
+상태: local 완료, 독립 provider 보류. Online Backup snapshot manifest와 격리 restore rehearsal은
+hash/count/quick_check/FK가 일치했다. B2/restic은 소액 과금과 account 준비 전까지 실행하지 않는다.
 
 - SQLite consistent snapshot
 - restic B2 S3-compatible repository
@@ -1492,6 +1504,9 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] Phase 1 schema v1 + zstd body ADR 확정
 [x] full legacy import transaction과 auxiliary data 반영
 [x] `scripts.verify_migration` full report `ok=true`
+[x] verified canonical snapshot과 격리 restore rehearsal `ok=true`
+[x] canonical schema v2 적용과 data count 보존
+[x] full exporter/collection reader/Access JWT/rclone publish 구현
 ```
 
 ## 19. 최종 한 줄
