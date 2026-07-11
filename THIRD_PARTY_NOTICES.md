@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-- 기준일: 2026-07-11
+- 기준일: 2026-07-12
 - version source of truth: `uv.lock`, `edge/package-lock.json`
 - license source: locked wheel metadata와 upstream license
 - 범위: direct runtime/dev dependency와 source tree에 vendoring 또는 복사한 material
@@ -57,6 +57,22 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
 
 ## Copied And Vendored Material
 
+- `edge/public/fonts/SUIT-Variable.woff2`: SUIT v2.0.5 by SUNN, SIL Open Font
+  License 1.1. Official upstream is [sun-typeface/SUIT](https://github.com/sun-typeface/SUIT)
+  commit `55118d981336d8fce005eb62888c12c0568ef7b0`; the file is pinned from
+  `fonts/variable/woff2/SUIT-Variable.woff2`. SHA-256 is
+  `aa894a204d5a6fbae259dac6868d350cbd373a390caee0313f92946af741df23` and the
+  exact upstream license is `edge/public/fonts/SUIT-LICENSE.txt`.
+- `edge/public/fonts/MaruBuri-Regular.woff2`: MaruBuri by NAVER, SIL Open Font
+  License 1.1. The official unversioned source is NAVER's
+  [Maru project](https://hangeul.naver.com/maruproject_11) and
+  [webfont CDN](https://hangeul.pstatic.net/hangeul_static/webfont/MaruBuri/MaruBuri-Regular.woff2);
+  the acquired file is pinned by SHA-256
+  `4cf1341cf2f23fb3e263712dfde1d8f25eedcc328b696a2e5a2c8add55e5c17b`.
+  NAVER states that MaruBuri uses the same open license as Nanum in its
+  [official license notice](https://help.naver.com/service/30016/contents/18088?osType=PC),
+  copied to `edge/public/fonts/MaruBuri-LICENSE.txt` with Reserved Font Name
+  `MaruBuri`.
 - `edge/public/fonts/Saitamaar-Regular.ttf`: Saitamaar by YAMASINA Keage, MIT.
   DSOTM commit `c3e0c24e136d791f206d288adc4891874cbb6bdf`의
   `src/viewer/static/fonts/Saitamaar-Regular.ttf`에서 이식했으며 upstream은
