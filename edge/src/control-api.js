@@ -7,6 +7,19 @@ const actions = new Set([
   "resume-schedule",
 ]);
 const runnerStates = new Set(["idle", "running", "degraded", "failed", "paused"]);
+const runKinds = new Set(["scheduled", "manual-sync", "retry", "publish"]);
+const runSources = new Set(["systemd", "command"]);
+const terminalStates = new Set(["succeeded", "partial", "failed"]);
+const counterNames = new Set([
+  "changed_posts",
+  "failed_posts",
+  "boards_ok",
+  "boards_failed",
+  "discovered",
+  "pending",
+  "retry",
+  "dead",
+]);
 const safeWarnings = new Set([
   "auth_failed",
   "parse_drift",
@@ -95,9 +108,34 @@ function commandView(row) {
     requested_at: row.requested_at,
     expires_at: row.expires_at,
     claimed_at: row.claimed_at ?? null,
+    claim_expires_at: row.claim_expires_at ?? null,
+    claim_attempts: Number(row.claim_attempts ?? 0),
     finished_at: row.finished_at ?? null,
     run_id: row.run_id ?? null,
     safe_message: row.safe_message ?? null,
+  };
+}
+
+function validCounters(value) {
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    Object.entries(value).every(([key, count]) =>
+      counterNames.has(key) && Number.isSafeInteger(count) && count >= 0);
+}
+
+function runView(row) {
+  return {
+    run_id: row.run_id,
+    kind: row.kind,
+    source: row.source,
+    state: row.state,
+    requested_at: row.requested_at ?? null,
+    started_at: row.started_at,
+    finished_at: row.finished_at ?? null,
+    changed_posts: Number(row.changed_posts ?? 0),
+    failed_posts: Number(row.failed_posts ?? 0),
+    boards_ok: Number(row.boards_ok ?? 0),
+    boards_failed: Number(row.boards_failed ?? 0),
+    release_id: row.release_id ?? null,
   };
 }
 
@@ -249,6 +287,128 @@ async function heartbeat(request, env, requestId) {
   return envelope(requestId, { accepted: true, heartbeat_at: now });
 }
 
+async function startRun(request, env, requestId) {
+  const body = await readJson(request, 64 * 1024);
+  if (!identifierPattern.test(body.run_id || "") || !runKinds.has(body.kind) ||
+      !runSources.has(body.source) || !validTimestamp(body.requested_at) ||
+      !validTimestamp(body.started_at) ||
+      (body.command_id != null && !/^[0-9a-f-]{36}$/i.test(body.command_id))) {
+    return failure(requestId, 400, "invalid_run", "Run fields are invalid");
+  }
+  const existing = await env.CONTROL_DB.prepare(
+    "SELECT * FROM runs WHERE run_id = ?",
+  ).bind(body.run_id).first();
+  if (existing) return envelope(requestId, runView(existing));
+  const startedAt = body.started_at ?? new Date().toISOString();
+  const statements = [
+    env.CONTROL_DB.prepare(
+      `INSERT INTO runs (run_id, kind, source, state, requested_at, started_at)
+       VALUES (?, ?, ?, 'running', ?, ?) ON CONFLICT(run_id) DO NOTHING`,
+    ).bind(body.run_id, body.kind, body.source, body.requested_at ?? null, startedAt),
+  ];
+  if (body.command_id != null) {
+    statements.push(
+      env.CONTROL_DB.prepare(
+        "UPDATE commands SET run_id = ? WHERE command_id = ? AND state = 'claimed'",
+      ).bind(body.run_id, body.command_id),
+    );
+  }
+  await env.CONTROL_DB.batch(statements);
+  return envelope(
+    requestId,
+    runView({ ...body, state: "running", started_at: startedAt }),
+    202,
+  );
+}
+
+function validEvent(event) {
+  return event && typeof event === "object" && !Array.isArray(event) &&
+    Number.isSafeInteger(event.sequence) && event.sequence >= 0 &&
+    identifierPattern.test(event.step || "") && identifierPattern.test(event.state || "") &&
+    validTimestamp(event.recorded_at) && validCounters(event.counters ?? {}) &&
+    (event.safe_message == null || identifierPattern.test(event.safe_message));
+}
+
+async function recordEvents(request, env, requestId, runId) {
+  const body = await readJson(request, 64 * 1024);
+  if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > 50 ||
+      !body.events.every(validEvent)) {
+    return failure(requestId, 400, "invalid_events", "Run events are invalid");
+  }
+  const run = await env.CONTROL_DB.prepare(
+    "SELECT state FROM runs WHERE run_id = ?",
+  ).bind(runId).first();
+  if (!run) return failure(requestId, 404, "run_not_found", "Run was not found");
+  if (run.state !== "running") {
+    return failure(requestId, 409, "run_terminal", "Run is already terminal");
+  }
+  await env.CONTROL_DB.batch(
+    body.events.map((event) => env.CONTROL_DB.prepare(
+      `INSERT INTO run_events (
+         run_id, sequence, step, state, recorded_at, counters_json, safe_message
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(run_id, sequence) DO NOTHING`,
+    ).bind(
+      runId,
+      event.sequence,
+      event.step,
+      event.state,
+      event.recorded_at ?? new Date().toISOString(),
+      JSON.stringify(event.counters ?? {}),
+      event.safe_message ?? null,
+    )),
+  );
+  return envelope(requestId, { accepted: body.events.length });
+}
+
+async function finishRun(request, env, requestId, runId) {
+  const body = await readJson(request, 64 * 1024);
+  if (!terminalStates.has(body.state) || !validCounters(body.counters ?? {}) ||
+      (body.release_id != null && !identifierPattern.test(body.release_id)) ||
+      (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
+    return failure(requestId, 400, "invalid_finish", "Run result is invalid");
+  }
+  const run = await env.CONTROL_DB.prepare(
+    "SELECT * FROM runs WHERE run_id = ?",
+  ).bind(runId).first();
+  if (!run) return failure(requestId, 404, "run_not_found", "Run was not found");
+  if (run.state !== "running") {
+    return run.state === body.state
+      ? envelope(requestId, runView(run))
+      : failure(requestId, 409, "run_terminal", "Run has a different terminal state");
+  }
+  const counters = body.counters ?? {};
+  const finishedAt = new Date().toISOString();
+  await env.CONTROL_DB.batch([
+    env.CONTROL_DB.prepare(
+      `UPDATE runs SET state = ?, finished_at = ?, changed_posts = ?, failed_posts = ?,
+         boards_ok = ?, boards_failed = ?, release_id = ?, safe_summary_json = ?
+       WHERE run_id = ? AND state = 'running'`,
+    ).bind(
+      body.state,
+      finishedAt,
+      counters.changed_posts ?? 0,
+      counters.failed_posts ?? 0,
+      counters.boards_ok ?? 0,
+      counters.boards_failed ?? 0,
+      body.release_id ?? null,
+      JSON.stringify({ code: body.safe_summary_code ?? null }),
+      runId,
+    ),
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = ?, finished_at = ?, safe_message = ?
+       WHERE run_id = ? AND state = 'claimed'`,
+    ).bind(body.state, finishedAt, body.safe_summary_code ?? null, runId),
+  ]);
+  return envelope(requestId, runView({
+    ...run,
+    ...counters,
+    state: body.state,
+    finished_at: finishedAt,
+    release_id: body.release_id ?? null,
+  }));
+}
+
 async function overview(env, requestId) {
   const [runner, run, queued] = await Promise.all([
     env.CONTROL_DB.prepare("SELECT * FROM runner_status WHERE id = 1").first(),
@@ -315,6 +475,21 @@ export async function controlApiResponse(request, env, auth) {
     }
     if (request.method === "POST" && url.pathname === "/api/v1/runner/heartbeat") {
       return await heartbeat(request, env, requestId);
+    }
+    if (request.method === "POST" && url.pathname === "/api/v1/runner/runs") {
+      return await startRun(request, env, requestId);
+    }
+    const eventMatch = /^\/api\/v1\/runner\/runs\/([a-zA-Z0-9_.:-]{1,128})\/events:batch$/.exec(
+      url.pathname,
+    );
+    if (request.method === "POST" && eventMatch) {
+      return await recordEvents(request, env, requestId, eventMatch[1]);
+    }
+    const finishMatch = /^\/api\/v1\/runner\/runs\/([a-zA-Z0-9_.:-]{1,128})\/finish$/.exec(
+      url.pathname,
+    );
+    if (request.method === "POST" && finishMatch) {
+      return await finishRun(request, env, requestId, finishMatch[1]);
     }
     return failure(requestId, 404, "route_not_found", "API route was not found");
   } catch (error) {

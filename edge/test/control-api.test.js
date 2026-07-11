@@ -23,8 +23,10 @@ function database(handler) {
     prepare(sql) {
       let parameters = [];
       const statement = {
+        sql,
         bind(...values) {
           parameters = values;
+          statement.parameters = values;
           return statement;
         },
         first() {
@@ -35,6 +37,9 @@ function database(handler) {
         },
       };
       return statement;
+    },
+    batch(statements) {
+      return handler("batch", "", statements);
     },
   };
 }
@@ -200,4 +205,129 @@ test("heartbeat and overview expose only bounded status", async () => {
   );
   assert.equal(overview.status, 200);
   assert.equal((await overview.json()).data.active_commands, 0);
+});
+
+test("starts a run and command link in one D1 batch", async () => {
+  let statements = [];
+  const env = {
+    CONTROL_DB: database((method, sql, values) => {
+      if (method === "batch") {
+        statements = values;
+        return [];
+      }
+      assert.match(sql, /SELECT \* FROM runs/);
+      return null;
+    }),
+  };
+  const commandId = crypto.randomUUID();
+  const result = await controlApiResponse(
+    request("/api/v1/runner/runs", {
+      method: "POST",
+      body: {
+        run_id: "sync-run-001",
+        kind: "manual-sync",
+        source: "command",
+        command_id: commandId,
+        started_at: "2026-07-12T00:00:00Z",
+      },
+      headers: { "Idempotency-Key": "start-run-001" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(result.status, 202);
+  assert.equal(statements.length, 2);
+  assert.match(statements[0].sql, /INSERT INTO runs/);
+  assert.match(statements[1].sql, /UPDATE commands SET run_id/);
+});
+
+test("batches idempotent run events and terminal command state", async () => {
+  const batches = [];
+  let runState = "running";
+  const run = {
+    run_id: "sync-run-001",
+    kind: "scheduled",
+    source: "systemd",
+    state: "running",
+    started_at: "2026-07-12T00:00:00.000Z",
+  };
+  const env = {
+    CONTROL_DB: database((method, sql, values) => {
+      if (method === "batch") {
+        batches.push(values);
+        return [];
+      }
+      if (sql.includes("SELECT state FROM runs")) return { state: runState };
+      if (sql.includes("SELECT * FROM runs")) return { ...run, state: runState };
+      return null;
+    }),
+  };
+  const events = await controlApiResponse(
+    request("/api/v1/runner/runs/sync-run-001/events:batch", {
+      method: "POST",
+      body: {
+        events: [
+          {
+            sequence: 1,
+            step: "crawling",
+            state: "running",
+            recorded_at: "2026-07-12T00:01:00Z",
+            counters: { discovered: 2 },
+          },
+          {
+            sequence: 2,
+            step: "verifying",
+            state: "running",
+            recorded_at: "2026-07-12T00:02:00Z",
+            counters: { changed_posts: 1 },
+          },
+        ],
+      },
+      headers: { "Idempotency-Key": "event-batch-001" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(events.status, 200);
+  assert.equal(batches[0].length, 2);
+  assert.match(batches[0][0].sql, /ON CONFLICT\(run_id, sequence\) DO NOTHING/);
+
+  const finish = await controlApiResponse(
+    request("/api/v1/runner/runs/sync-run-001/finish", {
+      method: "POST",
+      body: {
+        state: "succeeded",
+        counters: { changed_posts: 1, boards_ok: 46 },
+        release_id: "release-abc123",
+        safe_summary_code: "cycle_succeeded",
+      },
+      headers: { "Idempotency-Key": "finish-run-001" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(finish.status, 200);
+  assert.equal(batches[1].length, 2);
+  assert.match(batches[1][1].sql, /UPDATE commands/);
+});
+
+test("rejects oversized event batches before D1", async () => {
+  const env = { CONTROL_DB: database(() => assert.fail("D1 must not be called")) };
+  const result = await controlApiResponse(
+    request("/api/v1/runner/runs/sync-run-001/events:batch", {
+      method: "POST",
+      body: {
+        events: Array.from({ length: 51 }, (_, sequence) => ({
+          sequence,
+          step: "crawling",
+          state: "running",
+          counters: {},
+        })),
+      },
+      headers: { "Idempotency-Key": "event-batch-large" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(result.status, 400);
 });
