@@ -1,7 +1,7 @@
 # Frontend 구현 전략·채택 판단
 
-- 상태: Accepted final strategy; redesign pending
-- 기준일: 2026-07-11
+- 상태: Reader and Operations implemented locally; live authentication/mobile acceptance pending
+- 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
 - operations: [08](08_operations_control_plane.md)
@@ -17,9 +17,6 @@
 6. native dialog, details, popover, History API, Web Worker를 먼저 쓴다.
 7. D1은 canonical data가 아니라 작은 command/status/audit control plane에만 쓴다.
 
-현재 app.js 716 LOC는 다음 구조 변경에서 Step 0으로 dead binding/debug/중복 state를 먼저 제거한 뒤
-실제 책임 경계로만 나눈다. component framework를 만들지 않는다.
-
 ## 2. 현재 구현 판정
 
 ### 완료된 behavior baseline
@@ -33,19 +30,17 @@
 - state export/import
 - mobile single-plane
 - local read-only Operations C0
+- Signal Archive graphite/red Reader, self-hosted SUIT/MaruBuri/Saitamaar
+- stable identity/deep link, Home recent/freshness, offline/Access-expired와 import preview
+- keyboard navigation과 desktop Operations rail
+- Access/D1 control API와 responsive `/ops`, fixed command/queued cancel
 
-### 최종 계약과 다른 부분
+### 남은 acceptance
 
-- rejected warm-paper/violet visual
-- SUIT/MaruBuri actual asset 없음
-- repeated crescent/English eyebrow/empty cover
-- mobile toolbar wrap
-- stable identity 대신 object key를 저장
-- Home recent sections 미구현
-- loading/error/unavailable state 불완전
-- keyboard result navigation 미구현
-- import preview/confirmation 없음
-- remote Operations/D1/control protocol 미구현
+- authenticated production Reader/Operations data smoke
+- Access user/service role separation과 runner heartbeat/command live flow
+- 실제 Android Back/background/pinch/font와 사용자 시각 acceptance
+- 7일 shadow의 idle/running/degraded/stale/failed 상태 증거
 
 문서의 완료 상태는 behavior baseline과 live visual acceptance를 분리한다.
 
@@ -53,28 +48,29 @@
 
     edge/
       src/
-        index.js                 route/auth/R2 orchestration
-        reader-api.js            release/catalog/post GET
-        operations-api.js        D1 status/command API
-        access.js                JWT validation
+        index.js                 Access JWT, route, assets/R2 orchestration
+        control-api.js           D1 mutation/runner API
+        control-common.js        bounded response helpers
+        control-read.js          bounded Operations reads
       public/
         index.html               Reader semantic shell
         ops.html                 Operations semantic shell
-        app.css                  shared Signal Archive tokens/components
+        app.css                  Reader Signal Archive tokens/components
+        ops.css                  Operations instrument layout
         app.js                   Reader orchestration
         ops.js                   Operations orchestration
         search-core.js
         search-worker.js
         user-state.js
-        icons.svg                small vendored sprite or inline symbols
         fonts/
           SUIT-Variable.woff2
           MaruBuri-Regular.woff2
           Saitamaar-Regular.ttf
           LICENSE-*
 
-index.html과 ops.html은 runtime template engine을 쓰지 않는다. shared token과 작은 pure helper만
-공유하고 Reader module이 D1 command API를 import하지 않게 한다.
+index.html과 ops.html은 runtime template engine을 쓰지 않는다. Reader와 Operations surface를
+분리하고, 작은 token 중복은 억지 shared component 계층보다 허용한다. Reader module은 D1 command
+API를 import하지 않는다.
 
 Font asset 확보와 배포 gate:
 
@@ -109,8 +105,8 @@ Font asset 확보와 배포 gate:
 모든 route는 Access 뒤에 있고 Worker도 JWT issuer/audience/signature를 검증한다. Browser user request와
 Oracle service-token request를 claim으로 구분한다. CORS는 열지 않고 same-origin만 사용한다.
 `/`는 Home module과 Library catalog를 합치며 Reader 외 네 destination만 global navigation에 둔다.
-`/ops`가 배포되기 전까지 desktop rail과 mobile bottom navigation은 장서/검색/저장/설정 네
-destination만 노출하고, A3에서 `/ops`가 열리면 desktop rail에만 운영을 추가한다.
+desktop rail에는 `/ops` 운영 link를 추가하고 mobile bottom navigation은 장서/검색/저장/설정 네
+destination만 유지한다.
 
 Deep link 제공 규칙:
 

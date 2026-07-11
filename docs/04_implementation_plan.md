@@ -23,7 +23,7 @@
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | overlap discovery, 46-board cycle, daily-bounded delta publish, systemd source 구현; live canary 전 | IN PROGRESS |
 | Oracle | versioned application install·양방향 release rollback 통과; canonical/secret/timer 전 | IN PROGRESS |
-| remote operations | local read-only C0 완료, Access/D1 `/ops` 미구현 | PLANNED |
+| remote operations | Access/D1 API와 responsive `/ops` local 구현; service identity/live smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
@@ -276,9 +276,10 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
 Python 131 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
-302다. 3의 별도 Access service identity와
-인증 role smoke, Access secret 주입·timer 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3
-전체는 DONE이 아니다. Oracle에는 application base와 disabled control/schedule timer가 설치됐다.
+302다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
+fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 별도 Access service identity와 인증 role
+smoke, Access secret 주입·timer 연결, live failure gate는 아직이므로 A3 전체는 DONE이 아니다.
+Oracle에는 application base와 disabled control/schedule timer가 설치됐다.
 
 완료 기준:
 

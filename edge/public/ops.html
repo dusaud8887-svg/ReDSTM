@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
+    <title>Operations · ReDSTM</title>
+    <link rel="stylesheet" href="/ops.css">
+    <script type="module" src="/ops.js"></script>
+  </head>
+  <body>
+    <aside class="ops-rail" aria-label="Operations navigation">
+      <a class="ops-wordmark" href="/" aria-label="ReDSTM Reader">Re</a>
+      <nav>
+        <a href="#overview" aria-label="개요"><span aria-hidden="true">01</span><b>개요</b></a>
+        <a href="#runs" aria-label="실행"><span aria-hidden="true">02</span><b>실행</b></a>
+        <a href="#boards" aria-label="게시판"><span aria-hidden="true">03</span><b>보드</b></a>
+        <a href="#controls" aria-label="제어"><span aria-hidden="true">04</span><b>제어</b></a>
+      </nav>
+      <a class="reader-link" href="/">Reader</a>
+    </aside>
+
+    <header class="ops-header">
+      <div>
+        <p class="eyebrow">ReDSTM / Operations</p>
+        <h1>보존 시스템</h1>
+      </div>
+      <div class="header-actions">
+        <span id="updated-at">확인 전</span>
+        <button id="refresh" type="button">새로 확인</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="error-banner" class="error-banner" role="status" hidden></div>
+
+      <section id="overview" class="overview" aria-labelledby="overview-title">
+        <div class="section-index">01</div>
+        <div class="overview-copy">
+          <p id="overview-kicker" class="eyebrow">RUNNER STATE</p>
+          <h2 id="overview-title">상태 확인 중</h2>
+          <p id="overview-reason" class="overview-reason">운영 상태를 불러오고 있습니다.</p>
+        </div>
+        <div class="status-signal" id="status-signal" data-state="loading" aria-hidden="true"></div>
+        <dl class="overview-facts">
+          <div><dt>마지막 신호</dt><dd id="last-heartbeat">—</dd></div>
+          <div><dt>현재 단계</dt><dd id="active-step">—</dd></div>
+          <div><dt>다음 실행</dt><dd id="next-schedule">—</dd></div>
+          <div><dt>남은 디스크</dt><dd id="disk-free">—</dd></div>
+        </dl>
+        <div class="warning-line" id="warning-line" hidden>
+          <span aria-hidden="true"></span><strong id="warning-label"></strong>
+        </div>
+      </section>
+
+      <section class="active-strip" aria-labelledby="active-title">
+        <div>
+          <p class="eyebrow">LATEST RUN</p>
+          <h2 id="active-title">최근 실행 없음</h2>
+        </div>
+        <dl>
+          <div><dt>시작</dt><dd id="latest-start">—</dd></div>
+          <div><dt>변경</dt><dd id="latest-changed">0</dd></div>
+          <div><dt>실패</dt><dd id="latest-failed">0</dd></div>
+          <div><dt>대기 명령</dt><dd id="active-commands">0</dd></div>
+        </dl>
+      </section>
+
+      <section id="runs" class="data-section" aria-labelledby="runs-title">
+        <header class="section-heading">
+          <div><span>02</span><h2 id="runs-title">실행 기록</h2></div>
+          <p>예약 및 수동 실행의 최근 결과</p>
+        </header>
+        <div id="runs-list" class="run-list" aria-live="polite"></div>
+        <button id="runs-more" class="more-button" type="button" hidden>이전 실행 더 보기</button>
+      </section>
+
+      <section id="boards" class="data-section" aria-labelledby="boards-title">
+        <header class="section-heading">
+          <div><span>03</span><h2 id="boards-title">게시판과 대기열</h2></div>
+          <p>완료율을 추정하지 않는 실제 수집 상태</p>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>게시판</th><th>결과</th><th>최근 확인</th><th>발견</th><th>변경</th><th>대기</th><th>재시도</th><th>중단</th></tr></thead>
+            <tbody id="boards-body"></tbody>
+          </table>
+        </div>
+        <button id="boards-more" class="more-button" type="button" hidden>다음 게시판 보기</button>
+      </section>
+
+      <section class="release-section" aria-labelledby="release-title">
+        <header class="section-heading">
+          <div><span>04</span><h2 id="release-title">활성 릴리스</h2></div>
+          <p>R2 활성 포인터가 가리키는 읽기 전용 보존본</p>
+        </header>
+        <div class="release-ledger">
+          <div><span>현재</span><strong id="release-current">—</strong><small id="release-current-time">—</small></div>
+          <div><span>이전</span><strong id="release-previous">기록 없음</strong><small id="release-previous-time">—</small></div>
+          <dl id="release-counts"></dl>
+        </div>
+      </section>
+
+      <section id="controls" class="control-section" aria-labelledby="controls-title">
+        <header class="section-heading">
+          <div><span>05</span><h2 id="controls-title">제한된 제어</h2></div>
+          <p>고정된 작업만 요청하며 서버·경로·속도 인자는 받지 않습니다.</p>
+        </header>
+        <div class="control-list">
+          <button type="button" data-action="sync-now"><span>지금 동기화</span><small>1회 정상 증분 수집</small></button>
+          <button type="button" data-action="retry-batch"><span>재시도 처리</span><small>처리 시각이 된 항목 최대 100건</small></button>
+          <button type="button" data-action="publish-if-changed"><span>변경분 게시</span><small>변경 없거나 하루 게시 간격 전이면 실행 없음</small></button>
+          <button type="button" data-action="pause-after-current"><span>현재 작업 뒤 일시정지</span><small>진행 중 요청과 저장 작업은 완료</small></button>
+          <button type="button" data-action="resume-schedule"><span>예약 재개</span><small>일시정지 표시만 해제</small></button>
+        </div>
+        <div id="command-result" class="command-result" aria-live="polite" hidden></div>
+      </section>
+    </main>
+
+    <dialog id="command-dialog">
+      <form method="dialog">
+        <p class="eyebrow">BOUNDED COMMAND</p>
+        <h2 id="dialog-title">작업 확인</h2>
+        <p id="dialog-impact"></p>
+        <div class="dialog-actions">
+          <button value="cancel">취소</button>
+          <button id="dialog-confirm" value="confirm">요청</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

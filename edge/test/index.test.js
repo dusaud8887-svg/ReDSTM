@@ -199,4 +199,9 @@ test("serves authenticated static assets with security headers", async () => {
   assert.match(result.headers.get("Content-Security-Policy"), /default-src 'self'/);
   assert.equal(result.headers.get("X-Content-Type-Options"), "nosniff");
   assert.match(await result.text(), /ReDSTM/);
+
+  const operations = await worker.fetch(request("/ops"), env);
+  assert.equal(operations.status, 200);
+  assert.equal(new URL(received.url).pathname, "/ops");
+  assert.match(operations.headers.get("Content-Security-Policy"), /connect-src 'self'/);
 });

@@ -86,7 +86,7 @@ canonical·Access secret·canary 전이다.
 1. R2 authenticated live data smoke
 2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
 3. Oracle canonical/secret 주입과 incremental 20/100건·실제 delta publish canary
-4. Access user/service role smoke와 `/ops` UI
+4. Access user/service role smoke와 live `/ops` acceptance
 5. 24시간 canary, 7일 shadow, cutover와 실제 Android acceptance
 
 ## 확정된 UX·기술 결정

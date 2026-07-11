@@ -99,6 +99,7 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   await expect(page.locator("#archive-state")).toHaveText("보존본");
 
   if (testInfo.project.name === "desktop") {
+    await expect(page.locator('.rail a[href="/ops"]')).toBeVisible();
     await expect(page.locator("#empty-reader")).toBeVisible();
     await expect(page.locator("#empty-reader")).toContainText("다시 읽고 싶은 기록");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover.png" });

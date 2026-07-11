@@ -170,6 +170,9 @@ export default {
     if (url.pathname === "/health") {
       return Response.json({ status: "ok" });
     }
+    if (url.pathname === "/ops" || url.pathname === "/ops/") {
+      return staticAssetResponse(request, env);
+    }
     const key = objectKey(url);
     if (key === null) {
       return staticAssetResponse(request, env);
