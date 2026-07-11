@@ -21,9 +21,19 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
     assert store.begin_command(command_id, run_id="run-1", now=_NOW) is True
     assert store.begin_command(command_id, run_id="run-2", now=_NOW) is False
 
-    terminal = store.finish_command(command_id, "succeeded", "cycle_succeeded", now=_NOW)
+    payload = {"state": "succeeded", "counters": {"changed_posts": 2}}
+    terminal = store.finish_command(
+        command_id,
+        "succeeded",
+        "cycle_succeeded",
+        result_payload=payload,
+        now=_NOW,
+    )
     assert terminal["state"] == "succeeded"
-    assert json.loads(terminal["result_json"]) == {"code": "cycle_succeeded"}
+    assert json.loads(terminal["result_json"]) == {
+        "code": "cycle_succeeded",
+        "payload": payload,
+    }
     assert store.record_claim(command_id, "sync-now")["state"] == "succeeded"
     assert store.begin_command(command_id) is False
 
@@ -38,6 +48,19 @@ def test_command_ledger_rejects_action_mismatch_and_terminal_change(tmp_path: Pa
     store.finish_command(command_id, "succeeded", "schedule_paused", now=_NOW)
     with pytest.raises(ValueError, match="terminal state"):
         store.finish_command(command_id, "failed", "schedule_failed", now=_NOW)
+
+
+def test_command_ledger_rejects_unsafe_replay_payload(tmp_path: Path) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    command_id = str(uuid4())
+    store.record_claim(command_id, "sync-now", now=_NOW)
+    with pytest.raises(ValueError, match="forbidden"):
+        store.finish_command(
+            command_id,
+            "failed",
+            "cycle_failed",
+            result_payload={"path": "/srv/redstm/private"},
+        )
 
 
 def test_outbox_coalesces_status_and_orders_protected_events(tmp_path: Path) -> None:

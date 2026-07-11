@@ -49,7 +49,14 @@ def test_cycle_runs_enabled_boards_sequentially(
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
         commands.append(command)
         _output_path(command).write_text(
-            json.dumps({"ok": True, "status": "succeeded", "scheduled_posts": 0}),
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "succeeded",
+                    "scheduled_posts": 2,
+                    "outcomes": {"stored": 1, "unchanged": 1},
+                }
+            ),
             encoding="utf-8",
         )
         return SimpleNamespace(returncode=0)
@@ -61,6 +68,10 @@ def test_cycle_runs_enabled_boards_sequentially(
     assert report["status"] == "succeeded"
     assert [command[command.index("--board") + 1] for command in commands] == ["a", "b", "c", "d"]
     assert all("--session-prevalidated" in command for command in commands)
+    assert report["changed_posts"] == 4
+    assert report["failed_posts"] == 0
+    assert report["boards_ok"] == 4
+    assert report["boards_failed"] == 0
 
 
 @pytest.mark.parametrize(

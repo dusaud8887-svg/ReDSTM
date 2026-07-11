@@ -21,6 +21,21 @@ from scripts.healthcheck import notify_dead_man
 from scripts.sync import _write_report
 
 _NETWORK_FAILURES = {"listing_fetch_failed", "network_error"}
+_OUTCOMES = {"stored", "unchanged", "restricted", "missing", "parse_failed", "fetch_failed"}
+
+
+def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
+    value = report.get("outcomes", {})
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: count
+        for key, count in value.items()
+        if key in _OUTCOMES
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and count >= 0
+    }
 
 
 def _boards(archive: Path) -> list[str]:
@@ -116,16 +131,26 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             completed = subprocess.run(_worker_command(args, board_id, report_path), check=False)
             if not report_path.is_file():
                 status = "runner_failed"
-                results.append({"board_id": board_id, "status": status})
+                results.append(
+                    {
+                        "board_id": board_id,
+                        "status": status,
+                        "scheduled_posts": 0,
+                        "outcomes": {},
+                        "failures": ["runner_failed"],
+                    }
+                )
                 break
             report = json.loads(report_path.read_text(encoding="utf-8"))
             failures = set(report.get("failures", ()))
             board_status = str(report.get("status", "failed"))
+            outcomes = _outcome_counts(report)
             results.append(
                 {
                     "board_id": board_id,
                     "status": board_status,
                     "scheduled_posts": int(report.get("scheduled_posts", 0)),
+                    "outcomes": outcomes,
                     "failures": sorted(failures),
                 }
             )
@@ -154,6 +179,12 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 status = "partial"
 
         ok = status == "succeeded"
+        changed_posts = sum(item["outcomes"].get("stored", 0) for item in results)
+        failed_posts = sum(
+            item["outcomes"].get("parse_failed", 0) + item["outcomes"].get("fetch_failed", 0)
+            for item in results
+        )
+        boards_ok = sum(item["status"] == "succeeded" for item in results)
         notify_dead_man(ok, os.environ.get("REDSTM_CYCLE_HEALTHCHECK_URL", ""))
         return {
             "ok": ok,
@@ -161,6 +192,10 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "status": status,
             "board_count": len(boards),
             "completed_boards": len(results),
+            "changed_posts": changed_posts,
+            "failed_posts": failed_posts,
+            "boards_ok": boards_ok,
+            "boards_failed": len(results) - boards_ok,
             "preserved_attempts": preserved_attempts,
             "boards": results,
         }

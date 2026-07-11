@@ -176,13 +176,21 @@ class ControlStore:
         state: str,
         safe_code: str | None,
         *,
+        result_payload: dict[str, Any] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if state not in _TERMINAL_STATES:
             raise ValueError("command terminal state is invalid")
         if safe_code is not None and not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", safe_code):
             raise ValueError("command result code is invalid")
-        result_json = json.dumps({"code": safe_code}, separators=(",", ":"), sort_keys=True)
+        if result_payload is not None and not _safe_payload(result_payload):
+            raise ValueError("command result contains a forbidden field or local path")
+        result: dict[str, Any] = {"code": safe_code}
+        if result_payload is not None:
+            result["payload"] = result_payload
+        result_json = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        if len(result_json.encode()) > 16 * 1024:
+            raise ValueError("command result is too large")
         with self._connect() as connection:
             connection.execute(
                 """
