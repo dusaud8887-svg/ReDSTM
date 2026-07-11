@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>ReDSTM Archive</title>
+    <link rel="stylesheet" href="/app.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="app-bar">
+      <div class="identity">
+        <strong>ReDSTM</strong>
+        <span>개인 아카이브</span>
+      </div>
+      <div class="archive-facts" aria-live="polite">
+        <span id="archive-count">-</span>
+        <span id="archive-state">연결 중</span>
+      </div>
+      <button class="icon-button" id="theme-toggle" type="button" title="테마 전환" aria-label="테마 전환">◐</button>
+    </header>
+
+    <main class="workspace">
+      <aside class="catalog" aria-label="아카이브 목록">
+        <div class="catalog-controls">
+          <label class="search-field">
+            <span>검색</span>
+            <input id="search-input" type="search" placeholder="제목, 작성자, 분류" autocomplete="off">
+          </label>
+          <label class="board-field">
+            <span>게시판</span>
+            <select id="board-filter">
+              <option value="">전체 게시판</option>
+            </select>
+          </label>
+        </div>
+
+        <nav class="view-tabs" aria-label="목록 보기">
+          <button type="button" class="active" data-view="all" aria-pressed="true">전체</button>
+          <button type="button" data-view="history" aria-pressed="false">기록</button>
+          <button type="button" data-view="bookmarks" aria-pressed="false">북마크</button>
+        </nav>
+        <p class="result-status" id="result-status" role="status">색인 준비 중</p>
+        <ol class="result-list" id="result-list"></ol>
+      </aside>
+
+      <section class="reader-pane" id="reader-pane" aria-label="글 본문">
+        <div class="empty-reader" id="empty-reader">
+          <strong>선택된 글 없음</strong>
+          <span>보존된 글 <span id="empty-count">-</span></span>
+        </div>
+
+        <article class="reader" id="reader" hidden>
+          <header class="reader-header">
+            <div class="reader-kicker" id="reader-kicker"></div>
+            <h1 id="reader-title"></h1>
+            <p class="reader-meta" id="reader-meta"></p>
+          </header>
+
+          <div class="reader-toolbar" aria-label="읽기 도구">
+            <button class="icon-button" id="previous-post" type="button" title="이전 글" aria-label="이전 글">←</button>
+            <button class="icon-button" id="bookmark-post" type="button" title="북마크" aria-label="북마크" aria-pressed="false">☆</button>
+            <a class="text-command" id="source-link" href="#" target="_blank" rel="noreferrer">원문</a>
+            <span class="toolbar-spacer"></span>
+            <button class="icon-button" id="reader-settings" type="button" title="읽기 설정" aria-label="읽기 설정">⚙</button>
+            <button class="icon-button" id="next-post" type="button" title="다음 글" aria-label="다음 글">→</button>
+          </div>
+
+          <div class="archive-body" id="archive-body"></div>
+          <section class="comments" aria-labelledby="comments-title">
+            <h2 id="comments-title">댓글 <span id="comment-count">0</span></h2>
+            <ol id="comment-list"></ol>
+          </section>
+        </article>
+      </section>
+    </main>
+
+    <dialog id="settings-dialog">
+      <form method="dialog">
+        <header>
+          <h2>읽기 설정</h2>
+          <button class="icon-button" value="close" aria-label="닫기" title="닫기">×</button>
+        </header>
+        <label>본문 크기 <output id="prose-size-output"></output>
+          <input id="prose-size" type="range" min="15" max="24" step="1">
+        </label>
+        <label>줄 간격 <output id="line-height-output"></output>
+          <input id="line-height" type="range" min="1.4" max="2.2" step="0.1">
+        </label>
+        <label>본문 너비 <output id="prose-width-output"></output>
+          <input id="prose-width" type="range" min="560" max="960" step="20">
+        </label>
+        <label>AA 크기 <output id="aa-size-output"></output>
+          <input id="aa-size" type="range" min="9" max="20" step="1">
+        </label>
+        <button class="text-command reset-settings" id="reset-settings" type="button">기본값</button>
+        <button class="text-command" id="export-state" type="button">상태 내보내기</button>
+        <button class="text-command" id="import-state" type="button">상태 가져오기</button>
+        <input id="import-state-file" type="file" accept="application/json" hidden>
+      </form>
+    </dialog>
+  </body>
+</html>

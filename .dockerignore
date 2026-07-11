@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+.data
+.static
+artifacts
+docs
+tests
+__pycache__
+*.pyc
+*.db
+*.sqlite
+*.warc*
+*.wacz
+.env*

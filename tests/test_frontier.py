@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import multiprocessing
+import os
+import sqlite3
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from crawler.archive import SCHEMA_VERSION
+from crawler.frontier import FrontierLease, FrontierStore
+
+
+def _claim_then_crash(path: str, now_text: str) -> None:
+    leases = FrontierStore(Path(path)).claim(
+        limit=1,
+        lease_seconds=60,
+        now=datetime.fromisoformat(now_text),
+    )
+    os._exit(17 if len(leases) == 1 else 2)
+
+
+def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    url = "https://www.typemoon.net/write_free21/62068"
+    store.seed("write_free21", 62068, url, priority=10)
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    store.seed("write_free21", 62068, url, priority=10)
+    started_at = datetime(2026, 7, 11, tzinfo=UTC)
+
+    process = multiprocessing.get_context("spawn").Process(
+        target=_claim_then_crash,
+        args=(str(path), started_at.isoformat()),
+    )
+    process.start()
+    process.join(10)
+    assert process.exitcode == 17
+
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT board_id, external_post_id, url, attempts, lease_token, lease_expires_at
+            FROM crawl_frontier
+            """
+        ).fetchone()
+    assert row is not None
+    old_lease = FrontierLease(
+        board_id=row[0],
+        external_post_id=row[1],
+        url=row[2],
+        attempts=row[3],
+        lease_token=row[4],
+        lease_expires_at=datetime.fromisoformat(row[5]),
+    )
+
+    assert store.claim(limit=1, lease_seconds=60, now=started_at + timedelta(seconds=59)) == []
+    recovered = store.claim(limit=1, lease_seconds=60, now=started_at + timedelta(seconds=60))
+    assert len(recovered) == 1
+    assert recovered[0].attempts == 2
+    assert recovered[0].lease_token != old_lease.lease_token
+
+    with pytest.raises(RuntimeError, match="stale or missing frontier lease"):
+        store.complete(old_lease)
+    store.complete(recovered[0])
+    assert store.claim(limit=1, lease_seconds=60, now=started_at + timedelta(minutes=3)) == []
