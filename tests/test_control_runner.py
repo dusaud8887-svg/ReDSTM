@@ -197,3 +197,84 @@ def test_publish_without_change_is_a_process_free_noop(
     row = store.command(command["command_id"])
     assert row is not None
     assert json.loads(row["result_json"])["code"] == "publish_no_change"
+
+
+def test_publish_waits_for_daily_window_without_losing_pending_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command("publish-if-changed")
+    api = Api([command])
+    runner, store = _runner(tmp_path, api)
+    (runner.profile.state_dir / "publish.pending").touch()
+    (runner.profile.state_dir / "publish.completed").touch()
+    monkeypatch.setattr(
+        "scripts.control_runner.subprocess.Popen",
+        lambda *_args, **_kwargs: pytest.fail("publish process must not start"),
+    )
+
+    assert runner.run_once()["status"] == "succeeded"
+    row = store.command(command["command_id"])
+    assert row is not None
+    assert json.loads(row["result_json"])["code"] == "publish_not_due"
+    assert (runner.profile.state_dir / "publish.pending").exists()
+
+
+def test_scheduled_run_crawls_recovers_and_publishes_without_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    commands: list[list[str]] = []
+
+    class Process:
+        def __init__(self, arguments: list[str], **kwargs: object) -> None:
+            commands.append(arguments)
+            module = arguments[arguments.index("-m") + 1]
+            if "--output" in arguments:
+                output = Path(arguments[arguments.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "status": "succeeded",
+                            "changed_posts": 1 if module == "scripts.crawl_cycle" else 0,
+                            "failed_posts": 0,
+                            "boards_ok": 1 if module == "scripts.crawl_cycle" else 0,
+                            "boards_failed": 0,
+                            "boards": [],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            if module == "scripts.publish_static":
+                stdout: Any = kwargs["stdout"]
+                assert hasattr(stdout, "write")
+                stdout.write(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "status": "succeeded",
+                            "release_key": f"releases/{'a' * 64}.json",
+                        }
+                    ).encode()
+                )
+                stdout.flush()
+
+        def wait(self, timeout: int) -> int:
+            assert timeout == 30
+            return 0
+
+    monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
+
+    report = runner.run_scheduled()
+
+    assert report["status"] == "succeeded"
+    assert len(commands) == 4
+    start = next(payload for path, payload in api.calls if path == "/api/v1/runner/runs")
+    assert start["kind"] == "scheduled" and start["source"] == "systemd"
+    assert "command_id" not in start
+    finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
+    assert finish["release_id"] == "a" * 64
+    assert finish["counters"]["changed_posts"] == 1
+    assert not (runner.profile.state_dir / "publish.pending").exists()

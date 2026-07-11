@@ -1,7 +1,7 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: Architecture accepted, remote mutation not started
-- 기준일: 2026-07-11
+- 상태: Application base installed; canonical, credentials, canary and cutover pending
+- 기준일: 2026-07-12
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
 - 제외: 실제 DB 삭제, 원격 서비스 중지, credential 원문
@@ -32,13 +32,14 @@ endpoint를 제공하지 않는다.
 | OS/architecture | Ubuntu 22.04.5, x86_64 | 현재 OS 유지 |
 | CPU/RAM | 2 logical CPU, 956MiB RAM | concurrency 1 수집 가능 |
 | swap | 4GiB, 약 410MiB 사용 | 저속 crawler 안전망, RAM 대체재는 아님 |
-| root volume | 194GiB, 97GiB free | legacy 중복 DB 정리 뒤 충분 |
+| root volume | 194GiB, 약 103GiB free | 현재 application/canonical 추가 가능 |
 | uptime | 58일 | 현재 VM 자체는 안정적으로 동작 중 |
 | active viewer | PM2 `typemoon-viewer`, Nginx | Cloudflare data smoke 전 fallback으로 유지 |
-| active crawler schedule | 사용자 cron 없음, ReDSTM timer 없음 | 새 systemd 계약 필요 |
+| active crawler schedule | 사용자 cron 없음, ReDSTM timers disabled | canary 뒤 enable |
 | legacy project | 약 50GiB | application/data를 선별 퇴역 |
 | 큰 DB | 28.8GB main + 28.8GB online backup + 19.6GB backup | 검증 뒤 삭제 후보 |
 | container runtime | Docker 설치·active | production baseline에는 불필요 |
+| public listeners | 22/80/443/3000/1080 등 legacy listener 존재 | O3 전까지 보존, cutover 뒤 SSH 외 제거 |
 
 레거시 원본은 2026-07-10 SQLite Online Backup으로 로컬에 보존했다. 보고서의 원격/로컬
 SHA-256 일치와 local `quick_check=ok` 기록은
@@ -116,7 +117,7 @@ Dockerfile은 reproducible smoke와 emergency container fallback으로 유지한
 ```text
 /opt/redstm/current                 immutable application release symlink
 /opt/redstm/releases/<git-sha>/     source + frozen virtual environment
-/srv/redstm/canonical/              active SQLite, redstm: redstm, 0700
+/srv/redstm/canonical/              active SQLite, redstm:redstm, 0750
 /srv/redstm/warc/                   partial/closed WARC, 0700
 /srv/redstm/static/                 content-addressed serving derivatives
 /srv/redstm/snapshots/              bounded local backup staging
@@ -165,8 +166,9 @@ R2 writer key와 Access service token은 별도 credential file로만
 cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Celery/Redis를 추가하지 않는다.
 
 상태(2026-07-12): `scripts.crawl_cycle` local core와 failure test 완료, Oracle canary 및 systemd 연결
-전이다. 세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와 outage
-attempt 복원을 적용한다. 30분 재로그인 throttle은 timer 활성화 전 남은 gate다.
+전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
+구현됐다. 세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와
+outage attempt 복원을 적용한다. 30분 재로그인 throttle은 timer 활성화 전 남은 gate다.
 
 ### G3. delta release/publish
 
@@ -181,6 +183,9 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 - 오래된 search/board manifest GC는 최근 2개 release와 7일 rollback window 뒤 별도 bounded
   maintenance job으로만 수행한다.
 - publish는 매 crawl 직후가 아니라 변경이 있을 때 하루 최대 1회로 합친다.
+
+상태 marker는 `/srv/redstm/state/publish.pending`과 `publish.completed`의 atomic create/mtime만
+사용한다. 하루 window가 아직 열리지 않았으면 pending marker를 보존해 다음 cycle에서 처리한다.
 
 ### G4. 배포·복구 도구
 
@@ -197,6 +202,10 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy command의 암묵적 부작용으로
 넣지 않는다.
 
+상태(2026-07-12): 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 versioned release 설치가
+완료됐다. `506b7e5`에서 `dd85021`로 application rollback 후 다시 `506b7e5`로 복귀했으며 두 timer는
+disabled/inactive다. canonical activation과 새 schedule unit을 포함한 다음 release rollback은 남았다.
+
 ### G5. Operations client
 
 Oracle은 [08](08_operations_control_plane.md)의 runner endpoint만 사용한다.
@@ -208,7 +217,7 @@ Oracle은 [08](08_operations_control_plane.md)의 runner endpoint만 사용한�
 5. Worker/D1 장애 event는 local outbox에 두고 재연결 후 sequence로 replay한다.
 6. 허용 command 외 shell/path/arg를 실행하는 generic dispatcher는 만들지 않는다.
 
-상태(2026-07-12): local core 구현 완료, Oracle/Access canary 전이다. 별도 SQLite command ledger와
+상태(2026-07-12): local core와 systemd schedule source 구현 완료, Oracle/Access canary 전이다. 별도 SQLite command ledger와
 10MiB/10,000-event outbox, 5초 connect/15초 total retry transport, 60초 circuit breaker, fixed 5-action
 dispatcher, 30초 heartbeat/lease, atomic pause/publish marker, crash terminal replay와 board summary를
 구현했다. subprocess stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
@@ -274,8 +283,8 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | frontier | lease | 900초로 상향 | detail 180초 × 최대 3 시도(~570초+) + 처리 여유; 현행 300초는 느린 AA 재시도 경로를 못 덮음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
-| systemd | timer 분산 | `RandomizedDelaySec=600` | 정시 부하와 요청 패턴 회피 |
-| systemd | run 상한 | `RuntimeMaxSec` cycle 4시간, recovery 3시간, publish 2시간 | 느린 사이트에서 무한 run 방지; lease/transaction/`.partial` 계약이 강제 종료를 안전하게 함 |
+| systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |
+| systemd | run 상한 | oneshot `TimeoutStartSec=5h` | 느린 사이트에서 무한 run 방지; lease/transaction/`.partial` 계약이 강제 종료를 안전하게 함 |
 | control | D1/Worker HTTP | connect 5초/total 15초, backoff 2/5/15초 최대 3회 | [08 §5.4](08_operations_control_plane.md) |
 
 AutoThrottle은 감속 전용이다. Scrapy는 `DOWNLOAD_DELAY`를 하한으로 존중하므로 10초보다
@@ -303,8 +312,8 @@ B2/restic 외부 backup은 2026-07-11 사용자 결정으로 현재 범위에서
 상태(2026-07-12): E legacy source 28,811,358,208 bytes를 백그라운드 read-only hash해 기존
 `e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500`과 재일치했다. Oracle
 read-only 조회는 Ubuntu 22.04/2 CPU/956MiB RAM/4GiB swap/root 약 103GB free, legacy project
-50GB, `db-backups` 27GB, enabled `nginx.service`/`pm2-ubuntu.service`를 확인했다. listener 전체
-manifest와 remote data file hash는 아직이며 stop/delete/write는 수행하지 않았다.
+50GB, `db-backups` 27GB, enabled `nginx.service`/`pm2-ubuntu.service`와 legacy listener를 확인했다.
+remote online-backup hash는 저우선순위 background 검증 중이며 stop/delete는 수행하지 않았다.
 
 ### Phase O1 — application install
 
@@ -313,6 +322,10 @@ manifest와 remote data file hash는 아직이며 stop/delete/write는 수행하
 - secret file은 값 노출 없이 존재·권한만 검사한다.
 - Access service token route-role과 D1 status/event smoke를 검증한다.
 - timer 없이 manual canary만 실행한다.
+
+상태(2026-07-12): application/user/path/runtime install과 application rollback rehearsal은 완료됐다.
+canonical transfer/doctor, secret 주입, schedule unit remote install과 authenticated manual canary는
+남아 있다.
 
 ### Phase O2 — canary와 shadow
 

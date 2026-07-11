@@ -87,8 +87,14 @@ install_release() {
     "$target/deploy/oracle/redstm-control.service" /etc/systemd/system/redstm-control.service
   install -o root -g root -m 0644 \
     "$target/deploy/oracle/redstm-control.timer" /etc/systemd/system/redstm-control.timer
+  install -o root -g root -m 0644 \
+    "$target/deploy/oracle/redstm-schedule.service" /etc/systemd/system/redstm-schedule.service
+  install -o root -g root -m 0644 \
+    "$target/deploy/oracle/redstm-schedule.timer" /etc/systemd/system/redstm-schedule.timer
   systemd-analyze verify /etc/systemd/system/redstm-control.service \
-    /etc/systemd/system/redstm-control.timer
+    /etc/systemd/system/redstm-control.timer \
+    /etc/systemd/system/redstm-schedule.service \
+    /etc/systemd/system/redstm-schedule.timer
   systemctl daemon-reload
   sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" -c \
     'import scripts.control_runner'
@@ -98,8 +104,9 @@ install_release() {
   if [[ "$0" == "/tmp/redstm-install-release.sh" ]]; then
     rm -f -- "$0"
   fi
-  printf 'release=%s\ntimer_enabled=%s\n' "$release" \
-    "$(systemctl is-enabled redstm-control.timer 2>/dev/null || true)"
+  printf 'release=%s\ncontrol_timer_enabled=%s\nschedule_timer_enabled=%s\n' "$release" \
+    "$(systemctl is-enabled redstm-control.timer 2>/dev/null || true)" \
+    "$(systemctl is-enabled redstm-schedule.timer 2>/dev/null || true)"
 }
 
 activate_canonical() {
@@ -152,8 +159,23 @@ rollback_release() {
     "$previous/deploy/oracle/redstm-control.service" /etc/systemd/system/redstm-control.service
   install -o root -g root -m 0644 \
     "$previous/deploy/oracle/redstm-control.timer" /etc/systemd/system/redstm-control.timer
-  systemd-analyze verify /etc/systemd/system/redstm-control.service \
-    /etc/systemd/system/redstm-control.timer
+  if [[ -f "$previous/deploy/oracle/redstm-schedule.service" && \
+        -f "$previous/deploy/oracle/redstm-schedule.timer" ]]; then
+    install -o root -g root -m 0644 \
+      "$previous/deploy/oracle/redstm-schedule.service" /etc/systemd/system/redstm-schedule.service
+    install -o root -g root -m 0644 \
+      "$previous/deploy/oracle/redstm-schedule.timer" /etc/systemd/system/redstm-schedule.timer
+    systemd-analyze verify /etc/systemd/system/redstm-control.service \
+      /etc/systemd/system/redstm-control.timer \
+      /etc/systemd/system/redstm-schedule.service \
+      /etc/systemd/system/redstm-schedule.timer
+  else
+    systemctl disable --now redstm-schedule.timer 2>/dev/null || true
+    rm -f -- /etc/systemd/system/redstm-schedule.service \
+      /etc/systemd/system/redstm-schedule.timer
+    systemd-analyze verify /etc/systemd/system/redstm-control.service \
+      /etc/systemd/system/redstm-control.timer
+  fi
   systemctl daemon-reload
   sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" -c \
     'import scripts.control_runner'

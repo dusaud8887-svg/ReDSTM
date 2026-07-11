@@ -74,6 +74,12 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     installer = (root / "deploy" / "oracle" / "install_release.sh").read_text(encoding="utf-8")
     service = (root / "deploy" / "oracle" / "redstm-control.service").read_text(encoding="utf-8")
     timer = (root / "deploy" / "oracle" / "redstm-control.timer").read_text(encoding="utf-8")
+    schedule_service = (root / "deploy" / "oracle" / "redstm-schedule.service").read_text(
+        encoding="utf-8"
+    )
+    schedule_timer = (root / "deploy" / "oracle" / "redstm-schedule.timer").read_text(
+        encoding="utf-8"
+    )
 
     assert "systemctl enable" not in installer
     assert '"uv ${UV_VERSION}" ||' in installer
@@ -89,3 +95,9 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "TimeoutStartSec=4h" in service
     assert "RuntimeMaxSec" not in service
     assert "Persistent=true" in timer
+    assert "--scheduled" in schedule_service
+    assert "ConditionPathExists=/srv/redstm/canonical/archive.sqlite" in schedule_service
+    assert "00,06,12,18:17:00 UTC" in schedule_timer
+    assert "Persistent=true" in schedule_timer
+    assert "redstm-schedule.timer" in installer
+    assert "systemctl disable --now redstm-schedule.timer" in installer

@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,6 +55,7 @@ _WARNING_CODES = {
     "listing_fetch_failed": "site_unreachable",
     "network_error": "site_unreachable",
 }
+_PUBLISH_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 def _timestamp() -> str:
@@ -93,6 +95,85 @@ class ControlRunner:
                 return self._run_locked()
         except Timeout:
             return {"ok": True, "status": "busy"}
+
+    def run_scheduled(self) -> dict[str, Any]:
+        lock = FileLock(self.profile.state_dir / "control.lock", timeout=0)
+        try:
+            with lock:
+                return self._run_scheduled_locked()
+        except Timeout:
+            return {"ok": True, "status": "busy"}
+
+    def _run_scheduled_locked(self) -> dict[str, Any]:
+        if (self.profile.state_dir / "schedule.paused").exists():
+            self._heartbeat("paused")
+            return {"ok": True, "status": "paused"}
+        try:
+            self.client.flush(self.store)
+        except ControlProtocolError, OSError, ValueError:
+            pass
+        run_id = f"scheduled-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+        started_at = _timestamp()
+        self._send(
+            "run_start",
+            "/api/v1/runner/runs",
+            {
+                "run_id": run_id,
+                "kind": "scheduled",
+                "source": "systemd",
+                "requested_at": started_at,
+                "started_at": started_at,
+            },
+            f"start-{run_id}",
+        )
+        self._event(run_id, 0, "scheduled", "running")
+        state = "succeeded"
+        counters = {"changed_posts": 0, "failed_posts": 0, "boards_ok": 0, "boards_failed": 0}
+        release_id: str | None = None
+        crawl_status = "failed"
+        sequence = 1
+        for action in ("sync-now", "retry-batch", "publish-if-changed"):
+            if action == "retry-batch" and crawl_status in {
+                "site_unreachable",
+                "rate_limited",
+                "auth_failed",
+            }:
+                self._event(run_id, sequence, action, "skipped")
+                sequence += 1
+                continue
+            try:
+                report = self._execute_action(action, run_id, run_id)
+                action_state, _safe_code, payload = self._result(action, report)
+            except OSError, RuntimeError, ValueError:
+                report = {}
+                action_state = "failed"
+                payload = self._finish_payload("failed", "runner_failed")
+            if action == "sync-now":
+                crawl_status = str(report.get("status", "failed"))
+                self._board_summaries(report)
+            if action in {"sync-now", "retry-batch"} and payload["counters"]["changed_posts"]:
+                self._write_publish_marker()
+            counters["changed_posts"] += payload["counters"]["changed_posts"]
+            counters["failed_posts"] += payload["counters"]["failed_posts"]
+            if action == "sync-now":
+                counters["boards_ok"] = payload["counters"]["boards_ok"]
+                counters["boards_failed"] = payload["counters"]["boards_failed"]
+            release_id = payload.get("release_id") or release_id
+            if action_state == "failed" or state == "failed":
+                state = "failed"
+            elif action_state == "partial":
+                state = "partial"
+            self._event(run_id, sequence, action, action_state, payload["counters"])
+            sequence += 1
+        finish = self._finish_payload(state, f"scheduled_{state}", counters, release_id)
+        self._send(
+            "run_finish",
+            f"/api/v1/runner/runs/{run_id}/finish",
+            finish,
+            f"finish-{run_id}",
+        )
+        self._heartbeat("idle")
+        return {"ok": state == "succeeded", "status": state, "run_id": run_id}
 
     def _run_locked(self) -> dict[str, Any]:
         try:
@@ -180,7 +261,7 @@ class ControlRunner:
         self._event(run_id, 0, action, "running")
         report: dict[str, Any] = {}
         try:
-            report = self._execute_action(action, command_id, run_id)
+            report = self._execute_action(action, command_id, run_id, command_id=command_id)
             state, safe_code, finish_payload = self._result(action, report)
         except OSError, RuntimeError, ValueError:
             state = "failed"
@@ -209,10 +290,17 @@ class ControlRunner:
         )
         return {"ok": state == "succeeded", "status": terminal["state"], "command_id": command_id}
 
-    def _execute_action(self, action: str, command_id: str, run_id: str) -> dict[str, Any]:
+    def _execute_action(
+        self,
+        action: str,
+        report_id: str,
+        run_id: str,
+        *,
+        command_id: str | None = None,
+    ) -> dict[str, Any]:
         command_reports = self.profile.report_dir / "commands"
         command_reports.mkdir(parents=True, exist_ok=True)
-        report_path = command_reports / f"{command_id}.json"
+        report_path = command_reports / f"{report_id}.json"
         if action == "sync-now":
             command = [
                 sys.executable,
@@ -229,7 +317,9 @@ class ControlRunner:
                 "--output",
                 str(report_path),
             ]
-            return self._execute_report(command, report_path, run_id, "crawling")
+            return self._execute_report(
+                command, report_path, run_id, "crawling", command_id=command_id
+            )
         if action == "retry-batch":
             command = [
                 sys.executable,
@@ -246,10 +336,18 @@ class ControlRunner:
                 "--output",
                 str(report_path),
             ]
-            return self._execute_report(command, report_path, run_id, "recovery")
+            return self._execute_report(
+                command, report_path, run_id, "recovery", command_id=command_id
+            )
         marker = self.profile.state_dir / "publish.pending"
         if not marker.exists():
             return {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"}
+        completed = self.profile.state_dir / "publish.completed"
+        if (
+            completed.exists()
+            and time.time() - completed.stat().st_mtime < _PUBLISH_INTERVAL_SECONDS
+        ):
+            return {"ok": True, "status": "succeeded", "safe_code": "publish_not_due"}
         export_report = report_path.with_suffix(".export.json")
         export = [
             sys.executable,
@@ -262,7 +360,10 @@ class ControlRunner:
             "--workers",
             "1",
         ]
-        if self._wait(export, run_id, "exporting", stdout=export_report) != 0:
+        if (
+            self._wait(export, run_id, "exporting", stdout=export_report, command_id=command_id)
+            != 0
+        ):
             return {"ok": False, "status": "failed", "safe_code": "export_failed"}
         publish = [
             sys.executable,
@@ -272,24 +373,40 @@ class ControlRunner:
             "--remote",
             self.profile.remote,
         ]
-        if self._wait(publish, run_id, "publishing", stdout=report_path) != 0:
+        if (
+            self._wait(publish, run_id, "publishing", stdout=report_path, command_id=command_id)
+            != 0
+        ):
             return {"ok": False, "status": "failed", "safe_code": "publish_failed"}
         report = self._read_report(report_path)
         if report.get("ok") is True:
             marker.unlink(missing_ok=True)
+            completed.touch()
         return report
 
     def _execute_report(
-        self, command: list[str], report_path: Path, run_id: str, step: str
+        self,
+        command: list[str],
+        report_path: Path,
+        run_id: str,
+        step: str,
+        *,
+        command_id: str | None = None,
     ) -> dict[str, Any]:
-        return_code = self._wait(command, run_id, step)
+        return_code = self._wait(command, run_id, step, command_id=command_id)
         report = self._read_report(report_path)
         if return_code not in (0, 2) and report.get("ok") is not True:
             return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         return report
 
     def _wait(
-        self, command: list[str], run_id: str, step: str, *, stdout: Path | None = None
+        self,
+        command: list[str],
+        run_id: str,
+        step: str,
+        *,
+        stdout: Path | None = None,
+        command_id: str | None = None,
     ) -> int:
         output_handle: BinaryIO | None = stdout.open("wb") if stdout is not None else None
         output: BinaryIO | int = output_handle or subprocess.DEVNULL
@@ -305,7 +422,7 @@ class ControlRunner:
                 try:
                     return process.wait(timeout=30)
                 except subprocess.TimeoutExpired:
-                    self._heartbeat("running", run_id=run_id, step=step)
+                    self._heartbeat("running", run_id=run_id, step=step, command_id=command_id)
         finally:
             if output_handle is not None:
                 output_handle.close()
@@ -475,7 +592,14 @@ class ControlRunner:
                     f"board-{uuid4().hex}",
                 )
 
-    def _heartbeat(self, state: str, *, run_id: str | None = None, step: str | None = None) -> None:
+    def _heartbeat(
+        self,
+        state: str,
+        *,
+        run_id: str | None = None,
+        step: str | None = None,
+        command_id: str | None = None,
+    ) -> None:
         payload: dict[str, Any] = {
             "runner_version": self.profile.runner_version,
             "state": state,
@@ -484,10 +608,15 @@ class ControlRunner:
         if run_id is not None:
             payload.update(
                 {
-                    "runner_id": self.profile.runner_id,
-                    "active_command_id": run_id.removeprefix("command-"),
                     "active_run_id": run_id,
                     "active_step": step,
+                }
+            )
+        if command_id is not None:
+            payload.update(
+                {
+                    "runner_id": self.profile.runner_id,
+                    "active_command_id": command_id,
                 }
             )
         self._send(
@@ -519,6 +648,7 @@ class ControlRunner:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Poll and execute one fixed ReDSTM command.")
+    parser.add_argument("--scheduled", action="store_true")
     parser.add_argument("--state-db", type=Path, default=Path("/srv/redstm/state/control.sqlite"))
     parser.add_argument("--state-dir", type=Path, default=Path("/srv/redstm/state"))
     parser.add_argument(
@@ -551,7 +681,7 @@ def main() -> int:
     runner = ControlRunner(
         profile, ControlClient.from_environment(), ControlStore(profile.state_db)
     )
-    report = runner.run_once()
+    report = runner.run_scheduled() if args.scheduled else runner.run_once()
     print(json.dumps(report, sort_keys=True))
     return 0 if report.get("ok") is not False else 2
 

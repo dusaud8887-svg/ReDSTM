@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the ReDSTM archive cycle every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:17:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=redstm-schedule.service
+
+[Install]
+WantedBy=timers.target

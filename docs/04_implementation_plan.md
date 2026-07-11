@@ -21,8 +21,8 @@
 | live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
-| unattended crawl | overlap discovery, 46-board cycle, delta publish, scheduler | NOT READY |
-| Oracle | 읽기 전용 조사와 target runbook 완료, ReDSTM mutation 미시작 | PLANNED |
+| unattended crawl | overlap discovery, 46-board cycle, daily-bounded delta publish, systemd source 구현; live canary 전 | IN PROGRESS |
+| Oracle | versioned application install·양방향 release rollback 통과; canonical/secret/timer 전 | IN PROGRESS |
 | remote operations | local read-only C0 완료, Access/D1 `/ops` 미구현 | PLANNED |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
@@ -31,9 +31,10 @@
 remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-현재 baseline 검증은 Python 87 tests, Node 16 tests, Ruff check/format과 mypy가 통과했다.
-Playwright self-contained fixture는 1440/768/390/320px 28건 통과했고 local R2에 seed하지 않은 실제 AA/prose object
-6건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의 authenticated live smoke에서 확인한다.
+현재 baseline 검증은 Python 131 tests, Node 30 tests, Ruff check/format과 mypy가 통과했다.
+Playwright self-contained fixture는 1440/768/390/320px 28건 통과했고 local R2에 seed하지 않은 실제
+AA/prose fixture의 viewport 조합 8건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의
+authenticated live smoke에서 확인한다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -200,7 +201,8 @@ metadata 비교, 공지 제외 연속 20건 경계, warning/`--inventory` 우회
 - board별 run/counters와 final summary
 - duplicate process는 shared sync lock으로 차단
 
-상태(2026-07-12): local core 구현 완료, Oracle canary와 30분 재로그인 throttle은 남았다.
+상태(2026-07-12): local core와 6시간 systemd schedule source 구현 완료, Oracle canary와 30분
+재로그인 throttle은 남았다.
 `d52f63a`/`d71663f`에서 network/auth preflight 분류, 1회 session 검증, enabled board 순차 subprocess,
 board별 원자 report, parse failure 이월, auth 즉시 중단과 연속 network 3회 breaker를 구현했다.
 Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 사용한다.
@@ -241,7 +243,8 @@ dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않�
 board 표시명을 추가하면서 7-field rollback 호환을 유지한다. `c66aa3b`은 verified local ledger와
 remote pointer가 맞을 때 새 post/board/search/collection/versioned release만 `--files-from`으로
 upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20GB/800,000-object hard stop은
-두 경로에서 동일하다.
+두 경로에서 동일하다. systemd cycle은 crawl/recovery를 6시간마다 실행하되 전체 projection I/O가
+매번 반복되지 않도록 pending publish를 하루 최대 1회만 소비하며 marker를 잃지 않는다.
 
 완료 기준:
 
@@ -271,11 +274,11 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 
 상태(2026-07-12): remote D1 migration 2개와 Worker `c47b2e58` 배포, `7787ca24` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
-ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체 Python
-125 tests와 Edge 30 tests를
-통과했다. 비인증 `/`, deep link, ops, runner, health는 모두 302다. 3의 별도 Access service identity와
-인증 role smoke, Oracle 설치/systemd 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3 전체는
-DONE이 아니다.
+ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
+Python 131 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
+302다. 3의 별도 Access service identity와
+인증 role smoke, Access secret 주입·timer 연결, 8의 `/ops` UI, live failure gate는 아직이므로 A3
+전체는 DONE이 아니다. Oracle에는 application base와 disabled control timer가 설치됐다.
 
 완료 기준:
 
@@ -299,11 +302,13 @@ DONE이 아니다.
 6. 기존 E verified source와 격리 restore 사본을 재확인한다. 새 외부 backup provider는 만들지 않는다.
 7. A2/A3의 20/100건, duplicate command, D1 outage canary를 Oracle에서 실행한다.
 
-상태(2026-07-12): O0 read-only 재확인 중이다. E legacy source 28,811,358,208 bytes의 SHA-256은
-`e16203a7...5500`으로 기존 기록과 다시 일치했다. Oracle은 Ubuntu 22.04, 2 CPU, RAM 956MiB,
-swap 4GiB, root free 약 103GB이며 기존 legacy 50GB와 DB backup 27GB, enabled Nginx/PM2를
-보존 중이다. ReDSTM 경로/user/service 설치, listener 전체 manifest, application deploy는 아직
-수행하지 않았다.
+상태(2026-07-12): E legacy source 28,811,358,208 bytes의 SHA-256은 `e16203a7...5500`으로 기존
+기록과 다시 일치했다. Oracle은 Ubuntu 22.04, 2 CPU, RAM 956MiB, swap 4GiB, root free 약
+103GB이며 기존 legacy 50GB와 DB backup 27GB, enabled Nginx/PM2를 보존 중이다. 전용 user/path,
+pinned uv 0.9.21/Python 3.14, release `506b7e5` application을 설치했고 `dd85021`로 rollback한 뒤
+`506b7e5`로 재복귀했다. control timer는 disabled/inactive, Access secret과 canonical은 없으며
+새 schedule unit의 remote 배포·재rollback이 다음 gate다. 기존 public listener는 아직 건드리지
+않았다.
 
 완료 기준:
 
