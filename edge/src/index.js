@@ -88,9 +88,12 @@ function objectHeaders(object, key) {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("ETag", object.httpEtag);
-  if (key.endsWith(".json.gz")) {
+  if (key.endsWith(".json.zst")) {
     headers.set("Content-Type", "application/json; charset=utf-8");
-    headers.set("Content-Encoding", "gzip");
+    headers.set("Content-Encoding", "zstd");
+  }
+  if (key === "release.json" && object.uploaded instanceof Date) {
+    headers.set("Last-Modified", object.uploaded.toUTCString());
   }
   headers.set("Cache-Control", key === "release.json" ? "no-cache" : "private, immutable");
   return headers;
@@ -112,7 +115,7 @@ async function archiveResponse(request, env, key) {
   }
 
   const options = { onlyIf: request.headers };
-  if (!key.endsWith(".json.gz") && request.headers.has("Range")) {
+  if (!key.endsWith(".json.zst") && request.headers.has("Range")) {
     options.range = request.headers;
   }
   const object = await env.ARCHIVE.get(key, options);
@@ -120,7 +123,7 @@ async function archiveResponse(request, env, key) {
     return response("Not found", 404);
   }
   if (!("body" in object)) {
-    return response(null, 304, { ETag: object.httpEtag });
+    return response(null, 304, objectHeaders(object, key));
   }
 
   const headers = objectHeaders(object, key);

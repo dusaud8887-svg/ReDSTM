@@ -107,7 +107,7 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
   }
 });
 
-test("streams private objects with safe gzip and range headers", async () => {
+test("streams private objects with safe Zstandard and range headers", async () => {
   let options;
   const env = environment({
     ARCHIVE: {
@@ -133,9 +133,9 @@ test("streams private objects with safe gzip and range headers", async () => {
   assert.equal(result.headers.get("Cache-Control"), "private, immutable");
   assert.equal(options.range.get("Range"), "bytes=2-5");
 
-  const json = await worker.fetch(request("/archive/posts/board/1-hash.json.gz"), env);
+  const json = await worker.fetch(request("/archive/posts/board/1-hash.json.zst"), env);
   assert.equal(json.status, 200);
-  assert.equal(json.headers.get("Content-Encoding"), "gzip");
+  assert.equal(json.headers.get("Content-Encoding"), "zstd");
   assert.equal(json.headers.get("Content-Type"), "application/json; charset=utf-8");
   assert.equal(options.range, undefined);
 });
@@ -153,9 +153,31 @@ test("handles health, missing objects, methods, and invalid keys", async () => {
   });
 
   assert.equal((await worker.fetch(request("/health"), env)).status, 200);
-  assert.equal((await worker.fetch(request("/archive/missing.json.gz"), env)).status, 404);
+  assert.equal((await worker.fetch(request("/archive/missing.json.zst"), env)).status, 404);
   assert.equal((await worker.fetch(request("/archive/%5Csecret"), env)).status, 400);
   assert.equal((await worker.fetch(request("/archive/release.json", { method: "POST" }), env)).status, 405);
+});
+
+test("release.json is served as a no-cache pointer", async () => {
+  const result = await worker.fetch(request("/archive/release.json"), environment());
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get("Cache-Control"), "no-cache");
+});
+
+test("release.json exposes R2 uploaded as Last-Modified", async () => {
+  const uploaded = new Date("2026-07-12T03:00:00Z");
+  const env = environment({
+    ARCHIVE: {
+      async get() {
+        return { ...archiveObject(), uploaded };
+      },
+      async head() {
+        return { ...archiveObject(), uploaded };
+      },
+    },
+  });
+  const result = await worker.fetch(request("/archive/release.json"), env);
+  assert.equal(result.headers.get("Last-Modified"), uploaded.toUTCString());
 });
 
 test("serves authenticated static assets with security headers", async () => {
