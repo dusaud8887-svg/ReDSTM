@@ -6,6 +6,7 @@ RELEASES=/opt/redstm/releases
 CURRENT=/opt/redstm/current
 PREVIOUS=/opt/redstm/previous
 CANONICAL_TRANSFER=/srv/redstm/canonical/archive.sqlite.transfer.partial
+CANONICAL_STAGING=/srv/redstm/canonical/archive.sqlite.partial
 CANONICAL_CHUNK=/tmp/redstm-canonical.chunk.partial
 
 fail() {
@@ -115,9 +116,23 @@ canonical_transfer_size() {
   [[ $# -eq 0 ]] || fail "canonical-transfer-size takes no arguments"
   if [[ -f "$CANONICAL_TRANSFER" ]]; then
     stat -c '%s' "$CANONICAL_TRANSFER"
+  elif [[ -f "$CANONICAL_STAGING" ]]; then
+    stat -c '%s' "$CANONICAL_STAGING"
   else
     printf '0\n'
   fi
+}
+
+truncate_canonical_transfer() {
+  [[ $# -eq 1 ]] || fail "truncate-canonical-transfer requires bytes"
+  local expected_bytes="$1" current_bytes
+  [[ "$expected_bytes" =~ ^[0-9]+$ ]] || fail "invalid canonical truncate size"
+  [[ -f "$CANONICAL_TRANSFER" ]] || fail "canonical transfer is missing"
+  current_bytes="$(stat -c '%s' "$CANONICAL_TRANSFER")"
+  (( expected_bytes <= current_bytes )) || fail "canonical truncate size exceeds transfer"
+  truncate -s "$expected_bytes" "$CANONICAL_TRANSFER"
+  sync -d "$CANONICAL_TRANSFER"
+  printf 'canonical_transfer_bytes=%s\n' "$expected_bytes"
 }
 
 append_canonical_chunk() {
@@ -150,17 +165,24 @@ activate_canonical() {
   local expected_bytes="$1" expected_hash="$2"
   [[ "$expected_bytes" =~ ^[1-9][0-9]*$ ]] || fail "invalid canonical size"
   [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || fail "invalid canonical hash"
-  [[ -f "$CANONICAL_TRANSFER" ]] || fail "canonical transfer is missing"
-  [[ "$(stat -c '%s' "$CANONICAL_TRANSFER")" == "$expected_bytes" ]] || \
-    fail "canonical size mismatch"
-  if [[ "$(sha256sum "$CANONICAL_TRANSFER" | cut -d' ' -f1)" != "$expected_hash" ]]; then
-    rm -f -- "$CANONICAL_TRANSFER"
-    fail "canonical hash mismatch; transfer reset"
+  if [[ -f "$CANONICAL_TRANSFER" ]]; then
+    [[ "$(stat -c '%s' "$CANONICAL_TRANSFER")" == "$expected_bytes" ]] || \
+      fail "canonical size mismatch"
+    if [[ "$(sha256sum "$CANONICAL_TRANSFER" | cut -d' ' -f1)" != "$expected_hash" ]]; then
+      rm -f -- "$CANONICAL_TRANSFER"
+      fail "canonical hash mismatch; transfer reset"
+    fi
+    [[ ! -e "$CANONICAL_STAGING" ]] || fail "canonical staging path already exists"
+    mv -- "$CANONICAL_TRANSFER" "$CANONICAL_STAGING"
+  elif [[ -f "$CANONICAL_STAGING" ]]; then
+    [[ "$(stat -c '%s' "$CANONICAL_STAGING")" == "$expected_bytes" ]] || \
+      fail "canonical staging size mismatch"
+    [[ "$(sha256sum "$CANONICAL_STAGING" | cut -d' ' -f1)" == "$expected_hash" ]] || \
+      fail "canonical staging hash mismatch"
+  else
+    fail "canonical transfer is missing"
   fi
-  local canonical_partial=/srv/redstm/canonical/archive.sqlite.partial
-  [[ ! -e "$canonical_partial" ]] || fail "canonical staging path already exists"
-  mv -- "$CANONICAL_TRANSFER" "$canonical_partial"
-  sudo -u redstm "$CURRENT/.venv/bin/python" -m scripts.doctor "$canonical_partial" \
+  sudo -u redstm "$CURRENT/.venv/bin/python" -m scripts.doctor "$CANONICAL_STAGING" \
     --warc-dir /srv/redstm/warc --output /srv/redstm/reports/canonical-activation-doctor.json \
     >/dev/null
   local target=/srv/redstm/canonical/archive.sqlite
@@ -168,13 +190,13 @@ activate_canonical() {
     local current_hash
     current_hash="$(sha256sum "$target" | cut -d' ' -f1)"
     if [[ "$current_hash" == "$expected_hash" ]]; then
-      rm -f -- "$canonical_partial"
+      rm -f -- "$CANONICAL_STAGING"
       printf 'canonical=noop\n'
       return
     fi
     mv -- "$target" "/srv/redstm/canonical/archive.previous-$(date -u +%Y%m%dT%H%M%SZ).sqlite"
   fi
-  mv -- "$canonical_partial" "$target"
+  mv -- "$CANONICAL_STAGING" "$target"
   printf 'canonical=activated\nsha256=%s\n' "$expected_hash"
 }
 
@@ -224,6 +246,7 @@ shift || true
 case "$mode" in
   install) install_release "$@" ;;
   canonical-transfer-size) canonical_transfer_size "$@" ;;
+  truncate-canonical-transfer) truncate_canonical_transfer "$@" ;;
   append-canonical-chunk) append_canonical_chunk "$@" ;;
   activate-canonical) activate_canonical "$@" ;;
   rollback) rollback_release "$@" ;;

@@ -180,8 +180,21 @@ def activate_canonical(
     if re.fullmatch(r"[0-9]+", raw_offset) is None:
         raise RuntimeError("remote canonical transfer size is invalid")
     remote_offset = int(raw_offset)
-    if remote_offset > size or (remote_offset != size and remote_offset % chunk_bytes):
+    if remote_offset > size:
         raise RuntimeError("remote canonical transfer is not resumable")
+    if remote_offset != size and remote_offset % chunk_bytes:
+        remote_offset -= remote_offset % chunk_bytes
+        runner(
+            [
+                *_ssh(target),
+                "sudo",
+                "bash",
+                "/opt/redstm/install_release.sh",
+                "truncate-canonical-transfer",
+                str(remote_offset),
+            ],
+            check=True,
+        )
     digest = hashlib.sha256()
     position = 0
     with (

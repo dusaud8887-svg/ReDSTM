@@ -95,16 +95,23 @@ def test_canonical_transfer_resumes_at_verified_chunk_boundary(tmp_path: Path) -
     assert commands[-1][-3:] == ["activate-canonical", "10", report["sha256"]]
 
 
-def test_canonical_transfer_rejects_unaligned_remote_partial(tmp_path: Path) -> None:
+def test_canonical_transfer_truncates_unaligned_remote_partial(tmp_path: Path) -> None:
     target = _target(tmp_path)
     canonical = tmp_path / "archive.sqlite"
     canonical.write_bytes(b"abcdefghij")
+    commands: list[list[str]] = []
 
     def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(command, 0, stdout="3\n")
+        commands.append(command)
+        stdout = "3\n" if command[-1] == "canonical-transfer-size" else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
 
-    with pytest.raises(RuntimeError, match="not resumable"):
-        activate_canonical(target, canonical, runner=run, chunk_bytes=4)
+    activate_canonical(target, canonical, runner=run, chunk_bytes=4)
+
+    truncate = next(command for command in commands if "truncate-canonical-transfer" in command)
+    assert truncate[-2:] == ["truncate-canonical-transfer", "0"]
+    append_commands = [command for command in commands if "append-canonical-chunk" in command]
+    assert [command[-3:-1] for command in append_commands] == [["0", "4"], ["4", "4"], ["8", "2"]]
 
 
 def test_install_assets_never_enable_or_touch_legacy() -> None:
@@ -140,4 +147,5 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "redstm-schedule.timer" in installer
     assert "systemctl disable --now redstm-schedule.timer" in installer
     assert "canonical-transfer-size" in installer
+    assert "truncate-canonical-transfer" in installer
     assert "append-canonical-chunk" in installer
