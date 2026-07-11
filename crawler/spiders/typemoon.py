@@ -498,3 +498,67 @@ class TypeMoonSpider(scrapy.Spider):
             warnings=[],
             **capture_metadata,
         )
+
+
+class TypeMoonRecoverySpider(TypeMoonSpider):
+    name = "typemoon_recovery"
+
+    def __init__(
+        self,
+        candidates: Iterable[tuple[str, int]],
+        *,
+        archive_path: str | Path,
+        run_id: str,
+        session: SessionExport,
+        lease_seconds: int = 300,
+    ) -> None:
+        self._candidates = iter(candidates)
+        super().__init__(
+            archive_path=archive_path,
+            run_id=run_id,
+            session=session,
+            lease_seconds=lease_seconds,
+        )
+
+    async def start(self) -> AsyncIterator[scrapy.Request]:
+        request = self._next_recovery_request()
+        if request is not None:
+            yield request
+
+    def _next_recovery_request(self) -> scrapy.Request | None:
+        assert self.frontier is not None
+        assert self.session is not None
+        for board_id, external_post_id in self._candidates:
+            lease = self.frontier.claim_identity(
+                board_id,
+                external_post_id,
+                lease_seconds=self.lease_seconds,
+            )
+            if lease is None:
+                continue
+            request = (
+                super()
+                .detail_request(board_id, external_post_id, self.session)
+                .replace(
+                    callback=self._parse_recovery_detail,
+                    errback=self._recovery_error,
+                )
+            )
+            request.meta["frontier_lease"] = lease
+            self.scheduled_posts += 1
+            return request
+        return None
+
+    def _parse_recovery_detail(
+        self, response: scrapy.http.Response, **kwargs: object
+    ) -> Iterable[CapturedPostItem | scrapy.Request]:
+        yield from super().parse_detail(response, **kwargs)
+        request = self._next_recovery_request()
+        if request is not None:
+            yield request
+
+    def _recovery_error(self, failure: Any) -> Iterable[scrapy.Request]:
+        super().detail_error(failure)
+        request = self._next_recovery_request()
+        if request is not None:
+            yield request

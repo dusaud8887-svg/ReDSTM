@@ -174,6 +174,53 @@ class FrontierStore:
             lease_expires_at=expires_at,
         )
 
+    def recovery_candidates(
+        self,
+        *,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[tuple[str, int]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        selected_at = _timestamp(now or datetime.now(UTC))
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE crawl_frontier
+                SET state = 'retry', lease_token = NULL, lease_expires_at = NULL,
+                    next_attempt_at = ?
+                WHERE state = 'running' AND lease_expires_at <= ?
+                """,
+                (selected_at, selected_at),
+            )
+            rows = connection.execute(
+                """
+                SELECT frontier.board_id, frontier.external_post_id
+                FROM crawl_frontier AS frontier
+                LEFT JOIN boards AS board ON board.board_id = frontier.board_id
+                WHERE frontier.state IN ('pending', 'retry')
+                  AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
+                ORDER BY
+                    CASE
+                        WHEN board.group_name = 'aa' OR frontier.board_id GLOB 'aa_*'
+                            THEN 0
+                        WHEN board.group_name = 'creation'
+                             OR frontier.board_id GLOB 'write_*' THEN 1
+                        WHEN board.group_name = 'fanfic'
+                             OR frontier.board_id GLOB 'ss_*' THEN 2
+                        ELSE 3
+                    END,
+                    frontier.priority DESC,
+                    frontier.attempts,
+                    frontier.board_id,
+                    frontier.external_post_id
+                LIMIT ?
+                """,
+                (selected_at, limit),
+            ).fetchall()
+        return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
+
     def claim(
         self,
         *,
