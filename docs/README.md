@@ -83,7 +83,7 @@ authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있
 
 1. R2 authenticated live data smoke
 2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
-3. incremental discovery, 46-board cycle, bounded recovery와 delta publish
+3. Oracle에서 incremental discovery canary, 46-board cycle, bounded recovery와 실제 delta publish
 4. versioned Access/D1 control API와 `/ops`
 5. Oracle deploy/systemd, local recovery 확인과 canary
 6. 7일 shadow, cutover, manifest cleanup과 실제 Android acceptance

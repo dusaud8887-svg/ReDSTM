@@ -184,6 +184,11 @@ mobile-first 제품으로 교체한다.
 4. listing/parser warning이 있으면 boundary 조기 종료를 금지한다.
 5. 주 1회 bounded inventory가 boundary 누락을 보완한다.
 
+상태(2026-07-12): local 구현 완료, Oracle canary 전이다. `b3e83e1`에서 views를 제외한 listing
+metadata 비교, 공지 제외 연속 20건 경계, warning/`--inventory` 우회, listing 60초 timeout을
+구현했다. 동일 재실행 detail 0건·metadata 변경 재개방을 포함한 crawler 관련 27 test와 Ruff/mypy가
+통과했다.
+
 #### A2.2 46-board cycle
 
 - enabled board를 concurrency 1로 순차 실행
@@ -220,6 +225,10 @@ mobile-first 제품으로 교체한다.
    다음 export부터 search tuple 끝에 `is_aa`를, `release.json` `boards[]`에 `name`/`group_name`을
    추가한다. 이미 게시된 release는 재작성하지 않고, release 본문에 생성 시각을 넣어 결정론을
    깨지 않는다([09 Freshness](09_frontend_strategy_and_roadmap.md)).
+
+상태(2026-07-12): `acd89b7`에서 remote pointer가 동일하면 `rclone cat` 1회 뒤 `mode=noop`으로
+끝나 upload/check/activate와 거짓 freshness 갱신을 막았다. 변경 릴리스의 참조 차이 upload,
+ledger 강등, smoke rollback과 GC는 아직 구현 전이다.
 
 완료 기준:
 
