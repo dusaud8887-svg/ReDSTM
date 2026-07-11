@@ -317,11 +317,7 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
         for row in search_rows
         if isinstance(row, list)
         and len(row) == len(search_fields)
-        and (
-            search_fields == _SEARCH_FIELDS
-            or isinstance(row[7], bool)
-            or row[7] in (0, 1)
-        )
+        and (search_fields == _SEARCH_FIELDS or isinstance(row[7], bool) or row[7] in (0, 1))
     }
     if len(search_posts) != len(search_rows) or search_posts != board_posts:
         raise ValueError("search index does not match board manifests")

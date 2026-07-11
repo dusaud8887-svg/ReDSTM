@@ -111,10 +111,9 @@ def _delta_plan(
         ):
             return None
         keys = sorted(
-            _release_object_keys(root, release_body)
-            - _release_object_keys(root, previous_body)
+            _release_object_keys(root, release_body) - _release_object_keys(root, previous_body)
         )
-    except (OSError, ValueError, json.JSONDecodeError):
+    except OSError, ValueError, json.JSONDecodeError:
         return None
     new_bytes = sum((root / key).stat().st_size for key in keys)
     projected_bytes = (

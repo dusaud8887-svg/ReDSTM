@@ -74,8 +74,10 @@ def _run_fixture(path: Path, run_id: str) -> int:
         return 0
     [detail_request] = detail_requests
     assert detail_request.cookies
-    detail_body = (_FIXTURES / "detail.html").read_bytes().replace(
-        "대표 상세 게시물".encode(), "대표 게시물".encode()
+    detail_body = (
+        (_FIXTURES / "detail.html")
+        .read_bytes()
+        .replace("대표 상세 게시물".encode(), "대표 게시물".encode())
     )
     detail_body = detail_body.replace(
         b"</section>",
@@ -241,8 +243,7 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
         url,
         request=Request(url),
         body=(
-            f"<table><tbody>{rows}"
-            "<tr><td class='td-subj-wrap'></td></tr></tbody></table>"
+            f"<table><tbody>{rows}<tr><td class='td-subj-wrap'></td></tr></tbody></table>"
         ).encode(),
         encoding="utf-8",
     )
@@ -359,9 +360,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 900
     assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 60
     assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 60
-    assert "download_timeout" not in TypeMoonSpider().detail_request(
-        "write", 1, _session()
-    ).meta
+    assert "download_timeout" not in TypeMoonSpider().detail_request("write", 1, _session()).meta
 
     monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
     assert parse_sync_args().lease_seconds == 900
