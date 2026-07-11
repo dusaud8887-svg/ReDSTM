@@ -19,7 +19,7 @@
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
 | live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
-| current UI | Signal Archive local 구현/fixture 완료, live·Android acceptance 대기 | IN PROGRESS |
+| current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | overlap discovery, 46-board cycle, delta publish, scheduler | NOT READY |
 | Oracle | 읽기 전용 조사와 target runbook 완료, ReDSTM mutation 미시작 | PLANNED |
@@ -31,8 +31,8 @@
 remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-현재 baseline 검증은 Python 87 tests, Node 15 tests, Ruff check/format과 mypy가 통과했다.
-Playwright self-contained fixture는 1440/768/390/320px 20건 통과했고 local R2에 seed하지 않은 실제 AA/prose object
+현재 baseline 검증은 Python 87 tests, Node 16 tests, Ruff check/format과 mypy가 통과했다.
+Playwright self-contained fixture는 1440/768/390/320px 28건 통과했고 local R2에 seed하지 않은 실제 AA/prose object
 6건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의 authenticated live smoke에서 확인한다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
@@ -162,13 +162,15 @@ mobile-first 제품으로 교체한다.
 
 - A1.1 stable identity, v1 migration, stable route/hash migration, SPA fallback과 release resolve는 구현·test 완료다.
 - A1.2 self-host font/license gate, graphite/red shell, 실제 Home data/freshness와 장식 제거는 완료다.
-- A1.3 72/360 wide shell, 768 medium, 390/320 single-plane/bottom navigation, safe-area,
-  keyboard nav hide, manual scroll restore와 pagehide flush는 local fixture를 통과했다.
-- A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation과 import preview는 구현됐다.
-- 남은 gate는 offline과 Access-expired의 별도 복구 UI, medium catalog collapse, Arrow/Enter result navigation,
-  live Access smoke, 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
-- 코드 증거: `53163e7`, `bda49e1`, `b76c4fe`, `c6fc25c`, `230a00b`; local gate는 Node 15,
-  Playwright 20, font/license check와 `wrangler deploy --dry-run --strict` 통과다.
+- A1.3 72/360 wide shell, collapsible 768 medium, 390/320 single-plane/bottom navigation,
+  safe-area, keyboard nav hide, reader bar 감쇠, manual scroll restore와 pagehide flush가 fixture를 통과했다.
+- A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation, import preview,
+  offline/Access-expired recovery와 Arrow/Enter navigation이 구현됐다.
+- 남은 gate는 authenticated live data smoke, 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
+- 코드 증거: `53163e7`, `bda49e1`, `b76c4fe`, `c6fc25c`, `230a00b`, `c259d2f`, `1020564`;
+  local gate는 Node 16, Playwright 28, font/license check와 strict dry-run 통과다.
+- live evidence: Worker version `7787ca24-b141-4f32-8a63-2b60f8ce1a95`, `/`와 stable deep link의
+  unauthenticated 302 Access challenge 확인. 인증 뒤 data flow는 A0 smoke에서 판정한다.
 
 ### A2 — unattended crawler와 delta publish
 

@@ -73,15 +73,16 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 ### 현재 gate
 
 R2 baseline publish와 remote pointer rollback/복귀는 완료됐다. 로그인된 Chrome의 authenticated
-production data smoke가 A0의 마지막 gate다. A1은 local 구현과 fixture가 끝났고 live deploy,
-offline/Access-expired 세분화, 실제 Android와 사용자 시각 acceptance가 남아 있다.
+production data smoke가 A0의 마지막 gate다. A1은 local 구현과 fixture가 끝났으며,
+offline/Access-expired 복구를 포함해 version `7787ca24-b141-4f32-8a63-2b60f8ce1a95`로 배포됐다.
+authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다.
 
 ### 구현 필요
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
 1. R2 authenticated live data smoke
-2. Signal Archive live deploy와 실제 Android/frontend acceptance
+2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
 3. incremental discovery, 46-board cycle, bounded recovery와 delta publish
 4. versioned Access/D1 control API와 `/ops`
 5. Oracle deploy/systemd, local recovery 확인과 canary
