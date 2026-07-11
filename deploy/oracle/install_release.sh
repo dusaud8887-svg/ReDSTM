@@ -5,6 +5,8 @@ UV_VERSION=0.9.21
 RELEASES=/opt/redstm/releases
 CURRENT=/opt/redstm/current
 PREVIOUS=/opt/redstm/previous
+CANONICAL_TRANSFER=/srv/redstm/canonical/archive.sqlite.transfer.partial
+CANONICAL_CHUNK=/tmp/redstm-canonical.chunk.partial
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -109,20 +111,55 @@ install_release() {
     "$(systemctl is-enabled redstm-schedule.timer 2>/dev/null || true)"
 }
 
+canonical_transfer_size() {
+  [[ $# -eq 0 ]] || fail "canonical-transfer-size takes no arguments"
+  if [[ -f "$CANONICAL_TRANSFER" ]]; then
+    stat -c '%s' "$CANONICAL_TRANSFER"
+  else
+    printf '0\n'
+  fi
+}
+
+append_canonical_chunk() {
+  [[ $# -eq 3 ]] || fail "append-canonical-chunk requires offset, bytes, and hash"
+  local offset="$1" expected_bytes="$2" expected_hash="$3" current_bytes=0
+  [[ "$offset" =~ ^[0-9]+$ ]] || fail "invalid canonical chunk offset"
+  [[ "$expected_bytes" =~ ^[1-9][0-9]*$ ]] || fail "invalid canonical chunk size"
+  [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || fail "invalid canonical chunk hash"
+  [[ -f "$CANONICAL_CHUNK" ]] || fail "canonical chunk is missing"
+  [[ "$(stat -c '%s' "$CANONICAL_CHUNK")" == "$expected_bytes" ]] || \
+    fail "canonical chunk size mismatch"
+  [[ "$(sha256sum "$CANONICAL_CHUNK" | cut -d' ' -f1)" == "$expected_hash" ]] || \
+    fail "canonical chunk hash mismatch"
+  if [[ -f "$CANONICAL_TRANSFER" ]]; then
+    current_bytes="$(stat -c '%s' "$CANONICAL_TRANSFER")"
+  else
+    install -o redstm -g redstm -m 0640 /dev/null "$CANONICAL_TRANSFER"
+  fi
+  [[ "$current_bytes" == "$offset" ]] || fail "canonical transfer offset mismatch"
+  cat -- "$CANONICAL_CHUNK" >> "$CANONICAL_TRANSFER"
+  sync -d "$CANONICAL_TRANSFER"
+  [[ "$(stat -c '%s' "$CANONICAL_TRANSFER")" == "$((offset + expected_bytes))" ]] || \
+    fail "canonical transfer append mismatch"
+  rm -f -- "$CANONICAL_CHUNK"
+  printf 'canonical_transfer_bytes=%s\n' "$((offset + expected_bytes))"
+}
+
 activate_canonical() {
-  [[ $# -eq 3 ]] || fail "activate-canonical requires path, bytes, and hash"
-  local partial="$1" expected_bytes="$2" expected_hash="$3"
-  [[ "$partial" == "/tmp/redstm-canonical.sqlite.partial" ]] || fail "invalid partial path"
+  [[ $# -eq 2 ]] || fail "activate-canonical requires bytes and hash"
+  local expected_bytes="$1" expected_hash="$2"
   [[ "$expected_bytes" =~ ^[1-9][0-9]*$ ]] || fail "invalid canonical size"
   [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || fail "invalid canonical hash"
-  [[ -f "$partial" ]] || fail "canonical partial is missing"
-  [[ "$(stat -c '%s' "$partial")" == "$expected_bytes" ]] || fail "canonical size mismatch"
-  [[ "$(sha256sum "$partial" | cut -d' ' -f1)" == "$expected_hash" ]] || fail "canonical hash mismatch"
+  [[ -f "$CANONICAL_TRANSFER" ]] || fail "canonical transfer is missing"
+  [[ "$(stat -c '%s' "$CANONICAL_TRANSFER")" == "$expected_bytes" ]] || \
+    fail "canonical size mismatch"
+  if [[ "$(sha256sum "$CANONICAL_TRANSFER" | cut -d' ' -f1)" != "$expected_hash" ]]; then
+    rm -f -- "$CANONICAL_TRANSFER"
+    fail "canonical hash mismatch; transfer reset"
+  fi
   local canonical_partial=/srv/redstm/canonical/archive.sqlite.partial
   [[ ! -e "$canonical_partial" ]] || fail "canonical staging path already exists"
-  mv -- "$partial" "$canonical_partial"
-  chown redstm:redstm "$canonical_partial"
-  chmod 0640 "$canonical_partial"
+  mv -- "$CANONICAL_TRANSFER" "$canonical_partial"
   sudo -u redstm "$CURRENT/.venv/bin/python" -m scripts.doctor "$canonical_partial" \
     --warc-dir /srv/redstm/warc --output /srv/redstm/reports/canonical-activation-doctor.json \
     >/dev/null
@@ -186,6 +223,8 @@ mode="${1:-}"
 shift || true
 case "$mode" in
   install) install_release "$@" ;;
+  canonical-transfer-size) canonical_transfer_size "$@" ;;
+  append-canonical-chunk) append_canonical_chunk "$@" ;;
   activate-canonical) activate_canonical "$@" ;;
   rollback) rollback_release "$@" ;;
   *) fail "unknown install mode" ;;

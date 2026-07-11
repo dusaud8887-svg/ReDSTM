@@ -205,7 +205,9 @@ DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy comm
 상태(2026-07-12): 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 versioned release 설치가
 완료됐다. schedule unit을 포함한 `dd88366`에서 구버전 `506b7e5`로 rollback할 때 신규 unit을
 fail-closed로 제거한 뒤 다시 `dd88366`으로 복귀했다. 두 timer는 disabled/inactive이며 canonical
-activation이 남았다.
+activation이 남았다. canonical upload는 단일 12.4GB `scp`가 아니라 512MiB별 bytes/SHA-256을
+검증해 permanent transfer partial에 append하고 remote byte offset에서 재개한다. 전체 SHA-256
+불일치 시 partial만 폐기하며 active canonical은 건드리지 않는다.
 
 ### G5. Operations client
 
@@ -314,7 +316,8 @@ B2/restic 외부 backup은 2026-07-11 사용자 결정으로 현재 범위에서
 `e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500`과 재일치했다. Oracle
 read-only 조회는 Ubuntu 22.04/2 CPU/956MiB RAM/4GiB swap/root 약 103GB free, legacy project
 50GB, `db-backups` 27GB, enabled `nginx.service`/`pm2-ubuntu.service`와 legacy listener를 확인했다.
-remote online-backup hash는 저우선순위 background 검증 중이며 stop/delete는 수행하지 않았다.
+remote online-backup 저우선순위 hash process는 끝났지만 transient output이 보존되지 않아 증거로
+채택하지 않았다. canonical transfer와 겹치지 않게 다시 기록해야 하며 stop/delete는 수행하지 않았다.
 
 ### Phase O1 — application install
 
@@ -325,7 +328,8 @@ remote online-backup hash는 저우선순위 background 검증 중이며 stop/de
 - timer 없이 manual canary만 실행한다.
 
 상태(2026-07-12): application/user/path/runtime와 schedule unit install, 구버전 rollback/재복귀는
-완료됐다. canonical transfer/doctor, secret 주입과 authenticated manual canary는 남아 있다.
+완료됐다. resumable canonical transfer/activation tool의 local failure test도 통과했다. 실제
+transfer/doctor, secret 주입과 authenticated manual canary는 남아 있다.
 
 ### Phase O2 — canary와 shadow
 

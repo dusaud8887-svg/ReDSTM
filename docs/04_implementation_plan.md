@@ -31,7 +31,7 @@
 remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-현재 baseline 검증은 Python 131 tests, Node 30 tests, Ruff check/format과 mypy가 통과했다.
+현재 baseline 검증은 Python 133 tests, Node 30 tests, Ruff check/format과 mypy가 통과했다.
 Playwright self-contained fixture는 1440/768/390/320px 28건 통과했고 local R2에 seed하지 않은 실제
 AA/prose fixture의 viewport 조합 8건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의
 authenticated live smoke에서 확인한다.
@@ -275,7 +275,7 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 상태(2026-07-12): remote D1 migration 2개와 Worker `cefea2fb` 배포, `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
-Python 131 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
+Python 133 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
 302다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
 fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 별도 Access service identity와 인증 role
 smoke, Access secret 주입·timer 연결, live failure gate는 아직이므로 A3 전체는 DONE이 아니다.
@@ -309,7 +309,9 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 pinned uv 0.9.21/Python 3.14와 release `dd88366`을 설치했다. 신규 schedule unit이 없는 구버전
 `506b7e5`로 rollback할 때 해당 unit이 fail-closed로 제거되는 것을 확인한 뒤 `dd88366`으로
 재복귀했다. control/schedule timer는 disabled/inactive, Access secret과 canonical은 없으며
-기존 public listener는 아직 건드리지 않았다.
+기존 public listener는 아직 건드리지 않았다. canonical 전송은 512MiB별 bytes/SHA-256 검증과
+remote offset 재개, 전체 bytes/hash/doctor 뒤 atomic activation 경로까지 local test를 통과했고
+실제 전송이 다음 gate다.
 
 완료 기준:
 

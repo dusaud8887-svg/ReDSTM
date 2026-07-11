@@ -12,6 +12,8 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[Any]]
+_CANONICAL_CHUNK_BYTES = 512 * 1024 * 1024
+_REMOTE_CANONICAL_CHUNK = "/tmp/redstm-canonical.chunk.partial"
 
 
 def _sha256_file(path: Path) -> str:
@@ -155,12 +157,91 @@ def activate_canonical(
     canonical: Path,
     *,
     runner: CommandRunner = subprocess.run,
+    chunk_bytes: int = _CANONICAL_CHUNK_BYTES,
 ) -> dict[str, Any]:
     canonical = canonical.expanduser().resolve(strict=True)
-    size = canonical.stat().st_size
-    digest = _sha256_file(canonical)
-    remote_partial = "/tmp/redstm-canonical.sqlite.partial"
-    runner([*_scp(target), str(canonical), f"{target.destination}:{remote_partial}"], check=True)
+    if chunk_bytes < 1:
+        raise ValueError("canonical chunk size must be positive")
+    source_before = canonical.stat()
+    size = source_before.st_size
+    offset_result = runner(
+        [
+            *_ssh(target),
+            "sudo",
+            "bash",
+            "/opt/redstm/install_release.sh",
+            "canonical-transfer-size",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    raw_offset = offset_result.stdout.strip()
+    if re.fullmatch(r"[0-9]+", raw_offset) is None:
+        raise RuntimeError("remote canonical transfer size is invalid")
+    remote_offset = int(raw_offset)
+    if remote_offset > size or (remote_offset != size and remote_offset % chunk_bytes):
+        raise RuntimeError("remote canonical transfer is not resumable")
+    digest = hashlib.sha256()
+    position = 0
+    with (
+        canonical.open("rb") as source,
+        TemporaryDirectory(prefix="redstm-canonical-chunk-") as temporary,
+    ):
+        chunk = Path(temporary) / "canonical.chunk"
+        while position < size:
+            chunk_digest = hashlib.sha256()
+            chunk_size = 0
+            planned_size = min(chunk_bytes, size - position)
+            with chunk.open("wb") as destination:
+                while chunk_size < planned_size:
+                    block = source.read(min(1024 * 1024, planned_size - chunk_size))
+                    if not block:
+                        break
+                    destination.write(block)
+                    digest.update(block)
+                    chunk_digest.update(block)
+                    chunk_size += len(block)
+            if chunk_size != planned_size:
+                raise RuntimeError("canonical source ended before its declared size")
+            next_position = position + chunk_size
+            if next_position > remote_offset:
+                if position != remote_offset:
+                    raise RuntimeError("remote canonical transfer offset changed")
+                runner(
+                    [
+                        *_scp(target),
+                        str(chunk),
+                        f"{target.destination}:{_REMOTE_CANONICAL_CHUNK}",
+                    ],
+                    check=True,
+                )
+                runner(
+                    [
+                        *_ssh(target),
+                        "sudo",
+                        "bash",
+                        "/opt/redstm/install_release.sh",
+                        "append-canonical-chunk",
+                        str(position),
+                        str(chunk_size),
+                        chunk_digest.hexdigest(),
+                    ],
+                    check=True,
+                )
+                remote_offset = next_position
+                print(
+                    json.dumps({"canonical_bytes": remote_offset, "canonical_total": size}),
+                    flush=True,
+                )
+            position = next_position
+    source_after = canonical.stat()
+    if (source_after.st_size, source_after.st_mtime_ns) != (
+        source_before.st_size,
+        source_before.st_mtime_ns,
+    ):
+        raise RuntimeError("canonical source changed during transfer")
+    canonical_sha256 = digest.hexdigest()
     runner(
         [
             *_ssh(target),
@@ -168,13 +249,12 @@ def activate_canonical(
             "bash",
             "/opt/redstm/install_release.sh",
             "activate-canonical",
-            remote_partial,
             str(size),
-            digest,
+            canonical_sha256,
         ],
         check=True,
     )
-    return {"bytes": size, "sha256": digest}
+    return {"bytes": size, "sha256": canonical_sha256}
 
 
 def rollback(target: OracleTarget, *, runner: CommandRunner = subprocess.run) -> None:

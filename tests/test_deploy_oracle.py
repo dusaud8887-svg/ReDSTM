@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from scripts.deploy_oracle import OracleTarget, deploy_release, preflight
+from scripts.deploy_oracle import OracleTarget, activate_canonical, deploy_release, preflight
 
 
 def _target(tmp_path: Path) -> OracleTarget:
@@ -69,6 +69,44 @@ def test_preflight_requires_clean_tree_and_all_quality_gates(tmp_path: Path) -> 
     assert ["uv", "run", "mypy", "crawler", "scripts", "tests"] in commands
 
 
+def test_canonical_transfer_resumes_at_verified_chunk_boundary(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    canonical = tmp_path / "archive.sqlite"
+    canonical.write_bytes(b"abcdefghij")
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        stdout = "4\n" if command[-1] == "canonical-transfer-size" else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
+
+    report = activate_canonical(target, canonical, runner=run, chunk_bytes=4)
+
+    assert report == {
+        "bytes": 10,
+        "sha256": "72399361da6a7754fec986dca5b7cbaf1c810a28ded4abaf56b2106d06cb78b0",
+    }
+    append_commands = [command for command in commands if "append-canonical-chunk" in command]
+    assert [command[-3:-1] for command in append_commands] == [["4", "4"], ["8", "2"]]
+    assert (
+        sum(command[-1].endswith(":/tmp/redstm-canonical.chunk.partial") for command in commands)
+        == 2
+    )
+    assert commands[-1][-3:] == ["activate-canonical", "10", report["sha256"]]
+
+
+def test_canonical_transfer_rejects_unaligned_remote_partial(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    canonical = tmp_path / "archive.sqlite"
+    canonical.write_bytes(b"abcdefghij")
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout="3\n")
+
+    with pytest.raises(RuntimeError, match="not resumable"):
+        activate_canonical(target, canonical, runner=run, chunk_bytes=4)
+
+
 def test_install_assets_never_enable_or_touch_legacy() -> None:
     root = Path(__file__).resolve().parents[1]
     installer = (root / "deploy" / "oracle" / "install_release.sh").read_text(encoding="utf-8")
@@ -101,3 +139,5 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "Persistent=true" in schedule_timer
     assert "redstm-schedule.timer" in installer
     assert "systemctl disable --now redstm-schedule.timer" in installer
+    assert "canonical-transfer-size" in installer
+    assert "append-canonical-chunk" in installer
