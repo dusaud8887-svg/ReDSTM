@@ -46,6 +46,7 @@ class OracleTarget:
 def _ssh(target: OracleTarget) -> list[str]:
     return [
         "ssh",
+        "-n",
         "-i",
         str(target.key.expanduser().resolve()),
         "-o",

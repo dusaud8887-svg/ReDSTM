@@ -14,7 +14,7 @@
 | 영역 | 현재 상태 | 제품 판정 |
 |---|---|---|
 | legacy 원본 | E 드라이브에 28,811,358,208-byte verified source 보존 | DONE |
-| canonical | schema v2, 284,070 posts/3,729,706 comments, doctor/restore 통과 | DONE |
+| canonical | Oracle `/srv/redstm/canonical/archive.sqlite`, 12,407,148,544 bytes, schema v2 full doctor 통과 | DONE |
 | static release | zstd level 15 full release, 282,239 readable posts, `.partial` 0 | DONE |
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
@@ -22,7 +22,7 @@
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | overlap discovery, 46-board cycle, daily-bounded delta publish, systemd source 구현; live canary 전 | IN PROGRESS |
-| Oracle | versioned application install·양방향 release rollback 통과; canonical/secret/timer 전 | IN PROGRESS |
+| Oracle | release `c52647f...`, canonical activation/doctor 완료; secret/timer/canary 전 | IN PROGRESS |
 | remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
@@ -201,8 +201,10 @@ metadata 비교, 공지 제외 연속 20건 경계, warning/`--inventory` 우회
 - board별 run/counters와 final summary
 - duplicate process는 shared sync lock으로 차단
 
-상태(2026-07-12): local core와 6시간 systemd schedule source 구현 완료, Oracle canary와 30분
-재로그인 throttle은 남았다.
+상태(2026-07-12): local core, 6시간 systemd schedule source와 30분 자동 재로그인 throttle 구현
+완료, Oracle canary는 남았다. 로그인 시도 marker는 실패도 포함하고 atomic write+nonblocking lock으로
+동시·30분 내 재시도를 차단한다. session 검증은 오래된 서버가 본문 뒤 TLS EOF를 정상 종료하지 않아도
+필요한 login/logout 표식을 받으면 8MiB 경계 안에서 즉시 끝낸다.
 `d52f63a`/`d71663f`에서 network/auth preflight 분류, 1회 session 검증, enabled board 순차 subprocess,
 board별 원자 report, parse failure 이월, auth 즉시 중단과 연속 network 3회 breaker를 구현했다.
 Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 사용한다.
@@ -303,15 +305,19 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 6. 기존 E verified source와 격리 restore 사본을 재확인한다. 새 외부 backup provider는 만들지 않는다.
 7. A2/A3의 20/100건, duplicate command, D1 outage canary를 Oracle에서 실행한다.
 
-상태(2026-07-12): E legacy source 28,811,358,208 bytes의 SHA-256은 `e16203a7...5500`으로 기존
-기록과 다시 일치했다. Oracle은 Ubuntu 22.04, 2 CPU, RAM 956MiB, swap 4GiB, root free 약
-103GB이며 기존 legacy 50GB와 DB backup 27GB, enabled Nginx/PM2를 보존 중이다. 전용 user/path,
-pinned uv 0.9.21/Python 3.14와 release `dd88366`을 설치했다. 신규 schedule unit이 없는 구버전
-`506b7e5`로 rollback할 때 해당 unit이 fail-closed로 제거되는 것을 확인한 뒤 `dd88366`으로
-재복귀했다. control/schedule timer는 disabled/inactive, Access secret과 canonical은 없으며
-기존 public listener는 아직 건드리지 않았다. canonical 전송은 512MiB별 bytes/SHA-256 검증과
-remote offset 재개, 전체 bytes/hash/doctor 뒤 atomic activation 경로까지 local test를 통과했고
-실제 전송이 다음 gate다.
+상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
+pinned uv/Python 3.14,
+versioned deploy/rollback과 release `c52647f82ce8a48bd9239bb1fa83db0aa3edf278` 배포를 마쳤다.
+canonical 12,407,148,544 bytes를 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했고
+doctor는 `ok=true`, schema v2, application ID 1380209492, `quick_check=ok`, foreign key 0,
+expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 별도 원격 hash는 약
+8분이 걸렸으며 transfer/staging partial은 남지 않았다. canonical 재개·unaligned chunk 복구와
+interrupted staging retry도 같은 release까지 구현·배포됐고 현재 root free는 약 85GB다.
+R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입했고 owner/mode를 검증했다.
+Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. 첫 1건 canary는 원 사이트가 본문 뒤 TLS EOF를
+정상 종료하지 않는 현상을 재현해 위 session 조기 종료 수정의 배포 전 gate로 남겼다. **남음** — Access
+service credential, 수정 release 배포와 1→20→100건 manual canary, D1 outage/duplicate command 검증이다.
+control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.
 
 완료 기준:
 

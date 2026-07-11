@@ -1,6 +1,6 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: Application base installed; canonical, credentials, canary and cutover pending
+- 상태: Application and canonical installed; credentials, canary and cutover pending
 - 기준일: 2026-07-12
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
@@ -168,7 +168,8 @@ cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Ce
 상태(2026-07-12): `scripts.crawl_cycle` local core와 failure test 완료, Oracle canary 및 systemd 연결
 전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
 구현됐다. 세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와
-outage attempt 복원을 적용한다. 30분 재로그인 throttle은 timer 활성화 전 남은 gate다.
+outage attempt 복원을 적용한다. 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
+30분에 1회로 제한한다. login/logout 표식 조기 판정은 오래된 서버의 비정상 TLS EOF를 기다리지 않는다.
 
 ### G3. delta release/publish
 
@@ -202,12 +203,14 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy command의 암묵적 부작용으로
 넣지 않는다.
 
-상태(2026-07-12): 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 versioned release 설치가
-완료됐다. schedule unit을 포함한 `dd88366`에서 구버전 `506b7e5`로 rollback할 때 신규 unit을
-fail-closed로 제거한 뒤 다시 `dd88366`으로 복귀했다. 두 timer는 disabled/inactive이며 canonical
-activation이 남았다. canonical upload는 단일 12.4GB `scp`가 아니라 512MiB별 bytes/SHA-256을
-검증해 permanent transfer partial에 append하고 remote byte offset에서 재개한다. 전체 SHA-256
-불일치 시 partial만 폐기하며 active canonical은 건드리지 않는다.
+상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 release
+`c52647f82ce8a48bd9239bb1fa83db0aa3edf278`을 배포했다. resumable transfer는 remote offset 재개,
+unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
+`/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
+full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결과는 `ok=true`, schema v2,
+application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
+missing/invalid/orphan WARC 0이다. root free는 약 85GB다. **남음** — secret 주입과 manual canary다.
+control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
 
 ### G5. Operations client
 
@@ -327,9 +330,13 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - Access service token route-role과 D1 status/event smoke를 검증한다.
 - timer 없이 manual canary만 실행한다.
 
-상태(2026-07-12): application/user/path/runtime와 schedule unit install, 구버전 rollback/재복귀는
-완료됐다. resumable canonical transfer/activation tool의 local failure test도 통과했다. 실제
-transfer/doctor, secret 주입과 authenticated manual canary는 남아 있다.
+상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit, release
+`c52647f82ce8a48bd9239bb1fa83db0aa3edf278`, resumable canonical transfer와 atomic activation,
+위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 85GB다.
+R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
+Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. **남음** — Access service-token 주입과 route-role/D1
+smoke, 비정상 TLS EOF 대응 release 배포 뒤 1→20건 manual canary다. control/schedule timer는
+disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow
 

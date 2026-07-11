@@ -11,6 +11,7 @@ Group=redstm
 WorkingDirectory=/opt/redstm/current
 EnvironmentFile=/etc/redstm/access.env
 EnvironmentFile=-/etc/redstm/runtime.env
+Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf
 ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner
 Restart=no
 TimeoutStartSec=4h

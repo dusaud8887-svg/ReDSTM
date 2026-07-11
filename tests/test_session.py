@@ -13,6 +13,7 @@ import pytest
 
 import crawler.session as session_module
 from crawler.session import (
+    AutomaticLoginThrottleError,
     SessionNetworkError,
     SessionRefreshError,
     ensure_session_export,
@@ -179,6 +180,81 @@ def test_expired_export_is_validated_before_form_login(
 
     assert state["post_count"] == 1
     assert session.cookies[0].value == "secret"
+
+
+def test_session_validation_stops_after_logout_marker_before_broken_eof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Headers:
+        def get_content_charset(self) -> str:
+            return "utf-8"
+
+    class HangingResponse:
+        headers = Headers()
+        reads = 0
+
+        def read(self, _size: int) -> bytes:
+            self.reads += 1
+            if self.reads == 1:
+                return b"<a href='/bbs/logout.php'>logout</a>"
+            raise TimeoutError("server never closes the response")
+
+    response = HangingResponse()
+
+    class HangingOpener:
+        def open(self, request: object, timeout: float) -> HangingResponse:
+            assert request.get_header("Connection") == "close"  # type: ignore[attr-defined]
+            assert timeout == 30
+            return response
+
+    monkeypatch.setattr(session_module, "build_opener", lambda *handlers: HangingOpener())
+
+    session = ensure_session_export(
+        _session_file(tmp_path),
+        user_id="member",
+        password="unused",
+        user_agent="ReDSTM-test/1.0",
+        now=datetime(2026, 7, 11, 12, tzinfo=UTC),
+    )
+
+    assert session.cookies[0].name == "PHPSESSID"
+    assert response.reads == 1
+
+
+def test_automatic_login_is_throttled_for_thirty_minutes_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "private" / "session.json"
+    first = datetime(2026, 7, 11, 12, tzinfo=UTC)
+
+    with _login_server(monkeypatch) as (state, _):
+        with pytest.raises(SessionRefreshError, match="verified"):
+            ensure_session_export(
+                path,
+                user_id="member",
+                password="wrong",
+                user_agent="ReDSTM-test/1.0",
+                now=first,
+            )
+        with pytest.raises(AutomaticLoginThrottleError, match="once every 30 minutes"):
+            ensure_session_export(
+                path,
+                user_id="member",
+                password="wrong",
+                user_agent="ReDSTM-test/1.0",
+                now=first.replace(minute=29),
+            )
+        assert state["post_count"] == 1
+        with pytest.raises(SessionRefreshError, match="verified"):
+            ensure_session_export(
+                path,
+                user_id="member",
+                password="wrong",
+                user_agent="ReDSTM-test/1.0",
+                now=first.replace(minute=30),
+            )
+
+    assert state["post_count"] == 2
 
 
 def test_session_network_failure_is_distinct_from_auth_failure(

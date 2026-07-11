@@ -66,6 +66,8 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - stable post identity와 Signal Archive frontend의 1440/768/390/320px local fixture 검증
 - local loopback read-only Operations C0
 - Oracle read-only audit, target runbook, ADR-014/015
+- Oracle release `c52647f82ce8a48bd9239bb1fa83db0aa3edf278`와 12,407,148,544-byte
+  canonical을 `/srv/redstm/canonical/archive.sqlite`에 활성화하고 full doctor 통과
 - Signal Archive 디자인·제품·API의 최종 문서 계약
 
 세부 증거와 당시 조건은 [`archive/2026-07-11`](archive/2026-07-11/README.md)에 보존한다.
@@ -77,8 +79,9 @@ production data smoke가 A0의 마지막 gate다. A1은 local 구현과 fixture�
 offline/Access-expired 복구, control API와 responsive Operations를 포함한 version
 `cefea2fb-e1fd-4195-abe3-8710ddb8a7df`가 배포됐다. `c47b2e58` rollback/복귀도 통과했으며
 authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다. Oracle은
-versioned application과 6시간 schedule unit 배포, 구버전 rollback/복귀까지 통과했고
-canonical·Access secret·canary 전이다.
+versioned application, resumable canonical activation과 full doctor까지 통과했다. control/schedule
+timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 bucket-scoped R2 조회는
+통과했으며 Access service credential, session EOF 대응 release 배포와 manual canary가 남았다.
 
 ### 구현 필요
 
@@ -86,7 +89,7 @@ canonical·Access secret·canary 전이다.
 
 1. R2 authenticated live data smoke
 2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
-3. Oracle canonical/secret 주입과 incremental 20/100건·실제 delta publish canary
+3. Oracle Access secret 주입과 incremental 1/20/100건·실제 delta publish canary
 4. Access user/service role smoke와 live `/ops` acceptance
 5. 24시간 canary, 7일 shadow, cutover와 실제 Android acceptance
 

@@ -114,6 +114,27 @@ def test_canonical_transfer_truncates_unaligned_remote_partial(tmp_path: Path) -
     assert [command[-3:-1] for command in append_commands] == [["0", "4"], ["4", "4"], ["8", "2"]]
 
 
+def test_canonical_activation_ssh_does_not_inherit_parent_stdin(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    canonical = tmp_path / "archive.sqlite"
+    canonical.write_bytes(b"a")
+    activated = False
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal activated
+        if command[-1] == "canonical-transfer-size":
+            return subprocess.CompletedProcess(command, 0, stdout="1\n")
+        if "activate-canonical" in command:
+            if "-n" not in command:
+                raise subprocess.TimeoutExpired(command, 1)
+            activated = True
+        return subprocess.CompletedProcess(command, 0, stdout="")
+
+    activate_canonical(target, canonical, runner=run, chunk_bytes=1)
+
+    assert activated is True
+
+
 def test_install_assets_never_enable_or_touch_legacy() -> None:
     root = Path(__file__).resolve().parents[1]
     installer = (root / "deploy" / "oracle" / "install_release.sh").read_text(encoding="utf-8")
@@ -136,6 +157,8 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "pm2" not in installer
     assert "nginx" not in installer
     assert "EnvironmentFile=/etc/redstm/access.env" in service
+    assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in service
+    assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in schedule_service
     assert "ProtectSystem=strict" in service
     assert "TimeoutStartSec=4h" in service
     assert "RuntimeMaxSec" not in service

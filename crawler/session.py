@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.cookiejar import Cookie, CookieJar
@@ -13,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
+from filelock import FileLock, Timeout
 from parsel import Selector
 
 if TYPE_CHECKING:
@@ -24,6 +26,8 @@ _BASE_URL = "https://www.typemoon.net/"
 _LOGIN_PAGE_URL = f"{_BASE_URL}bbs/login.php"
 _LOGIN_CHECK_URL = f"{_BASE_URL}bbs/login_check.php"
 _SESSION_LIFETIME = timedelta(hours=4)
+_AUTO_LOGIN_MIN_INTERVAL = timedelta(minutes=30)
+_MAX_SESSION_HTML_BYTES = 8 * 1024 * 1024
 
 
 class SessionRefreshError(RuntimeError):
@@ -31,6 +35,10 @@ class SessionRefreshError(RuntimeError):
 
 
 class SessionNetworkError(SessionRefreshError):
+    pass
+
+
+class AutomaticLoginThrottleError(SessionRefreshError):
     pass
 
 
@@ -106,20 +114,61 @@ def ensure_session_export(
     now: datetime | None = None,
     timeout: float = 30.0,
 ) -> SessionExport:
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        raise SessionRefreshError("current time must include a timezone")
     try:
-        session = load_session_export(path, now=now, allow_expired=True)
+        session = load_session_export(path, now=current, allow_expired=True)
     except OSError, ValueError:
         session = None
     if session is not None and _session_is_authenticated(session, timeout=timeout):
         return session
+    _reserve_automatic_login(Path(path), current)
     return refresh_session_export(
         path,
         user_id=user_id,
         password=password,
         user_agent=user_agent,
-        now=now,
+        now=current,
         timeout=timeout,
     )
+
+
+def _reserve_automatic_login(path: Path, now: datetime) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    marker = path.with_name(f".{path.name}.login-attempt")
+    lock = FileLock(f"{marker}.lock", timeout=0)
+    try:
+        with lock:
+            try:
+                previous = datetime.fromisoformat(marker.read_text(encoding="utf-8").strip())
+            except FileNotFoundError:
+                previous = None
+            except ValueError as error:
+                raise AutomaticLoginThrottleError(
+                    "automatic login throttle marker is invalid"
+                ) from error
+            if previous is not None:
+                if previous.tzinfo is None:
+                    raise AutomaticLoginThrottleError("automatic login throttle marker is invalid")
+                if now < previous or now - previous < _AUTO_LOGIN_MIN_INTERVAL:
+                    raise AutomaticLoginThrottleError(
+                        "automatic login is limited to once every 30 minutes"
+                    )
+            temporary: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", dir=path.parent, prefix=f".{marker.name}.", delete=False
+                ) as stream:
+                    stream.write(now.astimezone(UTC).isoformat() + "\n")
+                    temporary = Path(stream.name)
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, marker)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+    except Timeout as error:
+        raise AutomaticLoginThrottleError("automatic login is already in progress") from error
 
 
 def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool:
@@ -150,8 +199,13 @@ def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool
     try:
         home_html = _read_html(
             opener.open(
-                Request(_BASE_URL, headers={"User-Agent": session.user_agent}), timeout=timeout
-            )
+                Request(
+                    _BASE_URL,
+                    headers={"User-Agent": session.user_agent, "Connection": "close"},
+                ),
+                timeout=timeout,
+            ),
+            complete=_has_logout_link,
         )
     except (HTTPError, URLError, OSError) as error:
         raise SessionNetworkError("TypeMoon session validation request failed") from error
@@ -181,8 +235,13 @@ def refresh_session_export(
     try:
         login_html = _read_html(
             opener.open(
-                Request(_LOGIN_PAGE_URL, headers={"User-Agent": user_agent}), timeout=timeout
-            )
+                Request(
+                    _LOGIN_PAGE_URL,
+                    headers={"User-Agent": user_agent, "Connection": "close"},
+                ),
+                timeout=timeout,
+            ),
+            complete=_has_login_form,
         )
         form = _login_form(login_html)
         action = urljoin(_LOGIN_PAGE_URL, form.attrib.get("action", ""))
@@ -202,11 +261,19 @@ def refresh_session_export(
                 "User-Agent": user_agent,
                 "Referer": _LOGIN_PAGE_URL,
                 "Origin": _BASE_URL.rstrip("/"),
+                "Connection": "close",
             },
         )
         opener.open(request, timeout=timeout).close()
         home_html = _read_html(
-            opener.open(Request(_BASE_URL, headers={"User-Agent": user_agent}), timeout=timeout)
+            opener.open(
+                Request(
+                    _BASE_URL,
+                    headers={"User-Agent": user_agent, "Connection": "close"},
+                ),
+                timeout=timeout,
+            ),
+            complete=_has_logout_link,
         )
     except SessionRefreshError:
         raise
@@ -236,9 +303,21 @@ def refresh_session_export(
     return session
 
 
-def _read_html(response: object) -> str:
-    body = response.read()  # type: ignore[attr-defined]
+def _read_html(response: object, *, complete: Callable[[str], bool]) -> str:
     charset = response.headers.get_content_charset() or "utf-8"  # type: ignore[attr-defined]
+    body = bytearray()
+    while len(body) < _MAX_SESSION_HTML_BYTES:
+        chunk = response.read(  # type: ignore[attr-defined]
+            min(16 * 1024, _MAX_SESSION_HTML_BYTES - len(body))
+        )
+        if not chunk:
+            break
+        body.extend(chunk)
+        html = body.decode(charset, "replace")
+        if complete(html):
+            return html
+    if len(body) == _MAX_SESSION_HTML_BYTES:
+        raise SessionRefreshError("TypeMoon session response exceeded 8 MiB")
     return body.decode(charset, "replace")
 
 
@@ -249,6 +328,14 @@ def _login_form(html: str) -> Selector:
         if {"mb_id", "mb_password"} <= names:
             return form
     raise SessionRefreshError("TypeMoon login form was not found")
+
+
+def _has_login_form(html: str) -> bool:
+    try:
+        _login_form(html)
+    except SessionRefreshError:
+        return False
+    return True
 
 
 def _has_logout_link(html: str) -> bool:
