@@ -1,5 +1,6 @@
 import { exportUserState, importUserState, samePost } from "/user-state.js";
 
+const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.gz$/;
 const storageKeys = {
   settings: "redstm.settings.v1",
   history: "redstm.history.v1",
@@ -9,7 +10,7 @@ const defaultSettings = { theme: "system", proseSize: 18, lineHeight: 1.8, prose
 const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "board-filter", "result-status", "result-list",
-    "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta",
+    "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "archive-body", "comment-count", "comment-list", "previous-post", "next-post", "bookmark-post", "source-link",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "aa-size-output", "reset-settings",
@@ -23,6 +24,9 @@ let bookmarks = readJson(storageKeys.bookmarks, []);
 let searchResults = [];
 let renderedResults = [];
 let currentSummary = null;
+let currentCollection = null;
+let activeCollectionId = null;
+let collectionPromise;
 let currentView = "all";
 let requestId = 0;
 let scrollTimer;
@@ -153,6 +157,76 @@ function renderResults(posts, status) {
   elements["result-list"].append(fragment);
 }
 
+async function loadCollections() {
+  const releaseResponse = await fetch("/archive/release.json");
+  if (!releaseResponse.ok) throw new Error(`release 응답 ${releaseResponse.status}`);
+  const release = await releaseResponse.json();
+  const objectKey = release?.collections?.object_key;
+  if (release.schema_version !== 1 || typeof objectKey !== "string") {
+    throw new Error("지원하지 않는 컬렉션 release 형식");
+  }
+  const response = await fetch(`/archive/${objectKey}`);
+  if (!response.ok) throw new Error(`컬렉션 응답 ${response.status}`);
+  const payload = await response.json();
+  if (payload?.schema_version !== 1 || !Array.isArray(payload.collections)) {
+    throw new Error("지원하지 않는 컬렉션 형식");
+  }
+  for (const collection of payload.collections) {
+    if (!Number.isInteger(collection.id) || typeof collection.title !== "string" ||
+        !Array.isArray(collection.entries)) throw new Error("잘못된 컬렉션");
+    collection.entries.forEach((entry, index) => {
+      const match = postObjectKeyPattern.exec(entry?.object_key ?? "");
+      const invalidObject = entry?.object_key !== null &&
+        (!match || match[1] !== entry.board_id || Number(match[2]) !== entry.external_post_id);
+      if (entry?.position !== index + 1 || invalidObject) throw new Error("잘못된 컬렉션 글");
+    });
+  }
+  return payload.collections;
+}
+
+function collections() {
+  collectionPromise ??= loadCollections().catch((error) => {
+    collectionPromise = undefined;
+    throw error;
+  });
+  return collectionPromise;
+}
+
+function findCollection(collectionList, summary) {
+  const candidates = activeCollectionId === null
+    ? collectionList
+    : [...collectionList.filter((item) => item.id === activeCollectionId),
+      ...collectionList.filter((item) => item.id !== activeCollectionId)];
+  for (const collection of candidates) {
+    const index = collection.entries.findIndex((entry) => samePost(entry, summary));
+    if (index >= 0) return { collection, index };
+  }
+  return null;
+}
+
+async function updateCollection() {
+  const summary = currentSummary;
+  currentCollection = null;
+  elements["collection-context"].hidden = true;
+  elements["previous-post"].disabled = true;
+  elements["next-post"].disabled = true;
+  try {
+    const membership = findCollection(await collections(), summary);
+    if (!samePost(summary, currentSummary)) return;
+    currentCollection = membership;
+    if (membership) {
+      activeCollectionId = membership.collection.id;
+      const label = `${membership.collection.title} · ${membership.index + 1}/${membership.collection.entries.length}`;
+      elements["collection-context"].textContent = label;
+      elements["collection-context"].title = label;
+      elements["collection-context"].hidden = false;
+    }
+    updateNavigation();
+  } catch {
+    if (samePost(summary, currentSummary)) updateNavigation();
+  }
+}
+
 async function loadPost(summary) {
   if (!summary?.object_key) return;
   postController?.abort();
@@ -202,7 +276,7 @@ function showPost(payload, suppliedSummary) {
   renderComments(payload.comments);
   rememberHistory(currentSummary);
   updateBookmarkButton();
-  updateNavigation();
+  void updateCollection();
   renderResults(renderedResults, elements["result-status"].textContent);
   history.replaceState(null, "", `#${encodeURIComponent(currentSummary.object_key)}`);
   requestAnimationFrame(() => restoreReadingPosition(currentSummary));
@@ -284,9 +358,29 @@ function updateBookmarkButton() {
 }
 
 function updateNavigation() {
+  if (currentCollection) {
+    elements["previous-post"].disabled = !collectionAdjacent(-1);
+    elements["next-post"].disabled = !collectionAdjacent(1);
+    return;
+  }
   const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
   elements["previous-post"].disabled = index <= 0;
   elements["next-post"].disabled = index < 0 || index >= renderedResults.length - 1;
+}
+
+function collectionAdjacent(offset) {
+  if (!currentCollection) return null;
+  const entries = currentCollection.collection.entries;
+  for (let index = currentCollection.index + offset; entries[index]; index += offset) {
+    if (entries[index].object_key) return entries[index];
+  }
+  return null;
+}
+
+function adjacentPost(offset) {
+  if (currentCollection) return collectionAdjacent(offset);
+  const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
+  return renderedResults[index + offset];
 }
 
 function updateTabs() {
@@ -320,12 +414,12 @@ elements["bookmark-post"].addEventListener("click", () => {
   if (currentView === "bookmarks") renderCurrentView();
 });
 elements["previous-post"].addEventListener("click", () => {
-  const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
-  if (index > 0) loadPost(renderedResults[index - 1]);
+  const post = adjacentPost(-1);
+  if (post) loadPost(post);
 });
 elements["next-post"].addEventListener("click", () => {
-  const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
-  if (index >= 0 && index < renderedResults.length - 1) loadPost(renderedResults[index + 1]);
+  const post = adjacentPost(1);
+  if (post) loadPost(post);
 });
 elements["reader-pane"].addEventListener("scroll", queueScrollSave, { passive: true });
 window.addEventListener("scroll", queueScrollSave, { passive: true });

@@ -141,6 +141,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .reader-kicker { color: var(--secondary); font-size: 12px; font-weight: 800; }
 .reader-header h1 { margin: 10px 0 12px; font-family: Georgia, "Noto Serif KR", serif; font-size: clamp(24px, 3vw, 40px); line-height: 1.25; overflow-wrap: anywhere; }
 .reader-meta { margin: 0; color: var(--muted); font-size: 13px; }
+.collection-context { margin: 10px 0 0; color: var(--secondary); font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 
 .reader-toolbar {
   position: sticky; top: 0; z-index: 5; min-height: 50px; display: flex; align-items: center; gap: 8px; padding: 7px max(16px, calc((100% - var(--prose-width)) / 2));
