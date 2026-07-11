@@ -1,0 +1,13 @@
+[Unit]
+Description=Poll ReDSTM bounded remote commands every minute
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=60s
+AccuracySec=5s
+RandomizedDelaySec=10s
+Persistent=true
+Unit=redstm-control.service
+
+[Install]
+WantedBy=timers.target

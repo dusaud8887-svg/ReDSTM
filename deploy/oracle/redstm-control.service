@@ -1,0 +1,35 @@
+[Unit]
+Description=ReDSTM bounded remote command poll
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/redstm/access.env
+
+[Service]
+Type=oneshot
+User=redstm
+Group=redstm
+WorkingDirectory=/opt/redstm/current
+EnvironmentFile=/etc/redstm/access.env
+EnvironmentFile=-/etc/redstm/runtime.env
+ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner
+Restart=no
+TimeoutStartSec=4h
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/redstm
+ReadWritePaths=/srv/redstm
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+TasksMax=64
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target
