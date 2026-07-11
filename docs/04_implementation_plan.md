@@ -80,8 +80,9 @@ operation pending**이다.
 
 1. D canonical의 schema v2 doctor가 계속 `ok=true`이고 검증된 E backup 두 사본이 유지된다.
 2. full export가 exit 0으로 끝나며 `release.json`과 immutable release manifest가 생성된다.
-3. release count가 posts 282,239, comments 3,729,706, boards 46, collections 18,369와 일치하고
-   exporter의 source-unchanged/전체 object 검증이 통과한다.
+3. release count가 posts 282,239, comments 3,707,484, unavailable posts 1,831,
+   unavailable comments 22,222, boards 46, collections 18,369와 일치한다. 두 post/comment 합계가
+   canonical 284,070/3,729,706과 일치하고 exporter의 source-unchanged/전체 object 검증이 통과한다.
 4. 실제 산출물 크기가 계정의 무료 범위임을 확인한 뒤에만 R2에 pointer-last로 게시한다.
 5. Cloudflare Access가 비인증 요청을 차단하고 본인 인증 후 검색, 일반 글/AA, 댓글,
    collection 이전·다음, bookmark/progress/state export-import를 사용할 수 있다.

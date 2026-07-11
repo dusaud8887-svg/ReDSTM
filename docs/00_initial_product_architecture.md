@@ -1265,7 +1265,7 @@ deterministic sample 500건 불일치 0을 기록한다.
 - 모든 source post에 legacy version/latest pointer 존재
 - 랜덤 500 deterministic normalize/hash와 detail render 비교
 - AA 전체 또는 최소 모든 AA font marker 검사
-- legacy orphan 22,224건을 placeholder에 연결한 뒤 orphan FK 0
+- legacy orphan comment 22,222건을 unavailable placeholder 1,829개에 연결한 뒤 orphan FK 0
 
 legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. 해당 version은 `capture_origin=legacy_import`로 표시한다.
 
@@ -1274,6 +1274,11 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 상태: 구현 완료, 외부 gate 대기. Full canonical exporter, collection 연속 읽기, unavailable entry
 skip, stable user-state, Saitamaar와 desktop/mobile Playwright를 구현했다. 전수 export가 실행
 중이며 실제 Android와 Cloudflare Access/R2 gate는 남아 있다.
+
+Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링한다. 원문 version이
+없는 unavailable placeholder 1,831개와 그 댓글 22,222개는 canonical에 보존하고 release manifest의
+`unavailable_post_count`/`unavailable_comment_count`로 명시한다. Synthetic 본문을 만들어 정상
+게시물처럼 노출하지 않는다.
 
 - Worker Static Assets shell과 reader JS/CSS 구현
 - compact metadata search Web Worker

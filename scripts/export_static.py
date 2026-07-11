@@ -121,9 +121,12 @@ def _grouped_comments(
 ) -> Iterator[tuple[int, tuple[NormalizedComment, ...]]]:
     rows = connection.execute(
         """
-        SELECT post_id, position, source_comment_id, parent_position, depth, author,
-               content_html, content_text, created_at_raw
-        FROM comments ORDER BY post_id, position
+        SELECT c.post_id, c.position, c.source_comment_id, c.parent_position, c.depth,
+               c.author, c.content_html, c.content_text, c.created_at_raw
+        FROM comments AS c
+        JOIN posts AS p ON p.id = c.post_id
+        WHERE p.latest_version_id IS NOT NULL
+        ORDER BY c.post_id, c.position
         """
     )
     for post_id, grouped in groupby(rows, key=lambda row: int(row["post_id"])):
@@ -290,6 +293,12 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
     for key, value in expected.items():
         if manifest.get(key) != value:
             raise ValueError(f"release {key} mismatch")
+    unavailable = {}
+    for key in ("unavailable_post_count", "unavailable_comment_count"):
+        unavailable_value = manifest.get(key)
+        if not isinstance(unavailable_value, int) or unavailable_value < 0:
+            raise ValueError(f"invalid release {key}")
+        unavailable[key] = unavailable_value
     search_ref = cast(dict[str, Any], manifest["search"])
     collection_ref = cast(dict[str, Any], manifest["collections"])
     if search_ref.get("post_count") != len(search_rows):
@@ -299,7 +308,7 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
         or collection_ref.get("entry_count") != entry_count
     ):
         raise ValueError("collection reference count mismatch")
-    return {"release_key": release_key, **expected}
+    return {"release_key": release_key, **expected, **unavailable}
 
 
 def activate_release(root: Path, release: str) -> dict[str, Any]:
@@ -336,6 +345,17 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             raise ValueError(f"canonical schema v{SCHEMA_VERSION} is required")
         connection.execute("BEGIN")
         boards = [dict(row) for row in connection.execute("SELECT * FROM boards ORDER BY board_id")]
+        unavailable_counts = connection.execute(
+            """
+            SELECT COUNT(DISTINCT p.id) AS post_count, COUNT(c.position) AS comment_count
+            FROM posts AS p
+            LEFT JOIN comments AS c ON c.post_id = p.id
+            WHERE p.latest_version_id IS NULL
+            """
+        ).fetchone()
+        assert unavailable_counts is not None
+        unavailable_post_count = int(unavailable_counts["post_count"])
+        unavailable_comment_count = int(unavailable_counts["comment_count"])
         comment_groups = iter(_grouped_comments(connection))
         current_comments = next(comment_groups, None)
         for row in connection.execute(
@@ -510,6 +530,8 @@ def export_static(source: Path, output: Path) -> dict[str, Any]:
             "source": "typemoon",
             "post_count": post_count,
             "comment_count": comment_count,
+            "unavailable_post_count": unavailable_post_count,
+            "unavailable_comment_count": unavailable_comment_count,
             "board_count": len(board_refs),
             "collection_count": len(collections),
             "collection_entry_count": collection_entry_count,

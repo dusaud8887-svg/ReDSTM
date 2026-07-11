@@ -128,6 +128,15 @@ def _canonical(path: Path) -> None:
                 "SELECT id FROM posts WHERE board_id = 'ss_temp01' AND external_post_id = 99"
             ).fetchone()[0]
         )
+        connection.execute(
+            """
+            INSERT INTO comments (
+                post_id, position, source_comment_id, author, content_html, content_text, depth
+            ) VALUES (?, 1, 'orphan-1', 'orphan', '<p>orphan comment</p>',
+                      'orphan comment', 0)
+            """,
+            (placeholder_id,),
+        )
         connection.executemany(
             """
             INSERT INTO collections (id, board_id, kind, title, created_at, updated_at)
@@ -180,6 +189,8 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(tmp_path: 
         "board_count": 3,
         "collection_count": 2,
         "collection_entry_count": 2,
+        "unavailable_post_count": 1,
+        "unavailable_comment_count": 1,
     }
 
     release = json.loads((output / "release.json").read_bytes())
@@ -214,6 +225,9 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(tmp_path: 
         "position": 2,
         "title": "보존 불가",
     }
+    assert not list(output.glob("posts/ss_temp01/99-*.json.gz"))
+    assert release["unavailable_post_count"] == 1
+    assert release["unavailable_comment_count"] == 1
     assert collection_payload["collections"][1]["entries"] == []
 
 
