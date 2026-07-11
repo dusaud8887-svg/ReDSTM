@@ -182,7 +182,8 @@ activate_canonical() {
   else
     fail "canonical transfer is missing"
   fi
-  sudo -u redstm "$CURRENT/.venv/bin/python" -m scripts.doctor "$CANONICAL_STAGING" \
+  sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" \
+    -m scripts.doctor "$CANONICAL_STAGING" \
     --warc-dir /srv/redstm/warc --output /srv/redstm/reports/canonical-activation-doctor.json \
     >/dev/null
   local target=/srv/redstm/canonical/archive.sqlite
