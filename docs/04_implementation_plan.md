@@ -186,9 +186,12 @@ mobile-first 제품으로 교체한다.
 5. 주 1회 bounded inventory가 boundary 누락을 보완한다.
 
 상태(2026-07-12): local 구현 완료, Oracle canary 전이다. `b3e83e1`에서 views를 제외한 listing
-metadata 비교, 공지 제외 연속 20건 경계, warning/`--inventory` 우회, listing 60초 timeout을
-구현했다. 동일 재실행 detail 0건·metadata 변경 재개방을 포함한 crawler 관련 27 test와 Ruff/mypy가
-통과했다.
+metadata 비교, 공지 제외 연속 20건 경계와 warning/`--inventory` 우회를 구현했다. Oracle canary에서
+원 사이트 listing이 60초 뒤 timeout되고 약 109초 뒤 비정상 TLS EOF로 끝나는 것을 실측해 listing
+timeout을 120초로 바꾸고 `DOWNLOAD_FAIL_ON_DATALOSS=false`를 명시했다. `python -m` 실행이
+`scrapy.cfg`를 자동 로드하지 않던 문제도 고쳐 sync/recovery가 concurrency/delay/AutoThrottle/WARC/
+pipeline 설정을 명시적으로 적용한다. 동일 재실행 detail 0건·metadata 변경 재개방을 포함한 crawler
+관련 test와 Ruff/mypy가 통과했다.
 
 #### A2.2 46-board cycle
 

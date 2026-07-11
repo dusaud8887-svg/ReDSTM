@@ -8,7 +8,6 @@ from typing import Any
 
 from filelock import FileLock, Timeout
 from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
 
 from crawler.archive import initialize_archive
 from crawler.frontier import FrontierStore
@@ -17,7 +16,13 @@ from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man
-from scripts.sync import _capture_failure_codes, _capture_summary, _run_status, _write_report
+from scripts.sync import (
+    _capture_failure_codes,
+    _capture_summary,
+    _project_settings,
+    _run_status,
+    _write_report,
+)
 
 
 def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
@@ -49,7 +54,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 password=os.environ.get("TYPEMOON_PASSWORD", ""),
                 user_agent=USER_AGENT,
             )
-            settings = get_project_settings()
+            settings = _project_settings()
             settings.set("REDSTM_ARCHIVE_PATH", str(archive), priority="cmdline")
             settings.set("REDSTM_RUN_ID", run_id, priority="cmdline")
             settings.set("REDSTM_WARC_PATH", str(warc_path), priority="cmdline")

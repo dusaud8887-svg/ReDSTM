@@ -18,7 +18,7 @@ from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man, ping_success
 from scripts.recover_queue import _parse_args as parse_recovery_args
-from scripts.sync import _capture_failure_codes, _capture_summary, _run_status
+from scripts.sync import _capture_failure_codes, _capture_summary, _project_settings, _run_status
 from scripts.sync import _parse_args as parse_sync_args
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
@@ -358,9 +358,17 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.AUTOTHROTTLE_MAX_DELAY == 60.0
     assert crawler_settings.DOWNLOAD_MAXSIZE == 64 << 20
     assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 900
-    assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 60
-    assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 60
+    assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
+    assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 120
+    assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 120
     assert "download_timeout" not in TypeMoonSpider().detail_request("write", 1, _session()).meta
+    project = _project_settings()
+    assert project.getint("CONCURRENT_REQUESTS") == 1
+    assert project.getfloat("DOWNLOAD_DELAY") == 10
+    assert project.getdict("DOWNLOADER_MIDDLEWARES") == {
+        "crawler.middlewares.WarcCaptureMiddleware": 595
+    }
+    assert project.getdict("ITEM_PIPELINES") == {"crawler.archive_pipeline.ArchivePipeline": 300}
 
     monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
     assert parse_sync_args().lease_seconds == 900

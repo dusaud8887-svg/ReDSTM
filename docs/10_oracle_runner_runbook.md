@@ -275,13 +275,13 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | 영역 | 항목 | 시작값 | 근거 |
 |---|---|---|---|
 | network | 요청 간격 | 10초 하한 + 감속 전용 AutoThrottle 최대 60초 | 서버 응답이 느려지면 자동으로 더 길게; `DOWNLOAD_DELAY` 하한 아래로 빨라지지 않음 |
-| network | listing timeout | 60초 | 작은 문서; 죽은 사이트에서 빠른 실패 |
+| network | listing timeout | 120초 | Oracle 실측상 본문 뒤 비정상 TLS EOF까지 약 109초; preflight가 outage를 먼저 차단 |
 | network | detail timeout | 180초 | 수 MB AA + 느린 응답(기존 유지) |
 | network | request retry | 총 3회(`RETRY_TIMES=2`), 408/5xx/522/524 | 기존 유지 |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | 429 | `Retry-After` 우선(최대 24시간), 연속 3회면 run 조기 종료 | 기존 + 과속 신호 존중 |
 | outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 46개 board를 순회하지 않음 |
-| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료 | 최악에도 십수 분 안에 중단 |
+| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료 | listing 3회 retry 포함 최악 약 20분 안팎에 중단 |
 | outage | attempt 보존 | `site_unreachable` run의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
 | frontier | network attempts | 5회 뒤 dead | 기존 유지 |
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
@@ -296,6 +296,10 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 AutoThrottle은 감속 전용이다. Scrapy는 `DOWNLOAD_DELAY`를 하한으로 존중하므로 10초보다
 빨라질 수 없고, 느린 응답에서는 최대 60초까지 간격을 넓힌다.
 [AutoThrottle](https://docs.scrapy.org/en/latest/topics/autothrottle.html)
+
+`scripts.sync`와 `scripts.recover_queue`는 module 실행 시 `scrapy.cfg` 발견에 의존하지 않고
+`crawler.settings`를 project priority로 명시 로드한다. 그렇지 않으면 concurrency/delay,
+AutoThrottle, WARC middleware와 archive pipeline이 조용히 빠지므로 회귀 test로 고정한다.
 
 ## 9. 현재 recovery 범위
 

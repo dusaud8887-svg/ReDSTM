@@ -8,8 +8,10 @@ from typing import Any
 
 from filelock import FileLock, Timeout
 from scrapy.crawler import CrawlerProcess
+from scrapy.settings import Settings
 from scrapy.utils.project import get_project_settings
 
+from crawler import settings as crawler_settings
 from crawler.archive import connect_archive, initialize_archive
 from crawler.session import SessionRefreshError, ensure_session_export, load_session_export
 from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
@@ -64,6 +66,12 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
         partial.unlink(missing_ok=True)
 
 
+def _project_settings() -> Settings:
+    settings = get_project_settings()
+    settings.setmodule(crawler_settings, priority="project")
+    return settings
+
+
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
     session_path = args.session.expanduser().resolve()
@@ -99,7 +107,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         run_id = store.start_run("sync")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
-        settings = get_project_settings()
+        settings = _project_settings()
         settings.set("REDSTM_ARCHIVE_PATH", str(archive), priority="cmdline")
         settings.set("REDSTM_RUN_ID", run_id, priority="cmdline")
         settings.set("REDSTM_WARC_PATH", str(warc_path), priority="cmdline")
