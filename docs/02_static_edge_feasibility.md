@@ -135,7 +135,7 @@ P0 정책:
 - crawler: 고정된 집 IP의 self-hosted runner secret으로 ID/PW 주입
 - login: 저장 session authenticated GET 우선, 실패 시 form 1회, 재실패 시 run 중단
 - login POST/body, cookie, R2 key는 WARC/log/artifact/YAML에 기록하지 않음
-- 최초 legacy migration과 full export는 `E:`에서 실행
+- 초기 legacy migration은 `E:`에서 완료했고 canonical/full export 작업은 `D:\ReDSTM\.data`에서 실행
 - scheduled incremental은 changed board/post object와 release manifest만 갱신
 
 GitHub-hosted runner는 test/lint와 credential 없는 publish에 사용한다. crawler를 Worker용

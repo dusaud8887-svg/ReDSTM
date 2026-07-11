@@ -2,8 +2,8 @@
 
 개인용 TypeMoon 수집·보존·열람 도구다. Phase 0 evidence gate와 schema v1 full legacy import를
 완료했다. `.data/migration/full-import-verification.json`은 count/sample/SQLite health/hash를
-검증해 `ok=true`다. canonical DB는 `E:\ReDSTM\canonical\archive-v1.sqlite`이며 verified
-snapshot/restore 뒤 schema v2로 전환했다.
+검증해 `ok=true`다. canonical DB는 `D:\ReDSTM\.data\canonical\archive.sqlite`이며 verified
+snapshot/restore 뒤 schema v2로 전환했다. 장기 backup만 `E:\ReDSTM\backups`에 둔다.
 
 ## 먼저 읽기
 

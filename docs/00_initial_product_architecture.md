@@ -1068,7 +1068,7 @@ Cloudflare Worker가 단일 사용자 인증과 private R2 streaming만 담당�
 [`02_static_edge_feasibility.md`](02_static_edge_feasibility.md)를 따른다.
 
 ```text
-E: local canonical SQLite
+D: workspace-local canonical SQLite
   -> deterministic exporter
   -> gzip post/board/search/collection objects + release manifest
   -> private R2
@@ -1087,9 +1087,10 @@ title/author metadata에서 수행한다.
 
 ### 11.2 수집과 갱신 실행기
 
-최초 legacy migration과 full export는 여유 공간이 있는 로컬 `E:`에서 실행한다. 이후 증분은
-같은 Python/Scrapy command를 고정된 집 IP의 self-hosted runner에서 실행한다. GitHub Actions
-private repository는 test/lint와 credential 없는 publish에 사용하고 workflow 정의는 공유한다.
+초기 legacy migration은 대용량 작업 공간이 필요해 `E:`에서 수행했지만, 12.4GB canonical과
+static 작업 산출물은 `D:\ReDSTM\.data`에서 운영한다. `E:\ReDSTM\backups`에는 검증된 독립
+사본만 둔다. 이후 증분은 같은 Python/Scrapy command를 고정된 집 IP의 self-hosted runner에서
+실행한다. GitHub Actions private repository는 test/lint와 credential 없는 publish에 사용한다.
 
 - crawler를 Worker TypeScript로 다시 작성하지 않음
 - 한 run에서 유효 session reuse, 필요 시 login form 1회만 제출

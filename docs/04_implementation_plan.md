@@ -19,16 +19,17 @@
 |---|---|
 | immutable source | `artifacts/phase0/private/redstm-phase0-posts-20260710T114500Z.db`, 28,811,358,208 bytes |
 | source SHA-256 | `e16203a7e2a4617ab1e3b85c20345353075bcc84322e38896dee384937245500` |
-| canonical target | `E:\ReDSTM\canonical\archive-v1.sqlite`, 12,407,144,448 bytes |
-| import target SHA-256 | `c695e739603669db4f827c8e2e6bf930325dfabb7364104af49828491635281e` (schema v1) |
+| legacy import output | 12,407,144,448 bytes, SHA-256 `c695e739603669db4f827c8e2e6bf930325dfabb7364104af49828491635281e` (schema v1) |
+| current canonical | `D:\ReDSTM\.data\canonical\archive.sqlite`, 12,407,148,544 bytes |
 | current target schema | v2, 13 tables, capture raw hash partial index |
 | 주요 건수 | boards 46, posts 284,070, comments 3,729,706, collections 18,369 |
 | legacy 보존 확인 | legacy post versions 282,239, placeholder posts 1,831 |
 | 무결성 | `quick_check=ok`, foreign key error 0 |
 | 내용 표본 | deterministic 500건, mismatch 0 |
 | report 결론 | `ok=true`, issues 0 |
-| verified snapshot | `.data/backups/archive-v1-20260711T045931Z.sqlite`, SHA-256 `945f10716c646027267ca6f0d2cc0e978f932d60abc733784ba8e3e061f0cdb3` |
-| restore rehearsal | `.data/restore-rehearsal/archive-v1.sqlite`, hash/count/health 일치, `ok=true` |
+| verified pre-v2 snapshot | `E:\ReDSTM\backups\pre-schema-v2\archive-v1-20260711T045931Z.sqlite`, SHA-256 `945f10716c646027267ca6f0d2cc0e978f932d60abc733784ba8e3e061f0cdb3` |
+| independent v2 backup | `E:\ReDSTM\backups\canonical-v2-20260711\archive-v1.sqlite` |
+| v2 restore doctor | `.data/migration/schema-v2-doctor.json`, quick check/FK/lease/WARC 모두 `ok=true` |
 
 따라서 **개발과 local canonical 조회를 시작할 DB는 준비됐다.** 원본 DB는 아직 삭제하지
 않으며 canonical DB만 새 수집의 write target으로 사용한다.
@@ -59,8 +60,8 @@
 - 12,407,144,448-byte snapshot manifest와 격리 restore rehearsal은 hash/count/health 모두
   `ok=true`다. 그 뒤 canonical을 schema v2로 적용했고 데이터 table count는 전부 동일하다.
 - full deterministic exporter, collection 연속 탐색, Cloudflare Access JWT 검증, `rclone`의
-  pointer-last publish와 bounded legacy queue recovery를 구현했다. Full export와 schema v2
-  canonical doctor는 background 실행 중이다.
+  pointer-last publish와 bounded legacy queue recovery를 구현했다. Schema v2 doctor는
+  `ok=true`이며 full export는 `D:\ReDSTM\.data\static\archive`에서 background 실행 중이다.
 
 ## 2. 우선순위 규칙
 
@@ -214,7 +215,7 @@ canary는 full export와 canonical doctor 완료 뒤 실행한다.
 
 전수 image mirror나 hotlink proxy는 inventory 전 구현하지 않는다.
 URL/host/same-origin/중복 count만 기록하는 read-only inventory command는 구현했다. 전수 scan은
-canonical doctor와 full export의 I/O가 끝난 뒤 verified snapshot에서 다시 실행한다.
+full export의 I/O가 끝난 뒤 D canonical에서 다시 실행한다.
 
 ## 6. P3: evidence가 있을 때만
 
@@ -226,11 +227,10 @@ canonical doctor와 full export의 I/O가 끝난 뒤 verified snapshot에서 다
 
 ## 7. 바로 진행할 작업 순서
 
-1. **P0 검증 종료:** background schema v2 canonical doctor 결과 확인
-2. **P1-1:** background full export 완료, release 전수 검증과 동일 입력 재실행 확인
-3. **P1-3:** 사용자 Cloudflare OAuth 완료 후 free Worker/R2/Access resource와 rollback 검증
-4. **P2-1:** AA board 100건 recovery canary 후 창작·팬픽 순서로 확대
-5. **P2-2:** verified snapshot image inventory 완료 후 link-only/cache 정책 확정
+1. **P1-1:** background full export 완료, release 전수 검증과 동일 입력 재실행 확인
+2. **P1-3:** 사용자 Cloudflare OAuth 완료 후 free Worker/R2/Access resource와 rollback 검증
+3. **P2-1:** AA board 100건 recovery canary 후 창작·팬픽 순서로 확대
+4. **P2-2:** D canonical image inventory 완료 후 link-only/cache 정책 확정
 
 ## 8. 사용자 승인 또는 외부 준비가 필요한 지점
 
@@ -270,7 +270,7 @@ Migration/backup 변경:
 ```powershell
 uv run python -m scripts.verify_migration `
   --source artifacts/phase0/private/redstm-phase0-posts-20260710T114500Z.db `
-  --target E:/ReDSTM/canonical/archive-v1.sqlite
+  --target .data/canonical/archive.sqlite
 ```
 
 모든 phase는 관련 failure test, docs, 실행 report를 같은 변경에서 갱신한다. 검증하지 못한

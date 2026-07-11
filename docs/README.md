@@ -17,9 +17,10 @@ Phase 0 evidence gate와 static edge pilot은 통과했다. schema v1 full legac
 crawl/cutover는 아직 승인하지 않는다.
 
 현재 실행 순서의 source of truth는 [`04_implementation_plan.md`](04_implementation_plan.md)다.
-DB migration, verified snapshot/restore와 canonical schema v2 적용은 완료됐다. Capture ledger,
-bounded sync와 `doctor`도 별도 DB의 live canary를 통과했다. Full static export와 schema v2
-doctor는 background 실행 중이며 Access/R2/B2 gate 전에는 production 운영 준비 완료로 보지 않는다.
+DB migration, verified snapshot/restore, canonical schema v2 적용과 full doctor는 완료됐다.
+Canonical과 작업 산출물은 `D:\ReDSTM\.data`, 장기 backup은 `E:\ReDSTM\backups`에 둔다.
+Full static export는 background 실행 중이며 Access/R2/B2 gate 전에는 production 운영 준비
+완료로 보지 않는다.
 
 현재 가능:
 
