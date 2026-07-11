@@ -1,4 +1,12 @@
-import { exportUserState, importUserState, samePost } from "/user-state.js";
+import {
+  STATE_KEY,
+  defaultUserState,
+  exportUserState,
+  migrateLegacyState,
+  planImport,
+  postIdentity,
+  samePost,
+} from "/user-state.js";
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const storageKeys = {
@@ -22,17 +30,18 @@ const elements = Object.fromEntries(
     "continue-meta", "catalog-back", "prose-font", "aa-controls", "aa-inline-size",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
-    "end-previous-title", "end-next-title", "mode-toggle", "mode-reset",
+    "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-select",
+    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
+    "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings",
+    "post-settings-actions", "settings-bookmark", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
-const storedSettings = readJson(storageKeys.settings, defaultSettings);
-let settings = {
-  ...defaultSettings, ...storedSettings,
-  viewModes: { ...defaultSettings.viewModes, ...storedSettings.viewModes },
-};
-let historyEntries = readJson(storageKeys.history, []);
-let bookmarks = readJson(storageKeys.bookmarks, []);
+let userState = loadUserState();
+let settings;
+let historyEntries;
+let bookmarks;
+applyUserState(userState);
 let renderedResults = [];
 let currentSummary = null;
 let currentPayload = null;
@@ -41,17 +50,22 @@ let currentCollection = null;
 let activeCollectionId = null;
 let collectionPromise;
 let currentView = "all";
-let requestId = 0;
+let currentDestination = "library";
+let messageId = 0;
+let searchRequestId = 0;
 let scrollTimer;
 let searchTimer;
 let postController;
 let pinchDistance = 0;
 let zoomFeedbackTimer;
 let zoomPersistTimer;
+let latestPosts = [];
+let publishedAt = null;
+const workerRequests = new Map();
 
 const searchWorker = new Worker("/search-worker.js", { type: "module" });
 searchWorker.addEventListener("message", handleWorkerMessage);
-searchWorker.postMessage({ type: "init", id: ++requestId });
+searchWorker.postMessage({ type: "init", id: ++messageId });
 
 function readJson(key, fallback) {
   try {
@@ -61,12 +75,67 @@ function readJson(key, fallback) {
   }
 }
 
-function store(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+function loadUserState() {
+  const stored = readJson(STATE_KEY, null);
+  try {
+    if (stored) return planImport(JSON.stringify(stored), defaultSettings).state;
+    return migrateLegacyState({
+      settings: readJson(storageKeys.settings, defaultSettings),
+      history: readJson(storageKeys.history, []),
+      bookmarks: readJson(storageKeys.bookmarks, []),
+    }, defaultSettings);
+  } catch {
+    return defaultUserState(defaultSettings);
+  }
+}
+
+function entriesFromState(map, timestampKey) {
+  return Object.entries(map)
+    .map(([identity, value]) => {
+      const [boardId, externalId] = identity.split(":");
+      return {
+        summary: { board_id: boardId, external_post_id: Number(externalId) },
+        [timestampKey]: value[timestampKey],
+        ...(timestampKey === "readAt" ? { scroll: userState.scroll[identity] ?? 0 } : {}),
+      };
+    })
+    .sort((left, right) => Date.parse(right[timestampKey]) - Date.parse(left[timestampKey]));
+}
+
+function applyUserState(state) {
+  userState = state;
+  settings = {
+    ...defaultSettings,
+    ...state.settings,
+    viewModes: { ...defaultSettings.viewModes, ...state.viewModes },
+  };
+  historyEntries = entriesFromState(state.history, "readAt");
+  bookmarks = entriesFromState(state.bookmarks, "savedAt");
+}
+
+function persistUserState() {
+  const { viewModes, ...savedSettings } = settings;
+  userState = {
+    schema_version: 2,
+    settings: savedSettings,
+    history: Object.fromEntries(historyEntries.map((entry) => [
+      postIdentity(entry.summary), { readAt: entry.readAt },
+    ]).filter(([identity]) => identity)),
+    bookmarks: Object.fromEntries(bookmarks.map((entry) => [
+      postIdentity(entry.summary), { savedAt: entry.savedAt },
+    ]).filter(([identity]) => identity)),
+    scroll: Object.fromEntries(historyEntries.map((entry) => [
+      postIdentity(entry.summary), entry.scroll ?? 0,
+    ]).filter(([identity]) => identity)),
+    viewModes,
+    lastCatalogState: userState.lastCatalogState,
+  };
+  localStorage.setItem(STATE_KEY, exportUserState(userState));
+  for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
 }
 
 function saveSettings() {
-  store(storageKeys.settings, settings);
+  persistUserState();
   applySettings();
 }
 
@@ -86,7 +155,10 @@ function applySettings() {
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * settings.aaZoom}px`);
   root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * settings.aaZoom}px`);
   root.style.setProperty("--aa-background", settings.aaBackground);
-  elements["theme-toggle"].textContent = dark ? "☀" : "◐";
+  elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
+  elements["theme-toggle"].title = elements["theme-toggle"].ariaLabel;
+  elements["theme-select"].value = settings.theme;
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#0b0d12" : "#f5f6f8";
   for (const [id, value, suffix] of [
     ["prose-size", settings.proseSize, "px"],
     ["line-height", settings.lineHeight, ""],
@@ -127,39 +199,164 @@ function setAaZoom(value, debounce = false) {
   applySettings();
   showZoomFeedback();
   clearTimeout(zoomPersistTimer);
-  if (debounce) zoomPersistTimer = setTimeout(() => store(storageKeys.settings, settings), 250);
-  else store(storageKeys.settings, settings);
+  if (debounce) zoomPersistTimer = setTimeout(persistUserState, 250);
+  else persistUserState();
 }
 
-function renderCover(title = "월광 장서", description = "사라질 수 있는 이야기와 AA를 원형에 가깝게 보존한 개인 서고입니다.", showContinue = true) {
+function renderHomeList(element, posts, emptyText) {
+  element.replaceChildren();
+  if (!posts.length) {
+    const empty = document.createElement("li");
+    empty.className = "home-empty";
+    empty.textContent = emptyText;
+    element.append(empty);
+    return;
+  }
+  for (const post of posts.slice(0, 6)) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    const title = document.createElement("strong");
+    const meta = document.createElement("span");
+    button.type = "button";
+    button.className = "home-item";
+    title.textContent = post.title || "제목 없음";
+    meta.textContent = [post.board_id, post.author, post.created_at_raw].filter(Boolean).join(" · ");
+    button.append(title, meta);
+    button.addEventListener("click", () => loadPost(post));
+    item.append(button);
+    element.append(item);
+  }
+}
+
+function renderCover(
+  title = "다시 읽고 싶은 기록을 한곳에서 찾으세요.",
+  description = "사라질 수 있는 이야기와 AA를 원형에 가깝게 보존합니다.",
+  showContinue = true,
+) {
   elements.reader.hidden = true;
   elements["empty-reader"].hidden = false;
-  elements["empty-reader"].querySelector(":scope > strong").textContent = title;
+  elements["home-title"].textContent = title;
   elements["empty-reader"].querySelector(".cover-copy").textContent = description;
+  const published = publishedAt && !Number.isNaN(Date.parse(publishedAt))
+    ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(publishedAt))
+    : null;
+  const newest = latestPosts[0]?.created_at_raw;
+  elements["home-freshness"].textContent = published
+    ? `마지막 보존 ${published}${newest ? ` · 최신 기록 ${newest}` : ""}`
+    : "마지막 갱신 확인 중";
   const latest = historyEntries[0]?.summary;
   elements["continue-reading"].hidden = !latest || !showContinue;
   if (latest) {
     elements["continue-title"].textContent = latest.title || "제목 없음";
     elements["continue-meta"].textContent = [latest.board_id, latest.author].filter(Boolean).join(" · ");
   }
+  renderHomeList(elements["latest-list"], latestPosts, "새로 보존된 글이 없습니다.");
+  renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.");
 }
 
 function openMobileReader() {
+  document.body.classList.remove("home-open");
   document.body.classList.add("reader-open");
 }
 
-function closeMobileReader() {
+function closeMobileReader(focusSearch = currentDestination !== "library") {
   document.body.classList.remove("reader-open");
-  elements["search-input"].focus({ preventScroll: true });
+  document.body.classList.toggle("home-open", currentDestination === "library");
+  if (focusSearch) elements["search-input"].focus({ preventScroll: true });
+}
+
+function updateDestinationButtons() {
+  for (const button of document.querySelectorAll("[data-destination]")) {
+    const active = button.dataset.destination === currentDestination;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active);
+  }
+}
+
+function showDestination(destination, navigate = true) {
+  if (destination === "settings") {
+    elements["settings-dialog"].showModal();
+    return;
+  }
+  currentDestination = destination;
+  currentSummary = null;
+  currentPayload = null;
+  elements["post-settings-actions"].hidden = true;
+  renderCover();
+  closeMobileReader(destination === "search");
+  if (destination === "bookmarks") {
+    currentView = "bookmarks";
+    updateTabs();
+    renderCurrentView();
+  } else {
+    currentView = "all";
+    updateTabs();
+    requestSearch();
+  }
+  updateDestinationButtons();
+  const path = destination === "library" ? "/" : destination === "bookmarks" ? "/saved" : "/search";
+  if (navigate && location.pathname !== path) history.pushState(null, "", path);
 }
 
 function setImmersive(active) {
   document.body.classList.toggle("immersive", active);
   elements["immersive-toggle"].setAttribute("aria-pressed", active);
   elements["immersive-toggle"].textContent = active ? "집중 종료" : "집중";
+  elements["settings-immersive"].textContent = active ? "집중 종료" : "집중";
+}
+
+function resolvePosts(summaries) {
+  const identities = summaries.map(postIdentity).filter(Boolean);
+  if (!identities.length) return Promise.resolve([]);
+  const id = ++messageId;
+  return new Promise((resolve, reject) => {
+    workerRequests.set(id, { resolve, reject });
+    searchWorker.postMessage({ type: "resolve", id, identities });
+  });
+}
+
+async function hydrateSavedEntries() {
+  for (const entries of [historyEntries, bookmarks]) {
+    for (let start = 0; start < entries.length; start += 500) {
+      const chunk = entries.slice(start, start + 500);
+      const summaries = await resolvePosts(chunk.map((entry) => entry.summary));
+      summaries.forEach((summary, index) => {
+        if (summary) chunk[index].summary = summary;
+      });
+    }
+  }
+}
+
+function routeSummary() {
+  const route = /^\/read\/([a-z0-9_]+)\/([1-9]\d*)\/?$/.exec(location.pathname);
+  if (route) return { board_id: route[1], external_post_id: Number(route[2]) };
+  try {
+    const legacy = postObjectKeyPattern.exec(decodeURIComponent(location.hash.slice(1)));
+    return legacy ? { board_id: legacy[1], external_post_id: Number(legacy[2]) } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleRoute() {
+  const summary = routeSummary();
+  if (!summary) {
+    const destination = location.pathname === "/saved" ? "bookmarks" : location.pathname === "/search" ? "search" : "library";
+    showDestination(destination, false);
+    if (location.pathname === "/settings") elements["settings-dialog"].showModal();
+    return;
+  }
+  if (!samePost(summary, currentSummary)) await loadPost(summary, false);
 }
 
 function handleWorkerMessage({ data }) {
+  const pending = workerRequests.get(data.id);
+  if (pending) {
+    workerRequests.delete(data.id);
+    if (data.type === "error") pending.reject(new Error(data.message));
+    else pending.resolve(data.summaries);
+    return;
+  }
   if (data.type === "error") {
     elements["archive-state"].textContent = "연결 오류";
     elements["result-status"].textContent = data.message;
@@ -170,22 +367,31 @@ function handleWorkerMessage({ data }) {
     elements["archive-count"].textContent = `${data.count.toLocaleString("ko-KR")}건`;
     elements["empty-count"].textContent = `${data.count.toLocaleString("ko-KR")}건`;
     elements["archive-state"].textContent = "보존본";
-    for (const board of data.boards) elements["board-filter"].add(new Option(board, board));
+    latestPosts = data.recentPosts;
+    publishedAt = data.publishedAt;
+    for (const board of data.boardMetadata) {
+      const label = board.name === board.board_id ? board.name : `${board.name} · ${board.board_id}`;
+      elements["board-filter"].add(new Option(label, board.board_id));
+    }
     renderCover();
     requestSearch();
+    void hydrateSavedEntries().then(() => {
+      if (!currentSummary) renderCover();
+      if (currentView !== "all") renderCurrentView();
+    }).catch((error) => { elements["result-status"].textContent = error.message; });
+    void handleRoute();
     return;
   }
-  if (data.type === "results" && data.id === requestId) {
-    renderResults(data.posts, `${data.posts.length}건 · ${data.elapsedMs.toFixed(1)}ms`);
-    const directKey = decodeURIComponent(location.hash.slice(1));
-    if (directKey.startsWith("posts/") && !currentSummary) loadPost({ object_key: directKey }, false);
+  if (data.type === "results" && data.id === searchRequestId && currentView === "all") {
+    renderResults(data.posts, `${data.total.toLocaleString("ko-KR")}건 · ${data.elapsedMs.toFixed(1)}ms`);
   }
 }
 
 function requestSearch() {
   currentView = "all";
   updateTabs();
-  const id = ++requestId;
+  const id = ++messageId;
+  searchRequestId = id;
   searchWorker.postMessage({
     type: "search",
     id,
@@ -318,17 +524,18 @@ async function updateCollection() {
 }
 
 async function loadPost(summary, navigate = true) {
-  if (!summary?.object_key) return;
   postController?.abort();
   postController = new AbortController();
   elements["reader-pane"].setAttribute("aria-busy", "true");
   if (!currentSummary) renderCover("본문을 불러오는 중", "보존 객체를 확인하고 있습니다.", false);
   try {
-    const response = await fetch(`/archive/${summary.object_key}`, { signal: postController.signal });
+    const resolved = summary?.object_key ? summary : (await resolvePosts([summary]))[0];
+    if (!resolved?.object_key) throw new Error("현재 보존본에서 글을 찾을 수 없습니다");
+    const response = await fetch(`/archive/${resolved.object_key}`, { signal: postController.signal });
     if (!response.ok) throw new Error(response.status === 404 ? "보존 객체가 없습니다" : `본문 응답 ${response.status}`);
     const payload = await response.json();
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
-    showPost(payload, summary, navigate);
+    showPost(payload, resolved, navigate);
   } catch (error) {
     if (error.name !== "AbortError") {
       renderCover("본문을 열 수 없음", error.message, false);
@@ -355,7 +562,6 @@ function showPost(payload, suppliedSummary, navigate) {
     comment_count: payload.comments.length,
     views: post.views,
   };
-  const pushReaderState = isNarrowScreen() && navigate && !document.body.classList.contains("reader-open");
   elements["reading-progress"].style.width = "0%";
   elements["empty-reader"].hidden = true;
   elements.reader.hidden = false;
@@ -363,15 +569,17 @@ function showPost(payload, suppliedSummary, navigate) {
   elements["reader-title"].textContent = post.title || "제목 없음";
   elements["reader-meta"].textContent = [post.author || "작성자 없음", post.created_at_raw, `조회 ${post.views ?? 0}`].filter(Boolean).join(" · ");
   elements["source-link"].href = post.canonical_url;
+  elements["settings-source"].href = post.canonical_url;
+  elements["post-settings-actions"].hidden = false;
   renderPostBody();
   renderComments(payload.comments);
   rememberHistory(currentSummary);
   updateBookmarkButton();
   void updateCollection();
   renderResults(renderedResults, elements["result-status"].textContent);
-  const nextUrl = `#${encodeURIComponent(currentSummary.object_key)}`;
-  if (pushReaderState) history.pushState({ redstmReader: true }, "", nextUrl);
-  else history.replaceState(history.state, "", nextUrl);
+  const nextUrl = `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`;
+  if (navigate) history.pushState({ redstmReader: true }, "", nextUrl);
+  else history.replaceState({ redstmReader: false }, "", nextUrl);
   openMobileReader();
   requestAnimationFrame(() => restoreReadingPosition(currentSummary));
 }
@@ -385,7 +593,9 @@ function renderPostBody() {
   elements["archive-body"].classList.toggle("aa", isAa);
   elements["aa-controls"].hidden = !isAa;
   elements["mode-toggle"].textContent = isAa ? "소설로 보기" : "AA로 보기";
+  elements["settings-mode"].textContent = elements["mode-toggle"].textContent;
   elements["mode-reset"].hidden = !override;
+  elements["settings-mode-reset"].hidden = !override;
   if (isAa) {
     const canvas = document.createElement("div");
     canvas.className = "aa-canvas";
@@ -443,7 +653,7 @@ function rememberHistory(summary) {
   historyEntries = historyEntries.filter((entry) => !samePost(entry.summary, summary));
   historyEntries.unshift({ summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0 });
   historyEntries = historyEntries.slice(0, 500);
-  store(storageKeys.history, historyEntries);
+  persistUserState();
 }
 
 function isNarrowScreen() {
@@ -463,7 +673,7 @@ function queueScrollSave() {
   clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
     const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
-    if (entry) { entry.scroll = readingPosition(); store(storageKeys.history, historyEntries); }
+    if (entry) { entry.scroll = readingPosition(); persistUserState(); }
   }, 250);
 }
 
@@ -475,8 +685,11 @@ function updateReadingProgress() {
 
 function updateBookmarkButton() {
   const active = bookmarks.some((entry) => samePost(entry.summary, currentSummary));
-  elements["bookmark-post"].textContent = active ? "★" : "☆";
   elements["bookmark-post"].setAttribute("aria-pressed", active);
+  elements["settings-bookmark"].setAttribute("aria-pressed", active);
+  elements["settings-bookmark"].textContent = active ? "저장 취소" : "저장";
+  elements["bookmark-post"].ariaLabel = active ? "저장 취소" : "저장";
+  elements["bookmark-post"].title = elements["bookmark-post"].ariaLabel;
 }
 
 function updateNavigation() {
@@ -492,6 +705,8 @@ function updateNavigation() {
   }
   elements["end-previous"].disabled = !previous;
   elements["end-next"].disabled = !next;
+  elements["reader-bottom-previous"].disabled = elements["previous-post"].disabled;
+  elements["reader-bottom-next"].disabled = elements["next-post"].disabled;
   elements["end-previous-title"].textContent = previous?.title || (previous ? "이전 글 열기" : "이전 글이 없습니다");
   elements["end-next-title"].textContent = next?.title || (next ? "다음 글 열기" : "다음 글이 없습니다");
 }
@@ -527,23 +742,32 @@ elements["continue-reading"].addEventListener("click", () => {
   const latest = historyEntries[0]?.summary;
   if (latest) loadPost(latest);
 });
+elements["browse-all"].addEventListener("click", () => showDestination("search"));
 elements["catalog-back"].addEventListener("click", () => {
   if (history.state?.redstmReader) history.back();
   else {
-    history.replaceState(null, "", `${location.pathname}${location.search}`);
-    closeMobileReader();
+    history.replaceState(null, "", "/");
+    showDestination("library", false);
   }
 });
-window.addEventListener("popstate", () => {
-  if (!location.hash) closeMobileReader();
-});
+window.addEventListener("popstate", () => { void handleRoute(); });
 elements["search-input"].addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(renderCurrentView, 250);
 });
 elements["board-filter"].addEventListener("change", renderCurrentView);
 for (const tab of document.querySelectorAll("[data-view]")) {
-  tab.addEventListener("click", () => { currentView = tab.dataset.view; updateTabs(); renderCurrentView(); });
+  tab.addEventListener("click", () => {
+    currentView = tab.dataset.view;
+    currentDestination = currentView === "bookmarks" ? "bookmarks" : "search";
+    document.body.classList.remove("home-open");
+    updateDestinationButtons();
+    updateTabs();
+    renderCurrentView();
+  });
+}
+for (const button of document.querySelectorAll("[data-destination]")) {
+  button.addEventListener("click", () => showDestination(button.dataset.destination));
 }
 elements["bookmark-post"].addEventListener("click", () => {
   if (!currentSummary) return;
@@ -551,7 +775,7 @@ elements["bookmark-post"].addEventListener("click", () => {
   bookmarks = active
     ? bookmarks.filter((entry) => !samePost(entry.summary, currentSummary))
     : [{ summary: currentSummary, savedAt: new Date().toISOString() }, ...bookmarks];
-  store(storageKeys.bookmarks, bookmarks);
+  persistUserState();
   updateBookmarkButton();
   if (currentView === "bookmarks") renderCurrentView();
 });
@@ -578,19 +802,31 @@ elements["theme-toggle"].addEventListener("click", () => {
   settings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   saveSettings();
 });
+elements["theme-select"].addEventListener("change", () => {
+  settings.theme = elements["theme-select"].value;
+  saveSettings();
+});
 elements["reader-settings"].addEventListener("click", () => elements["settings-dialog"].showModal());
+elements["reader-bottom-list"].addEventListener("click", () => elements["catalog-back"].click());
+elements["reader-bottom-previous"].addEventListener("click", () => elements["previous-post"].click());
+elements["reader-bottom-next"].addEventListener("click", () => elements["next-post"].click());
+elements["reader-bottom-settings"].addEventListener("click", () => elements["settings-dialog"].showModal());
+elements["settings-bookmark"].addEventListener("click", () => elements["bookmark-post"].click());
+elements["settings-mode"].addEventListener("click", () => elements["mode-toggle"].click());
+elements["settings-mode-reset"].addEventListener("click", () => elements["mode-reset"].click());
+elements["settings-immersive"].addEventListener("click", () => elements["immersive-toggle"].click());
 elements["immersive-toggle"].addEventListener("click", () => setImmersive(!document.body.classList.contains("immersive")));
 elements["mode-toggle"].addEventListener("click", () => {
   if (!currentPayload) return;
   const identity = `${currentSummary.board_id}:${currentSummary.external_post_id}`;
   settings.viewModes[identity] = currentMode === "aa" ? "prose" : "aa";
-  store(storageKeys.settings, settings);
+  persistUserState();
   renderPostBody();
 });
 elements["mode-reset"].addEventListener("click", () => {
   if (!currentPayload) return;
   delete settings.viewModes[`${currentSummary.board_id}:${currentSummary.external_post_id}`];
-  store(storageKeys.settings, settings);
+  persistUserState();
   renderPostBody();
 });
 for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["aa-size", "aaSize"]]) {
@@ -661,7 +897,8 @@ elements["reset-settings"].addEventListener("click", () => {
   saveSettings();
 });
 elements["export-state"].addEventListener("click", () => {
-  const blob = new Blob([exportUserState(settings, historyEntries, bookmarks)], {
+  persistUserState();
+  const blob = new Blob([exportUserState(userState)], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
@@ -676,12 +913,16 @@ elements["import-state-file"].addEventListener("change", async () => {
   const [file] = elements["import-state-file"].files;
   if (!file) return;
   try {
-    ({ settings, history: historyEntries, bookmarks } = importUserState(
-      await file.text(), { history: historyEntries, bookmarks }, defaultSettings,
-    ));
-    store(storageKeys.settings, settings);
-    store(storageKeys.history, historyEntries);
-    store(storageKeys.bookmarks, bookmarks);
+    if (file.size > 1_048_576) throw new Error("상태 파일은 1MB 이하여야 합니다");
+    const planned = planImport(await file.text(), defaultSettings);
+    const summary = planned.summary;
+    const approved = confirm(
+      `읽기 기록 ${summary.history}건, 북마크 ${summary.bookmarks}건, 위치 ${summary.scroll}건, 보기 설정 ${summary.viewModes}건을 가져올까요?`,
+    );
+    if (!approved) return;
+    applyUserState(planned.state);
+    persistUserState();
+    await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
     elements["result-status"].textContent = "사용자 상태를 가져왔습니다";
@@ -696,7 +937,7 @@ document.addEventListener("keydown", (event) => {
   if (event.target.closest("input, select, textarea, button, [contenteditable]")) return;
   if (event.key === "/") {
     event.preventDefault();
-    if (isNarrowScreen()) closeMobileReader();
+    showDestination("search");
     elements["search-input"].focus();
   } else if (event.key === "[") {
     elements["previous-post"].click();
@@ -711,4 +952,18 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+history.scrollRestoration = "manual";
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") persistUserState();
+});
+window.addEventListener("pagehide", persistUserState);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (settings.theme === "system") applySettings();
+});
+window.visualViewport?.addEventListener("resize", () => {
+  document.body.classList.toggle("keyboard-open", window.visualViewport.height < innerHeight * 0.75);
+});
+document.fonts.ready.then(() => {
+  if (currentSummary) restoreReadingPosition(currentSummary);
+});
 applySettings();

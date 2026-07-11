@@ -12,7 +12,12 @@ const standaloneHash = "3".repeat(64);
 const firstKey = `posts/board_a/1-${firstHash}.json.zst`;
 const secondKey = `posts/board_a/2-${secondHash}.json.zst`;
 const standaloneKey = `posts/board_a/3-${standaloneHash}.json.zst`;
-const missingKey = `posts/board_a/404-${"4".repeat(64)}.json.zst`;
+
+function stableUrl(key) {
+  const match = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-/.exec(key);
+  if (!match) throw new Error(`Invalid post key: ${key}`);
+  return `/read/${match[1]}/${match[2]}`;
+}
 
 function postPayload(id, title) {
   return {
@@ -73,7 +78,7 @@ async function useCollectionFixture(page) {
 }
 
 async function openPost(page, key) {
-  await page.goto(`/#${encodeURIComponent(key)}`);
+  await page.goto(stableUrl(key));
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page.locator("#empty-reader")).toBeHidden();
@@ -91,18 +96,25 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
 
   if (testInfo.project.name === "desktop") {
     await expect(page.locator("#empty-reader")).toBeVisible();
-    await expect(page.locator("#empty-reader")).toContainText("월광 장서");
+    await expect(page.locator("#empty-reader")).toContainText("다시 읽고 싶은 기록");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover.png" });
     await page.locator("#theme-toggle").click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
   }
 
+  if (page.viewportSize().width < 760) {
+    await expect(page.locator("#empty-reader")).toBeVisible();
+    await expect(page.locator(".bottom-nav")).toBeVisible();
+    await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-home.png` });
+    await page.locator("#browse-all").click();
+  }
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
+  await expect(page).toHaveURL(/\/read\/board_a\/3$/);
   if (page.viewportSize().width <= 760) {
     await expect(page.locator(".catalog")).toBeHidden();
-    await page.screenshot({ path: ".wrangler/screenshots/mobile-reader.png" });
+    await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-reader.png` });
     await page.locator("#catalog-back").click();
     await expect(page.locator(".catalog")).toBeVisible();
     await expect(page.locator("#search-input")).toBeFocused();
@@ -113,26 +125,33 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);
   await expect(page.locator("#aa-controls")).toBeVisible();
+  const mobile = page.viewportSize().width < 760;
+  await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
   await page.locator('[data-aa-preset="11:800"]').click();
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
   await expect(page.locator("#aa-inline-size")).toHaveText("11px");
-  await page.locator('[data-aa-zoom-delta="0.25"]').click();
-  await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
   await page.locator('[data-aa-background="#ffffff"]').click();
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await page.locator("#aa-source-styles").click();
   await expect(page.locator("#archive-body")).toHaveClass(/normalize-source-styles/);
   await expect(page.locator("#archive-body font")).not.toHaveCSS("color", "rgb(180, 35, 47)");
+  await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  await page.locator('[data-aa-zoom-delta="0.25"]').click();
+  await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
   await page.reload();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
-  await page.locator("#mode-toggle").click();
+  if (mobile) await page.locator("#reader-bottom-settings").click();
+  await page.locator(mobile ? "#settings-mode" : "#mode-toggle").click();
+  await expect(page.locator(mobile ? "#settings-mode-reset" : "#mode-reset")).toBeVisible();
+  if (mobile) await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await expect(page.locator("#archive-body")).not.toHaveClass(/aa/);
   await expect(page.locator("#aa-controls")).toBeHidden();
-  await expect(page.locator("#mode-reset")).toBeVisible();
   await page.reload();
   await expect(page.locator("#archive-body")).not.toHaveClass(/aa/);
-  await page.locator("#mode-reset").click();
+  if (mobile) await page.locator("#reader-bottom-settings").click();
+  await page.locator(mobile ? "#settings-mode-reset" : "#mode-reset").click();
+  if (mobile) await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await expect(page.locator("#archive-body")).toHaveClass(/aa/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa-fixture.png` });
@@ -164,16 +183,25 @@ test("searches and renders a real AA post", async ({ page }, testInfo) => {
   const query = title.match(/[가-힣]{2}/)?.[0];
   expect(query).toBeTruthy();
 
+  await page.keyboard.press("/");
   await page.locator("#board-filter").selectOption("aa_19");
   await page.locator("#search-input").fill(query);
   await expect(page.locator(".result-item", { hasText: title })).toBeVisible();
+  await page.locator(".result-item", { hasText: title }).click();
 
-  await page.locator("#reader-settings").click();
+  const mobile = page.viewportSize().width < 760;
+  await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
   await expect(page.locator("#settings-dialog")).toBeVisible();
   await expect(page.locator("#export-state")).toBeVisible();
   await expect(page.locator("#import-state")).toBeVisible();
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
-  await page.locator("#bookmark-post").click();
+  if (mobile) {
+    await page.locator("#reader-bottom-settings").click();
+    await page.locator("#settings-bookmark").click();
+    await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  } else {
+    await page.locator("#bookmark-post").click();
+  }
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
 
   const widthFits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
@@ -205,29 +233,32 @@ test("renders prose and restores the reading position", async ({ page }, testInf
 test("restores collection navigation and keeps list fallback", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, secondKey);
+  const mobile = page.viewportSize().width < 760;
+  const previous = mobile ? "#reader-bottom-previous" : "#previous-post";
+  const next = mobile ? "#reader-bottom-next" : "#next-post";
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
-  await expect(page.locator("#previous-post")).toBeEnabled();
-  await expect(page.locator("#next-post")).toBeDisabled();
+  await expect(page.locator(previous)).toBeEnabled();
+  await expect(page.locator(next)).toBeDisabled();
 
-  await page.locator("#previous-post").click();
+  await page.locator(previous).click();
   await expect(page.locator("#reader-title")).toHaveText("첫째");
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 1/3 · 1건 보존 불가");
-  await expect(page.locator("#previous-post")).toBeDisabled();
-  await expect(page.locator("#next-post")).toBeEnabled();
+  await expect(page.locator(previous)).toBeDisabled();
+  await expect(page.locator(next)).toBeEnabled();
 
   await page.goto(`/?fixture=standalone#${encodeURIComponent(standaloneKey)}`);
   await expect(page.locator("#reader-title")).toHaveText("비소속");
   await expect(page.locator("#collection-context")).toBeHidden();
-  await expect(page.locator("#previous-post")).toBeDisabled();
-  await expect(page.locator("#next-post")).toBeEnabled();
-  await page.locator("#next-post").click();
+  await expect(page.locator(previous)).toBeDisabled();
+  await expect(page.locator(next)).toBeEnabled();
+  await page.locator(next).click();
   await expect(page.locator("#reader-title")).toHaveText("둘째");
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
 });
 
 test("distinguishes a missing preserved object", async ({ page }) => {
   await useCollectionFixture(page);
-  await page.goto(`/#${encodeURIComponent(missingKey)}`);
+  await page.goto("/read/board_a/404");
   await expect(page.locator("#archive-state")).toHaveText("본문 오류");
-  await expect(page.locator("#empty-reader")).toContainText("보존 객체가 없습니다");
+  await expect(page.locator("#empty-reader")).toContainText("현재 보존본에서 글을 찾을 수 없습니다");
 });
