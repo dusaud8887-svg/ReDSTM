@@ -221,6 +221,28 @@ def test_session_validation_stops_after_logout_marker_before_broken_eof(
     assert response.reads == 1
 
 
+def test_session_reader_stops_after_login_marker_before_broken_eof() -> None:
+    class Headers:
+        def get_content_charset(self) -> str:
+            return "utf-8"
+
+    class HangingResponse:
+        headers = Headers()
+        reads = 0
+
+        def read(self, _size: int) -> bytes:
+            self.reads += 1
+            if self.reads == 1:
+                return b"<a href='/bbs/login.php'>login</a>"
+            raise TimeoutError("server never closes the response")
+
+    response = HangingResponse()
+    html = session_module._read_html(response, complete=session_module._has_auth_marker)
+
+    assert "login.php" in html
+    assert response.reads == 1
+
+
 def test_automatic_login_is_throttled_for_thirty_minutes_after_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

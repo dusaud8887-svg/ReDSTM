@@ -205,7 +205,7 @@ def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool
                 ),
                 timeout=timeout,
             ),
-            complete=_has_logout_link,
+            complete=_has_auth_marker,
         )
     except (HTTPError, URLError, OSError) as error:
         raise SessionNetworkError("TypeMoon session validation request failed") from error
@@ -273,7 +273,7 @@ def refresh_session_export(
                 ),
                 timeout=timeout,
             ),
-            complete=_has_logout_link,
+            complete=_has_auth_marker,
         )
     except SessionRefreshError:
         raise
@@ -341,6 +341,12 @@ def _has_login_form(html: str) -> bool:
 def _has_logout_link(html: str) -> bool:
     return any(
         "logout" in href.lower() for href in Selector(text=html).css("a::attr(href)").getall()
+    )
+
+
+def _has_auth_marker(html: str) -> bool:
+    return _has_logout_link(html) or any(
+        "login" in href.lower() for href in Selector(text=html).css("a::attr(href)").getall()
     )
 
 
