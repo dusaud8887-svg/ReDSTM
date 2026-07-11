@@ -14,6 +14,7 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from crawler.archive import connect_archive
+from crawler.frontier import FrontierStore
 from crawler.session import SessionNetworkError, SessionRefreshError, ensure_session_export
 from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
 from scripts.healthcheck import notify_dead_man
@@ -106,6 +107,9 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         report_dir = args.report_dir / cycle_id
         report_dir.mkdir(parents=True, exist_ok=False)
         consecutive_network_failures = 0
+        consecutive_rate_limits = 0
+        network_run_ids: list[str] = []
+        preserved_attempts = 0
         status = "succeeded"
         for board_id in boards:
             report_path = report_dir / f"{board_id}.json"
@@ -129,11 +133,22 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 status = "auth_failed"
                 break
             network_failure = bool(failures & _NETWORK_FAILURES)
+            if network_failure and isinstance(report.get("run_id"), str):
+                network_run_ids.append(report["run_id"])
             consecutive_network_failures = (
                 consecutive_network_failures + 1 if network_failure else 0
             )
             if consecutive_network_failures >= 3:
                 status = "site_unreachable"
+                preserved_attempts = FrontierStore(args.archive).preserve_network_attempts(
+                    network_run_ids
+                )
+                break
+            consecutive_rate_limits = (
+                consecutive_rate_limits + 1 if "rate_limited" in failures else 0
+            )
+            if consecutive_rate_limits >= 3:
+                status = "rate_limited"
                 break
             if completed.returncode != 0 or board_status != "succeeded":
                 status = "partial"
@@ -146,6 +161,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "status": status,
             "board_count": len(boards),
             "completed_boards": len(results),
+            "preserved_attempts": preserved_attempts,
             "boards": results,
         }
     finally:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from crawler.archive import SCHEMA_VERSION
+from crawler.archive import SCHEMA_VERSION, connect_archive
 from crawler.frontier import FrontierLease, FrontierStore
 
 
@@ -91,3 +91,53 @@ def test_reopen_done_and_claim_only_requested_identity(tmp_path: Path) -> None:
     second = store.claim_identity("write_free21", 2, lease_seconds=60)
     assert second is not None
     assert second.external_post_id == 2
+
+
+def test_site_outage_restores_network_attempt_without_reviving_other_failures(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    for post_id, state, error in ((1, "dead", "network_error"), (2, "retry", "auth_required")):
+        store.seed("write_free21", post_id, f"https://www.typemoon.net/write_free21/{post_id}")
+        with connect_archive(path) as connection:
+            connection.execute(
+                """
+                UPDATE crawl_frontier
+                SET state = ?, attempts = 5, last_error_code = ?
+                WHERE board_id = 'write_free21' AND external_post_id = ?
+                """,
+                (state, error, post_id),
+            )
+    with connect_archive(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawl_runs (run_id, kind, status, started_at, finished_at)
+            VALUES ('sync-outage', 'sync', 'failed', 'now', 'now')
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO captures (run_id, url, entity_type, fetched_at, outcome, error_code)
+            VALUES ('sync-outage', ?, 'post', 'now', 'fetch_failed', ?)
+            """,
+            [
+                ("https://www.typemoon.net/write_free21/1", "network_error"),
+                ("https://www.typemoon.net/write_free21/2", "auth_required"),
+            ],
+        )
+
+    assert store.preserve_network_attempts(["sync-outage", "sync-outage"]) == 1
+
+    with connect_archive(path, read_only=True) as connection:
+        rows = [
+            tuple(row)
+            for row in connection.execute(
+                """
+                SELECT external_post_id, state, attempts, last_error_code
+                FROM crawl_frontier ORDER BY external_post_id
+                """
+            )
+        ]
+    assert rows == [(1, "retry", 4, None), (2, "retry", 5, "auth_required")]

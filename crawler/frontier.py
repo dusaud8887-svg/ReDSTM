@@ -255,6 +255,26 @@ class FrontierStore:
             ).fetchall()
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
+    def preserve_network_attempts(self, run_ids: list[str]) -> int:
+        unique_run_ids = list(dict.fromkeys(run_ids))
+        if not unique_run_ids:
+            return 0
+        placeholders = ",".join("?" for _ in unique_run_ids)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE crawl_frontier
+                SET attempts = MAX(attempts - 1, 0), state = 'retry',
+                    next_attempt_at = NULL, last_error_code = NULL
+                WHERE state IN ('retry', 'dead') AND url IN (
+                    SELECT url FROM captures
+                    WHERE run_id IN ({placeholders}) AND error_code = 'network_error'
+                )
+                """,
+                unique_run_ids,
+            )
+        return cursor.rowcount
+
     def claim(
         self,
         *,
