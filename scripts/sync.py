@@ -5,8 +5,6 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 from filelock import FileLock, Timeout
 from scrapy.crawler import CrawlerProcess
@@ -17,6 +15,7 @@ from crawler.session import SessionRefreshError, ensure_session_export
 from crawler.settings import USER_AGENT
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
+from scripts.healthcheck import notify_dead_man
 
 
 def _capture_summary(archive: Path, run_id: str) -> dict[str, int]:
@@ -43,23 +42,6 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
         os.replace(partial, path)
     finally:
         partial.unlink(missing_ok=True)
-
-
-def _ping_success(url: str) -> None:
-    parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("healthcheck URL must be credential-free HTTPS")
-    try:
-        urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=15).close()
-    except OSError as error:
-        raise RuntimeError("healthcheck success ping failed") from error
-
-
-def _notify_dead_man(status: str, url: str) -> None:
-    # The dead-man contract pings only fully successful runs so that a streak
-    # of partial failures still raises the external alert.
-    if url and status == "succeeded":
-        _ping_success(url)
 
 
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:
@@ -121,7 +103,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             discovered=discovered,
             summary={"outcomes": outcomes},
         )
-        _notify_dead_man(status, os.environ.get("REDSTM_HEALTHCHECK_URL", ""))
+        notify_dead_man(status == "succeeded", os.environ.get("REDSTM_HEALTHCHECK_URL", ""))
         return {
             "ok": status == "succeeded",
             "run_id": run_id,

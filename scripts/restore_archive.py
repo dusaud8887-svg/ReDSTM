@@ -10,6 +10,7 @@ from typing import Any
 
 from crawler.archive import archive_health
 from scripts.backup_archive import _sha256, _table_counts
+from scripts.healthcheck import notify_dead_man
 
 
 def _load_expected_snapshot(manifest: Path) -> dict[str, Any]:
@@ -113,6 +114,7 @@ def main() -> int:
     args = _parse_args()
     try:
         report = restore_backup(args.snapshot, args.manifest, args.target)
+        notify_dead_man(report["ok"] is True, os.environ.get("REDSTM_RESTORE_HEALTHCHECK_URL", ""))
     except Exception as error:
         print(json.dumps({"ok": False, "error": type(error).__name__, "message": str(error)}))
         return 1

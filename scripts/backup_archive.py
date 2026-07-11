@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from crawler.archive import archive_health, connect_archive
+from scripts.healthcheck import notify_dead_man
 
 
 def _sha256(path: Path) -> str:
@@ -124,6 +125,7 @@ def main() -> int:
     report = create_backup(
         args.source, args.snapshot, args.manifest, resume_partial=args.resume_partial
     )
+    notify_dead_man(report["ok"] is True, os.environ.get("REDSTM_BACKUP_HEALTHCHECK_URL", ""))
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

@@ -56,26 +56,29 @@ def inspect_archive(
                     (checked_at.isoformat(timespec="seconds"),),
                 )
             ]
-            missing_warcs = [
-                {"capture_id": int(row["id"]), "warc_file": str(row["warc_file"])}
-                for row in connection.execute(
-                    """
-                    SELECT id, warc_file FROM captures
-                    WHERE warc_file IS NOT NULL
-                    ORDER BY id
-                    """
-                )
-                if not _warc_path(str(row["warc_file"]), warc_dir).is_file()
-            ]
-            referenced_warcs = {
-                _warc_path(str(row["warc_file"]), warc_dir)
-                for row in connection.execute(
-                    "SELECT DISTINCT warc_file FROM captures WHERE warc_file IS NOT NULL"
-                )
-            }
+            # One row per referenced file: after backfill the captures table has
+            # hundreds of thousands of rows but only a handful of WARC files.
+            warc_rows = connection.execute(
+                """
+                SELECT warc_file, COUNT(*) AS capture_count, MIN(id) AS first_capture_id
+                FROM captures
+                WHERE warc_file IS NOT NULL
+                GROUP BY warc_file
+                ORDER BY warc_file
+                """
+            ).fetchall()
+            missing_warcs = []
             invalid_warcs = []
-            for path in sorted(referenced_warcs):
+            for row in warc_rows:
+                path = _warc_path(str(row["warc_file"]), warc_dir)
                 if not path.is_file():
+                    missing_warcs.append(
+                        {
+                            "warc_file": str(row["warc_file"]),
+                            "captures": int(row["capture_count"]),
+                            "first_capture_id": int(row["first_capture_id"]),
+                        }
+                    )
                     continue
                 try:
                     with path.open("rb") as stream:

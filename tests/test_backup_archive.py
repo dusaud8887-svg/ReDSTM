@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
 
 from crawler.archive import connect_archive, initialize_archive
-from scripts.backup_archive import create_backup
+from scripts.backup_archive import create_backup, main
 
 
 def test_create_backup_verifies_snapshot_and_refuses_overwrite(tmp_path: Path) -> None:
@@ -51,3 +52,27 @@ def test_resume_partial_verifies_without_recopying(tmp_path: Path) -> None:
     assert report["ok"] is True
     assert snapshot.exists()
     assert not partial.exists()
+
+
+def test_backup_cli_pings_dead_man_check_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "source.sqlite"
+    snapshot = tmp_path / "snapshot.sqlite"
+    manifest = tmp_path / "snapshot.manifest.json"
+    initialize_archive(source)
+    pinged: list[tuple[bool, str]] = []
+    monkeypatch.setattr(
+        "scripts.backup_archive.notify_dead_man",
+        lambda ok, url: pinged.append((ok, url)),
+    )
+    monkeypatch.setenv("REDSTM_BACKUP_HEALTHCHECK_URL", "https://hc.example.test/backup")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["backup", str(source), "--snapshot", str(snapshot), "--manifest", str(manifest)],
+    )
+
+    assert main() == 0
+    assert pinged == [(True, "https://hc.example.test/backup")]
+    assert json.loads(capsys.readouterr().out)["ok"] is True
