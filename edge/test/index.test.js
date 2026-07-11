@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+
 import worker from "../src/index.js";
 
 const username = "reader";
@@ -56,6 +58,53 @@ test("rejects missing or invalid credentials", async () => {
     environment({ VIEWER_PASSWORD: "" }),
   );
   assert.equal(unconfigured.status, 500);
+});
+
+test("validates Cloudflare Access JWTs and rejects the wrong audience", async () => {
+  const issuer = "https://redstm-test.cloudflareaccess.com";
+  const audience = "redstm-audience";
+  const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+  const publicJwk = await exportJWK(publicKey);
+  publicJwk.alg = "RS256";
+  publicJwk.kid = "test-key";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), `${issuer}/cdn-cgi/access/certs`);
+    return Response.json({ keys: [publicJwk] });
+  };
+  const token = await new SignJWT({ email: "reader@example.test" })
+    .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+    .setIssuer(issuer)
+    .setAudience(audience)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(privateKey);
+  const accessEnvironment = environment({
+    VIEWER_USERNAME: "",
+    VIEWER_PASSWORD: "",
+    TEAM_DOMAIN: issuer,
+    POLICY_AUD: audience,
+  });
+  try {
+    const valid = await worker.fetch(
+      new Request("https://archive.example/health", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      }),
+      accessEnvironment,
+    );
+    assert.equal(valid.status, 200);
+
+    const invalid = await worker.fetch(
+      new Request("https://archive.example/health", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      }),
+      { ...accessEnvironment, POLICY_AUD: "wrong-audience" },
+    );
+    assert.equal(invalid.status, 403);
+    assert.equal(invalid.headers.has("WWW-Authenticate"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("streams private objects with safe gzip and range headers", async () => {

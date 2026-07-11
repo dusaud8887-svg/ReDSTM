@@ -4,6 +4,7 @@
   "main": "src/index.js",
   "compatibility_date": "2026-07-10",
   "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

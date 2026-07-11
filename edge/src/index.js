@@ -1,5 +1,8 @@
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
 const encoder = new TextEncoder();
 const keyPattern = /^[a-zA-Z0-9_./-]+$/;
+const accessJwks = new Map();
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'none'",
@@ -26,7 +29,39 @@ async function equalSecrets(left, right) {
   return difference === 0;
 }
 
+function accessIssuer(teamDomain) {
+  const issuer = new URL(teamDomain);
+  if (issuer.protocol !== "https:" || issuer.username || issuer.password ||
+      issuer.pathname !== "/" || issuer.search || issuer.hash ||
+      !issuer.hostname.endsWith(".cloudflareaccess.com")) {
+    throw new TypeError("invalid Cloudflare Access team domain");
+  }
+  return issuer.origin;
+}
+
 async function authorized(request, env) {
+  if (env.TEAM_DOMAIN || env.POLICY_AUD) {
+    if (!env.TEAM_DOMAIN || !env.POLICY_AUD) return null;
+    let issuer;
+    try {
+      issuer = accessIssuer(env.TEAM_DOMAIN);
+    } catch {
+      return null;
+    }
+    const token = request.headers.get("Cf-Access-Jwt-Assertion");
+    if (!token) return false;
+    try {
+      let jwks = accessJwks.get(issuer);
+      if (!jwks) {
+        jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
+        accessJwks.set(issuer, jwks);
+      }
+      await jwtVerify(token, jwks, { issuer, audience: env.POLICY_AUD });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (!env.VIEWER_USERNAME || !env.VIEWER_PASSWORD) {
     return null;
   }
@@ -107,9 +142,12 @@ export default {
       return response("Worker secrets are not configured", 500);
     }
     if (!isAuthorized) {
-      return response("Authentication required", 401, {
-        "WWW-Authenticate": 'Basic realm="ReDSTM", charset="UTF-8"',
-      });
+      const accessMode = Boolean(env.TEAM_DOMAIN || env.POLICY_AUD);
+      return response(
+        "Authentication required",
+        accessMode ? 403 : 401,
+        accessMode ? {} : { "WWW-Authenticate": 'Basic realm="ReDSTM", charset="UTF-8"' },
+      );
     }
     if (!new Set(["GET", "HEAD"]).has(request.method)) {
       return response("Method not allowed", 405, { Allow: "GET, HEAD" });
