@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node scripts/check-assets.mjs && node --check src/index.js && node --check public/app.js && node --check public/search-core.js && node --check public/search-worker.js && node --check public/user-state.js && node --check scripts/benchmark-search.mjs && node --check test/index.test.js && node --check test/search.test.js && node --check test/user-state.test.js && node --check playwright.config.js && node --check e2e/viewer.spec.js",
+    "check": "node scripts/check-assets.mjs && node --check src/index.js && node --check src/control-api.js && node --check public/app.js && node --check public/search-core.js && node --check public/search-worker.js && node --check public/user-state.js && node --check scripts/benchmark-search.mjs && node --check test/index.test.js && node --check test/control-api.test.js && node --check test/search.test.js && node --check test/user-state.test.js && node --check playwright.config.js && node --check e2e/viewer.spec.js",
     "deploy": "npm test && npm run check && wrangler deploy --dry-run --strict && wrangler deploy --strict",
     "dev": "wrangler dev",
     "test": "node --test",

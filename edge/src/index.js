@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { controlApiResponse } from "./control-api.js";
 
 const encoder = new TextEncoder();
 const keyPattern = /^[a-zA-Z0-9_./-]+$/;
@@ -39,7 +40,7 @@ function accessIssuer(teamDomain) {
   return issuer.origin;
 }
 
-async function authorized(request, env) {
+async function authorized(request, env, role) {
   if (env.TEAM_DOMAIN || env.POLICY_AUD) {
     if (!env.TEAM_DOMAIN || !env.POLICY_AUD) return null;
     let issuer;
@@ -56,8 +57,11 @@ async function authorized(request, env) {
         jwks = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
         accessJwks.set(issuer, jwks);
       }
-      await jwtVerify(token, jwks, { issuer, audience: env.POLICY_AUD });
-      return true;
+      const audience = role === "runner" ? env.RUNNER_POLICY_AUD : env.POLICY_AUD;
+      if (!audience) return null;
+      const { payload } = await jwtVerify(token, jwks, { issuer, audience });
+      const subject = payload.email || payload.common_name || payload.sub;
+      return typeof subject === "string" ? { role, subject } : false;
     } catch {
       return false;
     }
@@ -66,7 +70,9 @@ async function authorized(request, env) {
     return null;
   }
   const expected = `Basic ${btoa(`${env.VIEWER_USERNAME}:${env.VIEWER_PASSWORD}`)}`;
-  return equalSecrets(request.headers.get("Authorization") || "", expected);
+  return await equalSecrets(request.headers.get("Authorization") || "", expected)
+    ? { role: "user", subject: "local-basic" }
+    : false;
 }
 
 function response(body, status, headers = {}) {
@@ -140,7 +146,9 @@ async function archiveResponse(request, env, key) {
 
 export default {
   async fetch(request, env) {
-    const isAuthorized = await authorized(request, env);
+    const url = new URL(request.url);
+    const role = url.pathname.startsWith("/api/v1/runner/") ? "runner" : "user";
+    const isAuthorized = await authorized(request, env, role);
     if (isAuthorized === null) {
       return response("Worker secrets are not configured", 500);
     }
@@ -152,11 +160,13 @@ export default {
         accessMode ? {} : { "WWW-Authenticate": 'Basic realm="ReDSTM", charset="UTF-8"' },
       );
     }
+    if (url.pathname.startsWith("/api/v1/")) {
+      return controlApiResponse(request, env, isAuthorized);
+    }
     if (!new Set(["GET", "HEAD"]).has(request.method)) {
       return response("Method not allowed", 405, { Allow: "GET, HEAD" });
     }
 
-    const url = new URL(request.url);
     if (url.pathname === "/health") {
       return Response.json({ status: "ok" });
     }
