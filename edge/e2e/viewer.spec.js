@@ -187,6 +187,7 @@ test("restores search controls from the URL and browser history", async ({ page 
     query: "첫째", boardId: "board_a", mode: "aa", sort: "latest",
   });
   await page.locator(".result-item", { hasText: "첫째" }).click();
+  await expect(page).toHaveURL(/\/read\//);
   await page.goBack();
   await expect(page.locator("#search-input")).toHaveValue("첫째");
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
