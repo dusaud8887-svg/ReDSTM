@@ -17,12 +17,19 @@ from uuid import UUID
 
 from filelock import FileLock, Timeout
 
-from crawler.archive import SCHEMA_VERSION
+from crawler.archive import (
+    APPLICATION_ID,
+    MIGRATIONS,
+    RUNTIME_SCHEMA_POLICY,
+    SCHEMA_VERSION,
+)
 from scripts.control_client import ControlClient
 from scripts.deploy_oracle import (
     OracleTarget,
     build_archive,
+    canonical_schema_status,
     deploy_release,
+    migrate_canonical_schema,
     quality_gates,
     release_identity,
     rollback,
@@ -56,8 +63,17 @@ _RELEASE_IDENTITY_FAILURES = {
 }
 
 
-def _require_oracle_deploy_ready() -> None:
-    if SCHEMA_VERSION >= 4:
+def _require_oracle_deploy_ready(schema: Mapping[str, object]) -> None:
+    expected_migrations = [[item.version, item.sha256] for item in MIGRATIONS]
+    if (
+        schema.get("application_id") != APPLICATION_ID
+        or schema.get("schema_version") != SCHEMA_VERSION
+        or schema.get("migration_count") != len(MIGRATIONS)
+        or schema.get("migrations") != expected_migrations
+        or schema.get("schema_policy") != RUNTIME_SCHEMA_POLICY
+        or schema.get("compatible") is not True
+        or schema.get("exact") is not True
+    ):
         raise ReleaseError("preflight", "canonical_schema_upgrade_pending")
 
 
@@ -577,6 +593,7 @@ def deploy_oracle_application(
     target: OracleTarget,
     release: str,
     *,
+    install_mode: str = "install",
     runner: CommandRunner = subprocess.run,
 ) -> dict[str, Any]:
     safe_runner = _without_application_secrets(runner)
@@ -589,11 +606,78 @@ def deploy_oracle_application(
             archive,
             digest,
             root / "deploy" / "oracle" / "install_release.sh",
+            install_mode=install_mode,
             runner=safe_runner,
         )
     if remote.get("current_release") != release:
         raise ReleaseError("oracle_status", "oracle_release_mismatch")
     return remote
+
+
+def deploy_oracle_bridge(
+    root: Path,
+    target: OracleTarget,
+    release: str,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> dict[str, Any]:
+    if RUNTIME_SCHEMA_POLICY != "explicit-v1":
+        raise ReleaseError("preflight", "canonical_bridge_policy_invalid")
+    oracle = deploy_oracle_application(
+        root, target, release, install_mode="install-bridge", runner=runner
+    )
+    try:
+        schema = canonical_schema_status(target, runner=_without_application_secrets(runner))
+    except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+        raise ReleaseError("oracle_schema", "canonical_schema_status_failed") from error
+    if schema["application_id"] != APPLICATION_ID:
+        raise ReleaseError("oracle_schema", "canonical_application_id_mismatch")
+    if schema["schema_policy"] != RUNTIME_SCHEMA_POLICY or schema["compatible"] is not True:
+        raise ReleaseError("oracle_schema", "canonical_bridge_incompatible")
+    if schema["schema_version"] >= SCHEMA_VERSION:
+        raise ReleaseError("oracle_schema", "canonical_bridge_not_required")
+    return {"oracle": oracle, "canonical": schema, "bridge_ready": True}
+
+
+def migrate_oracle_canonical(
+    target: OracleTarget,
+    *,
+    expected_current: str,
+    expected_previous: str,
+    runner: CommandRunner = subprocess.run,
+) -> dict[str, Any]:
+    safe_runner = _without_application_secrets(runner)
+    oracle = status(target, runner=safe_runner)
+    if oracle.get("current_release") != expected_current:
+        raise ReleaseError("oracle_schema", "canonical_current_release_changed")
+    if oracle.get("previous_release") != expected_previous:
+        raise ReleaseError("oracle_schema", "canonical_previous_release_changed")
+    migration: dict[str, Any] | None = None
+    migration_error: BaseException | None = None
+    for _attempt in range(2):
+        try:
+            migration = migrate_canonical_schema(
+                target,
+                expected_current=expected_current,
+                expected_previous=expected_previous,
+                runner=safe_runner,
+            )
+        except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
+            migration_error = error
+        else:
+            break
+    try:
+        schema = canonical_schema_status(target, runner=safe_runner)
+        _require_oracle_deploy_ready(schema)
+    except ReleaseError:
+        raise
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
+        raise ReleaseError("oracle_schema", "canonical_schema_migration_failed") from (
+            migration_error or error
+        )
+    if migration is None:
+        migration = {"state": "reconciled", "schema_version": schema["schema_version"]}
+    return {"oracle": oracle, "migration": migration, "canonical": schema}
 
 
 def deploy_all(
@@ -940,6 +1024,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     commands.add_parser("deploy-cloudflare")
     deploy_parser = commands.add_parser("deploy")
     _target_arguments(deploy_parser)
+    bridge_parser = commands.add_parser("deploy-oracle-bridge")
+    _target_arguments(bridge_parser)
+    migration_parser = commands.add_parser("migrate-canonical")
+    _target_arguments(migration_parser)
+    migration_parser.add_argument("--expected-current", required=True)
+    migration_parser.add_argument("--expected-previous", required=True)
     rollback_parser = commands.add_parser("rollback")
     _target_arguments(rollback_parser)
     rollback_parser.add_argument("--worker-version", required=True)
@@ -987,18 +1077,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                 deploy_target: OracleTarget | None = None
                 if args.command == "deploy-cloudflare":
                     ControlClient.from_environment()
-                elif args.command == "deploy":
-                    _require_oracle_deploy_ready()
-                    ControlClient.from_environment()
+                elif args.command in {"deploy", "deploy-oracle-bridge", "migrate-canonical"}:
+                    if args.command == "deploy":
+                        ControlClient.from_environment()
                     deploy_target = _target(args.host, args.user, args.key)
                 with release_preflight(root) as (release_root, release):
                     if args.command == "preflight":
                         result = {"release": release}
                     elif args.command == "deploy-cloudflare":
                         result = deploy_cloudflare(release_root, release)
+                    elif args.command == "deploy-oracle-bridge":
+                        if deploy_target is None:
+                            raise ReleaseError("preflight", "oracle_target_missing")
+                        result = deploy_oracle_bridge(
+                            release_root,
+                            deploy_target,
+                            release,
+                        )
+                    elif args.command == "migrate-canonical":
+                        if deploy_target is None:
+                            raise ReleaseError("preflight", "oracle_target_missing")
+                        if release != args.expected_current:
+                            raise ReleaseError("preflight", "canonical_migration_source_mismatch")
+                        result = migrate_oracle_canonical(
+                            deploy_target,
+                            expected_current=args.expected_current,
+                            expected_previous=args.expected_previous,
+                        )
                     else:
                         if deploy_target is None:
                             raise ReleaseError("preflight", "oracle_target_missing")
+                        try:
+                            schema = canonical_schema_status(deploy_target)
+                        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+                            raise ReleaseError(
+                                "preflight", "canonical_schema_status_failed"
+                            ) from error
+                        _require_oracle_deploy_ready(schema)
                         result = deploy_all(
                             release_root,
                             deploy_target,

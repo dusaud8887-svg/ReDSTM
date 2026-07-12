@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from scrapy.http import HtmlResponse, Response
 from crawler import settings as crawler_settings
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
+from crawler.frontier import FrontierStore
 from crawler.items import CapturedPostItem
 from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider
@@ -55,6 +57,22 @@ def _initialize(path: Path) -> None:
         )
 
 
+def _detail_requests(outputs: Sequence[object]) -> list[Request]:
+    return [
+        output
+        for output in outputs
+        if isinstance(output, Request) and "frontier_lease" in output.meta
+    ]
+
+
+def _listing_requests(outputs: Sequence[object]) -> list[Request]:
+    return [
+        output
+        for output in outputs
+        if isinstance(output, Request) and "frontier_lease" not in output.meta
+    ]
+
+
 def _run_fixture(path: Path, run_id: str) -> int:
     spider = TypeMoonSpider(
         board_id="write_free21",
@@ -78,7 +96,7 @@ def _run_fixture(path: Path, run_id: str) -> int:
         encoding="utf-8",
     )
     outputs = list(spider.parse_listing(listing))
-    detail_requests = [output for output in outputs if isinstance(output, Request)]
+    detail_requests = _detail_requests(outputs)
     if not detail_requests:
         return 0
     [detail_request] = detail_requests
@@ -219,7 +237,7 @@ def test_listing_metadata_change_reopens_known_post(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    requests = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    requests = _detail_requests(list(spider.parse_listing(listing)))
 
     assert len(requests) == 1
     assert requests[0].url.endswith("/write_free21/62068")
@@ -231,7 +249,268 @@ def test_listing_metadata_change_reopens_known_post(tmp_path: Path) -> None:
         )
 
 
-def test_overlap_boundary_stops_next_listing_page(tmp_path: Path) -> None:
+def test_incremental_anchor_requires_configured_overlap_page(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    with connect_archive(path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title, first_seen_at,
+                last_seen_at, comment_count
+            ) VALUES ('write_free21', ?, ?, ?, 'now', 'now', 0)
+            """,
+            [
+                (100, "https://www.typemoon.net/write_free21/100", "anchor"),
+                (99, "https://www.typemoon.net/write_free21/99", "older"),
+            ],
+        )
+        connection.execute(
+            "UPDATE boards SET incremental_anchor_post_id = 100 WHERE board_id = 'write_free21'"
+        )
+    frontier = FrontierStore(path)
+    for post_id in (100, 99):
+        frontier.seed(
+            "write_free21",
+            post_id,
+            f"https://www.typemoon.net/write_free21/{post_id}",
+            expected_comment_count=0,
+        )
+        lease = frontier.claim_identity("write_free21", post_id, lease_seconds=60)
+        assert lease is not None
+        frontier.complete(lease)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_pages=3,
+        max_posts=1,
+        anchor_post_id=100,
+        overlap_pages=1,
+    )
+    page_one = HtmlResponse(
+        "https://www.typemoon.net/write_free21",
+        request=Request("https://www.typemoon.net/write_free21"),
+        body=(
+            b"<table><tbody>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/101'>"
+            b"<span class='subject'>new</span></a></td></tr>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/100'>"
+            b"<span class='subject'>anchor</span></a></td></tr>"
+            b"</tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = list(spider.parse_listing(page_one))
+
+    assert spider.listing_completed is False
+    assert spider.latest_post_id == 101
+    assert any(isinstance(item, Request) and item.url.endswith("?page=2") for item in outputs)
+    page_two = HtmlResponse(
+        "https://www.typemoon.net/write_free21?page=2",
+        request=Request("https://www.typemoon.net/write_free21?page=2"),
+        body=(
+            b"<table><tbody><tr><td class='td-subj-wrap'><a href='/write_free21/99'>"
+            b"<span class='subject'>older</span></a></td></tr></tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+    list(spider.parse_listing(page_two))
+    assert spider.listing_completed is True
+
+
+def test_exact_anchor_disables_unchanged_streak_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("crawler.spiders.typemoon.REDSTM_LISTING_OVERLAP_UNCHANGED", 2)
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    with connect_archive(path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title, first_seen_at,
+                last_seen_at, comment_count
+            ) VALUES ('write_free21', ?, ?, ?, 'now', 'now', 0)
+            """,
+            [
+                (post_id, f"https://www.typemoon.net/write_free21/{post_id}", f"post {post_id}")
+                for post_id in (3, 2, 1)
+            ],
+        )
+    frontier = FrontierStore(path)
+    for post_id in (3, 2, 1):
+        frontier.seed(
+            "write_free21",
+            post_id,
+            f"https://www.typemoon.net/write_free21/{post_id}",
+            expected_comment_count=0,
+        )
+        lease = frontier.claim_identity("write_free21", post_id, lease_seconds=60)
+        assert lease is not None
+        frontier.complete(lease)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_pages=2,
+        max_posts=1,
+        anchor_post_id=1,
+        overlap_pages=0,
+    )
+    page_one_url = "https://www.typemoon.net/write_free21"
+    page_one = HtmlResponse(
+        page_one_url,
+        request=Request(page_one_url),
+        body=(
+            b"<table><tbody>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/3'>"
+            b"<span class='subject'>post 3</span></a></td></tr>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/2'>"
+            b"<span class='subject'>post 2</span></a></td></tr>"
+            b"</tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+
+    requests = _listing_requests(list(spider.parse_listing(page_one)))
+
+    assert [request.url for request in requests] == [f"{page_one_url}?page=2"]
+    assert spider.listing_completed is False
+
+
+@pytest.mark.parametrize(("latest_post_id", "expected_anchor"), [(101, 101), (None, 100)])
+def test_successful_listing_pass_commits_anchor_and_timestamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    latest_post_id: int | None,
+    expected_anchor: int,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    with connect_archive(path) as connection:
+        connection.execute(
+            "UPDATE boards SET incremental_anchor_post_id = 100 WHERE board_id = 'write_free21'"
+        )
+    captured: dict[str, object] = {}
+    spider = SimpleNamespace(
+        scheduled_posts=0,
+        failure_codes=set(),
+        paused=False,
+        next_inventory_page=1,
+        inventory_completed=False,
+        listing_completed=True,
+        latest_post_id=latest_post_id,
+    )
+
+    class FakeProcess:
+        def __init__(self, _settings: object) -> None:
+            self.crawler = SimpleNamespace(spider=spider, stats=None)
+
+        def create_crawler(self, _spider_type: object) -> object:
+            return self.crawler
+
+        def crawl(self, _crawler: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def start(self, *, stop_after_crawl: bool) -> None:
+            assert stop_after_crawl is True
+
+    monkeypatch.setattr("scripts.sync.CrawlerProcess", FakeProcess)
+    monkeypatch.setattr("scripts.sync.ensure_session_export", lambda *_a, **_k: _session())
+    report = run_sync(
+        Namespace(
+            archive=path,
+            board="write_free21",
+            session=tmp_path / "session.json",
+            session_prevalidated=False,
+            warc_dir=tmp_path / "warc",
+            pause_file=None,
+            parent_lock_held=True,
+            inventory=False,
+            max_seconds=60,
+            max_pages=3,
+            max_posts=20,
+            lease_seconds=60,
+        )
+    )
+
+    assert captured["anchor_post_id"] == 100
+    assert report["latest_post_id"] == latest_post_id
+    with connect_archive(path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT incremental_anchor_post_id, last_incremental_at FROM boards"
+        ).fetchone()
+    assert row["incremental_anchor_post_id"] == expected_anchor
+    assert row["last_incremental_at"] is not None
+
+
+def test_incomplete_listing_boundary_does_not_advance_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    with connect_archive(path) as connection:
+        connection.execute(
+            "UPDATE boards SET incremental_anchor_post_id = 100 WHERE board_id = 'write_free21'"
+        )
+    spider = SimpleNamespace(
+        scheduled_posts=0,
+        failure_codes=set(),
+        paused=False,
+        next_inventory_page=1,
+        inventory_completed=False,
+        listing_completed=False,
+        latest_post_id=101,
+    )
+
+    class FakeProcess:
+        def __init__(self, _settings: object) -> None:
+            self.crawler = SimpleNamespace(spider=spider, stats=None)
+
+        def create_crawler(self, _spider_type: object) -> object:
+            return self.crawler
+
+        def crawl(self, _crawler: object, **_kwargs: object) -> None:
+            return None
+
+        def start(self, *, stop_after_crawl: bool) -> None:
+            assert stop_after_crawl is True
+
+    monkeypatch.setattr("scripts.sync.CrawlerProcess", FakeProcess)
+    monkeypatch.setattr("scripts.sync.ensure_session_export", lambda *_a, **_k: _session())
+
+    report = run_sync(
+        Namespace(
+            archive=path,
+            board="write_free21",
+            session=tmp_path / "session.json",
+            session_prevalidated=False,
+            warc_dir=tmp_path / "warc",
+            pause_file=None,
+            parent_lock_held=True,
+            inventory=False,
+            max_seconds=60,
+            max_pages=1,
+            max_posts=20,
+            lease_seconds=60,
+        )
+    )
+
+    assert report["ok"] is False
+    assert report["status"] == "failed"
+    assert report["failures"] == ["listing_boundary_incomplete"]
+    with connect_archive(path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT incremental_anchor_post_id, last_incremental_at FROM boards"
+        ).fetchone()
+    assert tuple(row) == (100, None)
+
+
+def test_overlap_boundary_scans_two_extra_listing_pages(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
     with connect_archive(path) as connection:
@@ -268,9 +547,9 @@ def test_overlap_boundary_stops_next_listing_page(tmp_path: Path) -> None:
         max_pages=2,
     )
 
-    requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
+    requests = _listing_requests(list(spider.parse_listing(response)))
 
-    assert requests == []
+    assert [request.url for request in requests] == [f"{url}?page=2"]
     assert spider.scheduled_posts == 0
 
     inventory = TypeMoonSpider(
@@ -328,7 +607,7 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
         max_pages=2,
     )
 
-    requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
+    requests = _listing_requests(list(spider.parse_listing(response)))
 
     assert [request.url for request in requests] == [f"{url}?page=2"]
     assert "listing_parse_failed" in spider.failure_codes
@@ -343,9 +622,7 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
         start_page=3,
     )
     inventory_response = response.replace(url=f"{url}?page=3")
-    inventory_requests = [
-        item for item in inventory.parse_listing(inventory_response) if isinstance(item, Request)
-    ]
+    inventory_requests = _listing_requests(list(inventory.parse_listing(inventory_response)))
     assert inventory_requests == []
     assert inventory.next_inventory_page == 3
 
@@ -525,9 +802,7 @@ def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
         body=(_FIXTURES / "listing.html").read_bytes(),
         encoding="utf-8",
     )
-    [detail_request] = [
-        output for output in spider.parse_listing(listing) if isinstance(output, Request)
-    ]
+    [detail_request] = _detail_requests(list(spider.parse_listing(listing)))
 
     spider.detail_error(SimpleNamespace(request=detail_request, value=OSError("secret detail")))
 
@@ -551,7 +826,7 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
         archive_path=path,
         run_id=run_id,
         session=_session(),
-        max_posts=1,
+        max_posts=2,
     )
     url = "https://www.typemoon.net/write_free21"
     response = HtmlResponse(
@@ -568,7 +843,7 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
+    requests = _detail_requests(list(spider.parse_listing(response)))
 
     assert len(requests) == 1
     assert requests[0].meta["expected_comment_count"] == 0
@@ -594,6 +869,7 @@ def test_sync_stops_current_board_on_auth_response(tmp_path: Path) -> None:
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
         max_posts=2,
+        detail_concurrency=1,
     )
     listing_url = "https://www.typemoon.net/write_free21"
     listing = HtmlResponse(
@@ -609,7 +885,7 @@ def test_sync_stops_current_board_on_auth_response(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    [request] = _detail_requests(list(spider.parse_listing(listing)))
     response = HtmlResponse(
         request.url,
         request=request,
@@ -639,6 +915,7 @@ def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
         max_posts=4,
+        detail_concurrency=1,
     )
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
@@ -652,7 +929,7 @@ def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
         body=f"<table><tbody>{rows}</tbody></table>".encode(),
         encoding="utf-8",
     )
-    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    [request] = _detail_requests(list(spider.parse_listing(listing)))
 
     for expected_remaining in (1, 1, 0):
         outputs = list(
@@ -676,6 +953,7 @@ def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Pat
         run_id=run_id,
         session=_session(),
         max_posts=4,
+        detail_concurrency=1,
     )
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
@@ -689,7 +967,7 @@ def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Pat
         body=f"<table><tbody>{rows}</tbody></table>".encode(),
         encoding="utf-8",
     )
-    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    [request] = _detail_requests(list(spider.parse_listing(listing)))
 
     for attempt in range(3):
         response = HtmlResponse(
@@ -739,6 +1017,7 @@ def test_pause_marker_stops_before_next_detail_lease(tmp_path: Path) -> None:
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
         max_posts=2,
+        detail_concurrency=1,
         pause_file=pause_file,
     )
     url = "https://www.typemoon.net/write_free21"
@@ -755,7 +1034,7 @@ def test_pause_marker_stops_before_next_detail_lease(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    [request] = _detail_requests(list(spider.parse_listing(listing)))
     pause_file.touch()
     detail = HtmlResponse(
         request.url,
@@ -777,7 +1056,7 @@ def test_pause_marker_stops_before_next_detail_lease(tmp_path: Path) -> None:
         )
 
 
-def test_non_html_detail_records_terminal_parse_outcome(tmp_path: Path) -> None:
+def test_non_html_detail_records_retryable_parse_outcome(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
     store = ArchiveStore(path)
@@ -789,7 +1068,7 @@ def test_non_html_detail_records_terminal_parse_outcome(tmp_path: Path) -> None:
     listing = HtmlResponse(
         url, request=Request(url), body=(_FIXTURES / "listing.html").read_bytes(), encoding="utf-8"
     )
-    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    [request] = _detail_requests(list(spider.parse_listing(listing)))
     [item] = [
         output
         for output in spider._parse_sync_detail(
@@ -806,7 +1085,9 @@ def test_non_html_detail_records_terminal_parse_outcome(tmp_path: Path) -> None:
                 "SELECT outcome, error_code FROM captures WHERE entity_type = 'post'"
             ).fetchone()
         ) == ("parse_failed", "parse_drift")
-        assert tuple(connection.execute("SELECT state FROM crawl_frontier").fetchone()) == ("dead",)
+        assert tuple(connection.execute("SELECT state FROM crawl_frontier").fetchone()) == (
+            "retry",
+        )
 
 
 def test_captured_post_repr_never_logs_content() -> None:

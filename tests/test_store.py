@@ -349,7 +349,7 @@ def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
     _initialize(path)
     frontier = FrontierStore(path)
     url = "https://www.typemoon.net/ss_temp01/7"
-    frontier.seed("ss_temp01", 7, url, expected_comment_count=6)
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=1)
     lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
     assert lease is not None
     store = ArchiveStore(path)
@@ -378,7 +378,7 @@ def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
         assert connection.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
         assert (
             connection.execute("SELECT expected_comment_count FROM crawl_frontier").fetchone()[0]
-            == 6
+            == 1
         )
 
     store.store_post(
@@ -401,10 +401,10 @@ def test_successful_empty_comment_capture_refreshes_frontier_expectation(tmp_pat
     _initialize(path)
     frontier = FrontierStore(path)
     url = "https://www.typemoon.net/ss_temp01/7"
-    frontier.seed("ss_temp01", 7, url, expected_comment_count=6)
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=0)
     lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
     assert lease is not None
-    assert lease.expected_comment_count == 6
+    assert lease.expected_comment_count == 0
     store = ArchiveStore(path)
     run_id = store.start_run("sync", now=_NOW)
 
@@ -462,6 +462,34 @@ def test_non_stored_outcome_preserves_frontier_expectation(
             connection.execute("SELECT expected_comment_count FROM crawl_frontier").fetchone()[0]
             == 6
         )
+
+
+def test_store_rejects_a_post_with_fewer_comments_than_its_lease(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=2)
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+
+    with pytest.raises(ValueError, match="fewer comments"):
+        store.store_post(
+            run_id,
+            _post(),
+            captured_at=_NOW,
+            raw_sha256="a" * 64,
+            warc_file="capture.warc.gz",
+            lease=lease,
+        )
+
+    with connect_archive(path, read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "running"
 
 
 def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from crawler.archive import connect_archive, initialize_archive
+from crawler.settings import REDSTM_FULL_CONTENT_MAX_POSTS, REDSTM_RECOVERY_MAX_POSTS
 from scripts.control_client import ControlClient
 from scripts.control_runner import (
     ControlRunner,
@@ -1216,7 +1217,72 @@ def test_retry_batch_runs_each_cycle_even_with_a_legacy_completion_marker(
     report = runner._execute_action("retry-batch", "scheduled", "scheduled")
 
     assert report["status"] == "succeeded"
-    assert commands[0][commands[0].index("--max-posts") + 1] == "100"
+    assert commands[0][commands[0].index("--max-posts") + 1] == str(REDSTM_RECOVERY_MAX_POSTS)
+
+
+def test_full_content_refetches_every_post_for_one_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    commands: list[list[str]] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        return {"ok": True, "status": "succeeded", "full_content_remaining": 0}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-content", "full-aa", "full-aa", command_id="manual", board_id="aa"
+    )
+
+    assert report["status"] == "succeeded"
+    command = commands[0]
+    assert "--all" not in command
+    assert "--full-content-before" in command
+    assert command[command.index("--full-content-max-rowid") + 1] == "0"
+    assert command[command.index("--board") + 1] == "aa"
+    assert command[command.index("--max-posts") + 1] == str(REDSTM_FULL_CONTENT_MAX_POSTS)
+    assert "--pause-file" not in command
+
+
+def test_full_content_checkpoint_survives_a_partial_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawl_frontier (board_id, external_post_id, url)
+            VALUES ('aa', 1, 'https://source.invalid/aa/1')
+            """
+        )
+    commands: list[list[str]] = []
+    reports = iter(
+        [
+            {"ok": True, "status": "succeeded", "full_content_remaining": 1},
+            {"ok": True, "status": "succeeded", "full_content_remaining": 0},
+        ]
+    )
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        return next(reports)
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    result = runner._execute_action(
+        "full-content", "full-1", "full-1", command_id="manual", board_id="aa"
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["full_content_complete"] is True
+    assert not (runner.profile.state_dir / "full-content.started").exists()
+    for argument in ("--full-content-before", "--full-content-max-rowid"):
+        assert (
+            commands[0][commands[0].index(argument) + 1]
+            == commands[1][commands[1].index(argument) + 1]
+        )
 
 
 def test_scheduled_run_requires_explicit_export_bootstrap(
@@ -1276,7 +1342,7 @@ def test_scheduled_run_requires_explicit_export_bootstrap(
     report = runner.run_scheduled()
 
     assert report["status"] == "partial"
-    assert len(commands) == 3
+    assert len(commands) == 2
     start = next(payload for path, payload in api.calls if path == "/api/v1/runner/runs")
     assert start["kind"] == "scheduled" and start["source"] == "systemd"
     assert "command_id" not in start
@@ -1347,15 +1413,14 @@ def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
 
     assert report["status"] == "failed"
     assert actions == ["sync-now", "publish-if-changed"]
-    skipped = next(
-        payload["events"][0]
+    assert not any(
+        payload["events"][0]["state"] == "skipped"
         for path, payload in api.calls
-        if path.endswith("/events:batch") and payload["events"][0]["state"] == "skipped"
+        if path.endswith("/events:batch")
     )
-    assert skipped["step"] == "retry-batch"
 
 
-def test_scheduled_run_uses_weekly_inventory_instead_of_recovery(
+def test_scheduled_run_only_collects_latest_and_publishes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -1417,15 +1482,12 @@ def test_scheduled_run_uses_weekly_inventory_instead_of_recovery(
     assert runner.run_scheduled()["status"] == "succeeded"
     assert [command[command.index("-m") + 1] for command in commands] == [
         "scripts.crawl_cycle",
-        "scripts.crawl_cycle",
         "scripts.export_static",
         "scripts.publish_static",
         "scripts.release_smoke",
     ]
     assert "--inventory" not in commands[0]
-    assert "--inventory" in commands[1]
-    assert "scripts.recover_queue" not in commands[1]
-    assert (runner.profile.state_dir / "inventory.completed").is_file()
+    assert all("scripts.recover_queue" not in command for command in commands)
 
 
 def test_partial_inventory_keeps_running_until_every_board_cursor_completes(
@@ -1438,34 +1500,35 @@ def test_partial_inventory_keeps_running_until_every_board_cursor_completes(
         "stop_reason": "time_budget",
         "boards": [{"board_id": "aa"}],
     }
-    monkeypatch.setattr(runner, "_execute_report", lambda *_args, **_kwargs: report)
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return report
+        started_at = runner._latest_inventory_pass_started_at()
+        assert started_at is not None
+        with connect_archive(runner.profile.archive) as connection:
+            connection.execute(
+                "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ?",
+                (started_at,),
+            )
+        return {"ok": True, "status": "succeeded", "boards": []}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
     with connect_archive(runner.profile.archive) as connection:
         connection.execute("UPDATE boards SET inventory_next_page = 4 WHERE board_id = 'aa'")
 
-    runner._execute_action("inventory", "inventory-1", "inventory-1")
+    runner._execute_action("full-catalog", "inventory-1", "inventory-1", command_id="manual")
 
     marker = runner.profile.state_dir / "inventory.completed"
-    assert not marker.exists()
-    assert (runner.profile.state_dir / "inventory.started").is_file()
-    assert runner._inventory_due() is True
-
-    started_at = runner._latest_inventory_pass_started_at()
-    assert started_at is not None
-    with connect_archive(runner.profile.archive) as connection:
-        connection.execute(
-            """
-            UPDATE boards SET inventory_next_page = 1,
-                last_inventory_at = ?
-            WHERE board_id = 'aa'
-            """,
-            (started_at,),
-        )
-    runner._execute_action("inventory", "inventory-2", "inventory-2")
+    assert calls == 2
     assert marker.is_file()
     assert not (runner.profile.state_dir / "inventory.started").exists()
 
 
-def test_inventory_finalizes_when_a_crash_left_only_the_pass_marker(
+def test_full_catalog_refetches_even_after_a_completed_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -1475,19 +1538,29 @@ def test_inventory_finalizes_when_a_crash_left_only_the_pass_marker(
             "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ?",
             (started_at,),
         )
+    commands: list[list[str]] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        return {"ok": True, "status": "succeeded", "boards": []}
+
     monkeypatch.setattr(
         runner,
         "_execute_report",
-        lambda *_args, **_kwargs: pytest.fail("completed inventory must not start a subprocess"),
+        execute,
     )
 
-    runner._execute_action("inventory", "inventory-resume", "inventory-resume")
+    runner._execute_action(
+        "full-catalog", "inventory-resume", "inventory-resume", command_id="manual"
+    )
 
     assert (runner.profile.state_dir / "inventory.completed").is_file()
     assert not (runner.profile.state_dir / "inventory.started").exists()
+    assert "--inventory" in commands[0] and "--listing-only" in commands[0]
+    assert commands[0][commands[0].index("--inventory-since") + 1] == started_at
 
 
-def test_scheduled_bootstrap_recovery_drains_outline_only_without_daily_throttle(
+def test_scheduled_run_does_not_start_manual_full_content_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -1537,8 +1610,7 @@ def test_scheduled_bootstrap_recovery_drains_outline_only_without_daily_throttle
     monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
 
     assert runner.run_scheduled()["status"] == "succeeded"
-    recovery = next(command for command in commands if "scripts.recover_queue" in command)
-    assert recovery[recovery.index("--max-posts") + 1] == "600"
+    assert all("scripts.recover_queue" not in command for command in commands)
     assert not (runner.profile.state_dir / "recovery.completed").exists()
 
 
@@ -1552,15 +1624,14 @@ def test_running_process_claims_pause_marker(
 
     class Process:
         def __init__(self, arguments: list[str], **_kwargs: object) -> None:
-            assert "--pause-file" in arguments
+            assert "--pause-file" not in arguments
             output = Path(arguments[arguments.index("--output") + 1])
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(
                 json.dumps(
                     {
-                        "ok": False,
-                        "status": "partial",
-                        "stop_reason": "schedule_paused",
+                        "ok": True,
+                        "status": "succeeded",
                         "boards": [],
                     }
                 ),
@@ -1576,7 +1647,7 @@ def test_running_process_claims_pause_marker(
 
     monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
 
-    assert runner.run_once()["status"] == "partial"
+    assert runner.run_once()["status"] == "succeeded"
     assert (runner.profile.state_dir / "schedule.paused").is_file()
     pause = store.command(pause_command["command_id"])
     assert pause is not None and pause["state"] == "succeeded"

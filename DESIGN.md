@@ -228,16 +228,16 @@ Wordmark는 SUIT 700 ink 단색이다. wordmark에 red를 쓰지 않는다. red�
 
 ## 5. Responsive shell
 
-Wide, 1180px 이상:
+Wide, 1200px 이상:
 
     navigation rail 72px | catalog 360px | reader minmax(0, 1fr)
 
-- rail: Library, Search, Saved, Operations
-- Operations rail 항목은 `/ops` 배포 후 노출한다. 그 전에는 장서, 검색, 저장, 설정 4개를 유지한다.
+- rail: Home, Search, Saved, Settings, Operations
+- Operations는 `/ops`로 이동하고 Reader의 현재 route/state와 분리한다.
 - catalog와 reader는 독립 scroll context
 - reader content max 900px, prose measure 기본 760px
 
-Medium, 760~1179px:
+Medium, 760~1199px:
 
 - rail을 top app bar/menu로 합침
 - catalog 340px + reader
@@ -248,8 +248,8 @@ Narrow, 759px 이하:
 - 한 번에 한 plane만 표시: Home/Library/Search/Saved 또는 Reader
 - top-level bottom navigation 4개: 장서, 검색, 저장, 설정
 - Reader 진입 시 global bottom navigation 숨김
-- Reader bottom bar는 목록, 이전, 다음, 설정 최대 4개
-- bookmark, 원문, mode, 몰입은 More/Settings sheet
+- Reader bottom bar는 목록, 이전, 저장, 다음, 설정 5개
+- 원문, mode, 몰입은 article chrome 또는 Settings sheet
 - browser Back이 query/filter/list scroll 위치로 복귀
 - 100dvh, viewport-fit=cover, safe-area inset 적용
 - AA stage 외 page-level horizontal scroll 금지
@@ -274,7 +274,7 @@ Android Chrome 동작 규칙:
 Chrome 치수:
 
 - bottom navigation: 높이 56px + safe-area, icon 20px + label 11px/500, active만 red
-- Reader bottom bar: 높이 52px + safe-area, 4개 action 등분, label nowrap
+- Reader bottom bar: 높이 52px + safe-area, 5개 action 등분, label nowrap
 - medium top app bar 56px, rail 폭 72px(icon 20px + label 10px 또는 tooltip)
 - `<meta name="theme-color">`는 theme별 page token(light `#FFFFFF`, dark `#0B0D12`)을 따른다
 

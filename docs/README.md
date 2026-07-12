@@ -91,7 +91,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
   4-viewport 구현
 - complete listing seed, sync mid-board breaker, 30분 session 재검증, cycle-wide writer lock,
   subprocess hard bound와 bounded dead revive의 local crawler 구현
-- schema v3 inventory cursor, schema v4 durable listing 댓글 기대치와 automatic bootstrap/recovery,
+- schema v3 inventory cursor, schema v4 durable listing 댓글 기대치·증분 anchor와 수동 full collection,
   Operations telemetry의 local 검증
 - 홈/탐색/보관함 IA, current-release 미완독 이어읽기, catalog scroll, 모바일 직접 저장/집중 종료,
   AA 댓글 설정 연동의 4-viewport local 검증
@@ -128,7 +128,7 @@ baseline은 명시적 full export/publish bootstrap과 authenticated delta readb
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
 1. 실제 Android/frontend acceptance
-2. 명시적 full export/publish bootstrap 뒤 time/failure-bounded inventory·recovery·실제 delta publish canary
+2. 명시적 full export/publish bootstrap 뒤 장기 inventory·recovery·실제 delta publish canary
 3. duplicate command와 실제 crawl 중 D1/Worker outage canary
 4. schedule 활성 상태의 24시간 canary, 7일 shadow와 cutover
 
@@ -146,7 +146,7 @@ baseline은 명시적 full export/publish bootstrap과 authenticated delta readb
 - frontend: plain HTML/CSS/ES modules; framework/UI kit 추가 없음
 - control: Worker `/api/v1` 한 경계, Access user/service role 분리
 - command: sync/retry/publish/pause/resume fixed action만; shell/path/restore/delete 금지
-- crawler: listing index를 queue seed로 쓰고 detail은 lease 1건씩 처리; concurrency 1, 10초 하한
+- crawler: listing index를 queue seed로 쓰고 detail은 lease 최대 2건씩 엇갈려 처리; 시작 간 10초 하한
   delay(감속 전용 autothrottle), bounded outage 중단, durable inventory cursor, systemd automation,
   delta publish; local safety 계약과 남은 live gate는 `00 §8`/`10 §6·8.1`
 - access: private 유지; live 확인은 로그인된 Chrome, 자동 E2E는 local Worker 사용

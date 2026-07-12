@@ -25,6 +25,8 @@ _CONNECT_TIMEOUT_SECONDS = 5.0
 _TOTAL_REQUEST_TIMEOUT_SECONDS = 15.0
 _ACTIONS = {
     "sync-now",
+    "full-catalog",
+    "full-content",
     "retry-batch",
     "publish-if-changed",
     "pause-after-current",
@@ -33,6 +35,7 @@ _ACTIONS = {
 _RUNNER_PATH = re.compile(
     r"/api/v1/runner/(?:"
     r"commands/claim|heartbeat|boards/status|runs|"
+    r"frontier-failures|"
     r"runs/[a-zA-Z0-9_.:-]{1,128}/(?:events:batch|finish)|"
     r"commands/[0-9a-f-]{36}/finish)"
 )
@@ -302,6 +305,7 @@ class ControlClient:
             not isinstance(command, dict)
             or not isinstance(command.get("command_id"), str)
             or command.get("action") not in _ACTIONS
+            or not isinstance(command.get("args", {}), dict)
             or not isinstance(command.get("state"), str)
         ):
             raise ControlProtocolError("invalid_command_response")

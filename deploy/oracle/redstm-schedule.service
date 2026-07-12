@@ -1,5 +1,5 @@
 [Unit]
-Description=ReDSTM scheduled crawl, recovery, and delta publish
+Description=ReDSTM scheduled latest crawl and delta publish
 After=network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ EnvironmentFile=-/etc/redstm/runtime.env
 Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf
 ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner --scheduled
 Restart=no
-TimeoutStartSec=7h
+TimeoutStartSec=infinity
 Nice=10
 IOSchedulingClass=idle
 UMask=0077

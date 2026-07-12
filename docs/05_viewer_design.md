@@ -234,7 +234,7 @@ Reader와 같은 brand/token이지만 더 조밀한 **운영 브리프 + 원장*
 
 stale 사실은 모두 `마지막 보고` 문법을 사용하고 unknown count는 `—`다. status mark는 8px 수준으로
 축소하고 28~34px verdict를 넘지 않는다. mobile은 가로 표나 card stack이 아니라 native disclosure
-row를 쓴다. `sync-now`는 놓친 schedule 보완, `retry-batch`는 due 최대 100건이다.
+row를 쓴다. `sync-now`는 놓친 schedule 보완, `retry-batch`는 due가 없어질 때까지 이어진다.
 schedule enabled와 실제 automatic run evidence는 분리한다. enabled지만 running/completed automatic
 run 이력이 없으면 `자동 실행 확인 전`으로 표시하고 healthy/on으로 합성하지 않는다.
 `publish-if-changed`는 `publish.pending` 유무와 무관하게 bounded state/fingerprint reconciliation과

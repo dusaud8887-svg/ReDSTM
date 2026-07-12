@@ -1,5 +1,5 @@
 [Unit]
-Description=ReDSTM bounded remote command poll
+Description=ReDSTM remote command runner
 After=network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ EnvironmentFile=-/etc/redstm/runtime.env
 Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf
 ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner
 Restart=no
-TimeoutStartSec=5h
+TimeoutStartSec=infinity
 Nice=10
 IOSchedulingClass=idle
 UMask=0077

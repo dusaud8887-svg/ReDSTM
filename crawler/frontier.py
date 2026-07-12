@@ -8,8 +8,10 @@ from pathlib import Path
 
 from crawler.archive import connect_archive, initialize_archive
 from crawler.settings import (
+    REDSTM_CAPPED_RETRY_ERROR_CODES,
     REDSTM_FRONTIER_BACKOFF_BASE_SECONDS,
     REDSTM_FRONTIER_BACKOFF_CAP_SECONDS,
+    REDSTM_RECOVERY_GROUP_ORDER,
 )
 
 
@@ -186,7 +188,12 @@ class FrontierStore:
                 """,
                 (board_id, external_post_id),
             ).fetchone()
-        return row is not None and tuple(row) == (title, category, comment_count)
+        return bool(
+            row is not None
+            and row["title"] == title
+            and (category is None or row["category"] == category)
+            and row["comment_count"] == comment_count
+        )
 
     def claim_identity(
         self,
@@ -269,21 +276,19 @@ class FrontierStore:
                 """,
                 (selected_at, selected_at),
             )
+            group_order_sql = " ".join(
+                f"WHEN ? THEN {rank}" for rank, _group in enumerate(REDSTM_RECOVERY_GROUP_ORDER)
+            )
             rows = connection.execute(
-                """
+                f"""
                 SELECT frontier.board_id, frontier.external_post_id
                 FROM crawl_frontier AS frontier
                 LEFT JOIN boards AS board ON board.board_id = frontier.board_id
                 WHERE frontier.state IN ('pending', 'retry')
                   AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
                 ORDER BY
-                    CASE
-                        WHEN board.group_name = 'aa' OR frontier.board_id GLOB 'aa_*'
-                            THEN 0
-                        WHEN board.group_name = 'creation'
-                             OR frontier.board_id GLOB 'write_*' THEN 1
-                        WHEN board.group_name = 'fanfic'
-                             OR frontier.board_id GLOB 'ss_*' THEN 2
+                    CASE board.group_name
+                        {group_order_sql}
                         ELSE 3
                     END,
                     frontier.priority DESC,
@@ -292,9 +297,92 @@ class FrontierStore:
                     frontier.external_post_id
                 LIMIT ?
                 """,
-                (selected_at, limit),
+                (selected_at, *REDSTM_RECOVERY_GROUP_ORDER, limit),
             ).fetchall()
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
+
+    def requeue_full_content(
+        self,
+        *,
+        limit: int,
+        max_rowid: int,
+        attempted_before: datetime,
+        board_id: str | None = None,
+        now: datetime | None = None,
+    ) -> list[tuple[str, int]]:
+        if limit < 1 or max_rowid < 0:
+            raise ValueError("full-content bounds are invalid")
+        if attempted_before.tzinfo is None:
+            raise ValueError("attempted_before must be timezone-aware")
+        selected_at = _timestamp(now or datetime.now(UTC))
+        cutoff = _timestamp(attempted_before)
+        board_clause = " AND board_id = ?" if board_id is not None else ""
+        parameters: list[object] = [max_rowid, cutoff]
+        if board_id is not None:
+            parameters.append(board_id)
+        parameters.append(limit)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE crawl_frontier
+                SET state = 'retry', lease_token = NULL, lease_expires_at = NULL,
+                    next_attempt_at = ?
+                WHERE state = 'running' AND lease_expires_at <= ?
+                """,
+                (selected_at, selected_at),
+            )
+            rows = connection.execute(
+                f"""
+                SELECT board_id, external_post_id
+                FROM crawl_frontier
+                WHERE rowid <= ?
+                  AND (last_attempt_at IS NULL OR julianday(last_attempt_at) < julianday(?))
+                  AND state <> 'running'
+                  {board_clause}
+                ORDER BY last_attempt_at IS NOT NULL, julianday(last_attempt_at),
+                         board_id, external_post_id
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+            connection.executemany(
+                """
+                UPDATE crawl_frontier
+                SET state = 'pending', attempts = 0, next_attempt_at = NULL,
+                    last_error_code = NULL, lease_token = NULL, lease_expires_at = NULL
+                WHERE board_id = ? AND external_post_id = ? AND state <> 'running'
+                """,
+                [(row["board_id"], row["external_post_id"]) for row in rows],
+            )
+        return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
+
+    def full_content_remaining(
+        self,
+        *,
+        max_rowid: int,
+        attempted_before: datetime,
+        board_id: str | None = None,
+    ) -> int:
+        if max_rowid < 0 or attempted_before.tzinfo is None:
+            raise ValueError("full-content checkpoint is invalid")
+        board_clause = " AND board_id = ?" if board_id is not None else ""
+        parameters: list[object] = [max_rowid, _timestamp(attempted_before)]
+        if board_id is not None:
+            parameters.append(board_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM crawl_frontier
+                WHERE rowid <= ?
+                  AND (last_attempt_at IS NULL OR julianday(last_attempt_at) < julianday(?))
+                  {board_clause}
+                """,
+                parameters,
+            ).fetchone()
+        assert row is not None
+        return int(row[0])
 
     def requeue_stale_details(
         self,
@@ -338,7 +426,7 @@ class FrontierStore:
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
     def requeue_dead(self, *, error_code: str, limit: int) -> int:
-        if error_code not in {"network_error", "parse_drift"}:
+        if error_code not in REDSTM_CAPPED_RETRY_ERROR_CODES:
             raise ValueError("unsupported dead frontier error code")
         if limit < 1:
             raise ValueError("limit must be positive")

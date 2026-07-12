@@ -8,7 +8,7 @@ import crawler.archive_pipeline as archive_pipeline_module
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.frontier import FrontierLease, FrontierStore
-from crawler.items import CapturedPostItem
+from crawler.items import CapturedPostItem, DiscoveredPostItem
 from crawler.store import ArchiveStore
 
 
@@ -83,7 +83,7 @@ def test_pipeline_stores_post_and_completes_lease_atomically(tmp_path: Path) -> 
     ("outcome", "expected_state", "error_code"),
     [
         ("restricted", "done", "permission_denied"),
-        ("parse_failed", "dead", "parse_drift"),
+        ("parse_failed", "retry", "parse_drift"),
         ("fetch_failed", "retry", "auth_required"),
     ],
 )
@@ -135,6 +135,37 @@ def test_pipeline_rejects_mismatched_lease_before_writing(tmp_path: Path) -> Non
             ).fetchone()[0]
             == "running"
         )
+
+
+def test_pipeline_stores_listing_metadata_as_outline_post(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    pipeline, frontier, _ = _setup(path)
+    item = DiscoveredPostItem(
+        board_id="write_free21",
+        external_post_id=8,
+        canonical_url="https://www.typemoon.net/write_free21/8",
+        title="목록 제목",
+        author="작성자",
+        category="창작",
+        created_at_raw="2026.07.12",
+        comment_count=3,
+        is_notice=False,
+    )
+
+    assert pipeline.process_item(item) is item
+    frontier.seed(
+        "write_free21",
+        8,
+        str(item["canonical_url"]),
+        expected_comment_count=3,
+    )
+
+    with connect_archive(path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT title, author, category, comment_count, latest_version_id "
+            "FROM posts WHERE board_id = 'write_free21' AND external_post_id = 8"
+        ).fetchone()
+    assert tuple(row) == ("목록 제목", "작성자", "창작", 3, None)
 
 
 def test_pipeline_records_storage_error_before_reraising(

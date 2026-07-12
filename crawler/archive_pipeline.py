@@ -9,7 +9,7 @@ from scrapy.crawler import Crawler
 from scrapy.exceptions import NotConfigured
 
 from crawler.frontier import FrontierLease
-from crawler.items import CapturedPostItem
+from crawler.items import CapturedPostItem, DiscoveredPostItem
 from crawler.pipelines import normalize_captured_post
 from crawler.store import ArchiveStore
 
@@ -40,6 +40,9 @@ class ArchivePipeline:
         return cls(archive_path, run_id)
 
     def process_item(self, item: Any) -> Any:
+        if isinstance(item, DiscoveredPostItem):
+            self.store.store_discovered_post(item)
+            return item
         if not isinstance(item, CapturedPostItem):
             return item
 
@@ -74,7 +77,7 @@ class ArchivePipeline:
             if outcome == "restricted":
                 error_code, frontier_state = "permission_denied", "done"
             elif outcome == "parse_failed":
-                error_code, frontier_state = "parse_drift", "dead"
+                error_code, frontier_state = "parse_drift", "retry"
             else:
                 raw_error_code = item.get("error_code")
                 if not isinstance(raw_error_code, str) or raw_error_code not in {

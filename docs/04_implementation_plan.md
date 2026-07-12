@@ -20,7 +20,7 @@
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
 | live data | remote pointer rollback/복귀와 authenticated Reader/일반·AA 본문 smoke 완료 | DONE |
 | current UI | Porcelain shell/Reader continuity live, provenance·command eligibility local 완료; production/Android 재검증 전 | IN PROGRESS |
-| crawler core | schema v3 inventory cursor + schema v4 durable 댓글 기대치 local 완료; live migration·bootstrap/recovery canary 전 | IN PROGRESS |
+| crawler core | schema v3 inventory cursor + schema v4 댓글 기대치·증분 anchor local 완료; live migration·canary 전 | IN PROGRESS |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; schedule 활성화·관찰 전 | IN PROGRESS |
 | Oracle | live schema v3 baseline 완료; runtime fail-closed·명시 migration local 완료, 서로 다른 compatible SHA pair guard·doctor 전 | IN PROGRESS |
 | remote operations | role/marker/outbox replay/expired 통과; duplicate/full outage 전 | IN PROGRESS |
@@ -30,7 +30,7 @@
 현재 결론은 **데이터 기반·authenticated Reader와 live schema v3 runner는 배포됐고 repository target은
 schema v4이며, v4 migration·Operations 세부 provenance·schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
 
-현재 local gate는 전체 Python suite, Ruff lint/format, mypy와 Edge Node suite/check를 통과해야 한다.
+현재 local gate는 전체 Python suite, Ruff lint/format, mypy와 Edge unit/check/E2E/D1 fixture를 통과해야 한다.
 Playwright self-contained fixture는 1440/768/390/320px Reader/Operations gate를 통과한다. fixture는
 실제 R2 seed가 없어도 AA/prose와 읽기 위치 복원을 검증하고, 환경변수를 주면 대표 live object로
 교체할 수 있다. authenticated production에서는 현재 bundle의 282,239건 index, 일반 본문
@@ -64,7 +64,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 ## 3. 실행 원칙
 
 - canonical SQLite는 single writer다. crawler, recovery, backup/export를 동시에 쓰지 않는다.
-- TypeMoon concurrency 1, fixed 10초 delay를 기본으로 하며 canary 증거 없이 공격적으로 높이지 않는다.
+- TypeMoon detail concurrency 2와 request 시작 간 fixed 10초 delay를 기본으로 한다.
 - 자동 schedule은 Oracle systemd, remote command는 D1이다. 둘을 서로의 단일 장애점으로 만들지 않는다.
 - immutable object upload/readback 뒤 pointer-last activate한다.
 - 앱·DB·service를 한 deploy command에서 몰래 삭제/중지/enable하지 않는다.
@@ -122,10 +122,10 @@ mobile-first 제품으로 교체한다.
 
 #### A1.2 shell과 Home
 
-1. SUIT UI/title, MaruBuri prose, Saitamaar AA font asset/license를 실제 bundle에 넣는다.
+1. SUIT UI/title, MaruBuri prose, Saitamaar AA font asset/license를 bundle에 유지한다.
    SUIT는 [sun-typeface/SUIT](https://github.com/sun-typeface/SUIT)(SIL OFL 1.1), MaruBuri는
-   [네이버 한글캠페인](https://hangeul.naver.com/font)(SIL OFL)에서 받고, 새 파일 다운로드는 실행
-   직전 사용자 확인을 거친다. deploy는 CSS가 선언한 asset/license 존재를 기계적으로 검사한다.
+   [네이버 한글캠페인](https://hangeul.naver.com/font)(SIL OFL) 배포본이다. 교체할 때는 license와
+   대표 viewport를 다시 검증하며, deploy는 CSS가 선언한 asset/license 존재를 기계적으로 검사한다.
 2. graphite/white shell + ReDSTM red signal token으로 CSS를 교체한다.
 3. Home에 이어 읽기, 최근 본 글, 최신 갱신, 장서 진입, crawler freshness를 배치한다.
    freshness는 release 본문이 아니라 Worker가 노출하는 R2 `uploaded` 기반 `release.json`
@@ -137,7 +137,7 @@ mobile-first 제품으로 교체한다.
 
 - 320~767px: 홈/탐색/보관함/설정 bottom navigation
 - reader open: global nav 숨김, 목록/이전/저장/다음/설정 5개 action
-- 768~1199px: collapsible catalog + reader
+- 760~1199px: collapsible catalog + reader
 - 1200px 이상: 72px rail + 360px catalog + reader
 - safe-area, 44px target, no page-level horizontal scroll
 - 가상 키보드 열림 중 bottom navigation 숨김, 내부 scroll container +
@@ -227,12 +227,14 @@ Should — acceptance 직후:
 2. views 변화는 detail trigger에서 제외한다.
 3. 공지 제외 연속 known+unchanged를 overlap boundary로 사용한다.
 4. listing/parser warning이 있으면 boundary 조기 종료를 금지한다.
-5. 최초에는 board별 bounded inventory window를 cursor에서 계속 재개하고, 전 board 완료 뒤 주 1회
-   listing audit로 전환한다.
-6. 최초 listing coverage 완료 뒤 목차-only pending/retry backlog를 bounded bootstrap recovery로
-   비우고, 이후 매 6시간 cycle에서 처리 시각이 된 항목만 최대 100건 recovery한다.
+5. 자동 cycle은 최신 listing만 확인하며 직전 anchor page 뒤 2 page까지 검증한다.
+6. 전체 listing과 전체 body는 수동 장기 작업으로만 실행하고 내부 chunk가 끝나면 같은 command가
+   다음 chunk를 자동으로 이어 전체 범위를 완료한다.
 
-상태(2026-07-12): live schema v3와 coverage safety를 Oracle에 적용했고 repository schema v4는 local test를 통과했다. sync/recovery는 schema mismatch를 fail-closed하고 별도 `scripts.migrate_archive`만 lock 아래 migration한다. current/previous의 서로 다른 compatible SHA pair guard가 release flow에 연결될 때까지 CLI는 `canonical_schema_upgrade_pending`으로 full deploy를 차단한다.
+상태(2026-07-12): live schema v3와 coverage safety를 Oracle에 적용했고 repository schema v4는 local
+test를 통과했다. sync/recovery는 schema mismatch를 fail-closed하고 별도 `scripts.migrate_archive`만
+lock 아래 migration한다. current/previous의 서로 다른 compatible SHA pair guard가 release flow에
+연결될 때까지 CLI는 `canonical_schema_upgrade_pending`으로 full deploy를 차단한다.
 `b3e83e1`에서 views를 제외한 listing metadata 비교, 공지 제외 연속 20건 경계와
 warning/`--inventory` 우회를 구현했다. Oracle canary에서
 원 사이트 listing이 60초 뒤 timeout되고 약 109초 뒤 비정상 TLS EOF로 끝나는 것을 실측해 listing
@@ -247,7 +249,7 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 
 감사에서 발견한 `max_posts` 뒤 changed row 누락은 받은 listing의 모든 변경 row를 먼저 durable seed하고
 이번 detail scheduling만 cap하도록 고쳤다. schema v3은 board별 `inventory_next_page`를 저장해 bounded
-inventory가 다음 page에서 재개된다. repository schema v4는 기존 post 댓글 수를 frontier에 backfill하고,
+inventory가 다음 page에서 재개된다. repository schema v4는 기존 post 댓글 수와 board별 최신 frontier ID를 backfill하고,
 listing의 최신 댓글 기대치를 claim/retry/recovery lease까지 보존한다. detail의 실제 댓글이 더 적으면
 `incomplete_comments`로 저장을 거부하고, 성공 store만 실제 저장 댓글 수로 frontier 완료와 같은
 transaction에서 갱신한다. 실패는 기대값을 보존한다. 완료 때만 cursor/`last_inventory_at`을 확정한다.
@@ -257,7 +259,7 @@ coverage이며 기존 detail 전체를 다시 요청하는 작업이 아니다.
 
 #### A2.2 46-board cycle
 
-- enabled board를 concurrency 1로 순차 실행
+- enabled board는 순차 실행하고, 한 board의 느린 detail 요청만 최대 2개 엇갈려 처리
 - run 시작 preflight가 세션과 사이트 도달성을 확인하고, 실패하면 board를 순회하지 않고
   `site_unreachable`로 끝낸다
 - network/listing failure는 board failure로 기록하고 다음 board 진행
@@ -265,8 +267,7 @@ coverage이며 기존 detail 전체를 다시 요청하는 작업이 아니다.
 - auth/session failure는 전체 cycle 중단; 자동 재로그인은 run당 1회, 최소 간격 30분
 - board별 run/counters와 final summary
 - duplicate process는 shared sync lock으로 차단
-- 전체 4시간 graceful budget을 남은 초 단위로 각 board worker에 전달하고, budget 종료는 현재
-  request/WARC를 정리한 뒤 board 경계에서 `partial/time_budget`으로 기록
+- 최신 cycle과 수동 전체 작업에는 총 실행시간 상한이 없고 systemd 단일 unit/lock이 중복을 막는다
 
 상태(2026-07-12): local cycle과 무인 P0 safety 구현 완료, Oracle canary/systemd 연결 전이다. 로그인 시도 marker는 실패도 포함하고 atomic write+nonblocking lock으로
 동시·30분 내 재시도를 차단한다. session 검증은 오래된 서버가 본문 뒤 TLS EOF를 정상 종료하지 않아도
@@ -281,10 +282,9 @@ timeout으로 종료되며 `partial/worker_timeout`을 보고한다. Celery/Redi
 #### A2.3 retry/recovery
 
 - AA → 창작 → 팬픽 → 나머지
-- cycle당 후보 최대 100건, due retry만 claim(처리 목표 아님)
-- 2시간 graceful budget에서 현재 request를 정리하고 종료하며, frontier `next_attempt_at`이 항목별
-  backoff를 담당한다. 별도 24시간 completion marker는 두지 않아 다음 6시간 cycle에 다시 기회를 준다
-- 429 `Retry-After` 우선, timeout/5xx는 bounded backoff; 같은 class의 429·network·parse drift가
+- due retry는 작은 내부 chunk로 읽되 같은 수동 command가 due 0까지 계속 실행한다
+- child process의 graceful close는 WARC/report 정리를 위한 경계일 뿐 전체 작업의 총시간 상한이 아니다
+- 429 `Retry-After` 우선, timeout/5xx는 backoff; 같은 class의 429·network·parse drift가
   연속 3회면 run을 조기 종료하고 401/403·login form은 즉시 중단
 - 404는 서로 다른 run 2회 뒤 missing
 - parse drift/auth는 일반 retry와 분리
@@ -301,7 +301,8 @@ pending 29,379/retry 4,328/running 1이어서 100건 count만으로는 5시간 s
 claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage network attempt
 복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
 dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다. `8fc310f3`은 recovery 자체에도
-같은 class parse drift/network/429 연속 3회 breaker와 auth 즉시 중단을 적용한다.
+같은 class parse drift 연속 3회는 **parse-drift breaker**, network/429 연속 3회는 각각의
+systemic outage breaker로 중단하며 auth는 즉시 중단한다.
 15분 38초 bounded stop은 selected 100 중 scheduled 4/stored 2인 partial이었다. CPU 약 16초와
 request 7/exception 4/retry 3은 DB가 아니라 원본 서버 network 대기가 병목임을 보여 준다. 종료 시
 in-flight lease 1개는 900초 expiry 뒤 다음 run이 reclaim한다. 실행 증거는
@@ -549,8 +550,7 @@ chat/Git/log에 출력하지 않으며 dashboard/API/SSH credential store에서�
 
 Cloudflare와 Oracle 안에서 현재 자격증명으로 API/CLI 생성 가능한 resource와 secret 주입은 사용자
 수동 작업으로 넘기지 않는다. Wrangler OAuth의 Access 권한 부족은 사용자가 승인한 로그인 Chrome으로
-service token/application/policy를 생성해 해소했다. font
-다운로드 확인은 A1.2 해당 시점에만 짧게 받고, 실제 Android의 주관적 acceptance와 hard stop은
+service token/application/policy를 생성해 해소했다. 실제 Android의 주관적 acceptance와 hard stop은
 구현을 진행하는 동안 기다리지 않고 마지막 gate에서만 확인한다.
 
 ## 7. 검증 명령
@@ -565,6 +565,7 @@ Python 변경:
 Edge 변경:
 
     Set-Location edge
+    npm ci
     npm test
     npm run check
     npm run test:e2e

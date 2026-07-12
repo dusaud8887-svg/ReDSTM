@@ -7,6 +7,12 @@ from typing import Any
 
 import pytest
 
+from crawler.archive import (
+    APPLICATION_ID,
+    MIGRATIONS,
+    RUNTIME_SCHEMA_POLICY,
+    SCHEMA_VERSION,
+)
 from scripts.deploy_oracle import OracleTarget
 from scripts.release import (
     ReleaseError,
@@ -23,14 +29,33 @@ from scripts.release import (
     deploy_all,
     deploy_cloudflare,
     deploy_oracle_application,
+    deploy_oracle_bridge,
     edge_preflight,
+    migrate_oracle_canonical,
     release_preflight,
 )
 
 
-def test_oracle_deploy_is_blocked_until_the_v4_bridge_exists() -> None:
+def test_oracle_deploy_requires_the_exact_canonical_schema() -> None:
     with pytest.raises(ReleaseError, match="canonical_schema_upgrade_pending"):
-        _require_oracle_deploy_ready()
+        _require_oracle_deploy_ready(
+            {
+                "application_id": APPLICATION_ID,
+                "migration_count": len(MIGRATIONS) - 1,
+                "schema_version": SCHEMA_VERSION - 1,
+            }
+        )
+    _require_oracle_deploy_ready(
+        {
+            "application_id": APPLICATION_ID,
+            "compatible": True,
+            "exact": True,
+            "migration_count": len(MIGRATIONS),
+            "migrations": [[item.version, item.sha256] for item in MIGRATIONS],
+            "schema_policy": RUNTIME_SCHEMA_POLICY,
+            "schema_version": SCHEMA_VERSION,
+        }
+    )
 
 
 _DEPLOYMENT_OLD = "11111111-1111-4111-8111-111111111111"
@@ -1263,6 +1288,107 @@ def test_oracle_deploy_reuses_the_installers_verified_status(
     )
 
     assert deploy_oracle_application(tmp_path, target, release) == verified
+
+
+def test_bridge_deploy_proves_the_canonical_was_not_auto_migrated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = tmp_path / "oracle.key"
+    key.write_text("test", encoding="utf-8")
+    target = OracleTarget("oracle.example", "ubuntu", key)
+    release = "a" * 40
+    oracle = {"current_release": release, "previous_release": "b" * 40}
+    schema = {
+        "application_id": APPLICATION_ID,
+        "compatible": True,
+        "exact": False,
+        "migration_count": len(MIGRATIONS) - 1,
+        "migrations": [[item.version, item.sha256] for item in MIGRATIONS[:-1]],
+        "schema_policy": RUNTIME_SCHEMA_POLICY,
+        "schema_version": SCHEMA_VERSION - 1,
+    }
+    monkeypatch.setattr("scripts.release.deploy_oracle_application", lambda *_a, **_k: oracle)
+    monkeypatch.setattr("scripts.release.canonical_schema_status", lambda *_a, **_k: schema)
+
+    assert deploy_oracle_bridge(tmp_path, target, release) == {
+        "oracle": oracle,
+        "canonical": schema,
+        "bridge_ready": True,
+    }
+
+
+def test_canonical_migration_requires_the_exact_remote_release_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = tmp_path / "oracle.key"
+    key.write_text("test", encoding="utf-8")
+    target = OracleTarget("oracle.example", "ubuntu", key)
+    current = "a" * 40
+    previous = "b" * 40
+    oracle = {"current_release": current, "previous_release": previous}
+    migration = {"state": "migrated", "schema_version": SCHEMA_VERSION}
+    schema = {
+        "application_id": APPLICATION_ID,
+        "compatible": True,
+        "exact": True,
+        "migration_count": len(MIGRATIONS),
+        "migrations": [[item.version, item.sha256] for item in MIGRATIONS],
+        "schema_policy": RUNTIME_SCHEMA_POLICY,
+        "schema_version": SCHEMA_VERSION,
+    }
+    monkeypatch.setattr("scripts.release.status", lambda *_a, **_k: oracle)
+    monkeypatch.setattr("scripts.release.migrate_canonical_schema", lambda *_a, **_k: migration)
+    monkeypatch.setattr("scripts.release.canonical_schema_status", lambda *_a, **_k: schema)
+
+    assert migrate_oracle_canonical(
+        target,
+        expected_current=current,
+        expected_previous=previous,
+    ) == {"oracle": oracle, "migration": migration, "canonical": schema}
+
+    with pytest.raises(ReleaseError, match="canonical_previous_release_changed"):
+        migrate_oracle_canonical(
+            target,
+            expected_current=current,
+            expected_previous="c" * 40,
+        )
+
+
+def test_canonical_migration_reconciles_two_lost_responses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = tmp_path / "oracle.key"
+    key.write_text("test", encoding="utf-8")
+    target = OracleTarget("oracle.example", "ubuntu", key)
+    current = "a" * 40
+    previous = "b" * 40
+    schema = {
+        "application_id": APPLICATION_ID,
+        "compatible": True,
+        "exact": True,
+        "migration_count": len(MIGRATIONS),
+        "migrations": [[item.version, item.sha256] for item in MIGRATIONS],
+        "schema_policy": RUNTIME_SCHEMA_POLICY,
+        "schema_version": SCHEMA_VERSION,
+    }
+    attempts = 0
+
+    def lost_response(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        raise OSError("response lost")
+
+    monkeypatch.setattr(
+        "scripts.release.status",
+        lambda *_a, **_k: {"current_release": current, "previous_release": previous},
+    )
+    monkeypatch.setattr("scripts.release.migrate_canonical_schema", lost_response)
+    monkeypatch.setattr("scripts.release.canonical_schema_status", lambda *_a, **_k: schema)
+
+    result = migrate_oracle_canonical(target, expected_current=current, expected_previous=previous)
+
+    assert attempts == 2
+    assert result["migration"] == {"state": "reconciled", "schema_version": SCHEMA_VERSION}
 
 
 def test_oracle_status_falls_back_to_the_commit_bound_installer(

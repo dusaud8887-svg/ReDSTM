@@ -11,6 +11,7 @@ from typing import Any
 SCHEMA_VERSION = 4
 APPLICATION_ID = 0x52445354  # RDST
 BODY_COMPRESSION_LEVEL = 3
+RUNTIME_SCHEMA_POLICY = "explicit-v1"
 
 _SCHEMA_V1 = """
 CREATE TABLE boards (
@@ -232,6 +233,21 @@ WHERE EXISTS (
     WHERE post.board_id = crawl_frontier.board_id
       AND post.external_post_id = crawl_frontier.external_post_id
 );
+
+ALTER TABLE boards ADD COLUMN incremental_anchor_post_id INTEGER
+    CHECK (incremental_anchor_post_id > 0);
+ALTER TABLE boards ADD COLUMN last_incremental_at TEXT;
+
+UPDATE boards
+SET incremental_anchor_post_id = (
+    SELECT MAX(frontier.external_post_id)
+    FROM crawl_frontier AS frontier
+    WHERE frontier.board_id = boards.board_id
+)
+WHERE EXISTS (
+    SELECT 1 FROM crawl_frontier AS frontier
+    WHERE frontier.board_id = boards.board_id
+);
 """
 
 
@@ -282,7 +298,23 @@ def initialize_archive(path: str | Path) -> None:
     with connect_archive(archive_path) as connection:
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("PRAGMA synchronous = FULL")
-        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if tables:
+            if application_id != APPLICATION_ID:
+                raise RuntimeError("archive application id is invalid")
+            if "schema_migrations" not in tables:
+                raise RuntimeError("archive migration ledger is missing")
+        else:
+            if application_id not in {0, APPLICATION_ID} or user_version != 0:
+                raise RuntimeError("empty archive metadata is invalid")
+            connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -298,6 +330,10 @@ def initialize_archive(path: str | Path) -> None:
                 "SELECT version, sha256 FROM schema_migrations ORDER BY version"
             )
         }
+        if not 0 <= user_version <= SCHEMA_VERSION:
+            raise RuntimeError(f"archive schema v{user_version} is not supported")
+        if set(applied) != set(range(1, user_version + 1)):
+            raise RuntimeError("archive migration ledger is inconsistent")
         known_versions = {migration.version for migration in MIGRATIONS}
         unknown = sorted(set(applied) - known_versions)
         if unknown:
@@ -325,7 +361,6 @@ def initialize_archive(path: str | Path) -> None:
                 if connection.in_transaction:
                     connection.rollback()
                 raise
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def validate_archive_for_release(
@@ -351,6 +386,8 @@ def validate_archive_for_release(
     if int(connection.execute("PRAGMA application_id").fetchone()[0]) != APPLICATION_ID:
         raise RuntimeError("canonical archive application id is invalid")
     user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if not 1 <= user_version <= SCHEMA_VERSION:
+        raise RuntimeError(f"canonical schema v{user_version} is incompatible")
     applied = {
         int(row["version"]): str(row["sha256"])
         for row in connection.execute("SELECT version, sha256 FROM schema_migrations")
@@ -379,6 +416,29 @@ def validate_archive_for_release(
         table_sql = " ".join(str(table_row[0]).split()).upper() if table_row is not None else ""
         check_clause = "EXPECTED_COMMENT_COUNT INTEGER CHECK (EXPECTED_COMMENT_COUNT >= 0)"
         if columns != expected or check_clause not in table_sql:
+            raise RuntimeError("canonical schema v4 physical shape is invalid")
+        board_columns = {
+            str(row[1]): tuple(row)[1:]
+            for row in connection.execute("PRAGMA table_xinfo(boards)")
+            if row[1] in {"incremental_anchor_post_id", "last_incremental_at"}
+        }
+        expected_board_columns = {
+            "incremental_anchor_post_id": (
+                "incremental_anchor_post_id",
+                "INTEGER",
+                0,
+                None,
+                0,
+                0,
+            ),
+            "last_incremental_at": ("last_incremental_at", "TEXT", 0, None, 0, 0),
+        }
+        table_row = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'boards'"
+        ).fetchone()
+        table_sql = " ".join(str(table_row[0]).split()).upper() if table_row is not None else ""
+        check_clause = "INCREMENTAL_ANCHOR_POST_ID INTEGER CHECK (INCREMENTAL_ANCHOR_POST_ID > 0)"
+        if board_columns != expected_board_columns or check_clause not in table_sql:
             raise RuntimeError("canonical schema v4 physical shape is invalid")
 
 

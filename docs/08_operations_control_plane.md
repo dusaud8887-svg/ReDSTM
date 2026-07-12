@@ -383,22 +383,20 @@ Remote command와 무관하게 systemd가 실행한다.
 | timer | 기본 |
 |---|---|
 | incremental cycle | 6시간 |
-| bounded recovery | 매 cycle due 후보 최대 100건, 2시간/장애 breaker 우선 |
-| delta publish | marker 유무와 무관하게 매 cycle bounded reconcile |
-| 최초 board inventory | enabled board cursor가 모두 완료될 때까지 매 cycle bounded window 재개 |
-| 완료 뒤 board inventory | 주 1회 bounded listing audit |
+| 최신 글 증분 수집 | 6시간마다; 이전 cycle 실행 중이면 이번 slot은 pass |
+| delta publish | marker 유무와 무관하게 증분 reconcile |
+| 전체 board 목차 | 수동 `full-catalog`만; 첫 page부터 끝까지 다시 수집 |
+| 전체 게시글 본문 | 수동 `full-content`만; 성공분을 포함해 전부 다시 수집 |
 
 Operations schedule toggle은 최종 제품에서도 직접 timer file을 편집하지 않는다. pause는
 pause-after-current marker로 다음 automatic start를 보류하고 resume-schedule만 marker를 해제한다.
 운영 목표 상태는 자동 enabled지만, 웹의 `일시정지 해제`는 비활성 systemd timer를 켜지 않는다.
 
-각 6시간 cycle은 최신 page incremental을 먼저 수행한다. inventory pass는 별도 시작 epoch marker를
-원자적으로 만들고, 그 epoch 뒤에 완료되지 않은 enabled board만 `inventory_next_page`에서 이어 간다.
-마지막 board DB 반영 뒤 process가 죽어도 다음 실행은 DB 완료 상태를 먼저 확인해 pass marker를 확정한다.
-모든 board cursor가 한 번 완료된 뒤에는 inventory를 주간 audit로 낮추고, 그 시점의
-pending/retry 목차-only backlog를 별도 bounded bootstrap recovery로 다음 cycle들에서 비운다. bootstrap
-backlog가 정리되면 매 cycle due item 최대 100건의 normal recovery를 실행한다. inventory는 listing coverage이며 기존 detail
-본문 전체를 재검증하는 full recrawl이 아니다.
+각 6시간 cycle은 최신 page incremental과 변경분 게시만 수행한다. 직전 기준 게시글이 발견된 page 뒤
+2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와 전체 본문은 자동 cycle에 섞지 않는다.
+수동 전체 목차는 `inventory_next_page`를 1로 되돌리고 모든 row를 다시 읽으며, 수동 전체 본문은
+frontier 전체를 재큐잉해 이미 성공한 글도 다시 받는다. 두 작업 모두 총량·총시간 상한이 없고 단일 writer
+lock을 잡는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않고 `busy`로 끝난다.
 
 `redstm-control.timer`는 application release 설치 뒤 heartbeat와 fixed-command poll을 유지하는 baseline으로
 enable한다. `redstm-schedule.timer`는 authenticated route, repository schema v4 doctor, 명시적 full
@@ -504,16 +502,17 @@ Button은 action, bound, 현재 eligibility와 disabled reason을 함께 보여�
 설명하며 command ID와 expiry를 결과로 표시한다. claim 전 cancel만 허용한다. 실행 결과와 이력은
 Runs/Releases ledger에서 별도로 확인한다.
 
-- `sync-now`: 놓친 schedule을 보완하는 1회 bounded incremental cycle이며 정상 운영의 기본 버튼이 아니다.
-- `retry-batch`: due frontier 최대 100건; due 0이면 disable한다.
+- `sync-now`: 전체 또는 선택 게시판의 최신 증분을 한 번 실행한다.
+- `full-catalog`: 전체 또는 선택 게시판의 목차를 첫 page부터 끝까지 다시 수집한다.
+- `full-content`: 전체 또는 선택 게시판의 발견된 모든 본문을 성공 여부와 무관하게 다시 수집한다.
+- `retry-batch`: 현재 due인 pending/retry frontier를 상한 없이 순차 처리한다. due 0이면 disable한다.
 - `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,
   authenticated release smoke를 실행한다. 실제 delta가 없으면 exporter/publisher가 검증된 no-op으로
   끝나며, 실패 시 기존 marker가 있으면 지우지 않고 다음 6시간 cycle에서 다시 reconcile한다.
-- `pause-after-current`: 현재 request/transaction을 끝내고 이후 schedule을 막는다. 현재 작업 취소가 아니다.
-- `resume-schedule`: UI에서는 `일시정지 해제`라고 부르며 pause marker만 해제한다. 즉시 crawl하거나
+- `pause-after-current`: UI에서는 `자동 수집 끄기`다. 현재 request/transaction을 끝내고 이후 schedule을 막는다. 수동 작업은 막지 않는다.
+- `resume-schedule`: UI에서는 `자동 수집 켜기`다. pause marker만 해제한다. 즉시 crawl하거나
   disabled systemd timer를 enable하지 않는다.
-- 최초 전체 listing 수집을 위한 별도 unbounded 버튼은 두지 않는다. 자동 cycle이 inventory cursor를
-  bounded window로 재개하므로 `sync-now`도 같은 bounded 흐름 한 회만 요청한다.
+- 전체 목차·본문 버튼은 장기 실행 경고와 선택 게시판 범위를 확인한 뒤 요청한다.
 - pause/resume은 상호 배타적이다. stale/not_enrolled runner가 claim해야 하는 action은 disabled reason을
   표시한다.
 - create 응답 전 button을 잠그고 동일 intent retry는 동일 client idempotency key를 사용한다. bounded
@@ -563,7 +562,7 @@ incremental export/publish의 terminal safe code는 기존 `publish.pending`을 
 | `incremental_base_invalid`, `incremental_bootstrap_required`, `incremental_state_invalid`, `incremental_publish_bootstrap_required` | full fallback 없이 partial 재시도 | active pointer/source를 확인하고 [`10 §G3`](10_oracle_runner_runbook.md)의 explicit full bootstrap |
 | `incremental_source_changed`, `incremental_source_rewound` | canonical을 덮거나 state를 추정하지 않음 | canonical activation/restore identity와 capture high-water 조사 후 full bootstrap |
 | `incremental_projection_untracked`, `incremental_snapshot_changed` | pointer 변경 없이 marker 유지 | 한 번 재시도 후 반복되면 canonical/store invariant 조사 |
-| `incremental_delta_too_large` | 2,000건 상한에서 중단 | 변경량 원인을 확인하고 maintenance full export/publish |
+| `incremental_delta_too_large` | 사용자가 명시한 비상 상한에서만 중단 | 기본값 0은 상한 없음; 필요 시 원인 확인 |
 | `incremental_publish_validation_failed`, `incremental_publish_ledger_invalid`, `incremental_publish_smoke_marker_invalid`, `incremental_publish_pointer_unavailable`, `incremental_publish_predecessor_unavailable`, `incremental_publish_smoke_pointer_conflict` | remote pointer 추정·pending 삭제 없이 중단 | local state/pending ledger/smoke marker와 active/previous remote release를 함께 확인한 뒤 다음 cycle 재시도 또는 복구 |
 
 ## 13. Retention

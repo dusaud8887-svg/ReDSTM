@@ -17,6 +17,7 @@
         <a href="#overview"><b>상태</b></a>
         <a href="#collection"><b>수집</b></a>
         <a href="#runs"><b>실행</b></a>
+        <a href="#failures"><b>실패</b></a>
         <a href="#controls"><b>제어</b></a>
       </nav>
       <a class="reader-link" href="/">Reader</a>
@@ -142,12 +143,23 @@
         </header>
         <div class="control-list">
           <button type="button" data-action="sync-now" disabled><span>증분 수집 지금 실행</span><small>등록된 게시판의 최신 페이지를 한 번 확인</small></button>
-          <button type="button" data-action="retry-batch" disabled><span>본문 대기 재시도</span><small>처리 시각이 된 항목을 제한된 한 묶음 처리</small></button>
+          <button type="button" data-action="full-catalog" disabled><span>전체 게시글 목차 다시 수집</span><small>모든 게시판을 첫 페이지부터 끝까지 다시 확인</small></button>
+          <button type="button" data-action="full-content" disabled><span>전체 게시글 본문 다시 수집</span><small>성공한 글도 포함해 발견된 모든 본문을 다시 수집</small></button>
+          <button type="button" data-action="retry-batch" disabled><span>본문 대기 재시도</span><small>처리 시각이 된 모든 대기·재시도 항목을 순차 처리</small></button>
           <button type="button" data-action="publish-if-changed" disabled><span>변경분 Reader 반영</span><small>새 변경이 있을 때만 검증 후 Reader 보존본을 바꿈</small></button>
-          <button type="button" data-action="pause-after-current" disabled><span>현재 작업 뒤 일시정지</span><small>진행 중 요청과 저장 작업은 완료</small></button>
-          <button type="button" data-action="resume-schedule" disabled><span>일시정지 해제</span><small>일시정지 상태에서 다음 자동 실행을 허용</small></button>
+          <button type="button" data-action="pause-after-current" disabled><span>자동 수집 끄기</span><small>진행 중 작업은 마친 뒤 다음 자동 실행을 막음</small></button>
+          <button type="button" data-action="resume-schedule" disabled><span>자동 수집 켜기</span><small>다음 예약 시각부터 최신 글 자동 수집 허용</small></button>
         </div>
         <div id="command-result" class="command-result" aria-live="polite" hidden></div>
+      </section>
+
+      <section id="failures" class="data-section" aria-labelledby="failures-title">
+        <header class="section-heading">
+          <div><span>06</span><h2 id="failures-title">최종 실패 게시글</h2></div>
+          <p>5회 실패해 자동 대기열에서 분리된 글입니다. 전체 본문 수집 때 다시 시도할 수 있습니다.</p>
+        </header>
+        <div id="failures-list" class="failure-list" aria-live="polite"></div>
+        <button id="failures-more" class="more-button" type="button" hidden>실패 항목 더 보기</button>
       </section>
     </main>
 

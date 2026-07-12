@@ -22,6 +22,21 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sync_file(path: Path) -> None:
+    with path.open("rb+") as stream:
+        os.fsync(stream.fileno())
+
+
+def _sync_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _table_counts(path: Path) -> dict[str, int]:
     with closing(connect_archive(path, read_only=True)) as connection:
         tables = [
@@ -101,8 +116,12 @@ def create_backup(
         if issues:
             raise RuntimeError(f"backup verification failed: {', '.join(issues)}")
 
+        _sync_file(snapshot_partial)
+        _sync_file(manifest_partial)
         os.replace(snapshot_partial, snapshot)
+        _sync_directory(snapshot.parent)
         os.replace(manifest_partial, manifest)
+        _sync_directory(manifest.parent)
         return report
     except Exception:
         if not resume_partial:

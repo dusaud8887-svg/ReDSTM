@@ -1,5 +1,5 @@
 [Unit]
-Description=Poll ReDSTM bounded remote commands every minute
+Description=Poll ReDSTM remote commands every minute
 
 [Timer]
 OnBootSec=2m

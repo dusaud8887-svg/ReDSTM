@@ -19,6 +19,8 @@ _CANONICAL_CHUNK_BYTES = 512 * 1024 * 1024
 _MAX_STATUS_BYTES = 2048
 _MAX_INSTALLER_BYTES = 1024 * 1024
 _POST_INSTALL_STATUS_ATTEMPTS = 5
+_CANONICAL_MIGRATION_TIMEOUT_SECONDS = 8 * 60 * 60
+_MAX_SCHEMA_STATUS_BYTES = 16 * 1024
 
 
 def _sha256_file(path: Path) -> str:
@@ -210,6 +212,131 @@ def status(target: OracleTarget, *, runner: CommandRunner = subprocess.run) -> d
     return _status_at(target, "/opt/redstm/install_release.sh", runner=runner)
 
 
+def canonical_schema_status(
+    target: OracleTarget, *, runner: CommandRunner = subprocess.run
+) -> dict[str, Any]:
+    result = runner(
+        [
+            *_ssh(target),
+            "sudo",
+            "bash",
+            "/opt/redstm/install_release.sh",
+            "canonical-schema-status",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+    )
+    raw = result.stdout
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > _MAX_SCHEMA_STATUS_BYTES:
+        raise RuntimeError("remote canonical schema status output is invalid")
+    try:
+        payload: object = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("remote canonical schema status is not valid JSON") from error
+    if not isinstance(payload, dict) or set(payload) != {
+        "application_id",
+        "compatible",
+        "exact",
+        "migration_count",
+        "migrations",
+        "schema_policy",
+        "schema_version",
+    }:
+        raise RuntimeError("remote canonical schema status fields are invalid")
+    report = cast(dict[str, Any], payload)
+    for key in ("application_id", "migration_count", "schema_version"):
+        if type(report[key]) is not int or not 0 <= report[key] <= 2**31 - 1:
+            raise RuntimeError(f"remote canonical {key} is invalid")
+    if (
+        type(report["compatible"]) is not bool
+        or type(report["exact"]) is not bool
+        or (report["exact"] and not report["compatible"])
+        or not isinstance(report["schema_policy"], str)
+        or re.fullmatch(r"[a-z0-9-]{1,32}", report["schema_policy"]) is None
+        or not isinstance(report["migrations"], list)
+    ):
+        raise RuntimeError("remote canonical schema status metadata is invalid")
+    migrations = report["migrations"]
+    if not all(
+        isinstance(item, list)
+        and len(item) == 2
+        and type(item[0]) is int
+        and item[0] >= 1
+        and isinstance(item[1], str)
+        and re.fullmatch(r"[0-9a-f]{64}", item[1]) is not None
+        for item in migrations
+    ) or len({item[0] for item in migrations}) != len(migrations):
+        raise RuntimeError("remote canonical migrations are invalid")
+    if report["migration_count"] != len(migrations):
+        raise RuntimeError("remote canonical migration count is invalid")
+    return report
+
+
+def migrate_canonical_schema(
+    target: OracleTarget,
+    *,
+    expected_current: str,
+    expected_previous: str,
+    runner: CommandRunner = subprocess.run,
+) -> dict[str, Any]:
+    for name, release in (
+        ("current", expected_current),
+        ("previous", expected_previous),
+    ):
+        if re.fullmatch(r"[0-9a-f]{40}", release) is None:
+            raise ValueError(f"expected {name} release is invalid")
+    if expected_current == expected_previous:
+        raise ValueError("canonical migration requires two distinct releases")
+    result = runner(
+        [
+            *_ssh(target),
+            "sudo",
+            "bash",
+            "/opt/redstm/install_release.sh",
+            "migrate-canonical",
+            expected_current,
+            expected_previous,
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=_CANONICAL_MIGRATION_TIMEOUT_SECONDS,
+    )
+    raw = result.stdout
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 4096:
+        raise RuntimeError("remote canonical migration output is invalid")
+    fields: dict[str, str] = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key in fields:
+            raise RuntimeError("remote canonical migration output is invalid")
+        fields[key] = value
+    if fields.get("canonical-schema") not in {"migrated", "noop"}:
+        raise RuntimeError("remote canonical migration result is invalid")
+    if re.fullmatch(r"[1-9][0-9]*", fields.get("schema-version", "")) is None:
+        raise RuntimeError("remote canonical migration schema version is invalid")
+    optional = set(fields) - {"canonical-schema", "schema-version"}
+    if fields["canonical-schema"] == "noop":
+        if optional:
+            raise RuntimeError("remote canonical migration no-op fields are invalid")
+    elif optional != {"snapshot", "manifest"}:
+        raise RuntimeError("remote canonical migration evidence is incomplete")
+    elif not all(
+        re.fullmatch(r"/srv/redstm/snapshots/[A-Za-z0-9_.-]{1,200}", fields[name])
+        for name in ("snapshot", "manifest")
+    ):
+        raise RuntimeError("remote canonical migration evidence path is invalid")
+    return {
+        "state": fields["canonical-schema"],
+        "schema_version": int(fields["schema-version"]),
+        **({name: fields[name] for name in ("snapshot", "manifest")} if optional else {}),
+    }
+
+
 def build_archive(
     root: Path, release: str, destination: Path, *, runner: CommandRunner = subprocess.run
 ) -> str:
@@ -282,9 +409,12 @@ def deploy_release(
     archive_sha256: str,
     installer: Path,
     *,
+    install_mode: str = "install",
     runner: CommandRunner = subprocess.run,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
+    if install_mode not in {"install", "install-bridge"}:
+        raise ValueError("release install mode is invalid")
     if (
         re.fullmatch(r"[0-9a-f]{40}", release) is None
         or re.fullmatch(r"[0-9a-f]{64}", archive_sha256) is None
@@ -321,7 +451,7 @@ def deploy_release(
             "sudo",
             "bash",
             remote_installer,
-            "install",
+            install_mode,
             release,
             remote_archive,
             archive_sha256,

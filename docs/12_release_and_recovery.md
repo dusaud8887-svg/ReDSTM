@@ -249,7 +249,8 @@ Oracle rollback은 canonical DB의 `schema_migrations(version, sha256)`를 targe
 source와 비교한다. unknown version, 같은 version의 hash mismatch, 더 높은 `user_version`이면 symlink를
 바꾸기 전에 거부한다.
 
-현재 repository target은 nullable `crawl_frontier.expected_comment_count`만 추가하는 schema v4다.
+현재 repository target은 nullable `crawl_frontier.expected_comment_count`,
+`boards.incremental_anchor_post_id`, `boards.last_incremental_at`을 한 migration에서 추가하는 schema v4다.
 안전한 전환은 canonical이 v3인 동안 자동 migration하지 않는 서로 다른 v4-compatible Git SHA를 두 번
 순차 배포해 `current`와 `previous`를 모두 호환 release로 만든 뒤 명시 migration/doctor를 실행하는 순서다.
 같은 SHA 재설치는 `previous`를 갱신하지 않으므로 2회 배포로 세지 않는다. sync/recovery는 schema
@@ -258,7 +259,7 @@ CLI는 `canonical_schema_upgrade_pending`으로 full deploy를 거부한다. cur
 검증해 명시 migration을 호출하는 release-pair guard가 연결될 때까지 live v4 배포를 차단한다. v4 적용
 뒤 schema v3-only release rollback은 installer가 mutation 전에 거부한다. v4는
 static projection을 바꾸지 않으므로 exporter는 exact migration hash를 확인한 경우에만 기존 v3 export
-state를 재사용한다.
+state를 재사용한다. 이 세 필드와 migration hash가 모두 맞아야 v4 physical-shape 검증을 통과한다.
 
 automatic R2 rollback은 publish 시 기록한 predecessor 관계로 pointer와 active ledger를 함께 복구해
 다음 6시간 cycle도 bounded delta를 이어 갈 수 있어야 한다. matching ledger가 없는

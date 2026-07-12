@@ -59,6 +59,15 @@ async function useOperationsFixture(page, received, fixture = {}) {
         },
       ], next_cursor: null }) });
     }
+    if (url.pathname === "/api/v1/ops/failures") {
+      return route.fulfill({ json: envelope(fixture.frontierFailures || {
+        items: [{
+          board_id: "aa_19", external_post_id: 99, attempts: 5,
+          error_code: "parse_drift", last_attempt_at: now,
+        }],
+        next_cursor: null,
+      }) });
+    }
     if (url.pathname === "/api/v1/ops/releases") {
       return route.fulfill({ json: envelope(fixture.releases || {
         current: {
@@ -145,7 +154,7 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
   await page.locator(".healthy-boards > summary").click();
   await expect(page.getByText("healthy_1")).toBeVisible();
 
-  await page.locator('[data-action="sync-now"]').click();
+  await page.locator('.control-list [data-action="sync-now"]').click();
   await expect(page.getByRole("dialog", { name: "증분 수집 지금 실행" })).toBeVisible();
   await page.locator("#dialog-confirm").click();
   await expect(page.locator("#command-result")).toContainText("증분 수집 지금 실행 · 대기");
@@ -163,13 +172,13 @@ test("reuses command intent after response loss and reload", async ({ page }) =>
   await useOperationsFixture(page, received, { commandFailures: 1 });
   await page.goto("/ops");
 
-  await page.locator('[data-action="sync-now"]').click();
+  await page.locator('.control-list [data-action="sync-now"]').click();
   await page.locator("#dialog-confirm").click();
   await expect.poll(() => received.length).toBe(1);
   const firstKey = received[0].headers["idempotency-key"];
 
   await page.reload();
-  await page.locator('[data-action="sync-now"]').click();
+  await page.locator('.control-list [data-action="sync-now"]').click();
   await page.locator("#dialog-confirm").click();
   await expect(page.locator("#command-result")).toContainText("증분 수집 지금 실행 · 대기");
 
@@ -200,7 +209,7 @@ test("keeps stale runner, empty telemetry, and readable release distinct", async
   await expect(page.locator("#active-title")).toHaveText("아직 보고된 실행 없음");
   await expect(page.locator("#latest-changed")).toHaveText("—");
   await expect(page.locator("#boards-list")).toContainText("운영 기록이 아직 보고되지 않았습니다");
-  await expect(page.locator("[data-action]:disabled")).toHaveCount(5);
+  await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(7);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -222,9 +231,9 @@ test("shows a connected runner with a disabled schedule as automation off", asyn
   await expect(page.locator("#overview-title")).toHaveText("자동 수집 꺼짐");
   await expect(page.locator("#overview-reason")).toContainText("redstm-schedule.timer");
   await expect(page.locator("#next-schedule")).toHaveText("예약 없음");
-  await expect(page.locator('[data-action="resume-schedule"] span')).toHaveText("일시정지 해제");
-  await expect(page.locator('[data-action="sync-now"]')).toBeEnabled();
-  await expect(page.locator('[data-action="pause-after-current"]')).toBeDisabled();
+  await expect(page.locator('.control-list [data-action="resume-schedule"] span')).toHaveText("자동 수집 켜기");
+  await expect(page.locator('.control-list [data-action="sync-now"]')).toBeEnabled();
+  await expect(page.locator('.control-list [data-action="pause-after-current"]')).toBeDisabled();
 });
 
 test("keeps automation state separate from the recent failure", async ({ page }) => {
@@ -362,8 +371,8 @@ test("only enables pause while the runner is working", async ({ page }) => {
   });
   await page.goto("/ops");
 
-  await expect(page.locator('[data-action="pause-after-current"]')).toBeEnabled();
-  await expect(page.locator('[data-action]:not([data-action="pause-after-current"]):disabled')).toHaveCount(4);
+  await expect(page.locator('.control-list [data-action="pause-after-current"]')).toBeEnabled();
+  await expect(page.locator('.control-list [data-action]:not([data-action="pause-after-current"]):disabled')).toHaveCount(6);
   await expect(page.locator("#latest-changed")).toHaveText("—");
   await expect(page.locator("#active-reason")).toContainText("수치는 종료 후 집계");
 });

@@ -14,10 +14,12 @@ CANONICAL_TRANSFER=/srv/redstm/canonical/archive.sqlite.transfer.partial
 CANONICAL_STAGING=/srv/redstm/canonical/archive.sqlite.partial
 CANONICAL_TARGET=/srv/redstm/canonical/archive.sqlite
 COMPLETE=/opt/redstm/current-release.complete
+CANONICAL_MIGRATION_FREE_MARGIN_BYTES=5368709120
 INSTALL_ARCHIVE=""
 INSTALLER_UPLOAD=""
 INSTALL_ACTIVE=0
 INSTALL_MUTATED=0
+INSTALL_BRIDGE=0
 
 handle_error() {
   local code=$?
@@ -68,6 +70,16 @@ acquire_runner_lock() {
   if ! flock --nonblock 8; then
     fail_not_started "crawler or control runner is active"
   fi
+}
+
+acquire_archive_locks() {
+  local cycle_lock="${CANONICAL_TARGET}.cycle.lock"
+  local sync_lock="${CANONICAL_TARGET}.sync.lock"
+  sudo -u redstm touch -- "$cycle_lock" "$sync_lock"
+  exec 7<>"$cycle_lock"
+  flock --nonblock 7 || fail_not_started "canonical cycle is active"
+  exec 6<>"$sync_lock"
+  flock --nonblock 6 || fail_not_started "canonical sync is active"
 }
 
 release_is_complete() {
@@ -250,6 +262,31 @@ release_status() {
     "$(systemd_flag is-enabled redstm-schedule.timer)"
 }
 
+bridge_install_guard() {
+  [[ $# -eq 1 ]] || fail "bridge guard requires a release path"
+  local target="$1"
+  [[ -f "$CANONICAL_TARGET" && ! -L "$CANONICAL_TARGET" ]] || \
+    fail_not_started "canonical archive is unavailable"
+  if systemctl is-active --quiet redstm-schedule.timer || \
+     systemctl is-enabled --quiet redstm-schedule.timer; then
+    fail_not_started "automatic schedule must be disabled before bridge install"
+  fi
+  sudo -u redstm env PYTHONPATH="$target" "$target/.venv/bin/python" \
+    - "$CANONICAL_TARGET" <<'PY'
+import sys
+from pathlib import Path
+
+from crawler.archive import RUNTIME_SCHEMA_POLICY, SCHEMA_VERSION
+from scripts.migrate_archive import migration_source_version
+
+if RUNTIME_SCHEMA_POLICY != "explicit-v1":
+    raise SystemExit("bridge release runtime schema policy is invalid")
+source_version = migration_source_version(Path(sys.argv[1]))
+if source_version >= SCHEMA_VERSION:
+    raise SystemExit("canonical bridge is not required")
+PY
+}
+
 install_release() {
   [[ $# -eq 4 ]] || fail "install requires release, archive, hash, and expected current"
   local release="$1" archive="$2" expected="$3" expected_current="$4"
@@ -275,7 +312,8 @@ install_release() {
   old="$(readlink -f "$CURRENT" 2>/dev/null || true)"
   previous="$(readlink -f "$PREVIOUS" 2>/dev/null || true)"
   if [[ "$old" == "$target" ]]; then
-    if release_is_complete "$release" && [[ "$expected_current" != "$release" ]]; then
+    if (( INSTALL_BRIDGE == 0 )) && release_is_complete "$release" && \
+      [[ "$expected_current" != "$release" ]]; then
       printf 'release=%s\n' "$release"
       return
     fi
@@ -324,6 +362,11 @@ install_release() {
     sudo -u redstm env PYTHONPATH="$staging" "$staging/.venv/bin/python" -c \
       'import crawler.archive, scripts.control_runner'
     mv -- "$staging" "$target"
+  fi
+
+  if (( INSTALL_BRIDGE == 1 )); then
+    acquire_archive_locks
+    bridge_install_guard "$target"
   fi
 
   mark_release_attempt "$release" "$nonce"
@@ -484,6 +527,148 @@ activate_canonical() {
   printf 'canonical=activated\nsha256=%s\n' "$expected_hash"
 }
 
+canonical_schema_status() {
+  [[ $# -eq 0 ]] || fail "canonical-schema-status takes no arguments"
+  [[ -f "$CANONICAL_TARGET" && ! -L "$CANONICAL_TARGET" ]] || \
+    fail "canonical archive is unavailable"
+  [[ -x "$CURRENT/.venv/bin/python" ]] || fail "current release Python is unavailable"
+  sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" \
+    - "$CANONICAL_TARGET" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+from crawler.archive import (
+    APPLICATION_ID,
+    MIGRATIONS,
+    RUNTIME_SCHEMA_POLICY,
+    SCHEMA_VERSION,
+    connect_archive,
+    validate_archive_for_release,
+)
+
+path = Path(sys.argv[1]).resolve(strict=True)
+with connect_archive(path, read_only=True) as connection:
+    application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
+    schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    try:
+        migrations = [
+            [int(row[0]), str(row[1])]
+            for row in connection.execute(
+                "SELECT version, sha256 FROM schema_migrations ORDER BY version"
+            )
+        ]
+    except sqlite3.DatabaseError:
+        migrations = []
+    compatible = False
+    try:
+        validate_archive_for_release(
+            connection,
+            target_schema_version=SCHEMA_VERSION,
+            target_migration_hashes={item.version: item.sha256 for item in MIGRATIONS},
+        )
+        compatible = True
+    except (RuntimeError, sqlite3.DatabaseError):
+        pass
+    expected = [[item.version, item.sha256] for item in MIGRATIONS]
+    payload = {
+        "application_id": application_id,
+        "compatible": compatible,
+        "exact": compatible and schema_version == SCHEMA_VERSION and migrations == expected,
+        "migration_count": len(migrations),
+        "migrations": migrations,
+        "schema_policy": RUNTIME_SCHEMA_POLICY,
+        "schema_version": schema_version,
+    }
+print(json.dumps(payload, sort_keys=True))
+PY
+}
+
+migrate_canonical_schema() {
+  [[ $# -eq 2 ]] || fail "migrate-canonical requires expected current and previous releases"
+  local expected_current="$1" expected_previous="$2"
+  local current previous metadata schema_version target_schema
+  local canonical_bytes free_bytes nonce snapshot manifest doctor_report canonical_dir
+  validate_release "$expected_current"
+  validate_release "$expected_previous"
+  [[ "$expected_current" != "$expected_previous" ]] || \
+    fail_not_started "canonical migration requires two distinct compatible releases"
+  acquire_runner_lock
+  acquire_archive_locks
+  if systemctl is-active --quiet redstm-schedule.timer || \
+     systemctl is-enabled --quiet redstm-schedule.timer; then
+    fail_not_started "automatic schedule must be disabled before canonical migration"
+  fi
+  current="$(readlink -f "$CURRENT" 2>/dev/null || true)"
+  previous="$(readlink -f "$PREVIOUS" 2>/dev/null || true)"
+  [[ "$current" == "${RELEASES}/${expected_current}" ]] || \
+    fail_not_started "current release changed before canonical migration"
+  [[ "$previous" == "${RELEASES}/${expected_previous}" ]] || \
+    fail_not_started "previous release changed before canonical migration"
+  [[ -f "$CANONICAL_TARGET" && ! -L "$CANONICAL_TARGET" ]] || \
+    fail_not_started "canonical archive is unavailable"
+
+  metadata="$(sudo -u redstm env PYTHONPATH="$current" "$current/.venv/bin/python" \
+    - "$CANONICAL_TARGET" "$current" "$previous" <<'PY'
+import sys
+from pathlib import Path
+
+from crawler.archive import SCHEMA_VERSION
+from scripts.migrate_archive import migration_source_version, validate_release_pair
+
+validate_release_pair(Path(sys.argv[2]), Path(sys.argv[3]))
+print(f"{migration_source_version(Path(sys.argv[1]))} {SCHEMA_VERSION}")
+PY
+  )"
+  read -r schema_version target_schema <<<"$metadata"
+  [[ "$schema_version" =~ ^[0-9]+$ && "$target_schema" =~ ^[0-9]+$ ]] || \
+    fail "canonical migration metadata output is invalid"
+  if [[ "$schema_version" == "$target_schema" ]]; then
+    sudo -u redstm env PYTHONPATH="$current" "$current/.venv/bin/python" \
+      -m scripts.doctor "$CANONICAL_TARGET" --warc-dir /srv/redstm/warc \
+      --output /srv/redstm/reports/canonical-schema-doctor.json >/dev/null
+    printf 'canonical-schema=noop\nschema-version=%s\n' "$target_schema"
+    return
+  fi
+
+  canonical_bytes="$(stat -c '%s' "$CANONICAL_TARGET")"
+  free_bytes="$(df -B1 --output=avail /srv/redstm/snapshots | awk 'NR == 2 {print $1}')"
+  [[ "$canonical_bytes" =~ ^[0-9]+$ && "$free_bytes" =~ ^[0-9]+$ ]] || \
+    fail "canonical migration capacity is invalid"
+  (( free_bytes >= canonical_bytes + CANONICAL_MIGRATION_FREE_MARGIN_BYTES )) || \
+    fail_not_started "insufficient free space for canonical migration snapshot"
+  nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  [[ "$nonce" =~ ^[0-9a-f]{32}$ ]] || fail "canonical migration nonce is invalid"
+  snapshot="/srv/redstm/snapshots/canonical-pre-v${target_schema}-$(date -u +%Y%m%dT%H%M%SZ)-${nonce}.sqlite"
+  manifest="${snapshot}.json"
+  doctor_report="/srv/redstm/reports/canonical-schema-v${target_schema}-doctor.json"
+  sudo -u redstm env PYTHONPATH="$current" "$current/.venv/bin/python" \
+    - "$CANONICAL_TARGET" "$snapshot" "$manifest" "$current" "$previous" <<'PY' \
+    >/dev/null
+import sys
+from pathlib import Path
+
+from scripts.migrate_archive import migrate_archive_locked
+
+migrate_archive_locked(
+    Path(sys.argv[1]),
+    snapshot=Path(sys.argv[2]),
+    manifest=Path(sys.argv[3]),
+    current_release=Path(sys.argv[4]),
+    previous_release=Path(sys.argv[5]),
+)
+PY
+  canonical_dir="$(dirname "$CANONICAL_TARGET")"
+  sync -d "$CANONICAL_TARGET"
+  sync -f "$canonical_dir"
+  sudo -u redstm env PYTHONPATH="$current" "$current/.venv/bin/python" \
+    -m scripts.doctor "$CANONICAL_TARGET" --warc-dir /srv/redstm/warc \
+    --output "$doctor_report" >/dev/null
+  printf 'canonical-schema=migrated\nschema-version=%s\nsnapshot=%s\nmanifest=%s\n' \
+    "$target_schema" "$snapshot" "$manifest"
+}
+
 rollback_release() {
   [[ $# -eq 3 ]] || fail "rollback requires expected current, target release, and attempt"
   local expected_current="$1" target_release="$2" expected_attempt="$3"
@@ -507,11 +692,6 @@ rollback_release() {
       fail_not_started "release attempt ownership changed"
   fi
   if [[ "$current" == "$target" ]]; then
-    if [[ "$expected_attempt" == "none" ]] && release_is_complete "$target_release" && \
-      [[ "$expected_current" != "$target_release" ]]; then
-      printf 'rollback=%s\n' "$target_release"
-      return
-    fi
     if [[ "$expected_attempt" == "none" && \
           "$expected_current" != "$target_release" ]]; then
       [[ "$previous" == "${RELEASES}/${expected_current}" ]] || \
@@ -542,8 +722,10 @@ target_result = subprocess.run(
     [
         str(target_release / ".venv/bin/python"),
         "-c",
-        "import json; from crawler.archive import MIGRATIONS, SCHEMA_VERSION; "
+        "import json; from crawler.archive import MIGRATIONS, RUNTIME_SCHEMA_POLICY, "
+        "SCHEMA_VERSION; "
         "print(json.dumps({'schema_version': SCHEMA_VERSION, "
+        "'schema_policy': RUNTIME_SCHEMA_POLICY, "
         "'migrations': [[item.version, item.sha256] for item in MIGRATIONS]}))",
     ],
     cwd=target_release,
@@ -555,8 +737,9 @@ target_result = subprocess.run(
 target_payload = json.loads(target_result.stdout)
 if (
     not isinstance(target_payload, dict)
-    or set(target_payload) != {"schema_version", "migrations"}
+    or set(target_payload) != {"schema_version", "schema_policy", "migrations"}
     or type(target_payload["schema_version"]) is not int
+    or target_payload["schema_policy"] != "explicit-v1"
     or not isinstance(target_payload["migrations"], list)
     or not all(
     isinstance(item, list)
@@ -638,10 +821,13 @@ mode="${1:-}"
 shift || true
 case "$mode" in
   install) acquire_release_lock; INSTALL_ACTIVE=1; INSTALL_MUTATED=0; install_release "$@" ;;
+  install-bridge) acquire_release_lock; INSTALL_ACTIVE=1; INSTALL_MUTATED=0; INSTALL_BRIDGE=1; install_release "$@" ;;
   canonical-transfer-size) canonical_transfer_size "$@" ;;
   truncate-canonical-transfer) acquire_release_lock; truncate_canonical_transfer "$@" ;;
   append-canonical-chunk) acquire_release_lock; append_canonical_chunk "$@" ;;
   activate-canonical) acquire_release_lock; activate_canonical "$@" ;;
+  canonical-schema-status) canonical_schema_status "$@" ;;
+  migrate-canonical) acquire_release_lock; migrate_canonical_schema "$@" ;;
   rollback) acquire_release_lock; rollback_release "$@" ;;
   status) release_status "$@" ;;
   *) fail "unknown install mode" ;;

@@ -14,6 +14,7 @@ from crawler.archive import require_archive_schema
 from crawler.frontier import FrontierStore
 from crawler.session import SessionRefreshError, ensure_session_export
 from crawler.settings import (
+    REDSTM_CAPPED_RETRY_ERROR_CODES,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_RECOVERY_MAX_POSTS,
     REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
@@ -60,6 +61,16 @@ def _recovery_batch(
     return candidates, len(revisited)
 
 
+def _aware_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("timestamp must be ISO-8601") from error
+    if parsed.tzinfo is None:
+        raise argparse.ArgumentTypeError("timestamp must include a timezone")
+    return parsed.astimezone(UTC)
+
+
 def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
     session_path = args.session.expanduser().resolve()
@@ -80,17 +91,29 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         interrupted_runs = store.interrupt_stale_crawl_runs()
         frontier = FrontierStore(archive)
         requeue_code = getattr(args, "requeue_dead", None)
+        full_content_before = getattr(args, "full_content_before", None)
+        full_content_max_rowid = getattr(args, "full_content_max_rowid", None)
+        board_id = getattr(args, "board", None)
         paused = pause_file is not None and pause_file.exists()
         if paused:
             requeued_dead = revisited_posts = 0
             candidates: list[tuple[str, int]] = []
         else:
-            requeued_dead = (
-                frontier.requeue_dead(error_code=requeue_code, limit=args.max_posts)
-                if requeue_code
-                else 0
-            )
-            candidates, revisited_posts = _recovery_batch(frontier, limit=args.max_posts)
+            if full_content_before is not None and full_content_max_rowid is not None:
+                requeued_dead = revisited_posts = 0
+                candidates = frontier.requeue_full_content(
+                    limit=args.max_posts,
+                    max_rowid=full_content_max_rowid,
+                    attempted_before=full_content_before,
+                    board_id=board_id,
+                )
+            else:
+                requeued_dead = (
+                    frontier.requeue_dead(error_code=requeue_code, limit=args.max_posts)
+                    if requeue_code
+                    else 0
+                )
+                candidates, revisited_posts = _recovery_batch(frontier, limit=args.max_posts)
         run_id = store.start_run("retry")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
@@ -132,6 +155,15 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 failures = sorted({*failures, "recovery_time_budget"})
 
         outcomes = _capture_summary(archive, run_id)
+        full_content_remaining = (
+            frontier.full_content_remaining(
+                max_rowid=full_content_max_rowid,
+                attempted_before=full_content_before,
+                board_id=board_id,
+            )
+            if full_content_before is not None and full_content_max_rowid is not None
+            else None
+        )
         status = "partial" if paused else _run_status(outcomes, scheduled, failures)
         store.finish_run(
             run_id,
@@ -144,6 +176,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 "interrupted_runs": interrupted_runs,
                 "requeued_dead": requeued_dead,
                 "revisited_posts": revisited_posts,
+                "full_content_remaining": full_content_remaining,
             },
         )
         if not paused:
@@ -161,6 +194,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "interrupted_runs": interrupted_runs,
             "requeued_dead": requeued_dead,
             "revisited_posts": revisited_posts,
+            "full_content_remaining": full_content_remaining,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
         }
@@ -183,16 +217,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-posts", type=int, default=REDSTM_RECOVERY_MAX_POSTS)
     parser.add_argument("--max-seconds", type=int, default=REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
+    parser.add_argument("--board")
+    parser.add_argument("--full-content-before", type=_aware_datetime)
+    parser.add_argument("--full-content-max-rowid", type=int)
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--requeue-dead",
-        choices=("network_error", "parse_drift"),
+        choices=tuple(sorted(REDSTM_CAPPED_RETRY_ERROR_CODES)),
         help="Requeue at most max-posts matching dead entries before recovery",
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_posts, args.max_seconds, args.lease_seconds) < 1:
         parser.error("max-posts, max-seconds and lease-seconds must be positive")
+    full_content = (args.full_content_before, args.full_content_max_rowid)
+    if (full_content[0] is None) != (full_content[1] is None):
+        parser.error("full-content checkpoint arguments must be provided together")
+    if args.full_content_max_rowid is not None and args.full_content_max_rowid < 0:
+        parser.error("full-content-max-rowid must be non-negative")
+    if args.requeue_dead and args.full_content_before is not None:
+        parser.error("requeue-dead cannot be combined with full-content mode")
     return args
 
 

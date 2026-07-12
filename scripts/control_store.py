@@ -13,6 +13,8 @@ MAX_OUTBOX_EVENTS = 10_000
 
 _ACTIONS = {
     "sync-now",
+    "full-catalog",
+    "full-content",
     "retry-batch",
     "publish-if-changed",
     "pause-after-current",
@@ -22,6 +24,7 @@ _TERMINAL_STATES = {"succeeded", "partial", "failed"}
 _PRIORITIES = {
     "event_batch": 50,
     "board_status": 60,
+    "frontier_failures": 60,
     "heartbeat": 80,
     "run_start": 100,
     "run_finish": 100,
@@ -30,6 +33,7 @@ _PRIORITIES = {
 _PATHS = {
     "heartbeat": re.compile(r"/api/v1/runner/heartbeat"),
     "board_status": re.compile(r"/api/v1/runner/boards/status"),
+    "frontier_failures": re.compile(r"/api/v1/runner/frontier-failures"),
     "run_start": re.compile(r"/api/v1/runner/runs"),
     "event_batch": re.compile(r"/api/v1/runner/runs/[a-zA-Z0-9_.:-]{1,128}/events:batch"),
     "run_finish": re.compile(r"/api/v1/runner/runs/[a-zA-Z0-9_.:-]{1,128}/finish"),
@@ -59,6 +63,7 @@ CREATE TABLE IF NOT EXISTS command_ledger (
     updated_at TEXT NOT NULL,
     run_id TEXT,
     result_json TEXT NOT NULL DEFAULT '{}',
+    args_json TEXT NOT NULL DEFAULT '{}',
     reported_at TEXT,
     report_state TEXT NOT NULL DEFAULT 'pending'
         CHECK (report_state IN ('pending', 'delivered', 'permanently_rejected'))
@@ -142,6 +147,10 @@ class ControlStore:
                     "DEFAULT 'pending' CHECK (report_state IN "
                     "('pending', 'delivered', 'permanently_rejected'))"
                 )
+            if "args_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE command_ledger ADD COLUMN args_json TEXT NOT NULL DEFAULT '{}'"
+                )
                 connection.execute(
                     "UPDATE command_ledger SET report_state = 'delivered' "
                     "WHERE reported_at IS NOT NULL"
@@ -155,7 +164,12 @@ class ControlStore:
         return connection
 
     def record_claim(
-        self, command_id: str, action: str, *, now: datetime | None = None
+        self,
+        command_id: str,
+        action: str,
+        *,
+        args: dict[str, Any] | None = None,
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         try:
             canonical_id = str(UUID(command_id))
@@ -169,10 +183,17 @@ class ControlStore:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO command_ledger (command_id, action, state, claimed_at, updated_at)
-                VALUES (?, ?, 'claimed', ?, ?) ON CONFLICT(command_id) DO NOTHING
+                INSERT INTO command_ledger (
+                    command_id, action, state, claimed_at, updated_at, args_json
+                ) VALUES (?, ?, 'claimed', ?, ?, ?) ON CONFLICT(command_id) DO NOTHING
                 """,
-                (command_id, action, timestamp, timestamp),
+                (
+                    command_id,
+                    action,
+                    timestamp,
+                    timestamp,
+                    json.dumps(args or {}, separators=(",", ":"), sort_keys=True),
+                ),
             )
             row = connection.execute(
                 "SELECT * FROM command_ledger WHERE command_id = ?", (command_id,)
@@ -180,7 +201,9 @@ class ControlStore:
         assert row is not None
         if row["action"] != action:
             raise ValueError("command replay action mismatch")
-        return dict(row)
+        result = dict(row)
+        result["args"] = json.loads(result.get("args_json", "{}"))
+        return result
 
     def begin_command(
         self, command_id: str, *, run_id: str | None = None, now: datetime | None = None

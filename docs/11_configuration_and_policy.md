@@ -131,7 +131,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | session | local lifetime/login throttle/revalidate | 4시간 / 30분 / 30분 | `crawler/settings.py` |
 | detail audit | stale detail revisit | 30일 eligibility, batch당 oldest-first 예약 1건 | `crawler/settings.py` |
 | cycle | graceful budget | 4시간 | `scripts.crawl_cycle` CLI |
-| recovery | normal/bootstrap budget | 100건 / 600건, 2시간 | `scripts.control_runner` fixed action |
+| recovery | 내부 chunk | normal 20건 / full-content 100건 | 같은 command가 남은 항목 0까지 자동 반복; 총량·총시간 상한 아님 |
 | export | automatic workers / changed-post cap | 1 / 2,000건 | `scripts.control_runner`, `scripts.export_static` |
 | export | deterministic compression | post object level 15 / board·search·collection aggregate `-v2` level 6 | `scripts.export_static` |
 | publish | R2 hard stop | 20GB / 800,000 objects | `scripts.publish_static` |
@@ -200,6 +200,7 @@ uv run ruff format --check .
 uv run mypy crawler scripts tests
 
 Set-Location edge
+npm ci
 npm test
 npm run check
 npm run test:e2e

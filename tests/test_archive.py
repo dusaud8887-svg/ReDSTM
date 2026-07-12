@@ -135,10 +135,13 @@ def test_schema_v4_backfills_frontier_comment_expectation(
             )
         ]
         assert rows == [(1, 5), (2, None)]
+        assert (
+            connection.execute("SELECT incremental_anchor_post_id FROM boards").fetchone()[0] == 2
+        )
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
-def test_release_schema_guard_accepts_exact_v4_and_rejects_actual_v3_target(
+def test_release_schema_guard_accepts_exact_v4_and_rejects_v3_target(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "archive.sqlite"
@@ -188,7 +191,7 @@ def test_release_schema_guard_rejects_missing_or_wrong_v4_column(
                 connection,
                 target_schema_version=4,
                 target_migration_hashes={
-                    migration.version: migration.sha256 for migration in MIGRATIONS
+                    migration.version: migration.sha256 for migration in MIGRATIONS[:4]
                 },
             )
 
@@ -217,14 +220,16 @@ def test_release_schema_guard_rejects_inconsistent_ledger_and_target_metadata(
             )
 
 
-def test_schema_v2_indexes_raw_capture_hash(tmp_path: Path) -> None:
+def test_schema_v2_indexes_raw_capture_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "archive.sqlite"
-    initialize_archive(path)
-    with connect_archive(path) as connection:
-        _board(connection, "ss_temp01")
-        connection.execute("DROP INDEX captures_raw_sha256_idx")
-        connection.execute("DELETE FROM schema_migrations WHERE version = 2")
-        connection.execute("PRAGMA user_version = 1")
+    with monkeypatch.context() as patch:
+        patch.setattr(archive_module, "SCHEMA_VERSION", 1)
+        patch.setattr(archive_module, "MIGRATIONS", MIGRATIONS[:1])
+        initialize_archive(path)
+        with connect_archive(path) as connection:
+            _board(connection, "ss_temp01")
 
     initialize_archive(path)
 

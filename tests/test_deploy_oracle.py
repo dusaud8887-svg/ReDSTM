@@ -13,10 +13,13 @@ from typing import Any
 
 import pytest
 
+from crawler.archive import MIGRATIONS, RUNTIME_SCHEMA_POLICY, SCHEMA_VERSION
 from scripts.deploy_oracle import (
     OracleTarget,
     activate_canonical,
+    canonical_schema_status,
     deploy_release,
+    migrate_canonical_schema,
     preflight,
     rollback,
     status,
@@ -46,6 +49,70 @@ def _status_json(
             "schedule_timer": {"active": False, "enabled": False},
         }
     )
+
+
+def test_canonical_schema_status_is_bounded_and_typed(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    payload = {
+        "application_id": 0x52445354,
+        "compatible": True,
+        "exact": True,
+        "migration_count": len(MIGRATIONS),
+        "migrations": [[item.version, item.sha256] for item in MIGRATIONS],
+        "schema_policy": RUNTIME_SCHEMA_POLICY,
+        "schema_version": SCHEMA_VERSION,
+    }
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[-1] == "canonical-schema-status"
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(payload),
+            stderr="",
+        )
+
+    assert canonical_schema_status(target, runner=run) == payload
+
+
+def test_canonical_migration_requires_pair_and_parses_evidence(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    current = "a" * 40
+    previous = "b" * 40
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[-3:] == ["migrate-canonical", current, previous]
+        assert kwargs["timeout"] == 8 * 60 * 60
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                "canonical-schema=migrated\n"
+                "schema-version=4\n"
+                "snapshot=/srv/redstm/snapshots/canonical-pre-v4.sqlite\n"
+                "manifest=/srv/redstm/snapshots/canonical-pre-v4.sqlite.json\n"
+            ),
+            stderr="",
+        )
+
+    assert migrate_canonical_schema(
+        target,
+        expected_current=current,
+        expected_previous=previous,
+        runner=run,
+    ) == {
+        "state": "migrated",
+        "schema_version": 4,
+        "snapshot": "/srv/redstm/snapshots/canonical-pre-v4.sqlite",
+        "manifest": "/srv/redstm/snapshots/canonical-pre-v4.sqlite.json",
+    }
+    with pytest.raises(ValueError, match="two distinct"):
+        migrate_canonical_schema(
+            target,
+            expected_current=current,
+            expected_previous=current,
+            runner=run,
+        )
 
 
 def _run_canonical_installer(
@@ -790,7 +857,7 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "UV_UNMANAGED_INSTALL" not in installer
     assert "/usr/local/bin/uvx" in installer
     assert installer.count("UV_NO_CONFIG=1") == 2
-    assert installer.count('PYTHONPATH="$CURRENT"') == 3
+    assert installer.count('PYTHONPATH="$CURRENT"') == 4
     assert 'PYTHONPATH="$staging"' in installer
     assert "redstm-release-${release}-([0-9a-f]{32})" in installer
     assert "/home/ubuntu" not in installer
@@ -800,8 +867,8 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in service
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in schedule_service
     assert "ProtectSystem=strict" in service
-    assert "TimeoutStartSec=5h" in service
-    assert "TimeoutStartSec=7h" in schedule_service
+    assert "TimeoutStartSec=infinity" in service
+    assert "TimeoutStartSec=infinity" in schedule_service
     assert "RuntimeMaxSec" not in service
     assert "Persistent=true" in timer
     assert "--scheduled" in schedule_service
@@ -832,18 +899,22 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "status) release_status" in installer
     assert "redstm_install_not_started" in installer
     assert 'exec 8<>"$lock"' in installer
-    assert installer.count("acquire_runner_lock") == 4
+    assert installer.count("acquire_runner_lock") == 5
     assert "crawler or control runner is active" in installer
     assert "current-release.complete" in installer
     assert "release_attempt_matches" in installer
     assert "rollback requires expected current, target release, and attempt" in installer
     assert "find /tmp" not in installer
     assert "validate_archive_for_release" in installer
-    assert "from crawler.archive import MIGRATIONS, SCHEMA_VERSION" in installer
+    assert "from crawler.archive import MIGRATIONS, RUNTIME_SCHEMA_POLICY" in installer
     assert 'target_schema_version=target_payload["schema_version"]' in installer
     assert 'PYTHONPATH="$source_release"' in installer
     assert 'target_environment["PYTHONPATH"] = str(target_release)' in installer
     assert "if extra_versions or mismatched or user_version > supported_max" not in installer
+    assert "migrate-canonical)" in installer
+    assert "canonical migration requires two distinct compatible releases" in installer
+    assert "migrate_archive_locked" in installer
+    assert "CANONICAL_MIGRATION_FREE_MARGIN_BYTES=5368709120" in installer
     rollback_body = installer.split("rollback_release() {", 1)[1].split('mode="${1:-}"', 1)[0]
     assert rollback_body.index("validate_archive_for_release") < rollback_body.index(
         'ln -sfn -- "$target" "${CURRENT}.new"'

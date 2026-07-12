@@ -457,7 +457,7 @@ source of truth는 Oracle systemd timer이고, D1이나 Worker 장애가 자동 
 
 ```text
 Sync now       신규/변경 discovery + collect
-Retry batch     cycle당 due 후보 최대 100건; 2시간/장애 breaker 우선
+Retry batch     내부 chunk를 due 0까지 연속 처리; 장애 breaker 우선
 Publish if changed
 Pause after current
 Resume schedule
@@ -583,7 +583,8 @@ profile에서만 pinned container로 사용한다.
 
 schema SQL은 `crawler/archive.py`의 hash 검증된 `MIGRATIONS`가 source of truth다. v1이 전체
 schema를 만들고 v2는 WARC 재사용을 위한 capture `(raw_sha256, url)` partial index를, v3는 board별
-bounded inventory 재개 cursor를, v4는 nullable frontier `expected_comment_count`를 더한다. SQLite
+inventory 재개 cursor를, v4는 nullable frontier `expected_comment_count`와 board별
+`incremental_anchor_post_id`/`last_incremental_at`을 한 번에 더한다. SQLite
 `STRICT` table, foreign key, latest-version 소유권 trigger, frontier lease CHECK를 사용하며 같은
 migration version의 SQL hash가 달라지면 DB open을 거부한다. 아래는 외부 계약이다.
 
@@ -837,11 +838,11 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
-| 부하 제한 | concurrency 1, domain concurrency 1, 고정 10초 delay, robots 준수 | time-bounded canary에서 요청 간격·429 여부 확인 |
+| 부하 제한 | detail concurrency 2, 병렬 시작 간 고정 10초 delay, robots 준수 | canary에서 요청 간격·429 여부 확인 |
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | frontier backoff/dead와 `network_error`·`parse_drift` bounded revive | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
-| listing | complete changed-row seed, overlap boundary, schema v3 inventory cursor와 v4 댓글 기대치 | pass-epoch bundle과 실제 cursor progression |
+| listing | complete changed-row seed, overlap boundary, schema v3 inventory cursor와 v4 댓글 기대치·증분 anchor | 실제 cursor progression |
 | detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
 | monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage canary와 7일 shadow |
 
@@ -1024,7 +1025,7 @@ storage_error
 
 - network policy의 단일 source of truth는 `crawler/settings.py`다. YAML을 추가하지 않는다.
   board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
-- 구현값은 `CONCURRENT_REQUESTS=1`, `CONCURRENT_REQUESTS_PER_DOMAIN=1`,
+- 구현값은 `CONCURRENT_REQUESTS=2`, `CONCURRENT_REQUESTS_PER_DOMAIN=2`,
   `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, `RETRY_TIMES=2`,
   `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=True`다.
 - listing/detail timeout은 120/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
@@ -1046,7 +1047,8 @@ storage_error
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
 - `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
 - `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery와 일반 sync는 첫
-  auth, 같은 class의 parse drift/network/429 연속 3회에서 board 내 요청을 중단한다. 고립된
+  auth, 같은 class의 parse drift/network/429 연속 3회에서 board 내 요청을 중단한다. 이 문서에서는
+  parse drift 연속 중단을 일관되게 **parse-drift breaker**라고 부른다. 고립된
   parse failure는 해당 항목을 dead로 분류하고 다음 detail을 계속한다. cycle은 board
   경계 결과의 연속 network breaker도 유지한다.
 - session preflight 뒤 30분이 지난 board 경계에서 session을 재검증한다. 재로그인은 run당 1회·최소
@@ -1594,7 +1596,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 | TypeMoon 갑작스러운 종료 | backfill 미완료 | 기존 DB 먼저 보존, 고가치 board 우선 |
 | HTML drift | 잘못된 빈 본문 저장 | raw-first, quality gate, parse_drift 중단 |
 | 계정/session 만료 | crawl 정지 | 저장 session reuse, form login 1회, 명시적 auth_required |
-| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 1, delay, Retry-After/backoff, weekly audit |
+| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 2, staggered delay, Retry-After/backoff |
 | raw HTML XSS | 개인 기기 compromise | WARC 직접 렌더 금지, sanitize/CSP |
 | R2 credential 탈취 | serving 삭제 | content-addressed canonical/backup에서 재배포, scoped token |
 | B2 credential 탈취 | backup 삭제 | 별도 account/token, Oracle canonical, offline recovery 사본 |
@@ -1727,7 +1729,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - 결정: **승인 (2026-07-11, 사용자 방향 확정)**
 - 범위: instance, 194GiB boot volume, SSH와 network는 유지하고 legacy application/data만 검증된
   manifest 단위로 퇴역한다. Oracle에는 public viewer/API를 두지 않는다.
-- 근거: 추가 비용 0, 97GiB free와 4GiB swap을 이미 확보했고 concurrency 1 crawler에 충분하다.
+- 근거: 추가 비용 0, 97GiB free와 4GiB swap을 이미 확보했고 concurrency 2 crawler에 충분하다.
   Cloudflare Free CPU/ephemeral container disk는 Python/Scrapy + 12GB SQLite/WARC host에 맞지 않고,
   새 Oracle A1을 위해 현 instance를 삭제하면 capacity와 200GB volume을 잃을 위험이 있다.
 - runtime: native pinned `uv` + Python 3.14 + systemd oneshot/timer. Docker는 smoke/fallback이며
@@ -1810,7 +1812,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] canonical schema v2 적용과 data count 보존
 [x] schema v3 inventory cursor migration 코드와 회귀 test
 [x] Oracle canonical schema v3 migration과 doctor
-[x] schema v4 durable listing 댓글 기대치 migration 코드와 회귀 test
+[x] schema v4 durable listing 댓글 기대치·증분 anchor migration 코드와 회귀 test
 [ ] schema-v4-compatible application 2회 배포 뒤 canonical v4 migration/doctor
 [ ] pass-epoch inventory/bootstrap bundle live canary와 automatic schedule 관찰
 [x] full exporter/collection reader/Access JWT/rclone publish 구현

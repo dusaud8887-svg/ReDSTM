@@ -47,6 +47,12 @@ function boardView(row) {
     retry: Number(row.retry ?? 0),
     done: Number(row.done ?? 0),
     dead: Number(row.dead ?? 0),
+    collection_enabled: Number(row.collection_enabled ?? 1) === 1,
+    outline_only: Number(row.outline_only ?? 0),
+    incremental_anchor_post_id: row.incremental_anchor_post_id == null
+      ? null
+      : Number(row.incremental_anchor_post_id),
+    last_incremental_at: row.last_incremental_at ?? null,
     inventory_next_page: row.inventory_next_page == null
       ? null
       : Number(row.inventory_next_page),
@@ -54,6 +60,51 @@ function boardView(row) {
     inventory_pass_started_at: row.inventory_pass_started_at ?? null,
     warning_code: row.warning_code ?? null,
   };
+}
+
+async function failuresPage(env, requestId, url) {
+  const limit = pageLimit(url);
+  const cursor = decodeCursor(url.searchParams.get("cursor"), 3);
+  const boardId = url.searchParams.get("board_id");
+  if (boardId != null && !/^[a-z0-9_]{1,64}$/.test(boardId)) {
+    throw Object.assign(new Error("Board id is invalid"), { status: 400 });
+  }
+  if (cursor && !/^\d+$/.test(cursor[2])) {
+    throw Object.assign(new Error("Page cursor is invalid"), { status: 400 });
+  }
+  const clauses = [];
+  const parameters = [];
+  if (boardId) {
+    clauses.push("board_id = ?");
+    parameters.push(boardId);
+  }
+  if (cursor) {
+    clauses.push("(COALESCE(last_attempt_at, '') < ? OR " +
+      "(COALESCE(last_attempt_at, '') = ? AND " +
+      "(board_id > ? OR (board_id = ? AND external_post_id > ?))))");
+    parameters.push(cursor[0], cursor[0], cursor[1], cursor[1], Number(cursor[2]));
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const result = await env.CONTROL_DB.prepare(
+    `SELECT board_id, external_post_id, attempts, error_code, last_attempt_at
+     FROM frontier_failures ${where}
+     ORDER BY COALESCE(last_attempt_at, '') DESC, board_id, external_post_id LIMIT ?`,
+  ).bind(...parameters, limit + 1).all();
+  const rows = result.results ?? [];
+  const page = rows.slice(0, limit);
+  const last = page.at(-1);
+  return envelope(requestId, {
+    items: page.map((row) => ({
+      board_id: row.board_id,
+      external_post_id: Number(row.external_post_id),
+      attempts: Number(row.attempts),
+      error_code: row.error_code,
+      last_attempt_at: row.last_attempt_at ?? null,
+    })),
+    next_cursor: rows.length > limit && last
+      ? encodeCursor([last.last_attempt_at ?? "", last.board_id, String(last.external_post_id)])
+      : null,
+  });
 }
 
 function pageLimit(url) {
@@ -528,6 +579,7 @@ export async function readControlResponse(request, env, requestId, url) {
   if (url.pathname === "/api/v1/ops/overview") return overview(env, requestId);
   if (url.pathname === "/api/v1/ops/runs") return runsPage(env, requestId, url);
   if (url.pathname === "/api/v1/ops/boards") return boardsPage(env, requestId, url);
+  if (url.pathname === "/api/v1/ops/failures") return failuresPage(env, requestId, url);
   if (url.pathname === "/api/v1/ops/releases") return releases(env, requestId);
   return null;
 }

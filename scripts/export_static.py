@@ -46,7 +46,7 @@ _SEARCH_FIELDS_WITH_AA = [*_SEARCH_FIELDS, "is_aa"]
 _COMPRESSION_LEVEL = 15
 _AGGREGATE_COMPRESSION_LEVEL = 6
 _EXPORT_STATE_SCHEMA_VERSION = 1
-_DEFAULT_MAX_CHANGED_POSTS = 2_000
+_DEFAULT_MAX_CHANGED_POSTS = 0
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_PROJECTION_VERSION = "source-projection-v1"
 
@@ -1842,7 +1842,7 @@ def _incremental_export_static(
                 "incremental_projection_untracked",
                 "post projection changed without a matching stored capture",
             )
-        if len(changed_post_ids) > max_changed_posts:
+        if max_changed_posts and len(changed_post_ids) > max_changed_posts:
             raise IncrementalExportError(
                 "incremental_delta_too_large",
                 f"delta has {len(changed_post_ids)} changed posts; limit is {max_changed_posts}",
@@ -1901,8 +1901,8 @@ def export_static(
 ) -> dict[str, Any]:
     if workers < 1:
         raise ValueError("workers must be positive")
-    if max_changed_posts < 1:
-        raise ValueError("max_changed_posts must be positive")
+    if max_changed_posts < 0:
+        raise ValueError("max_changed_posts must not be negative")
     if incremental_only and force_full:
         raise ValueError("incremental_only and force_full are mutually exclusive")
     source = source.expanduser().resolve(strict=True)

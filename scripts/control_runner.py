@@ -20,6 +20,7 @@ from uuid import uuid4
 from filelock import FileLock, Timeout
 
 from crawler.archive import connect_archive
+from crawler.settings import REDSTM_FULL_CONTENT_MAX_POSTS, REDSTM_RECOVERY_MAX_POSTS
 from scripts.control_client import (
     ControlClient,
     ControlProtocolError,
@@ -30,6 +31,8 @@ from scripts.control_store import ControlStore, OutboxFullError
 
 _RUN_KINDS = {
     "sync-now": "manual-sync",
+    "full-catalog": "manual-sync",
+    "full-content": "retry",
     "retry-batch": "retry",
     "publish-if-changed": "publish",
 }
@@ -48,6 +51,8 @@ _STATUS_CODES = {
 }
 _SUCCESS_CODES = {
     "sync-now": "cycle_succeeded",
+    "full-catalog": "full_catalog_succeeded",
+    "full-content": "full_content_succeeded",
     "inventory": "inventory_succeeded",
     "bootstrap-recovery": "bootstrap_recovery_succeeded",
     "retry-batch": "recovery_succeeded",
@@ -64,9 +69,6 @@ _WARNING_CODES = {
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SNAPSHOT_TIME_BUDGET_SECONDS = 30
-_INVENTORY_TIME_BUDGET_SECONDS = 2 * 60 * 60
-_BOOTSTRAP_RECOVERY_MAX_POSTS = 600
-_RETRY_MAX_POSTS = 100
 _EXPORT_WORKERS = 1
 _DEFAULT_DISK_LOW_BYTES = 40 * 1024**3
 _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS = _DAILY_INTERVAL_SECONDS
@@ -79,6 +81,7 @@ _CALENDAR_PATTERN = re.compile(
 )
 _INVENTORY_STARTED = "inventory.started"
 _INVENTORY_COMPLETED = "inventory.completed"
+_FULL_CONTENT_STARTED = "full-content.started"
 
 
 def _timestamp() -> str:
@@ -240,14 +243,7 @@ class ControlRunner:
         intentional_pause = False
         terminal_safe_code: str | None = None
         sequence = 1
-        follow_up = (
-            "inventory"
-            if self._inventory_due()
-            else "bootstrap-recovery"
-            if self._bootstrap_pending()
-            else "retry-batch"
-        )
-        for action in ("sync-now", follow_up, "publish-if-changed"):
+        for action in ("sync-now", "publish-if-changed"):
             self._claim_marker()
             if (self.profile.state_dir / "schedule.paused").exists():
                 paused = True
@@ -338,7 +334,9 @@ class ControlRunner:
         if command is None:
             self._heartbeat("idle")
             return {"ok": True, "status": "idle"}
-        record = self.store.record_claim(command["command_id"], command["action"])
+        record = self.store.record_claim(
+            command["command_id"], command["action"], args=command.get("args", {})
+        )
         return self._resume(record)
 
     def _resume(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -408,8 +406,18 @@ class ControlRunner:
         self._send("run_start", "/api/v1/runner/runs", start_payload, f"start-{command_id}")
         self._event(run_id, 0, action, "running")
         report: dict[str, Any] = {}
+        raw_args = record.get("args")
+        if not isinstance(raw_args, dict):
+            raw_args = json.loads(str(record.get("args_json", "{}")))
+        board_id = raw_args.get("board_id")
+        if board_id is not None and (
+            not isinstance(board_id, str) or re.fullmatch(r"[a-z0-9_]{1,64}", board_id) is None
+        ):
+            raise ValueError("command board id is invalid")
         try:
-            report = self._execute_action(action, command_id, run_id, command_id=command_id)
+            report = self._execute_action(
+                action, command_id, run_id, command_id=command_id, board_id=board_id
+            )
             state, safe_code, finish_payload = self._result(action, report)
         except OSError, RuntimeError, ValueError:
             state = "failed"
@@ -421,10 +429,35 @@ class ControlRunner:
             safe_code,
             result_payload=finish_payload,
         )
-        if action in {"sync-now", "retry-batch"} and finish_payload["counters"]["changed_posts"]:
+        publishes_changes = action in {"sync-now", "full-content", "retry-batch"}
+        if publishes_changes and finish_payload["counters"]["changed_posts"]:
             self._write_publish_marker()
-        if action == "sync-now" and report:
+        if action in {"sync-now", "full-catalog"} and report:
             self._board_summaries(report)
+        elif action in {"full-content", "retry-batch"} and self.profile.archive.is_file():
+            with connect_archive(self.profile.archive, read_only=True) as connection:
+                if board_id:
+                    board_ids = [board_id]
+                else:
+                    board_ids = [
+                        str(row["board_id"])
+                        for row in connection.execute(
+                            "SELECT board_id FROM boards WHERE is_enabled = 1 ORDER BY board_id"
+                        )
+                    ]
+            self._board_summaries(
+                {
+                    "boards": [
+                        {
+                            "board_id": item,
+                            "status": str(report.get("status", "failed")),
+                            "outcomes": {},
+                            "scheduled_posts": 0,
+                        }
+                        for item in board_ids
+                    ]
+                }
+            )
         self._event(
             run_id,
             1,
@@ -433,7 +466,7 @@ class ControlRunner:
             finish_payload["counters"],
             safe_message=safe_code,
         )
-        if action in {"sync-now", "retry-batch"}:
+        if action in {"sync-now", "full-catalog", "full-content", "retry-batch"}:
             self._archive_snapshot_event(run_id, 2)
         delivery = self._send(
             "run_finish",
@@ -458,24 +491,17 @@ class ControlRunner:
         run_id: str,
         *,
         command_id: str | None = None,
+        board_id: str | None = None,
         reconcile_attempt: int = 0,
         pending_recovery_checked: bool = False,
     ) -> dict[str, Any]:
         command_reports = self.profile.report_dir / "commands"
         command_reports.mkdir(parents=True, exist_ok=True)
         report_path = command_reports / f"{report_id}.json"
-        if action in {"sync-now", "inventory"}:
-            inventory_started_at = (
-                self._ensure_inventory_pass_started() if action == "inventory" else None
-            )
-            if action == "inventory" and self._inventory_pass_complete(str(inventory_started_at)):
-                self._complete_inventory_pass(str(inventory_started_at))
-                return {
-                    "ok": True,
-                    "status": "succeeded",
-                    "safe_code": "inventory_already_complete",
-                    "boards": [],
-                }
+        if action in {"sync-now", "full-catalog"}:
+            inventory_started_at = None
+            if action == "full-catalog":
+                inventory_started_at = self._ensure_inventory_pass_started(board_id)
             command = [
                 sys.executable,
                 "-m",
@@ -488,33 +514,50 @@ class ControlRunner:
                 str(self.profile.warc_dir),
                 "--report-dir",
                 str(self.profile.report_dir / "cycles"),
-                "--pause-file",
-                str(self.profile.state_dir / "schedule.paused"),
                 "--output",
                 str(report_path),
             ]
-            if action == "inventory":
+            if command_id is None:
+                command.extend(("--pause-file", str(self.profile.state_dir / "schedule.paused")))
+            if board_id:
+                command.extend(("--board", board_id))
+            if action == "full-catalog":
                 command.extend(
                     (
                         "--inventory",
                         "--inventory-since",
                         str(inventory_started_at),
-                        "--max-seconds",
-                        str(_INVENTORY_TIME_BUDGET_SECONDS),
+                        "--listing-only",
                     )
                 )
-            report = self._execute_report(
-                command, report_path, run_id, "crawling", command_id=command_id
+            reports: list[dict[str, Any]] = []
+            while True:
+                report = self._execute_report(
+                    command, report_path, run_id, "crawling", command_id=command_id
+                )
+                reports.append(report)
+                if action != "full-catalog":
+                    return report
+                if self._inventory_pass_complete(str(inventory_started_at), board_id):
+                    self._complete_inventory_pass(str(inventory_started_at), board_id)
+                    return self._combined_collection_report(
+                        reports, safe_code="full_catalog_succeeded"
+                    )
+                if report.get("status") in {
+                    "auth_failed",
+                    "site_unreachable",
+                    "rate_limited",
+                    "runner_failed",
+                    "failed",
+                }:
+                    report["inventory_pass_complete"] = False
+                    return report
+        if action in {"full-content", "retry-batch"}:
+            full_content_checkpoint = (
+                self._ensure_full_content_pass_started(board_id)
+                if action == "full-content"
+                else None
             )
-            if (
-                action == "inventory"
-                and report.get("status") in {"succeeded", "partial"}
-                and report.get("stop_reason") != "schedule_paused"
-                and self._inventory_pass_complete(str(inventory_started_at))
-            ):
-                self._complete_inventory_pass(str(inventory_started_at))
-            return report
-        if action in {"bootstrap-recovery", "retry-batch"}:
             command = [
                 sys.executable,
                 "-m",
@@ -527,19 +570,62 @@ class ControlRunner:
                 str(self.profile.warc_dir),
                 "--max-posts",
                 str(
-                    _BOOTSTRAP_RECOVERY_MAX_POSTS
-                    if action == "bootstrap-recovery"
-                    else _RETRY_MAX_POSTS
+                    REDSTM_FULL_CONTENT_MAX_POSTS
+                    if action == "full-content"
+                    else REDSTM_RECOVERY_MAX_POSTS
                 ),
-                "--pause-file",
-                str(self.profile.state_dir / "schedule.paused"),
                 "--output",
                 str(report_path),
             ]
-            report = self._execute_report(
-                command, report_path, run_id, "recovery", command_id=command_id
-            )
-            return report
+            if board_id:
+                command.extend(("--board", board_id))
+            if action == "full-content":
+                assert full_content_checkpoint is not None
+                command.extend(
+                    (
+                        "--full-content-before",
+                        full_content_checkpoint[0],
+                        "--full-content-max-rowid",
+                        str(full_content_checkpoint[1]),
+                    )
+                )
+            reports = []
+            previous_remaining: int | None = None
+            while True:
+                report = self._execute_report(
+                    command, report_path, run_id, "recovery", command_id=command_id
+                )
+                reports.append(report)
+                if report.get("status") in {
+                    "auth_failed",
+                    "site_unreachable",
+                    "rate_limited",
+                    "runner_failed",
+                    "failed",
+                }:
+                    return self._combined_collection_report(reports)
+                if action == "retry-batch":
+                    if _integer(report.get("selected_posts")) == 0:
+                        return self._combined_collection_report(
+                            reports, safe_code="recovery_succeeded"
+                        )
+                    continue
+                remaining = report.get("full_content_remaining")
+                if remaining == 0:
+                    (self.profile.state_dir / _FULL_CONTENT_STARTED).unlink(missing_ok=True)
+                    combined = self._combined_collection_report(
+                        reports, safe_code="full_content_succeeded"
+                    )
+                    combined["full_content_complete"] = True
+                    combined["full_content_remaining"] = 0
+                    return combined
+                if (
+                    type(remaining) is not int
+                    or remaining < 1
+                    or (previous_remaining is not None and remaining >= previous_remaining)
+                ):
+                    raise RuntimeError("full-content checkpoint made no progress")
+                previous_remaining = remaining
         marker = self.profile.state_dir / "publish.pending"
         recovery_only = (
             not pending_recovery_checked
@@ -865,12 +951,16 @@ class ControlRunner:
             seconds=_WEEKLY_INTERVAL_SECONDS
         )
 
-    def _inventory_pass_complete(self, started_at: str) -> bool:
+    def _inventory_pass_complete(self, started_at: str, board_id: str | None = None) -> bool:
         if not self.profile.archive.is_file():
             return False
         with connect_archive(self.profile.archive, read_only=True) as connection:
+            board_filter = " AND board_id = ?" if board_id is not None else ""
+            parameters: tuple[object, ...] = (started_at,)
+            if board_id is not None:
+                parameters += (board_id,)
             row = connection.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS total,
                     SUM(
                         last_inventory_at IS NULL
@@ -878,27 +968,89 @@ class ControlRunner:
                         OR julianday(last_inventory_at) < julianday(?)
                         OR inventory_next_page <> 1
                     ) AS incomplete
-                FROM boards WHERE is_enabled = 1
+                FROM boards WHERE is_enabled = 1{board_filter}
                 """,
-                (started_at,),
+                parameters,
             ).fetchone()
         return bool(row and int(row["total"]) > 0 and int(row["incomplete"] or 0) == 0)
 
-    def _ensure_inventory_pass_started(self) -> str:
+    def _ensure_inventory_pass_started(self, board_id: str | None = None) -> str:
         marker = self.profile.state_dir / _INVENTORY_STARTED
+        payload = self._marker_payload(marker)
         existing = self._inventory_marker_time(marker, "started_at")
-        if existing is not None:
+        if payload is not None and existing is not None:
+            if payload.get("board_id") != board_id:
+                raise RuntimeError("an inventory pass with a different scope is active")
             return existing.isoformat(timespec="seconds").replace("+00:00", "Z")
         started_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-        self._write_inventory_marker(marker, {"started_at": started_at})
+        with connect_archive(self.profile.archive) as connection:
+            where = "board_id = ? AND is_enabled = 1" if board_id else "is_enabled = 1"
+            parameters = (board_id,) if board_id else ()
+            cursor = connection.execute(
+                f"UPDATE boards SET inventory_next_page = 1 WHERE {where}", parameters
+            )
+            if board_id is not None and cursor.rowcount != 1:
+                raise ValueError("board is missing or disabled")
+        self._write_inventory_marker(marker, {"started_at": started_at, "board_id": board_id})
         return started_at
 
-    def _complete_inventory_pass(self, started_at: str) -> None:
+    def _complete_inventory_pass(self, started_at: str, board_id: str | None = None) -> None:
+        with connect_archive(self.profile.archive) as connection:
+            board_filter = " AND board_id = ?" if board_id is not None else ""
+            parameters: tuple[object, ...] = (board_id,) if board_id is not None else ()
+            connection.execute(
+                f"""
+                UPDATE boards
+                SET incremental_anchor_post_id = COALESCE(
+                        (SELECT MAX(frontier.external_post_id)
+                         FROM crawl_frontier AS frontier
+                         WHERE frontier.board_id = boards.board_id),
+                        incremental_anchor_post_id
+                    ),
+                    last_incremental_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                WHERE is_enabled = 1{board_filter}
+                """,
+                parameters,
+            )
         self._write_inventory_marker(
             self.profile.state_dir / _INVENTORY_COMPLETED,
-            {"started_at": started_at, "completed_at": _timestamp()},
+            {
+                "started_at": started_at,
+                "completed_at": _timestamp(),
+                "board_id": board_id,
+            },
         )
         (self.profile.state_dir / _INVENTORY_STARTED).unlink(missing_ok=True)
+
+    def _ensure_full_content_pass_started(self, board_id: str | None) -> tuple[str, int]:
+        marker = self.profile.state_dir / _FULL_CONTENT_STARTED
+        payload = self._marker_payload(marker)
+        if payload is not None:
+            started_at = payload.get("started_at")
+            max_rowid = payload.get("max_rowid")
+            if (
+                payload.get("board_id") != board_id
+                or not isinstance(started_at, str)
+                or type(max_rowid) is not int
+                or max_rowid < 0
+            ):
+                raise RuntimeError("full-content checkpoint is invalid or has another scope")
+            return started_at, max_rowid
+        with connect_archive(self.profile.archive, read_only=True) as connection:
+            board_filter = " WHERE board_id = ?" if board_id is not None else ""
+            parameters = (board_id,) if board_id is not None else ()
+            max_rowid = int(
+                connection.execute(
+                    f"SELECT COALESCE(MAX(rowid), 0) FROM crawl_frontier{board_filter}",
+                    parameters,
+                ).fetchone()[0]
+            )
+        started_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        self._write_inventory_marker(
+            marker,
+            {"started_at": started_at, "max_rowid": max_rowid, "board_id": board_id},
+        )
+        return started_at, max_rowid
 
     def _latest_inventory_pass_started_at(self) -> str | None:
         for name in (_INVENTORY_STARTED, _INVENTORY_COMPLETED):
@@ -921,7 +1073,17 @@ class ControlRunner:
         return value.astimezone(UTC) if value.tzinfo is not None else None
 
     @staticmethod
-    def _write_inventory_marker(path: Path, fields: dict[str, str]) -> None:
+    def _marker_payload(path: Path) -> dict[str, object] | None:
+        try:
+            if not path.is_file() or path.stat().st_size > 1024:
+                return None
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return None
+        return payload if isinstance(payload, dict) and payload.get("schema_version") == 1 else None
+
+    @staticmethod
+    def _write_inventory_marker(path: Path, fields: dict[str, object]) -> None:
         partial = path.with_name(f"{path.name}.partial")
         try:
             partial.write_text(
@@ -1069,6 +1231,46 @@ class ControlRunner:
             finally:
                 os.close(directory)
 
+    @staticmethod
+    def _combined_collection_report(
+        reports: list[dict[str, Any]], *, safe_code: str | None = None
+    ) -> dict[str, Any]:
+        if not reports:
+            raise ValueError("collection reports are required")
+        outcomes: dict[str, int] = {}
+        boards: dict[str, dict[str, Any]] = {}
+        failures: set[str] = set()
+        for report in reports:
+            raw_outcomes = report.get("outcomes")
+            if isinstance(raw_outcomes, dict):
+                for name, value in raw_outcomes.items():
+                    outcomes[str(name)] = outcomes.get(str(name), 0) + _integer(value)
+            raw_boards = report.get("boards")
+            if isinstance(raw_boards, list):
+                for board in raw_boards:
+                    if isinstance(board, dict) and isinstance(board.get("board_id"), str):
+                        boards[str(board["board_id"])] = board
+            raw_failures = report.get("failures")
+            if isinstance(raw_failures, list):
+                failures.update(str(code) for code in raw_failures if isinstance(code, str))
+        result = dict(reports[-1])
+        result.update(
+            outcomes=outcomes,
+            failures=sorted(failures),
+            boards=list(boards.values()),
+            selected_posts=sum(_integer(report.get("selected_posts")) for report in reports),
+            scheduled_posts=sum(_integer(report.get("scheduled_posts")) for report in reports),
+            changed_posts=sum(
+                _integer(report.get("changed_posts", report.get("outcomes", {}).get("stored")))
+                for report in reports
+                if isinstance(report.get("outcomes", {}), dict)
+            ),
+            failed_posts=sum(_integer(report.get("failed_posts")) for report in reports),
+        )
+        if safe_code is not None:
+            result.update(ok=True, status="succeeded", safe_code=safe_code)
+        return result
+
     def _result(self, action: str, report: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         raw_status = str(report.get("status", "failed"))
         if report.get("ok") is True:
@@ -1208,7 +1410,12 @@ class ControlRunner:
                 }
                 board = connection.execute(
                     """
-                    SELECT name, group_name, inventory_next_page, last_inventory_at
+                    SELECT name, group_name, is_enabled, inventory_next_page,
+                           last_inventory_at, incremental_anchor_post_id,
+                           last_incremental_at,
+                           (SELECT COUNT(*) FROM posts
+                            WHERE posts.board_id = boards.board_id
+                              AND latest_version_id IS NULL) AS outline_only
                     FROM boards WHERE board_id = ?
                     """,
                     (board_id,),
@@ -1251,6 +1458,10 @@ class ControlRunner:
                     "last_inventory_at": _normalized_timestamp(board["last_inventory_at"]),
                     "inventory_pass_started_at": inventory_pass_started_at,
                     "warning_code": warning,
+                    "collection_enabled": bool(board["is_enabled"]),
+                    "outline_only": int(board["outline_only"]),
+                    "incremental_anchor_post_id": board["incremental_anchor_post_id"],
+                    "last_incremental_at": _normalized_timestamp(board["last_incremental_at"]),
                 }
                 self._send(
                     "board_status",
@@ -1258,6 +1469,40 @@ class ControlRunner:
                     payload,
                     f"board-{uuid4().hex}",
                 )
+                self._frontier_failures(connection, board_id)
+
+    def _frontier_failures(self, connection: sqlite3.Connection, board_id: str) -> None:
+        rows = connection.execute(
+            """
+            SELECT external_post_id, attempts, last_error_code, last_attempt_at
+            FROM crawl_frontier
+            WHERE board_id = ? AND state = 'dead'
+            ORDER BY external_post_id
+            """,
+            (board_id,),
+        ).fetchall()
+        generation = f"g-{uuid4().hex}"
+        batches = [rows[index : index + 100] for index in range(0, len(rows), 100)] or [[]]
+        for index, batch in enumerate(batches):
+            self._send(
+                "frontier_failures",
+                "/api/v1/runner/frontier-failures",
+                {
+                    "board_id": board_id,
+                    "generation": generation,
+                    "complete": index == len(batches) - 1,
+                    "items": [
+                        {
+                            "external_post_id": int(row["external_post_id"]),
+                            "attempts": int(row["attempts"]),
+                            "error_code": str(row["last_error_code"] or "unknown_error"),
+                            "last_attempt_at": _normalized_timestamp(row["last_attempt_at"]),
+                        }
+                        for row in batch
+                    ],
+                },
+                f"failures-{generation}-{index}",
+            )
 
     def _archive_snapshot_event(self, run_id: str, sequence: int) -> None:
         if not self.profile.archive.is_file():
@@ -1405,6 +1650,21 @@ class ControlRunner:
             "next_scheduled_at": next_scheduled_at,
             "safe_warning_code": self._safe_warning(disk_free_bytes, datetime.now(UTC)),
         }
+        if state == "running" and self.profile.archive.is_file():
+            try:
+                with connect_archive(self.profile.archive, read_only=True) as connection:
+                    active = connection.execute(
+                        """
+                        SELECT board_id, external_post_id FROM crawl_frontier
+                        WHERE state = 'running'
+                        ORDER BY last_attempt_at DESC LIMIT 1
+                        """
+                    ).fetchone()
+                if active is not None:
+                    payload["active_board_id"] = str(active["board_id"])
+                    payload["active_post_id"] = int(active["external_post_id"])
+            except sqlite3.Error:
+                pass
         if run_id is not None:
             payload.update(
                 {

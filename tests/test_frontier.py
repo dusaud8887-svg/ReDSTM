@@ -190,7 +190,12 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
     path = tmp_path / "frontier.sqlite"
     store = FrontierStore(path)
     store.initialize()
-    for post_id, error in ((1, "network_error"), (2, "network_error"), (3, "parse_drift")):
+    for post_id, error in (
+        (1, "network_error"),
+        (2, "network_error"),
+        (3, "parse_drift"),
+        (4, "storage_error"),
+    ):
         store.seed("write_free21", post_id, f"https://www.typemoon.net/write_free21/{post_id}")
         with connect_archive(path) as connection:
             connection.execute(
@@ -211,6 +216,80 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
                 "ORDER BY external_post_id"
             )
         ]
-    assert rows == [(1, "retry", 0), (2, "dead", 5), (3, "dead", 5)]
+    assert rows == [
+        (1, "retry", 0),
+        (2, "dead", 5),
+        (3, "dead", 5),
+        (4, "dead", 5),
+    ]
+    assert store.requeue_dead(error_code="storage_error", limit=1) == 1
     with pytest.raises(ValueError, match="unsupported"):
         store.requeue_dead(error_code="auth_required", limit=1)
+
+
+def test_missing_listing_category_preserves_detail_category_match(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    with connect_archive(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('write_free21', '자유게시판', 'https://www.typemoon.net/write_free21',
+                    'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title, category,
+                first_seen_at, last_seen_at, comment_count
+            ) VALUES ('write_free21', 1, 'https://www.typemoon.net/write_free21/1',
+                      'title', 'detail-only', 'now', 'now', 2)
+            """
+        )
+
+    assert store.listing_is_unchanged(
+        "write_free21", 1, title="title", category=None, comment_count=2
+    )
+    assert not store.listing_is_unchanged(
+        "write_free21", 1, title="title", category="changed", comment_count=2
+    )
+
+
+def test_full_content_requeue_uses_a_stable_rowid_and_time_checkpoint(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    cutoff = datetime(2026, 7, 12, tzinfo=UTC)
+    for post_id in (1, 2, 3):
+        store.seed("write_free21", post_id, f"https://example.test/{post_id}")
+    with connect_archive(path) as connection:
+        connection.execute(
+            "UPDATE crawl_frontier SET state = 'done', last_attempt_at = ?",
+            ((cutoff - timedelta(days=1)).isoformat(),),
+        )
+        max_rowid = int(connection.execute("SELECT MAX(rowid) FROM crawl_frontier").fetchone()[0])
+    store.seed("write_free21", 4, "https://example.test/4")
+
+    selected = store.requeue_full_content(
+        limit=2,
+        max_rowid=max_rowid,
+        attempted_before=cutoff,
+        now=cutoff,
+    )
+
+    assert selected == [("write_free21", 1), ("write_free21", 2)]
+    assert store.full_content_remaining(max_rowid=max_rowid, attempted_before=cutoff) == 3
+    with connect_archive(path) as connection:
+        connection.executemany(
+            "UPDATE crawl_frontier SET last_attempt_at = ? "
+            "WHERE board_id = ? AND external_post_id = ?",
+            [
+                ((cutoff + timedelta(seconds=1)).isoformat(), board_id, post_id)
+                for board_id, post_id in selected
+            ],
+        )
+    assert store.full_content_remaining(max_rowid=max_rowid, attempted_before=cutoff) == 1

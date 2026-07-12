@@ -61,6 +61,7 @@ def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
 def _boards(
     archive: Path,
     *,
+    board_id: str | None = None,
     inventory: bool = False,
     inventory_since: str | None = None,
 ) -> list[str]:
@@ -71,6 +72,7 @@ def _boards(
             if inventory
             else "board_id"
         )
+        board_filter = " AND board_id = ?" if board_id is not None else ""
         coverage = (
             " AND (last_inventory_at IS NULL "
             "OR julianday(last_inventory_at) IS NULL "
@@ -78,11 +80,16 @@ def _boards(
             if inventory and inventory_since is not None
             else ""
         )
-        parameters = (inventory_since,) if coverage else ()
+        parameters: tuple[object, ...] = ()
+        if board_id is not None:
+            parameters += (board_id,)
+        if coverage:
+            parameters += (inventory_since,)
         return [
             str(row[0])
             for row in connection.execute(
-                f"SELECT board_id FROM boards WHERE is_enabled = 1{coverage} ORDER BY {order}",
+                f"SELECT board_id FROM boards WHERE is_enabled = 1{board_filter}{coverage} "
+                f"ORDER BY {order}",
                 parameters,
             )
         ]
@@ -129,7 +136,7 @@ def _revalidate(session: Path) -> str | None:
 
 
 def _worker_command(
-    args: argparse.Namespace, board_id: str, output: Path, max_seconds: int
+    args: argparse.Namespace, board_id: str, output: Path, max_seconds: int | None
 ) -> list[str]:
     command = [
         sys.executable,
@@ -147,8 +154,6 @@ def _worker_command(
         str(args.max_pages),
         "--max-posts",
         str(args.max_posts),
-        "--max-seconds",
-        str(max_seconds),
         "--lease-seconds",
         str(args.lease_seconds),
         "--session-prevalidated",
@@ -156,8 +161,12 @@ def _worker_command(
         "--output",
         str(output),
     ]
+    if max_seconds is not None:
+        command.extend(("--max-seconds", str(max_seconds)))
     if args.inventory:
         command.append("--inventory")
+    if getattr(args, "listing_only", False):
+        command.append("--listing-only")
     pause_file = getattr(args, "pause_file", None)
     if pause_file is not None:
         command.extend(("--pause-file", str(pause_file)))
@@ -173,6 +182,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     args.pause_file = pause_file.expanduser().resolve() if pause_file is not None else None
     boards = _boards(
         args.archive,
+        board_id=getattr(args, "board", None),
         inventory=args.inventory,
         inventory_since=getattr(args, "inventory_since", None),
     )
@@ -218,8 +228,10 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 stop_reason = "schedule_paused"
                 break
             now = time.monotonic()
-            remaining_seconds = args.max_seconds - (now - started_at)
-            if remaining_seconds <= 0:
+            remaining_seconds = (
+                args.max_seconds - (now - started_at) if args.max_seconds > 0 else None
+            )
+            if remaining_seconds is not None and remaining_seconds <= 0:
                 status = "partial"
                 stop_reason = "time_budget"
                 break
@@ -231,12 +243,18 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                     break
                 session_validated_at = now
             report_path = report_dir / f"{board_id}.json"
-            worker_seconds = max(1, int(remaining_seconds))
+            worker_seconds = (
+                max(1, int(remaining_seconds)) if remaining_seconds is not None else None
+            )
             try:
                 completed = subprocess.run(
                     _worker_command(args, board_id, report_path, worker_seconds),
                     check=False,
-                    timeout=worker_seconds + REDSTM_WORKER_GRACE_SECONDS,
+                    timeout=(
+                        worker_seconds + REDSTM_WORKER_GRACE_SECONDS
+                        if worker_seconds is not None
+                        else None
+                    ),
                 )
             except subprocess.TimeoutExpired:
                 status = "partial"
@@ -337,17 +355,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
     parser.add_argument("--report-dir", type=Path, default=Path(".data/operations/cycles"))
+    parser.add_argument("--board")
     parser.add_argument("--max-pages", type=int, default=REDSTM_CYCLE_MAX_PAGES)
     parser.add_argument("--max-posts", type=int, default=REDSTM_CYCLE_MAX_POSTS)
     parser.add_argument("--max-seconds", type=int, default=REDSTM_CYCLE_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
+    parser.add_argument("--listing-only", action="store_true")
     parser.add_argument("--inventory-since", help=argparse.SUPPRESS)
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:
         parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
+    if args.listing_only and not args.inventory:
+        parser.error("listing-only requires inventory mode")
     if args.inventory_since is not None:
         if not args.inventory:
             parser.error("inventory-since requires inventory mode")

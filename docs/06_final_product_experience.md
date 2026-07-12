@@ -409,8 +409,8 @@ command ID, expiry, 다시 확인 link를 남긴다.
 
 | viewport | navigation | content |
 |---|---|---|
-| wide ≥1180 | 72px rail | catalog + reader |
-| medium 760–1179 | top app navigation | catalog + reader |
+| wide ≥1200 | 72px rail | catalog + reader |
+| medium 760–1199 | top app navigation | catalog + reader |
 | narrow <760 | 4-item bottom navigation | one plane |
 | Reader narrow | no global nav | full-screen article + 5 actions |
 | Operations narrow | verdict + Reader continuity first | vertical disclosure ledger; horizontal table 금지 |

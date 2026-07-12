@@ -74,7 +74,7 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
 def _project_settings(max_seconds: int | None = None) -> Settings:
     settings = get_project_settings()
     settings.setmodule(crawler_settings, priority="project")
-    if max_seconds is not None:
+    if max_seconds is not None and max_seconds > 0:
         settings.set("CLOSESPIDER_TIMEOUT", max_seconds, priority="cmdline")
     return settings
 
@@ -107,7 +107,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         interrupted_runs = store.interrupt_stale_crawl_runs()
         with connect_archive(archive, read_only=True) as connection:
             board = connection.execute(
-                "SELECT inventory_next_page FROM boards WHERE board_id = ? AND is_enabled = 1",
+                "SELECT inventory_next_page, incremental_anchor_post_id "
+                "FROM boards WHERE board_id = ? AND is_enabled = 1",
                 (args.board,),
             ).fetchone()
         if board is None:
@@ -143,6 +144,12 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             max_posts=args.max_posts,
             lease_seconds=args.lease_seconds,
             inventory=args.inventory,
+            listing_only=getattr(args, "listing_only", False),
+            anchor_post_id=(
+                None
+                if args.inventory or board["incremental_anchor_post_id"] is None
+                else int(board["incremental_anchor_post_id"])
+            ),
             pause_file=pause_file,
         )
         process.start(stop_after_crawl=True)
@@ -156,9 +163,13 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             failures = sorted({*failures, "sync_time_budget"})
         outcomes = _capture_summary(archive, run_id)
         paused = bool(getattr(spider, "paused", False))
-        status = "partial" if paused else _run_status(outcomes, discovered, failures)
         inventory_next_page = int(getattr(spider, "next_inventory_page", 1))
         inventory_completed = bool(getattr(spider, "inventory_completed", False))
+        listing_completed = bool(getattr(spider, "listing_completed", False))
+        latest_post_id = getattr(spider, "latest_post_id", None)
+        if not args.inventory and not paused and not listing_completed:
+            failures = sorted({*failures, "listing_boundary_incomplete"})
+        status = "partial" if paused else _run_status(outcomes, discovered, failures)
         if args.inventory:
             with connect_archive(archive) as connection:
                 connection.execute(
@@ -172,6 +183,21 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                     """,
                     (inventory_next_page, inventory_completed, args.board),
                 )
+        elif listing_completed:
+            if latest_post_id is not None and (
+                type(latest_post_id) is not int or latest_post_id < 1
+            ):
+                raise RuntimeError("incremental anchor candidate is invalid")
+            with connect_archive(archive) as connection:
+                connection.execute(
+                    """
+                    UPDATE boards SET incremental_anchor_post_id =
+                            COALESCE(?, incremental_anchor_post_id),
+                        last_incremental_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    WHERE board_id = ?
+                    """,
+                    (latest_post_id, args.board),
+                )
         store.finish_run(
             run_id,
             status=status,
@@ -181,6 +207,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 "failures": failures,
                 "interrupted_runs": interrupted_runs,
                 "inventory_next_page": inventory_next_page if args.inventory else None,
+                "listing_completed": listing_completed,
+                "latest_post_id": latest_post_id,
             },
         )
         if not paused:
@@ -195,6 +223,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             "failures": failures,
             "interrupted_runs": interrupted_runs,
             "inventory_next_page": inventory_next_page if args.inventory else None,
+            "listing_completed": listing_completed,
+            "latest_post_id": latest_post_id,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
         }
@@ -211,7 +241,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run one bounded authenticated TypeMoon sync.")
+    parser = argparse.ArgumentParser(description="Run one authenticated TypeMoon board sync.")
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--board", required=True)
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
@@ -221,16 +251,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seconds", type=int)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
+    parser.add_argument("--listing-only", action="store_true")
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--session-prevalidated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--parent-lock-held", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    limits = [args.max_pages, args.max_posts, args.lease_seconds]
+    limits = [args.max_pages, args.max_posts]
     if args.max_seconds is not None:
         limits.append(args.max_seconds)
-    if min(limits) < 1:
-        parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
+    if min(limits) < 1 or args.lease_seconds < 1:
+        parser.error("max limits and lease-seconds must be positive")
+    if args.listing_only and not args.inventory:
+        parser.error("listing-only requires inventory mode")
     return args
 
 

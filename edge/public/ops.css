@@ -87,7 +87,7 @@ dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere
 .run-detail { padding: 0 18px 16px 122px; display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 12px; }
 .empty-row { margin: 0; padding: 26px 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .more-button { margin-top: 18px; }
-.board-row { min-height: 72px; padding: 13px 0; display: grid; grid-template-columns: minmax(180px, .7fr) 1.5fr; align-items: center; gap: 20px; border-bottom: 1px solid var(--line); }
+.board-row { min-height: 72px; padding: 13px 0; display: grid; grid-template-columns: minmax(180px, .65fr) 1.2fr auto; align-items: center; gap: 20px; border-bottom: 1px solid var(--line); }
 .board-identity strong, .board-identity small { display: block; }
 .board-identity strong { font-size: 14px; }
 .board-identity small { margin-top: 4px; }
@@ -95,6 +95,16 @@ dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere
 .board-metrics { margin: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
 .board-metrics div { min-width: 0; }
 .board-warning { grid-column: 1 / -1; margin: 0; color: var(--warning); font-size: 12px; }
+.collection-state { color: var(--success); font-size: 11px; }
+.board-actions { display: grid; gap: 5px; }
+.board-actions button { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--raised); cursor: pointer; font-size: 11px; text-align: left; }
+.board-actions button:hover:not(:disabled) { border-color: var(--ink); }
+.board-actions button:disabled { color: var(--subtle); cursor: not-allowed; }
+.board-actions small:empty { display: none; }
+.board-actions small { display: block; color: var(--muted); }
+.failure-list { border-top: 1px solid var(--strong); }
+.failure-row { min-height: 54px; display: grid; grid-template-columns: minmax(180px, 1fr) repeat(3, minmax(100px, .5fr)); align-items: center; gap: 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.failure-row span, .failure-row time { color: var(--muted); }
 .healthy-boards { border-bottom: 1px solid var(--line); }
 .healthy-boards > summary { min-height: 58px; padding: 0 2px; display: flex; align-items: center; justify-content: space-between; gap: 20px; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 620; list-style: none; }
 .healthy-boards > summary::-webkit-details-marker { display: none; }
@@ -154,6 +164,7 @@ dialog p:not(.eyebrow) { margin: 0; color: var(--muted); line-height: 1.65; }
   .run-row > :nth-last-child(2), .run-row > :nth-last-child(3) { display: none; }
   .run-detail { padding-left: 112px; }
   .board-row { grid-template-columns: 180px 1fr; }
+  .board-actions { grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); }
   .board-metrics { grid-template-columns: repeat(3, 1fr); }
   .release-ledger { grid-template-columns: 1fr 1fr; }
   .release-ledger dl { grid-column: 1 / -1; padding-left: 0; }
@@ -161,7 +172,7 @@ dialog p:not(.eyebrow) { margin: 0; color: var(--muted); line-height: 1.65; }
 }
 @media (max-width: 680px) {
   .ops-rail { position: sticky; top: 0; width: 100%; height: 56px; grid-template-columns: 54px 1fr 54px; grid-template-rows: 56px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .ops-rail nav { height: 100%; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); }
+  .ops-rail nav { height: 100%; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); }
   .ops-rail nav a { min-height: 56px; }
   .reader-link { font-size: 10px; }
   .ops-header { top: 56px; min-height: 60px; margin-left: 0; padding: 8px 16px; }
@@ -184,6 +195,9 @@ dialog p:not(.eyebrow) { margin: 0; color: var(--muted); line-height: 1.65; }
   .run-detail { padding: 0 0 14px; }
   .board-row { grid-template-columns: 1fr; gap: 12px; }
   .board-metrics { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .board-actions { grid-column: auto; grid-template-columns: 1fr; }
+  .board-actions button { min-height: 44px; }
+  .failure-row { grid-template-columns: 1fr 1fr; padding: 12px 0; gap: 8px; }
   .release-ledger { grid-template-columns: 1fr; }
   .release-ledger > div { border-right: 0; border-bottom: 1px solid var(--line); padding: 18px 0; }
   .release-ledger dl { grid-column: auto; grid-template-columns: 1fr; }

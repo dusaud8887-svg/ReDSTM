@@ -30,7 +30,7 @@ endpoint를 제공하지 않는다.
 | 항목 | 실측 | 판정 |
 |---|---:|---|
 | OS/architecture | Ubuntu 22.04.5, x86_64 | 현재 OS 유지 |
-| CPU/RAM | 2 logical CPU, 956MiB RAM | concurrency 1 수집 가능 |
+| CPU/RAM | 2 logical CPU, 956MiB RAM | staggered concurrency 2 수집 가능 |
 | swap | 4GiB, 약 410MiB 사용 | 저속 crawler 안전망, RAM 대체재는 아님 |
 | root volume | 194GiB, 약 103GiB free | 현재 application/canonical 추가 가능 |
 | uptime | 58일 | 현재 VM 자체는 안정적으로 동작 중 |
@@ -74,7 +74,7 @@ backup을 포함한다. 동시에 7일 동안 CPU·network 사용률이 낮은 i
 
 ```text
 TypeMoon
-  <- concurrency 1, fixed 10s delay
+  <- detail concurrency 2, staggered fixed 10s start delay
   <- Oracle / ReDSTM systemd oneshot
        -> /srv/redstm/canonical/archive.sqlite
        -> /srv/redstm/warc/*.warc.gz
@@ -144,7 +144,7 @@ R2 writer key와 Access service token은 별도 credential file로만
 - control/scheduled runner와 installer의 application·canonical 전환은
   `/srv/redstm/state/control.lock`을 공유한다. installer는 active run을 중단하지 않고 mutation 전에
   `redstm_install_not_started`로 끝난다.
-- crawler는 `CONCURRENT_REQUESTS=1`, domain concurrency 1, fixed delay 10초를 유지한다.
+- crawler는 `CONCURRENT_REQUESTS=2`, domain concurrency 2, fixed start delay 10초를 유지한다.
 - systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 timer와
   durable frontier가 복구한다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
@@ -177,20 +177,17 @@ listing 댓글 기대치를 보존하는 additive schema v4다. 다음 계약으
    값은 갱신하되 다른 보존 내용 변경이 생긴 다음 release에 함께 반영한다.
 3. 공지를 제외한 연속 known+unchanged row를 overlap boundary로 판정한다.
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
-5. 최초에는 bounded inventory window가 board cursor를 매 cycle 재개하고, 전 board 완료 뒤 주 1회
-   listing audit가 boundary 오류를 보완한다.
-6. body-only 변경은 30일 이상 지난 `done` detail을 oldest-first로 재확인한다. recovery batch는
-   stale audit 1 slot을 예약하고 나머지를 due queue에 배정한다. 30일은 eligibility horizon이며
-   완료 SLA가 아니다.
+5. 자동 cycle은 anchor page 뒤 2 page까지만 확인하고 전체 listing은 수동 `full-catalog`가 담당한다.
+6. 전체 body 재검증은 수동 `full-content`, due 재시도는 수동 `retry-batch`가 남은 항목 0까지 이어간다.
 
 받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
 scheduling만 cap한다. schema v3의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서
-재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. schema v4는 listing 댓글 기대치를
+재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. schema v4는 listing 댓글 기대치와 증분 anchor를
 기존 post projection에서 backfill하고 claim/retry/recovery lease에 보존한다. detail 댓글 수가 더 적으면
 `incomplete_comments`로 저장하지 않고, 성공 store만 실제 저장 댓글 수와 lease 완료를 같은 transaction에서
 갱신한다. restricted/parse/fetch/storage 실패는 기대값을 보존한다. 전 board 최초 inventory가 끝나면
-목차-only pending/retry backlog를 bounded bootstrap recovery로 비운 뒤 cycle당 due recovery로 전환한다.
-inventory는 listing coverage이며 기존 detail 전체를 다시 요청하지 않는다. dead는 `network_error` 또는
+목차-only pending/retry backlog는 수동 전체 본문 작업으로 비운다.
+inventory는 listing coverage이며 기존 detail 전체 재요청은 별도 수동 작업이다. dead는 `network_error` 또는
 `parse_drift`만 오류별·건수 제한으로 명시 재개한다.
 
 ### G2. board cycle command
@@ -200,14 +197,13 @@ inventory는 listing coverage이며 기존 detail 전체를 다시 요청하지 
 cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Celery/Redis를 추가하지 않는다.
 
 상태(2026-07-12): `scripts.crawl_cycle` local core와 P0 failure test, Oracle application/systemd unit 설치를
-완료했고 schedule 활성화·automatic inventory/recovery bootstrap smoke 전이다. 6시간 `redstm-schedule.timer`와
-crawl→recovery→변경 publish orchestration source는 구현됐다. recovery는 2시간 graceful budget과
-cycle당 최대 100건으로 제한하며 frontier due time이 재시도 간격을 결정한다.
-cycle은 4시간 남은 budget을 각 순차 worker의 Scrapy graceful timeout으로 전달하고 그보다 60초 긴
-subprocess hard timeout을 둔다. timeout은 `partial/worker_timeout`으로 보고한다.
+완료했고 schedule 활성화·production smoke 전이다. 6시간 `redstm-schedule.timer`는
+최신 글 crawl→변경 publish만 수행한다. 전체 목차와 전체 본문은 수동 명령이며 총량·총시간 상한 없이
+단일 writer lock 아래에서 돈다. control/schedule oneshot도 `TimeoutStartSec=infinity`다.
 세션/도달성 preflight 뒤 30분 board 경계에서 session을 재검증하고 worker는 순차 실행한다.
 board 경계 breaker와 더불어 sync 내부도 첫 auth 또는 같은 class parse drift/network/429 3회에서
-중단한다. 고립된 parse failure는 항목별 dead로 남기고 다음 detail을 계속한다. outage attempt 복원을
+중단한다. 이 중 parse drift 연속 중단은 **parse-drift breaker**다. 고립된 parse failure는 항목별
+retry로 남기고 다음 detail을 계속하며 5회 실패 뒤 dead로 분리한다. outage attempt 복원을
 적용하고 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
 30분에 1회로 제한한다. login/logout 표식 조기 판정은 오래된 서버의 비정상 TLS EOF를 기다리지 않는다.
 
@@ -421,11 +417,11 @@ schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 24시
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
-| incremental board cycle | 6시간마다 | overlap boundary, concurrency 1, 10초 delay |
-| bootstrap recovery | 최초 inventory 완료 뒤 매 cycle bounded drain | 목차-only pending/retry, sync와 직렬 |
-| normal retry recovery | cycle당 최대 100건·2시간 | stale detail 1 slot 예약, 나머지는 due queue 우선; sync와 직렬 |
+| incremental board cycle | 6시간마다 | overlap boundary, detail concurrency 2, 10초 stagger |
+| full catalog | 수동 요청 | 첫 page부터 전부, 완료까지 같은 command가 지속 |
+| full content / retry | 수동 요청 | 내부 chunk를 남은 항목 0까지 지속; sync와 직렬 |
 | R2 delta publish | marker 유무와 무관하게 매 cycle reconcile | validated object first, pointer last; 성공 뒤 기존 pending 제거 |
-| bounded board inventory | 최초 완료까지 매 cycle, 이후 주 1회 | listing coverage; detail 전수 재검증 아님; durable page cursor 재개 |
+| board inventory | 수동 요청 | listing coverage; durable page cursor 재개 |
 
 systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전원이 오래 꺼졌다고 누락 횟수만큼
 연속 실행하지 않는다. 서비스가 아직 active면 같은 unit의 중복 실행을 만들지 않는다.
@@ -453,18 +449,18 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
 | frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
 | frontier | lease | 900초로 상향 | detail 180초 × 최대 3 시도(~570초+) + 처리 여유; 현행 300초는 느린 AA 재시도 경로를 못 덮음 |
-| recovery | graceful budget | 2시간 | 5시간 control/7시간 schedule hard kill 전에 WARC/report와 lease를 정상 정리 |
-| cycle | graceful/hard budget | 4시간 Scrapy soft close + worker별 남은 budget 60초 여유 hard timeout | 정상 종료를 우선하고 Scrapy 밖 hang은 `partial/worker_timeout`으로 제한 |
+| recovery | 총량·총시간 | 상한 없음 | due 또는 전체 재수집 대상을 끝까지 순차 처리 |
+| cycle | 총량·총시간 | 상한 없음 | 동일 unit/lock이 다음 slot의 중복 실행을 막음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
 | session | cycle 내 검증 | 시작 preflight + 30분 board 경계 재검증 | board마다 GET하지 않고 장기 cycle의 session drift를 제한 |
-| parser/auth | sync 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift 확산 방지 |
-| parser/auth | recovery 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift를 은폐하지 않음 |
+| parse-drift breaker/auth | sync 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift 확산 방지 |
+| parse-drift breaker/auth | recovery 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift를 은폐하지 않음 |
 | parser | 숫자 | 조회수/댓글수는 유일한 non-negative integer만 허용 | 누락·모호한 값을 0으로 합성하지 않음 |
 | detail audit | stale revisit | 30일 eligibility, recovery batch당 예약 1 slot | due queue가 계속 차도 body-only audit forward progress 보장 |
 | systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |
-| systemd | control run 상한 | oneshot `TimeoutStartSec=5h` | 단일 remote command의 4시간 cycle 뒤 정리 여유 |
-| systemd | schedule run 상한 | oneshot `TimeoutStartSec=7h` | 4시간 crawl + 2시간 recovery/inventory + publish/정리 여유 |
+| systemd | control run | oneshot `TimeoutStartSec=infinity` | 며칠 걸리는 수동 전체수집 허용 |
+| systemd | schedule run | oneshot `TimeoutStartSec=infinity` | 느린 최신 수집을 강제 종료하지 않음 |
 | control | D1/Worker HTTP | connect 5초/total 15초, backoff 2/5/15초 최대 3회 | [08 §5.4](08_operations_control_plane.md) |
 | warning | disk/control/token/publish | 40GiB / rejection 24시간 / 만료 24시간 전 / 최초 pending 24시간 | CLI/env override, 한 heartbeat에는 최고 우선순위 1개 |
 

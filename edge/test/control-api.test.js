@@ -204,7 +204,7 @@ test("allows one marker command alongside an active process command", async () =
       if (method === "run" && sql.includes("INSERT INTO commands")) {
         inserted = true;
         assert.doesNotMatch(sql, /active_conflict_group/);
-        assert.equal(values.length, 6);
+        assert.equal(values.length, 8);
         assert.match(values.at(-1), /^\d{4}-\d{2}-\d{2}T/);
         return { success: true };
       }
@@ -253,6 +253,40 @@ test("allows one marker command alongside an active process command", async () =
     { role: "user", subject: "reader@example.test" },
   );
   assert.equal(blocked.status, 409);
+});
+
+test("accepts a board-scoped full collection command and preserves its arguments", async () => {
+  let inserted;
+  const env = {
+    CONTROL_DB: database((method, sql, values) => {
+      if (sql === "SELECT * FROM commands WHERE idempotency_key = ?") return null;
+      if (method === "run" && sql.includes("SET state = 'expired'")) return { success: true };
+      if (sql.startsWith("SELECT command_id FROM commands")) return null;
+      if (method === "run" && sql.includes("INSERT INTO commands")) {
+        inserted = values;
+        return { success: true };
+      }
+      assert.fail(`Unexpected D1 statement: ${method} ${sql}`);
+    }),
+  };
+  const result = await controlApiResponse(
+    request("/api/v1/ops/commands", {
+      method: "POST",
+      body: { action: "full-content", args: { board_id: "aa_19" } },
+      headers: {
+        Origin: "https://archive.example",
+        "X-ReDSTM-Command": "1",
+        "Idempotency-Key": "full-content-board-001",
+      },
+    }),
+    env,
+    { role: "user", subject: "reader@example.test" },
+  );
+
+  assert.equal(result.status, 202);
+  assert.equal(inserted[2], "retry-batch");
+  assert.equal(inserted[3], "full-content");
+  assert.equal(inserted[4], '{"board_id":"aa_19"}');
 });
 
 test("returns a stable conflict when the database wins a command creation race", async () => {
@@ -1145,7 +1179,7 @@ test("starts a run and command link in one D1 batch", async () => {
         return values.map(() => ({ meta: { changes: 1 } }));
       }
       if (sql.includes("SELECT * FROM runs")) return null;
-      assert.match(sql, /SELECT action, state, run_id FROM commands/);
+      assert.match(sql, /SELECT action, operation, state, run_id FROM commands/);
       return { action: "sync-now", state: "claimed", run_id: null };
     }),
   };
@@ -1193,7 +1227,7 @@ test("allows only one run to win a claimed command start race", async () => {
       if (method === "first" && sql.includes("SELECT * FROM runs")) {
         return runs.get(values[0]) ?? null;
       }
-      if (method === "first" && sql.includes("SELECT action, state, run_id FROM commands")) {
+      if (method === "first" && sql.includes("SELECT action, operation, state, run_id FROM commands")) {
         commandReads += 1;
         if (commandReads === 2) releasePrechecks();
         return prechecksReady.then(() => ({ ...command, run_id: null }));
@@ -1325,6 +1359,10 @@ test("upserts monotonic bounded board status", async () => {
         last_inventory_at: null,
         inventory_pass_started_at: "2026-07-12T00:00:00Z",
         warning_code: "parse_drift",
+        collection_enabled: true,
+        outline_only: 7,
+        incremental_anchor_post_id: 42,
+        last_incremental_at: "2026-07-12T03:00:00Z",
       },
       headers: { "Idempotency-Key": "board-status-0001" },
     }),
@@ -1341,8 +1379,12 @@ test("upserts monotonic bounded board status", async () => {
   assert.equal(parameters[10], 20);
   assert.equal(parameters[12], 37);
   assert.equal(parameters[14], "2026-07-12T00:00:00.000Z");
-  assert.ok(Date.parse(parameters[16]) > Date.now());
-  assert.ok(Date.parse(parameters[16]) <= Date.now() + 6 * 60 * 1000);
+  assert.equal(parameters[16], 1);
+  assert.equal(parameters[17], 7);
+  assert.equal(parameters[18], 42);
+  assert.equal(parameters[19], "2026-07-12T03:00:00.000Z");
+  assert.ok(Date.parse(parameters[20]) > Date.now());
+  assert.ok(Date.parse(parameters[20]) <= Date.now() + 6 * 60 * 1000);
 });
 
 test("rejects a board timestamp beyond the allowed future clock skew before D1", async () => {

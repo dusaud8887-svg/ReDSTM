@@ -16,7 +16,9 @@ from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
 from crawler.settings import (
     REDSTM_CIRCUIT_BREAKER_FAILURES,
+    REDSTM_DETAIL_CONCURRENCY,
     REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_INCREMENTAL_OVERLAP_PAGES,
     REDSTM_LISTING_OVERLAP_UNCHANGED,
     REDSTM_LISTING_TIMEOUT_SECONDS,
     REDSTM_PARSE_BREAKER_FAILURES,
@@ -296,6 +298,10 @@ class TypeMoonSpider(scrapy.Spider):
         max_posts: int = REDSTM_SYNC_MAX_POSTS,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
         inventory: bool = False,
+        listing_only: bool = False,
+        anchor_post_id: int | None = None,
+        overlap_pages: int = REDSTM_INCREMENTAL_OVERLAP_PAGES,
+        detail_concurrency: int = REDSTM_DETAIL_CONCURRENCY,
         pause_file: str | Path | None = None,
     ) -> None:
         super().__init__()
@@ -310,9 +316,24 @@ class TypeMoonSpider(scrapy.Spider):
         self.max_posts = int(max_posts)
         self.lease_seconds = int(lease_seconds)
         self.inventory = bool(inventory)
+        self.listing_only = bool(listing_only)
+        self.anchor_post_id = int(anchor_post_id) if anchor_post_id is not None else None
+        self.overlap_pages = int(overlap_pages)
+        self.detail_concurrency = int(detail_concurrency)
         self.pause_file = Path(pause_file) if pause_file is not None else None
-        if min(self.max_pages, self.start_page, self.max_posts, self.lease_seconds) < 1:
-            raise ValueError("max_pages, start_page, max_posts, and lease_seconds must be positive")
+        if (
+            min(
+                self.max_pages,
+                self.start_page,
+                self.max_posts,
+                self.lease_seconds,
+                self.detail_concurrency,
+            )
+            < 1
+            or self.overlap_pages < 0
+            or (self.anchor_post_id is not None and self.anchor_post_id < 1)
+        ):
+            raise ValueError("crawl limits and anchor are invalid")
         configured = (self.archive_path is not None, self.run_id is not None, session is not None)
         if any(configured) and not all(configured):
             raise ValueError("archive_path, run_id, and session must be configured together")
@@ -320,10 +341,10 @@ class TypeMoonSpider(scrapy.Spider):
         self.store = ArchiveStore(self.archive_path) if self.archive_path is not None else None
         self._seen: set[tuple[str, int]] = set()
         self._pending_details: list[tuple[str, int]] = []
-        self._detail_in_flight = False
+        self._detail_in_flight = 0
         self._unchanged_streak = 0
         self._listing_warning = False
-        self._boundary_reached = False
+        self._boundary_page: int | None = None
         self._consecutive_network_errors = 0
         self._consecutive_rate_limits = 0
         self._consecutive_parse_failures = 0
@@ -333,6 +354,8 @@ class TypeMoonSpider(scrapy.Spider):
         self.scheduled_posts = 0
         self.next_inventory_page = self.start_page
         self.inventory_completed = False
+        self.latest_post_id: int | None = None
+        self.listing_completed = False
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
         if self.start_board_id is None:
@@ -588,12 +611,15 @@ class TypeMoonSpider(scrapy.Spider):
         self._listing_warning = self._listing_warning or page_warning
         if page_warning:
             self.failure_codes.add("listing_parse_failed")
+        regular_items = [item for item in discovered if not item["is_notice"]]
+        if page == 1 and regular_items:
+            self.latest_post_id = int(regular_items[0]["external_post_id"])
         for item in discovered:
-            yield item
             board_id = str(item["board_id"])
             external_post_id = int(item["external_post_id"])
             identity = (board_id, external_post_id)
             if item["is_notice"]:
+                yield item
                 continue
             unchanged = self.frontier is not None and self.frontier.listing_is_unchanged(
                 board_id,
@@ -610,52 +636,73 @@ class TypeMoonSpider(scrapy.Spider):
                     reopen_done=not unchanged,
                     expected_comment_count=int(item["comment_count"]),
                 )
+            if (
+                not self.listing_only
+                and not unchanged
+                and self.frontier is not None
+                and self.session is not None
+                and identity not in self._seen
+            ):
+                self._seen.add(identity)
+                if self.scheduled_posts + len(self._pending_details) < self.max_posts:
+                    self._pending_details.append(identity)
+            if (
+                not self.inventory
+                and self._boundary_page is None
+                and self.anchor_post_id == external_post_id
+            ):
+                self._boundary_page = page + self.overlap_pages
             if unchanged:
                 self._unchanged_streak += 1
                 if (
                     not self.inventory
                     and not self._listing_warning
+                    and self.anchor_post_id is None
+                    and self._boundary_page is None
                     and self._unchanged_streak >= REDSTM_LISTING_OVERLAP_UNCHANGED
                 ):
-                    self._boundary_reached = True
-                    break
+                    self._boundary_page = page + self.overlap_pages
+                yield item
                 continue
             self._unchanged_streak = 0
-            if self.frontier is None or self.session is None or identity in self._seen:
-                continue
-            self._seen.add(identity)
-            if self.scheduled_posts + len(self._pending_details) < self.max_posts:
-                self._pending_details.append(identity)
+            yield item
 
-        inventory_rows = [item for item in discovered if not item["is_notice"]]
+        inventory_rows = regular_items
         if self.inventory and not page_warning:
             self.next_inventory_page = page + 1 if inventory_rows else 1
             self.inventory_completed = not inventory_rows
+        if not self.inventory and not self._listing_warning:
+            self.listing_completed = not inventory_rows or (
+                self._boundary_page is not None and page >= self._boundary_page
+            )
         if (
             self.frontier is not None
             and self.session is not None
             and page < self.start_page + self.max_pages - 1
-            and (
-                self.inventory or self.scheduled_posts + len(self._pending_details) < self.max_posts
-            )
             and (not self.inventory or bool(inventory_rows))
             and (not self.inventory or not page_warning)
-            and not self._boundary_reached
+            and (self.inventory or not self.listing_completed)
             and not self._stop_requested()
         ):
             yield self.listing_request(
                 self.start_board_id or "", page=page + 1, session=self.session
             )
-        request = self._next_detail_request()
-        if request is not None:
+        yield from self._next_detail_requests()
+
+    def _next_detail_requests(self) -> Iterable[scrapy.Request]:
+        while self._detail_in_flight < self.detail_concurrency:
+            request = self._next_detail_request()
+            if request is None:
+                return
             yield request
 
     def _next_detail_request(self) -> scrapy.Request | None:
         if (
             self._stop_requested()
-            or self._detail_in_flight
+            or self._detail_in_flight >= self.detail_concurrency
             or self.frontier is None
             or self.session is None
+            or self.listing_only
         ):
             return None
         while self._pending_details and self.scheduled_posts < self.max_posts:
@@ -672,7 +719,7 @@ class TypeMoonSpider(scrapy.Spider):
                 expected_comment_count=lease.expected_comment_count,
             ).replace(callback=self._parse_sync_detail, errback=self._sync_error)
             request.meta["frontier_lease"] = lease
-            self._detail_in_flight = True
+            self._detail_in_flight += 1
             self.scheduled_posts += 1
             return request
         return None
@@ -682,25 +729,21 @@ class TypeMoonSpider(scrapy.Spider):
     ) -> Iterable[CapturedPostItem | scrapy.Request]:
         items = list(self.parse_detail(response, **kwargs))
         yield from items
-        self._detail_in_flight = False
+        self._detail_in_flight -= 1
         if self._detail_result_halted(items[0] if items else None):
             return
-        request = self._next_detail_request()
-        if request is not None:
-            yield request
+        yield from self._next_detail_requests()
 
     def _sync_error(self, failure: Any) -> Iterable[scrapy.Request]:
         error_code = self.detail_error(failure)
-        self._detail_in_flight = False
+        self._detail_in_flight -= 1
         if error_code == "auth_required":
             self.failure_codes.add(error_code)
             self._halted = True
             return
         if self._transport_failure_halted(error_code):
             return
-        request = self._next_detail_request()
-        if request is not None:
-            yield request
+        yield from self._next_detail_requests()
 
     def _detail_result_halted(self, item: CapturedPostItem | None) -> bool:
         if item is None or item.get("outcome") == "parse_failed":
@@ -896,6 +939,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         run_id: str,
         session: SessionExport,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
+        detail_concurrency: int = REDSTM_DETAIL_CONCURRENCY,
         pause_file: str | Path | None = None,
     ) -> None:
         self._candidates = iter(candidates)
@@ -904,12 +948,19 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
             run_id=run_id,
             session=session,
             lease_seconds=lease_seconds,
+            detail_concurrency=detail_concurrency,
             pause_file=pause_file,
         )
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
-        request = self._next_recovery_request()
-        if request is not None:
+        for request in self._next_recovery_requests():
+            yield request
+
+    def _next_recovery_requests(self) -> Iterable[scrapy.Request]:
+        while self._detail_in_flight < self.detail_concurrency:
+            request = self._next_recovery_request()
+            if request is None:
+                return
             yield request
 
     def _next_recovery_request(self) -> scrapy.Request | None:
@@ -939,6 +990,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
                 )
             )
             request.meta["frontier_lease"] = lease
+            self._detail_in_flight += 1
             self.scheduled_posts += 1
             return request
         return None
@@ -948,20 +1000,18 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
     ) -> Iterable[CapturedPostItem | scrapy.Request]:
         items = list(super().parse_detail(response, **kwargs))
         yield from items
+        self._detail_in_flight -= 1
         if self._detail_result_halted(items[0] if items else None):
             return
-        request = self._next_recovery_request()
-        if request is not None:
-            yield request
+        yield from self._next_recovery_requests()
 
     def _recovery_error(self, failure: Any) -> Iterable[scrapy.Request]:
         error_code = super().detail_error(failure)
+        self._detail_in_flight -= 1
         if error_code == "auth_required":
             self.failure_codes.add(error_code)
             self._halted = True
             return
         if self._transport_failure_halted(error_code):
             return
-        request = self._next_recovery_request()
-        if request is not None:
-            yield request
+        yield from self._next_recovery_requests()

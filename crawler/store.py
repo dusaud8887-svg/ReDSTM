@@ -14,8 +14,9 @@ from crawler.frontier import (
     retry_backoff,
     transition_lease,
 )
+from crawler.items import DiscoveredPostItem
 from crawler.pipelines import NormalizedPost
-from crawler.settings import REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS
+from crawler.settings import REDSTM_CAPPED_RETRY_ERROR_CODES, REDSTM_FRONTIER_MAX_ATTEMPTS
 from scripts.legacy_common import normalize_source_timestamp
 
 PARSER_VERSION = "2"
@@ -66,6 +67,56 @@ class ArchiveStore:
             )
         return cursor.rowcount
 
+    def store_discovered_post(
+        self,
+        item: DiscoveredPostItem,
+        *,
+        seen_at: datetime | None = None,
+    ) -> int:
+        observed_at = _timestamp(seen_at or datetime.now(UTC))
+        board_id = str(item["board_id"])
+        external_post_id = int(item["external_post_id"])
+        canonical_url = str(item["canonical_url"])
+        title = str(item["title"]).strip()
+        comment_count = int(item["comment_count"])
+        if not title or external_post_id < 1 or comment_count < 0:
+            raise ValueError("discovered post metadata is invalid")
+        with connect_archive(self.path) as connection:
+            connection.execute(
+                """
+                INSERT INTO posts (
+                    board_id, external_post_id, canonical_url, title, author, category,
+                    created_at_raw, first_seen_at, last_seen_at, comment_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (board_id, external_post_id) DO UPDATE SET
+                    canonical_url = excluded.canonical_url,
+                    title = excluded.title,
+                    author = COALESCE(excluded.author, posts.author),
+                    category = COALESCE(excluded.category, posts.category),
+                    created_at_raw = COALESCE(excluded.created_at_raw, posts.created_at_raw),
+                    last_seen_at = excluded.last_seen_at,
+                    comment_count = excluded.comment_count
+                """,
+                (
+                    board_id,
+                    external_post_id,
+                    canonical_url,
+                    title,
+                    item.get("author"),
+                    item.get("category"),
+                    item.get("created_at_raw"),
+                    observed_at,
+                    observed_at,
+                    comment_count,
+                ),
+            )
+            row = connection.execute(
+                "SELECT id FROM posts WHERE board_id = ? AND external_post_id = ?",
+                (board_id, external_post_id),
+            ).fetchone()
+        assert row is not None
+        return int(row["id"])
+
     def store_post(
         self,
         run_id: str,
@@ -78,6 +129,12 @@ class ArchiveStore:
         parser_version: str = PARSER_VERSION,
         lease: FrontierLease | None = None,
     ) -> StoreResult:
+        if (
+            lease is not None
+            and lease.expected_comment_count is not None
+            and len(post.comments) < lease.expected_comment_count
+        ):
+            raise ValueError("captured post has fewer comments than the listing advertised")
         captured_at_text = _timestamp(captured_at)
         created_at_source = normalize_source_timestamp(post.created_at_raw)
         with connect_archive(self.path) as connection:
@@ -332,9 +389,8 @@ class ArchiveStore:
                 state = frontier_state
                 next_attempt_at = None
                 if state == "retry":
-                    if (
-                        error_code == "network_error"
-                        and lease.attempts >= REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS
+                    if error_code in REDSTM_CAPPED_RETRY_ERROR_CODES and (
+                        lease.attempts >= REDSTM_FRONTIER_MAX_ATTEMPTS
                     ):
                         state = "dead"
                     else:

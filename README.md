@@ -1,7 +1,7 @@
 # ReDSTM
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
-schema v3 Oracle canonical runner가 배포돼 있고 repository target은 additive schema v4다. 남은 제품 작업은 bounded delta/failure canary,
+schema v3 Oracle canonical runner가 배포돼 있고 repository target은 additive schema v4다. v4는 댓글 기대값과 증분 기준 게시글을 함께 이관한다. 남은 제품 작업은 production delta/failure canary,
 그 전에 필요한 명시적 full export/publish baseline bootstrap, 실제 Android acceptance와 24시간/7일
 운영 관찰이다. 완료된 초기
 migration·타당성 증거는 `docs/done/`에 둔다.
@@ -72,11 +72,9 @@ uv run python -m scripts.release deploy-cloudflare
 uv run python -m scripts.release deploy --host <oracle-host> --key <ssh-key-path>
 ```
 
-`deploy-cloudflare` 뒤 생기는 일시적 Worker/Oracle SHA 차이와 안전한 pair 복구 절차는
-[`릴리스·복구 운영 기준`](docs/12_release_and_recovery.md)의 coordinated rollback 계약을 따른다.
-환경 변수, 실패별 자동 복구와 명시적 coordinated rollback은
-[`릴리스·복구 운영 기준`](docs/12_release_and_recovery.md)을 따른다. GitHub Actions는 production
-credential 없이 검증만 하며 자동 배포하지 않는다.
+`deploy-cloudflare` 뒤 생기는 일시적 Worker/Oracle SHA 차이, 환경 변수, 실패별 자동 복구와 명시적
+coordinated rollback은 [`릴리스·복구 운영 기준`](docs/12_release_and_recovery.md)을 따른다. GitHub
+Actions는 production credential 없이 검증만 하며 자동 배포하지 않는다.
 
 TypeMoon ID/PW는 CLI 인자나 YAML에 쓰지 않고 `TYPEMOON_ID`, `TYPEMOON_PASSWORD` secret으로
 process에 주입한다. session 기본 경로는 `.data/private/typemoon-session.json`이다.
@@ -90,7 +88,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - SQLite frontier lease와 interrupted recovery
 - canonical SQLite schema, resumable legacy import와 verification command
 - `.partial` atomic close/1GiB rotation WARC
-- raw hash/WARC capture ledger, atomic frontier transition과 bounded authenticated sync
+- raw hash/WARC capture ledger, atomic frontier transition과 authenticated sync
 - listing/run 실패 판정, sync 1건씩 lease, stale run 회수와 explicit timeout/retry policy
 - 429 `Retry-After` frontier defer와 서로 다른 run 2회 확인 404 missing 판정
 - read-only DB/lease/WARC `doctor`와 verified SQLite snapshot command
@@ -102,8 +100,8 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
 - R2 baseline upload/check/pointer와 authenticated data smoke/rollback
 - Access user/service role을 분리한 remote `/ops`, D1 heartbeat와 fixed command marker/outbox/expiry canary
-- 6시간 incremental, resumable bounded inventory와 due bounded recovery를 결합한 자동 수집 구조
-- AA -> 창작 -> 팬픽 우선 bounded legacy queue recovery
+- 6시간 최신 글 증분 수집과 수동 전체 목차·전체 본문 재수집
+- AA -> 창작 -> 팬픽 우선의 무제한 순차 recovery
 - stable post identity user-state export/import와 vendored Saitamaar font
 - 홈/탐색/보관함 mobile-first Reader, 소설/AA filter, direct save와 Operations 상호 진입
 - Browsertrix emergency WACZ와 ReplayWeb.page offline replay evidence
@@ -118,13 +116,14 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
 
-현재 crawler는 concurrency 1과 10초 고정 delay를 유지한다. Oracle canonical live는 schema v3이고
-repository target은 listing 댓글 기대치를 보존하는 additive schema v4이며, 1건·
-small batch·bounded stop evidence가 있다. 자동 모드는 최신 page incremental을 6시간마다 실행하고,
-최초에는 board별 inventory cursor를 bounded window로 계속 재개해 전체 listing을 덮은 뒤 남은
-목차-only frontier를 bounded recovery로 비운다. 이후에는 주 1회 listing audit를 하고, 처리 시각이 된
-recovery와 변경 publish는 매 6시간 cycle에서 다시 시도한다.
-network·session·revisit 정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가 source
+현재 crawler는 concurrency 2와 요청 시작 간 10초 고정 delay를 유지한다. Oracle canonical live는 schema v3이고
+repository target은 listing 댓글 기대값과 마지막 증분 게시글을 함께 보존하는 additive schema v4다.
+자동 모드는 최신 page incremental만 6시간마다 실행한다. 이전 기준 게시글이 나온 page 뒤 2 page를
+더 확인하고, 이미 다른 cycle이 실행 중이면 새 cycle은 `busy`로 통과한다. 전체 목차와 전체 본문은
+Operations의 명시적 수동 작업이며, 기존 성공분도 건너뛰지 않는다. 게시글 하나가 실패해도 다음 글로
+진행하고 5회 실패한 항목만 최종 실패 목록으로 분리한다. 총 게시글 수·총 실행 시간 상한은 없고
+2개 상세 요청만 엇갈려 처리한다.
+network·session·revisit 정책은 `crawler/settings.py`, secret은 environment가 source
 of truth이며 별도 YAML은 두지 않는다. 전체 분류와 환경변수 계약은
 [`설정·운영 정책 기준`](docs/11_configuration_and_policy.md)을 따른다. automatic delta는 verified
 export state/publish ledger가 없거나 불일치하면 full scan으로 강등하지 않고 partial로 닫아 marker를

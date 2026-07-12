@@ -288,6 +288,7 @@ def test_recovery_stops_after_three_consecutive_site_failures(
         run_id=run_id,
         session=_session(),
         lease_seconds=60,
+        detail_concurrency=1,
     )
     [request] = asyncio.run(_collect_start(spider))
 
@@ -331,6 +332,7 @@ def test_recovery_stops_on_auth_response(tmp_path: Path) -> None:
         run_id=run_id,
         session=_session(),
         lease_seconds=60,
+        detail_concurrency=1,
     )
     [request] = asyncio.run(_collect_start(spider))
     response = HtmlResponse(
