@@ -13,6 +13,7 @@ from scrapy.http import HtmlResponse
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.frontier import FrontierStore
+from crawler.items import CapturedPostItem
 from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
@@ -186,6 +187,7 @@ def test_recovery_stops_on_auth_response(tmp_path: Path) -> None:
 
     [item] = list(spider._parse_recovery_detail(response))
 
+    assert isinstance(item, CapturedPostItem)
     assert item["warnings"] == ["auth_required"]
     assert spider.failure_codes == {"auth_required"}
     assert spider.scheduled_posts == 1
