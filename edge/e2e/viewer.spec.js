@@ -97,6 +97,7 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   await useCollectionFixture(page);
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#home-search")).toBeVisible();
 
   if (testInfo.project.name === "desktop") {
     await expect(page.locator('.rail a[href="/ops"]')).toBeVisible();
@@ -112,7 +113,8 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
     await expect(page.locator("#empty-reader")).toBeVisible();
     await expect(page.locator(".bottom-nav")).toBeVisible();
     await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-home.png` });
-    await page.locator("#browse-all").click();
+    await page.locator("#home-search").click();
+    await expect(page.locator("#search-input")).toBeFocused();
   }
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();

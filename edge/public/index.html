@@ -11,7 +11,7 @@
   </head>
   <body class="home-open">
     <aside class="rail" aria-label="주요 메뉴">
-      <button class="wordmark" type="button" data-destination="library" aria-label="ReDSTM 장서">Re<br>D</button>
+      <button class="wordmark" type="button" data-destination="library" aria-label="ReDSTM 장서">Re</button>
       <nav>
         <button class="active" type="button" data-destination="library" aria-pressed="true">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg>
@@ -61,7 +61,7 @@
           <label class="search-field">
             <span class="sr-only">검색</span>
             <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg>
-            <input id="search-input" type="search" placeholder="제목, 작성자, 분류 검색" autocomplete="off">
+            <input id="search-input" type="search" placeholder="제목, 작성자, 분류 검색" autocomplete="off" enterkeyhint="search">
           </label>
           <label class="board-field">
             <span class="sr-only">게시판</span>
@@ -79,6 +79,11 @@
 
       <section class="reader-pane" id="reader-pane" aria-label="글 본문">
         <section class="home" id="empty-reader" aria-labelledby="home-title">
+          <button class="home-search" id="home-search" type="button" data-destination="search">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg>
+            <span><strong>장서에서 검색</strong><small>제목, 작성자, 분류로 찾기</small></span>
+            <kbd aria-hidden="true">/</kbd>
+          </button>
           <header class="home-header">
             <p>개인 보존 장서</p>
             <h1 id="home-title">다시 읽고 싶은 기록을<br>한곳에서 찾으세요.</h1>
