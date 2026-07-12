@@ -222,7 +222,8 @@ Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 
 - 하루 최대 100건, due retry만 claim
 - 2시간 graceful budget에서 현재 request를 정리하고 종료하며, 성공·부분 완료 뒤 24시간 marker로
   6시간 schedule과 수동 command의 같은 날 중복 실행을 막는다
-- 429 `Retry-After` 우선, timeout/5xx는 bounded backoff; 연속 429 3회는 run 조기 종료
+- 429 `Retry-After` 우선, timeout/5xx는 bounded backoff; 연속 429 또는 network 오류 3회는
+  run 조기 종료하고 401/403·login form·parse drift는 즉시 중단
 - 404는 서로 다른 run 2회 뒤 missing
 - parse drift/auth는 일반 retry와 분리
 - frontier lease 기본을 900초로 상향한다. 현행 300초는 느린 detail(180초 timeout × 최대 3 시도)
@@ -236,7 +237,8 @@ pending 29,379/retry 4,328/running 1이어서 100건 count만으로는 5시간 s
 WARC/report를 정상 닫고 하루 요청 상한을 실제 schedule과 remote command 모두에서 지킨다. 기존 priority/due
 claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage network attempt
 복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
-dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다.
+dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다. `8fc310f3`은 recovery 자체에도
+network/429 3회 breaker와 auth/parse drift 즉시 중단을 적용한다.
 
 #### A2.4 delta release
 

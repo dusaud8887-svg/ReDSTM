@@ -287,7 +287,7 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | network | detail timeout | 180초 | 수 MB AA + 느린 응답(기존 유지) |
 | network | request retry | 총 3회(`RETRY_TIMES=2`), 408/5xx/522/524 | 기존 유지 |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
-| network | 429 | `Retry-After` 우선(최대 24시간), 연속 3회면 run 조기 종료 | 기존 + 과속 신호 존중 |
+| network | 429/network breaker | `Retry-After` 우선(최대 24시간), 같은 class 연속 3회면 recovery 조기 종료 | 과속·전체 outage에서 다음 97건 요청 금지 |
 | outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 46개 board를 순회하지 않음 |
 | outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료 | listing 3회 retry 포함 최악 약 20분 안팎에 중단 |
 | outage | attempt 보존 | `site_unreachable` run의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
@@ -298,6 +298,7 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | recovery | graceful budget | 2시간 | 대형 backlog에서 5시간 systemd hard kill 전에 WARC/report와 lease를 정상 정리 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
+| parser/auth | recovery 중단 | 401/403·login form·parse drift 첫 건 | site-wide drift를 일반 retry로 은폐하지 않음 |
 | systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |
 | systemd | run 상한 | oneshot `TimeoutStartSec=5h` | 느린 사이트에서 무한 run 방지; lease/transaction/`.partial` 계약이 강제 종료를 안전하게 함 |
 | control | D1/Worker HTTP | connect 5초/total 15초, backoff 2/5/15초 최대 3회 | [08 §5.4](08_operations_control_plane.md) |
