@@ -330,7 +330,7 @@ Remote command와 무관하게 systemd가 실행한다.
 | timer | 기본 |
 |---|---|
 | incremental cycle | 6시간 |
-| bounded recovery | 하루 100건 |
+| bounded recovery | 하루 1회; 후보 최대 100건, 2시간/장애 breaker 우선 |
 | delta publish | 변경 시 하루 최대 1회 |
 | full inventory | 주 1회 |
 

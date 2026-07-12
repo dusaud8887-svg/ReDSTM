@@ -455,7 +455,7 @@ source of truth는 Oracle systemd timer이고, D1이나 Worker 장애가 자동 
 
 ```text
 Sync now       신규/변경 discovery + collect
-Retry batch     최대 100건
+Retry batch     하루 후보 최대 100건; 2시간/장애 breaker 우선
 Publish if changed
 Pause after current
 Resume schedule
@@ -815,32 +815,31 @@ viewer에 직접 렌더링하지 않는다.
 
 ## 8. crawler 설계
 
-### 8.0 2026-07-11 구현 감사 판정
+### 8.0 2026-07-12 구현 감사 판정
 
-현재 crawler는 **bounded vertical slice 완료, 장기 무인 운영 미완료**다. 별도 schema v2 canary
-DB에서 한 글을 3회 수집해 stored/unchanged, 댓글, WARC와 lease 전이를 확인했지만 canonical에는
-아직 실제 `sync`/`retry` run이 없다. 현재 frontier는 pending 29,384, retry 4,327, done 9,657,
-dead 1이며 expired running lease는 0이다.
+현재 crawler core와 Oracle 수동 canary는 동작하지만 **자동 timer와 7일 shadow 전**이다. canonical
+실측 queue는 약 pending 29.4k/retry 4.3k여서 count 100을 완료 gate로 쓰면 느린 원 서버에서 수시간이
+걸린다. `max-posts=100`은 후보 선택의 hard cap이고 실제 종료는 2시간 budget, 같은 class의
+network/429 3회, auth/parser 첫 실패 중 먼저 도달하는 조건이다.
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
-| 부하 제한 | concurrency 1, domain concurrency 1, 고정 10초 delay, robots 준수 | 100건 canary에서 요청 간격·429 여부 확인 |
+| 부하 제한 | concurrency 1, domain concurrency 1, 고정 10초 delay, robots 준수 | time-bounded canary에서 요청 간격·429 여부 확인 |
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | frontier 2분 지수 backoff, 6시간 cap, network 5회 후 dead, auth는 보류 | dead/retry 운영 report와 수동 재개 기준 |
 | 중단 복구 | file lock/lease, stale run 회수, capture 누락 종료 판정, WARC `.partial` 진단 | live process kill 확인 |
 | listing | fixed cap, idempotent seed, errback·비HTML/구조 실패 판정 | overlap boundary/inventory |
-| detail | 1건씩 claim, 인증·restricted·parse drift·WARC/canonical transaction | 20/100건 live canary |
+| detail | 1건씩 claim, 인증·restricted·parse drift·WARC/canonical transaction | small batch·2시간·24시간 live canary |
 | monitoring/UI | sync/recovery success hook, JSON report, CLI doctor, loopback read-only C0 console | scheduler/D1 heartbeat, remote Operations와 7일 shadow |
 
-따라서 현재 command를 수동 1~20건 canary에 쓰는 것은 가능하지만 장시간 production queue나 정기
-무인 sync를 시작해서는 안 된다. 실제 100건과 7일 shadow가 통과하기 전 “crawler 완성”으로
-표시하지 않는다.
+따라서 현재 command는 수동 bounded canary에만 사용한다. 24시간 반복과 7일 shadow가 통과하기 전
+“crawler 완성” 또는 timer cutover로 표시하지 않는다.
 
 ### 8.1 명령 표면
 
 ```text
 uv run python -m scripts.sync --archive ARCHIVE --board BOARD --max-posts 20
-uv run python -m scripts.recover_queue --archive ARCHIVE --max-posts 100
+uv run python -m scripts.recover_queue --archive ARCHIVE --max-posts 100 --max-seconds 7200
 uv run python -m scripts.doctor ARCHIVE --warc-dir WARC_DIR
 uv run python -m scripts.backup_archive ARCHIVE --snapshot SNAPSHOT --manifest MANIFEST
 uv run python -m scripts.restore_archive SNAPSHOT --manifest MANIFEST --target TARGET
@@ -974,13 +973,10 @@ storage_error
   board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
 - 구현값은 `CONCURRENT_REQUESTS=1`, `CONCURRENT_REQUESTS_PER_DOMAIN=1`,
   `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, `RETRY_TIMES=2`,
-  `AUTOTHROTTLE_ENABLED=False`, `ROBOTSTXT_OBEY=True`다.
-- `DOWNLOAD_TIMEOUT=180`과 retry HTTP code는 settings에 명시했다. 180초는 “최적값”이 아니라
-  오래된 server를 위한 보수적 시작값이며 100건 canary latency로만 조정한다.
-- A2 반영 예정 시작값: listing 60초/detail 180초 timeout 분리, `DOWNLOAD_WARNSIZE` 8MiB와
-  `DOWNLOAD_MAXSIZE` 64MiB 명시, 감속 전용 AutoThrottle(하한 10초, 최대 60초), frontier lease
-  기본 900초(현행 300초는 detail 180초 × 최대 3 시도 경로를 못 덮음). 느린 원 사이트와 수 MB AA
-  문서가 전제이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
+  `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=True`다.
+- listing/detail timeout은 120/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
+  10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
+  보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
 - site outage 조기 판정: run preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
   `site_unreachable`로 run을 조기 종료한다. 그 run의 network 실패는 frontier attempt로 세지
   않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 run당 1회, 최소
@@ -990,7 +986,8 @@ storage_error
 - export는 timezone이 있는 `created_at`/`expires_at`, user agent, browser cookie list만 읽고 만료·중복 cookie·TypeMoon 외 domain·header control character를 거부
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
 - `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
-- `ETag`/`Last-Modified` conditional request와 연속 auth/parse threshold 중단은 아직 구현되지 않았다.
+- `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery의 auth/parse 즉시 중단과
+  network/429 연속 3회 breaker는 구현했다.
 - crawler user agent는 개인 아카이빙 도구임을 식별하고 연락처는 공개하지 않음
 
 요청률은 코드 review가 가능한 settings에서 관리하고 dashboard에 performance preset이나 임의
@@ -1339,7 +1336,7 @@ Gate:
 
 상태: 운영 hardening code 완료, live gate 대기. schema/importer/parser/store/frontier, bounded
 listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
-정책과 `doctor`는 구현했다. scheduler/D1 heartbeat 실연결과 20/100건·7일 shadow는 남아 있다.
+정책과 `doctor`는 구현했다. scheduler/D1 heartbeat 실연결과 24시간·7일 shadow는 남아 있다.
 
 - 최소 schema/migration 작성
 - legacy importer
@@ -1389,8 +1386,8 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 
 ### 13.5 Phase 3: viewer
 
-상태: viewer 기능, gzip/zstd full local export와 R2 baseline publish 완료. authenticated data
-smoke/rollback과 승인된 시각 재설계 구현 대기.
+상태: viewer 기능, Signal Archive 재설계, gzip/zstd full local export와 R2 baseline publish 완료.
+authenticated data smoke와 실제 Android acceptance 대기.
 Full canonical exporter, collection
 연속 읽기, unavailable entry skip, legacy object-key user-state, Saitamaar와 desktop/mobile Playwright를
 구현했다. 기존 gzip 전수 export와 post-export doctor는 완료했고 baseline은
@@ -1399,13 +1396,12 @@ Full canonical exporter, collection
 완료했다. Worker/private R2 bucket/Access email
 allow/TOTP MFA와 인증된 shell smoke는 완료했다. matching bucket-scoped key로 local `rclone`
 연결을 복구했고 immutable baseline 5,148,165,450 bytes/282,289 objects를 게시했다. remote check
-차이 0과 pointer 검증이 통과했다. authenticated data smoke, remote rollback과 실제 Android
+차이 0과 pointer 검증, remote rollback/복귀가 통과했다. authenticated data smoke와 실제 Android
 gate가 남아 있다.
 
-현재 live shell의 색·서체·정보 구조는 제품 acceptance를 통과한 것으로 보지 않는다. 최종 구현은
-[`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose, Saitamaar AA와
-[`06_final_product_experience.md`](06_final_product_experience.md)의 stable identity/mobile flow를
-따라 교체한다.
+현재 live shell은 [`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose,
+Saitamaar AA와 stable identity/mobile flow로 교체됐다. authenticated/실기기 acceptance 전까지
+최종 시각 gate는 열려 있다.
 
 Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링한다. 원문 version이
 없는 unavailable placeholder 1,831개와 그 댓글 22,222개는 canonical에 보존하고 release manifest의

@@ -1,6 +1,6 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: Application and canonical installed; credentials, canary and cutover pending
+- 상태: Application/canonical/static installed; latest deploy, Access, shadow and cutover pending
 - 기준일: 2026-07-12
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
@@ -262,7 +262,7 @@ pointer 교체 뒤 실패하면 이전 pointer로 복귀한다.
 
 ## 8. 기본 schedule
 
-live 20/100건과 24시간 반복 canary가 통과한 뒤 다음에서 시작하고 실측으로만 조정한다.
+small batch, bounded full-window와 24시간 반복 canary가 통과한 뒤 다음에서 시작하고 실측으로만 조정한다.
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
@@ -279,7 +279,7 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 ### 8.1 운영 파라미터 시작값
 
 수치의 단일 source of truth는 코드(`crawler/settings.py`와 CLI 기본값)다. 이 표는 **느린 원
-사이트, 잦은 outage, 수 MB AA 문서**를 전제로 한 시작 계약이며, 조정은 100건 canary와 shadow
+사이트, 잦은 outage, 수 MB AA 문서**를 전제로 한 시작 계약이며, 조정은 time-bounded canary와 shadow
 실측으로만 한다.
 
 | 영역 | 항목 | 시작값 | 근거 |
@@ -353,14 +353,16 @@ R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주�
 Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. `write_free21` 1건 canary는 269.8초,
 stored 1/failure 0/frontier done, 최대 메모리 약 92MB와 WARC partial 0으로 통과했다. 20건 상한은
 48분 28초 동안 scheduled 13/stored 12/network retry 1/dead 0과 WARC partial 0으로 bounded partial을
-통과했고 expired `aa_19` lease도 정상 reclaim했다. 첫 100건 상한 run은 18분에 3건을 저장한 뒤
-5시간 초과 예측으로 중단했으며 gzip-valid WARC는 보존했다. **남음** — Access service-token
-route-role/D1 smoke와 새 2시간 bounded recovery·delta canary다. control/schedule timer는
+통과했고 expired `aa_19` lease도 정상 reclaim했다. 첫 진단 run은 18분에 3건을 저장한 뒤
+중단했으며 gzip-valid WARC는 보존했다. 다음 bounded stop run은 15분 38초에 selected 100/
+scheduled 4/stored 2/network 1, status partial, WARC partial 0을 기록했다. selected 100은 처리 목표가
+아니다. **남음** — latest Git application deploy, Access service-token route-role/D1 smoke와
+bounded full-window·delta canary다. control/schedule timer는
 disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow
 
-- 20건 -> 100건 -> 24시간 반복 canary를 통과한다.
+- small batch -> bounded full-window -> 24시간 반복 canary를 통과한다.
 - 요청 간격, p95 latency, 429/timeout, auth, parse drift, WARC partial, memory/disk를 기록한다.
 - 7일 동안 legacy data와 새 capture 결과를 비교한다.
 - Cloudflare viewer와 R2 delta release를 실제로 읽는다.
@@ -398,8 +400,9 @@ manifest에 기록된 경로만 제거한다.
 gate를 통과한 manifest 단위 O4 cleanup을 에이전트가 직접 수행하도록 standing approval했다.
 따라서 Cloudflare D1/service token 생성과 Oracle application 구성은 사용자 수동 단계가 아니다.
 
-구축 시작 전 필수 사용자 입력은 없다. 외부 dead-man provider는 현재 gate에서 제외하고 D1
-heartbeat/stale 감지를 사용한다. 합의 예산을 넘는 paid resource, Oracle
+현재 Wrangler OAuth에는 Access Apps/Policies와 Service Tokens write 권한이 없다. A3 진행에는
+scoped API token 또는 로그인된 Chrome 사용의 명시 승인이 필요하다. 외부 dead-man provider는
+현재 gate에서 제외하고 D1 heartbeat/stale 감지를 사용한다. 합의 예산을 넘는 paid resource, Oracle
 instance/volume/network 삭제와 마지막 검증 사본 삭제만 새 명시 승인 대상이다.
 
 R2/TypeMoon secret 값은 채팅이나 Git에 다시 적지 않는다. 기존 원격 secret을 재사용할 때도 migration

@@ -21,8 +21,8 @@
 | live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
-| unattended crawl | local core/systemd source 구현, Oracle 1건·20건 bounded partial 통과 | IN PROGRESS |
-| Oracle | application `d23ce20...`, canonical/R2/TypeMoon/1·20건 완료; Access/100/timer 전 | IN PROGRESS |
+| unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
+| Oracle | application `7a62dcc0...`, canonical/R2/static/TypeMoon 완료; latest deploy·Access·timer 전 | IN PROGRESS |
 | remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
@@ -31,7 +31,9 @@
 remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-현재 baseline 검증은 Python 133 tests, Node 30 tests, Ruff check/format과 mypy가 통과했다.
+마지막 Oracle deploy gate는 Python 142 tests, Ruff 69-file check/format과 mypy가 통과했고,
+Edge는 Node 30 tests/check를 통과했다. 이후 control offline/recovery breaker 변경은 targeted test,
+Ruff와 mypy를 통과했지만 최신 Git code의 Oracle 재배포는 남았다.
 Playwright self-contained fixture는 1440/768/390/320px 28건 통과했고 local R2에 seed하지 않은 실제
 AA/prose fixture의 viewport 조합 8건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의
 authenticated live smoke에서 확인한다.
@@ -219,7 +221,7 @@ Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 
 #### A2.3 retry/recovery
 
 - AA → 창작 → 팬픽 → 나머지
-- 하루 최대 100건, due retry만 claim
+- 하루 후보 최대 100건, due retry만 claim(처리 목표 아님)
 - 2시간 graceful budget에서 현재 request를 정리하고 종료하며, 성공·부분 완료 뒤 24시간 marker로
   6시간 schedule과 수동 command의 같은 날 중복 실행을 막는다
 - 429 `Retry-After` 우선, timeout/5xx는 bounded backoff; 연속 429 또는 network 오류 3회는
@@ -231,7 +233,7 @@ Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 
 - `site_unreachable`로 끝난 run의 network 실패는 frontier attempt로 세지 않는다
 - 파라미터 시작값은 [`10 §8.1`](10_oracle_runner_runbook.md)을 따른다
 
-상태(2026-07-12): local core 구현 완료, live 20/100건·대형 AA canary 전이다. Oracle 실측 queue는
+상태(2026-07-12): local core 구현 완료, 24시간·대형 AA canary 전이다. Oracle 실측 queue는
 pending 29,379/retry 4,328/running 1이어서 100건 count만으로는 5시간 service 상한을 보장하지 못했다.
 `849fdb34`는 Scrapy native `CLOSESPIDER_TIMEOUT` 2시간과 `recovery.completed` 24시간 marker를 추가해
 WARC/report를 정상 닫고 하루 요청 상한을 실제 schedule과 remote command 모두에서 지킨다. 기존 priority/due
@@ -239,6 +241,9 @@ claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage
 복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
 dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다. `8fc310f3`은 recovery 자체에도
 network/429 3회 breaker와 auth/parse drift 즉시 중단을 적용한다.
+15분 38초 bounded stop 실측은 selected 100/scheduled 4, stored 2/network failure 1, status partial,
+WARC partial 0이었다. 이는 selected count가 처리량이나 완료 기준이 아님을 확인한 진단 증거이며,
+종료 시 in-flight lease 1개는 900초 expiry 뒤 다음 run이 reclaim하는 계약이다.
 
 #### A2.4 delta release
 
@@ -272,7 +277,8 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 - 사이트 전체 outage에서 run이 십수 분 안에 `site_unreachable`로 끝나고 frontier attempt가
   소모되지 않는다.
 - no-change cycle은 R2 data upload/activate를 하지 않는다.
-- 20건 → 100건 → 24시간 canary에서 retry storm, lease leak, WARC partial이 없다.
+- small batch → bounded full-window → 24시간 canary에서 retry storm, 만료 후 미회수 lease,
+  WARC partial이 없다.
 - 대표 대형 AA detail이 lease 만료 없이 수집된다.
 
 ### A3 — Cloudflare/Oracle control API
@@ -320,7 +326,7 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 5. systemd oneshot/timer, resource limit, journald retention과 D1 heartbeat/stale 감지를 설치하되
    timer는 disable한다.
 6. 기존 E verified source와 격리 restore 사본을 재확인한다. 새 외부 backup provider는 만들지 않는다.
-7. A2/A3의 20/100건, duplicate command, D1 outage canary를 Oracle에서 실행한다.
+7. A2/A3의 small/time-bounded batch, duplicate command, D1 outage canary를 Oracle에서 실행한다.
 
 상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
 pinned uv/Python 3.14, versioned deploy/rollback과 application release
@@ -334,8 +340,10 @@ R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주�
 Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. `write_free21` 1건 canary는 stored 1,
 failure 0, frontier done, WARC partial 0으로 통과했다. 20건 상한은 48분 28초 동안 scheduled 13,
 stored 12, network retry 1, dead 0과 WARC partial 0으로 전체 중단 없이 끝났고, 이전 결함 run의
-expired `aa_19` lease도 정상 reclaim 후 stored/done으로 복구했다. **남음** — Access service credential,
-새 bounded recovery·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
+expired `aa_19` lease도 정상 reclaim 후 stored/done으로 복구했다. 15분 38초 bounded stop run은
+selected 100/scheduled 4/stored 2/network 1, status partial과 WARC partial 0을 기록했다.
+**남음** — latest Git application 배포, Access service credential,
+bounded full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
 18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.
 journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에서 24MiB로 줄였다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.
@@ -427,7 +435,6 @@ chat/Git/log에 출력하지 않으며 dashboard/API/SSH credential store에서�
 
 | 시점 | 입력 |
 |---|---|
-| A1.2 font 확보 | SUIT/MaruBuri 신규 파일 다운로드 직전 확인(출처·파일명·크기 제시) |
 | A1 acceptance | 실제 Android에서 주관적 읽기/디자인 최종 확인 |
 | A3 runner Access | `Access: Apps and Policies Write`, `Access: Service Tokens Write` API token을 임시 주입하거나 로그인된 Chrome 사용을 명시적으로 허용 |
 | paid limit | 연간/월간 합의 예산을 넘는 경우 새 승인 |

@@ -85,8 +85,10 @@ timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 b
 통과했다. application `d23ce2050fab21bd1ef211bea6861baf6480ee86`에서 `write_free21` 1건
 stored canary, frontier `done`, WARC partial 0과 본문 비노출도 통과했다. 20건 background canary는
 scheduled 13/stored 12/network retry 1/dead 0, WARC partial 0으로 bounded partial을
-통과했다. 첫 100건 상한 run은 18분/stored 3 실측에서 5시간 초과가 예상돼 중단했고, gzip 검증 후
-WARC를 보존했다. application `7a62dcc0`에는 하루 1회·2시간 graceful recovery가 배포됐다.
+통과했다. `100`은 처리 목표가 아니라 하루 후보 선택 상한이다. 첫 진단 run은 18분/stored 3에서
+중단했고, 다음 bounded run은 15분 38초에 selected 100/scheduled 4/stored 2/network failure 1로
+partial report를 남겼으며 WARC partial은 0이었다. application `7a62dcc0`에는 하루 1회·2시간
+graceful recovery가 배포됐고, Git 최신 code의 network/429/auth/parser breaker는 재배포 전이다.
 Oracle static root도 verified baseline과 같은 282,289 objects/5,148,165,450 bytes 및 pointer SHA로
 seed했다. 증거는 `/srv/redstm/reports/oracle-static-seed-20260712.json`이다. Access service
 credential, 새 bounded recovery·delta canary가 남았다.
@@ -97,7 +99,7 @@ credential, 새 bounded recovery·delta canary가 남았다.
 
 1. R2 authenticated live data smoke
 2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
-3. Oracle Access secret 주입과 최대 100건/2시간 recovery·실제 delta publish canary
+3. Oracle Access secret 주입과 time/failure-bounded recovery·실제 delta publish canary
 4. Access user/service role smoke와 live `/ops` acceptance
 5. 24시간 canary, 7일 shadow, cutover와 실제 Android acceptance
 
@@ -128,7 +130,8 @@ credential, 새 bounded recovery·delta canary가 남았다.
 비파괴·복구 가능한 작업은 반복 승인을 요구하지 않는다.
 
 GitHub CLI login과 remote read는 확인됐다. 현재 GitHub/Oracle이 같은 SSH key를 재사용하므로
-최종 credential rotation에서 용도별 key로 분리한다. 구현 시작 전 필수 사용자 입력은 없다.
+최종 credential rotation에서 용도별 key로 분리한다. Wrangler OAuth에 Access 관리 권한이 없으므로
+A3에는 scoped API token 또는 로그인된 Chrome 사용의 명시 승인이 필요하다([04 §6.3](04_implementation_plan.md)).
 
 instance/volume/network, 마지막 검증 사본, manifest 없는 data 삭제와 합의 예산 초과는 hard stop이다.
 credential 원문은 docs/chat/Git/log에 기록하지 않는다. 전체 경계는
