@@ -1,21 +1,24 @@
 # Operations Control Plane 사양
 
-- 상태: Worker/D1/responsive `/ops` live; authenticated acceptance와 runner Access/Oracle 연동 전
+- 상태: Worker/D1/responsive `/ops`와 runner Access/Oracle heartbeat live; failure canary 전
 - 기준일: 2026-07-12
 - product UX: [06](06_final_product_experience.md)
 - frontend: [09](09_frontend_strategy_and_roadmap.md)
 - runner: [10](10_oracle_runner_runbook.md)
 - completed C0: [archive record](archive/2026-07-11/08_local_operations_console_c0.md)
 
-Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 responsive Operations Worker
-`cefea2fb`을 배포했다. 이전 `c47b2e58` 100% rollback → Access 302 → `cefea2fb` 복귀를 재현했다.
-비인증 Reader/deep link/ops/runner/health는 모두 302다. 별도 runner Access app/service token과
-user/service 인증 role smoke 전이므로 A3 완료로 보지 않는다.
+Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 runner AUD를 포함한 Operations
+Worker `9344fbbe`를 배포했다. 이전 `c47b2e58` 100% rollback → Access 302 → current 복귀를
+재현했다. path-specific runner application/Service Auth policy와 회전 가능한 1년 token을 만들고
+Oracle `0640` env에 주입했다. runner heartbeat 200, service→ops 302, anonymous→runner 403과 D1 idle
+row, authenticated `/ops` 표시를 확인했다. duplicate/outage/replay live gate 전이므로 A3 전체 완료로
+보지 않는다.
 
 Local frontend checkpoint: Signal Archive graphite/SUIT Operations shell, Overview/Runs/Boards/Releases,
 fixed Controls와 queued cancel을 구현했다. API 값을 `textContent`로만 렌더링하고 secret/path/임의
 인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE E2E 4건과
-Edge unit 30건이 통과했다. `/ops` asset은 live지만 authenticated data/action acceptance는 다음 gate다.
+Edge unit 30건이 통과했다. `/ops`의 authenticated overview/data acceptance는 완료됐고 실제 command
+action/failure injection은 다음 gate다.
 
 ## 1. 목적
 

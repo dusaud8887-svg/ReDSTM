@@ -219,7 +219,8 @@ missing/invalid/orphan WARC 0이다. root free는 약 82GB다. R2/TypeMoon crede
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
-**남음** — Access service credential과 새 bounded recovery·delta canary다.
+Access service credential, route-role과 D1 idle heartbeat smoke는 완료됐다. **남음** — 새 bounded
+recovery·delta canary다.
 control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
 최신 배포 뒤 recovery/cycle/control module `--help` smoke와 canonical/WARC partial 0을 확인했고,
 DB scan이나 긴 canary는 실행하지 않았다.
@@ -235,14 +236,16 @@ Oracle은 [08](08_operations_control_plane.md)의 runner endpoint만 사용한�
 5. Worker/D1 장애 event는 local outbox에 두고 재연결 후 sequence로 replay한다.
 6. 허용 command 외 shell/path/arg를 실행하는 generic dispatcher는 만들지 않는다.
 
-상태(2026-07-12): local core와 systemd schedule source 구현 완료, Oracle/Access canary 전이다. 별도 SQLite command ledger와
+상태(2026-07-12): local core와 systemd schedule source, Oracle/Access idle heartbeat까지 완료했다.
+별도 SQLite command ledger와
 10MiB/10,000-event outbox, 5초 connect/15초 total retry transport, 60초 circuit breaker, fixed 5-action
 dispatcher, 30초 heartbeat/lease, atomic pause/publish marker, crash terminal replay와 board summary를
 구현했다. `04765c12`에서 control credential 3개가 모두 없는 scheduled run도 offline transport와
 local outbox로 계속되며, 일부만 설정된 경우는 오설정으로 실패하도록 고정했다. subprocess
 stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
-실행 명령에 들어가지 않는다. service token 주입과 systemd unit 연결 전이므로 G5 전체를 live
-완료로 표시하지 않는다.
+실행 명령에 들어가지 않는다. service token 주입, runner 200/service→ops 302/anonymous→runner 403,
+D1 idle heartbeat와 authenticated `/ops`는 통과했다. duplicate command와 D1 outage/replay 전이므로
+G5 전체를 live 완료로 표시하지 않는다.
 
 ## 7. 자동 cycle state machine
 
@@ -360,9 +363,9 @@ Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bo
 frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 selected 100 중 scheduled 4/
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
-최신 application module smoke와 timer disabled/inactive는 재확인했다. **남음** — Access
-service-token route-role/D1 smoke와 bounded full-window·delta canary다. control/schedule timer는
-disabled/inactive 상태를 유지한다.
+최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 timer
+disabled/inactive를 재확인했다. **남음** — bounded full-window·delta canary와 failure injection이다.
+control/schedule timer는 disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow
 
@@ -404,8 +407,8 @@ manifest에 기록된 경로만 제거한다.
 gate를 통과한 manifest 단위 O4 cleanup을 에이전트가 직접 수행하도록 standing approval했다.
 따라서 Cloudflare D1/service token 생성과 Oracle application 구성은 사용자 수동 단계가 아니다.
 
-현재 Wrangler OAuth에는 Access Apps/Policies와 Service Tokens write 권한이 없다. A3 진행에는
-scoped API token 또는 로그인된 Chrome 사용의 명시 승인이 필요하다. 외부 dead-man provider는
+Wrangler OAuth의 Access write 권한 부족은 사용자가 승인한 로그인 Chrome으로 service token,
+path-specific application과 policy를 생성해 해소했다. 외부 dead-man provider는
 현재 gate에서 제외하고 D1 heartbeat/stale 감지를 사용한다. 합의 예산을 넘는 paid resource, Oracle
 instance/volume/network 삭제와 마지막 검증 사본 삭제만 새 명시 승인 대상이다.
 

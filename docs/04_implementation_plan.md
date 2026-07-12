@@ -18,25 +18,26 @@
 | static release | zstd level 15 full release, 282,239 readable posts, `.partial` 0 | DONE |
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
-| live data | remote pointer rollback/복귀 완료, authenticated data smoke 대기 | IN PROGRESS |
-| current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
+| live data | remote pointer rollback/복귀와 authenticated Reader/일반·AA 본문 smoke 완료 | DONE |
+| current UI | Signal Archive live·authenticated `/ops` 완료, Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
-| Oracle | application `4edc1c9...`, canonical/R2/static/TypeMoon 완료; Access·timer 전 | IN PROGRESS |
-| remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
+| Oracle | application `4edc1c9...`, canonical/R2/static/TypeMoon/Access 완료; timer 전 | IN PROGRESS |
+| remote operations | user/service role, D1 idle heartbeat와 authenticated `/ops` 통과; failure canary 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
-현재 결론은 **데이터 기반과 local frontend는 준비됐지만, authenticated live 검증·Oracle 자동화·
-remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
+현재 결론은 **데이터 기반·authenticated Reader/Operations는 준비됐지만, Oracle 자동화·
+failure canary·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
 현재 local gate는 Python 147 tests, Ruff 69-file check/format과 mypy가 통과했고,
-Edge는 Node 30 tests/check를 통과했다. 이후 control offline/recovery breaker 변경은 targeted test,
-Ruff와 mypy를 통과했지만 최신 Git code의 Oracle 재배포는 남았다.
+Edge는 Node 30 tests/check를 통과했다. control offline/recovery breaker와 4시간 cycle budget은
+targeted test, Ruff와 mypy를 통과했고 Oracle application `4edc1c9...`에 배포됐다.
 Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 44건 통과했고 local R2에
-seed하지 않은 실제 AA/prose fixture의 viewport 조합 8건은 연결 오류로 미검증이다. Access를
-공개하지 않고 A0의 authenticated live smoke에서 확인한다.
+seed하지 않은 실제 AA/prose fixture의 viewport 조합 8건은 연결 오류로 남는다. 대신 authenticated
+production에서 282,239건 index, 일반 본문 8,738자/댓글 4개와 AA 186,058자/canvas/댓글 7개를 열어
+실데이터 경로를 확인했다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -182,6 +183,14 @@ hero, `enterkeyhint`, wordmark, 큰 post 수신 진행률, AA 배경 휘도별 �
 fixture E2E로 고정했다. 남은 A1 blocking은 authenticated live data, 실제 Android 동작과 사용자 시각
 acceptance다.
 
+같은 날 심야 재감사에서 A1 local blocking 두 건을 추가한다.
+
+- `/search`의 query/board/sort가 URL(`?q=&board=&sort=`)과 History state에 보존되지 않는다.
+  [06 §4.1](06_final_product_experience.md) 계약 위반으로 새로고침·탭 복원·공유·Back에서 검색
+  상태가 사라진다. destination 전환과 Back 복원은 이 URL 상태를 단일 source로 쓴다.
+- mobile에 운영 상시 진입점이 없다. 운영 link가 있는 rail은 1180px 이상에서만 보이므로 설정
+  sheet 하단에 운영 콘솔 link를 둔다. bottom navigation 4개 계약은 유지한다(06 §4.1).
+
 Should — acceptance 직후:
 
 - latest/oldest 정렬과 AA/일반 content-mode filter를 연다(06 §6.2; `is_aa` release 이후).
@@ -314,14 +323,16 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): remote D1 migration 2개와 Worker `ef87fd99` live 배포, 이전 `c47b2e58` rollback/복귀
+상태(2026-07-12): remote D1 migration 2개와 Worker `9344fbbe` live 배포, 이전 `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
-Python 147 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
-302다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
-fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 별도 Access service identity와 인증 role
-smoke, Access secret 주입·timer 연결, live failure gate는 아직이므로 A3 전체는 DONE이 아니다.
-Oracle에는 application base와 disabled control/schedule timer가 설치됐다.
+Python 147 tests와 Edge 30 tests를 통과했다. 비인증 user route는 302이고 path-specific runner는
+403 fail-closed다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
+fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 1년 service token, path-specific Service Auth
+application/policy, Oracle `0640` secret 주입과 runner 200/service→ops 302/anonymous→runner 403 role
+smoke가 통과했다. 실제 control oneshot은 D1에 release `4edc1c9...`, idle, next schedule과 disk를
+기록했고 authenticated `/ops`가 이를 정상 표시했다. duplicate/outage/replay live failure gate와
+timer 연결 전이므로 A3 전체는 DONE이 아니다.
 
 완료 기준:
 
@@ -357,8 +368,8 @@ R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주�
 Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. 1건·20건 partial, lease reclaim과 bounded
 stop의 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 분리했다.
 latest deploy 뒤 recovery/cycle/control module smoke, timer disabled/inactive와 partial 0을 확인했으며
-DB scan이나 긴 canary는 재실행하지 않았다. **남음** — Access service credential, bounded
-full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
+DB scan이나 긴 canary는 재실행하지 않았다. Access service credential과 D1 heartbeat는 통과했다.
+**남음** — bounded full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
 18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.
 journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에서 24MiB로 줄였다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.
@@ -451,13 +462,12 @@ chat/Git/log에 출력하지 않으며 dashboard/API/SSH credential store에서�
 | 시점 | 입력 |
 |---|---|
 | A1 acceptance | 실제 Android에서 주관적 읽기/디자인 최종 확인 |
-| A3 runner Access | `Access: Apps and Policies Write`, `Access: Service Tokens Write` API token을 임시 주입하거나 로그인된 Chrome 사용을 명시적으로 허용 |
 | paid limit | 연간/월간 합의 예산을 넘는 경우 새 승인 |
 | destructive cleanup | exact manifest를 보고 보존 요구가 있으면 예외 지정 |
 
 Cloudflare와 Oracle 안에서 현재 자격증명으로 API/CLI 생성 가능한 resource와 secret 주입은 사용자
-수동 작업으로 넘기지 않는다. 다만 2026-07-12 Wrangler OAuth에는 Access 권한이 없어 위 A3 입력 중
-하나는 필요하다. 그 전까지 fail-closed runner route와 나머지 구현·Oracle 준비는 계속한다. font
+수동 작업으로 넘기지 않는다. Wrangler OAuth의 Access 권한 부족은 사용자가 승인한 로그인 Chrome으로
+service token/application/policy를 생성해 해소했다. font
 다운로드 확인은 A1.2 해당 시점에만 짧게 받고, 실제 Android의 주관적 acceptance와 hard stop은
 구현을 진행하는 동안 기다리지 않고 마지막 gate에서만 확인한다.
 

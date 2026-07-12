@@ -69,6 +69,9 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - Oracle read-only audit, target runbook, ADR-014/015
 - Oracle에서 12,407,148,544-byte canonical 활성화/full doctor와 application
   `4edc1c9868045454c961cd3f038eb0a66a4cb010` 배포 통과
+- Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token/만료 알림
+- Oracle control oneshot → Access → Worker → D1 heartbeat와 user/service route 분리 smoke
+- authenticated production Reader 282,239건, 일반/AA 본문·댓글과 `/ops` idle heartbeat smoke
 - journald 1GiB/14일 보존 정책 적용과 과거 민감 가능 journal 폐기(4GiB → 24MiB)
 - Signal Archive 디자인·제품·API의 최종 문서 계약
 
@@ -76,11 +79,11 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 
 ### 현재 gate
 
-R2 baseline publish와 remote pointer rollback/복귀는 완료됐다. 로그인된 Chrome의 authenticated
-production data smoke가 A0의 마지막 gate다. A1은 local 구현과 fixture가 끝났으며,
+R2 baseline publish, remote pointer rollback/복귀와 로그인된 Chrome의 authenticated production
+data smoke는 완료됐다. A1은 local 구현과 fixture가 끝났으며,
 offline/Access-expired 복구, control API와 responsive Operations, 검색 우선 Home, AA/목록 사용성과
-상태 가져오기 검토를 포함한 version `ef87fd99-ee0d-4d2a-999d-69839ce0f438`이 배포됐다. 이전
-`c47b2e58` rollback/복귀 rehearsal도 통과했다. authenticated smoke, 실제 Android와 사용자 시각
+상태 가져오기 검토 및 runner AUD를 포함한 version `9344fbbe-dc85-4498-ac1b-c28b2446d88c`이
+배포됐다. 이전 `c47b2e58` rollback/복귀 rehearsal도 통과했다. 실제 Android와 사용자 시각
 acceptance가 남아 있다. Oracle은
 versioned application, resumable canonical activation과 full doctor까지 통과했다. control/schedule
 timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 bucket-scoped R2 조회는
@@ -93,17 +96,17 @@ stored 2였고, CPU가 아니라 원본 서버의 network timeout/retry가 지�
 control client를 배포했다. module smoke는 통과했으며 긴 canary는 이번 배포에서 재실행하지 않았다.
 Oracle static root도 verified baseline과 같은 282,289 objects/5,148,165,450 bytes 및 pointer SHA로
 seed했다. 증거는 `/srv/redstm/reports/oracle-static-seed-20260712.json`이다. Access service
-credential, 새 bounded recovery·delta canary가 남았다.
+credential과 D1 idle heartbeat는 완료됐고 새 bounded recovery·delta canary가 남았다.
 
 ### 구현 필요
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
-1. R2 authenticated live data smoke
-2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
-3. Oracle Access secret 주입과 time/failure-bounded recovery·실제 delta publish canary
-4. Access user/service role smoke와 live `/ops` acceptance
-5. 24시간 canary, 7일 shadow, cutover와 실제 Android acceptance
+1. 검색 URL state와 mobile Operations 진입점 구현
+2. 실제 Android/frontend acceptance
+3. time/failure-bounded recovery·실제 delta publish canary
+4. duplicate/outage/replay failure canary
+5. 24시간 canary, 7일 shadow와 cutover
 
 ## 확정된 UX·기술 결정
 

@@ -134,10 +134,14 @@ Reader와 Operations는 같은 로그인과 visual system을 쓰지만 route, da
 | destination | URL | behavior |
 |---|---|---|
 | 장서 | `/` | continue/recent/latest 다음 catalog와 board filter |
-| 검색 | `/search` | query/filter/sort가 History API state와 URL에 보존 |
+| 검색 | `/search` | query/filter/sort가 History API state와 URL(`?q=&board=&sort=`)에 보존 |
 | 저장 | `/saved` | bookmark/history, local user-state |
 | 설정 | `/settings` | Reader/AA/theme/import-export |
 | Reader | `/read/{board_id}/{external_post_id}` | full-screen, global nav hidden |
+
+Reader와 Operations의 상호 접근은 다음으로 고정한다. desktop rail의 운영 link와 `/ops` 상단의
+Reader 복귀 link가 기본 경로이고, mobile에서는 설정 sheet 하단의 운영 콘솔 link가 상시
+진입점이다. bottom navigation은 4개를 유지하며, Home의 갱신 지연 label은 보조 진입점이다.
 
 ## 5. Stable identity와 URL
 
