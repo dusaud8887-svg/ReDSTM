@@ -175,6 +175,33 @@ mobile-first 제품으로 교체한다.
 - live evidence: Worker version `7787ca24-b141-4f32-8a63-2b60f8ce1a95`, `/`와 stable deep link의
   unauthenticated 302 Access challenge 확인. 인증 뒤 data flow는 A0 smoke에서 판정한다.
 
+2026-07-12 저녁 배포 소스 실측 감사에서 확인한 A1 잔여 항목. 아래 blocking 항목은 사용자 시각
+acceptance 전에 반영한다(현 화면으로 acceptance를 받으면 재작업이 된다).
+
+Blocking — 계약 위반:
+
+1. Home 첫 viewport가 슬로건 헤더로 시작하고 Home plane에 검색 진입점이 없다. DESIGN §8.1과
+   [06 §6.1](06_final_product_experience.md)의 순서(검색 → 이어읽기 → 최신 → 최근)로 되돌린다.
+2. 압축 1MB 초과 post object의 수신 진행률이 없다(06 §6.3). 큰 AA에서 멈춤과 진행을 구분할 수
+   없어, 느린 회선에서 오류로 오인된다.
+3. AA `단색` mode가 dark 판독을 지원하지 않는다. normalize 시 잉크가 밝은 배경용 고정색이라
+   어두운 custom 배경에서 판독 불가다. [07 §4.4](07_reader_and_aa_experience.md)의 휘도 규칙을 따른다.
+4. AA 횡스크롤 edge fade와 `가로로 이동` 1회 힌트가 없다(07 §4.3).
+5. `theme-color` meta가 light 값 고정이라 dark에서 Android 상단 크롬이 어긋난다(DESIGN §5,
+   [09 §5](09_frontend_strategy_and_roadmap.md) 동기화 규칙).
+6. 검색 input에 `enterkeyhint=search`가 없다(06 §6.2).
+7. catalog row에 AA/저장/읽음 상태 배지가 없다(06 §6.2). AA 배지는 `is_aa` 있는 release부터 표시.
+8. catalog 첫 로드가 row 높이 skeleton 없이 2px line만 쓴다(DESIGN §8.2).
+9. 설정 destination이 URL을 `/settings`로 두지 않는다(딥링크 수신만 동작, 06 §4.1 비대칭).
+
+Should — acceptance 직후:
+
+- import 확인을 `window.confirm()` 대신 같은 dialog 체계로 바꾸고, validation에서 기본값으로
+  되돌린 필드 요약을 함께 보여준다(07 §4.2).
+- latest/oldest 정렬과 AA/일반 content-mode filter를 연다(06 §6.2; `is_aa` release 이후).
+- `::selection` accent-soft와 touch `:active` surface를 적용한다(DESIGN §3/§7).
+- collection 다음 글 1건 idle prefetch(06 §7.2, `Save-Data` 제외).
+
 ### A2 — unattended crawler와 delta publish
 
 목표: 로컬 PC 없이 적은 요청으로 신규/변경 내용을 자동 반영한다.
@@ -241,9 +268,10 @@ claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage
 복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
 dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다. `8fc310f3`은 recovery 자체에도
 network/429 3회 breaker와 auth/parse drift 즉시 중단을 적용한다.
-15분 38초 bounded stop 실측은 selected 100/scheduled 4, stored 2/network failure 1, status partial,
-WARC partial 0이었다. 이는 selected count가 처리량이나 완료 기준이 아님을 확인한 진단 증거이며,
-종료 시 in-flight lease 1개는 900초 expiry 뒤 다음 run이 reclaim하는 계약이다.
+15분 38초 bounded stop은 selected 100 중 scheduled 4/stored 2인 partial이었다. CPU 약 16초와
+request 7/exception 4/retry 3은 DB가 아니라 원본 서버 network 대기가 병목임을 보여 준다. 종료 시
+in-flight lease 1개는 900초 expiry 뒤 다음 run이 reclaim한다. 실행 증거는
+[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
 
 #### A2.4 delta release
 
@@ -337,11 +365,8 @@ expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 
 8분이 걸렸으며 transfer/staging partial은 남지 않았다. canonical 재개·unaligned chunk 복구와
 interrupted staging retry도 같은 release까지 구현·배포됐고 현재 root free는 약 85GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입했고 owner/mode를 검증했다.
-Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. `write_free21` 1건 canary는 stored 1,
-failure 0, frontier done, WARC partial 0으로 통과했다. 20건 상한은 48분 28초 동안 scheduled 13,
-stored 12, network retry 1, dead 0과 WARC partial 0으로 전체 중단 없이 끝났고, 이전 결함 run의
-expired `aa_19` lease도 정상 reclaim 후 stored/done으로 복구했다. 15분 38초 bounded stop run은
-selected 100/scheduled 4/stored 2/network 1, status partial과 WARC partial 0을 기록했다.
+Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. 1건·20건 partial, lease reclaim과 bounded
+stop의 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 분리했다.
 **남음** — latest Git application 배포, Access service credential,
 bounded full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
 18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.

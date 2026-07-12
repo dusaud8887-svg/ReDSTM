@@ -137,6 +137,7 @@ Freshness 계약:
 | search | existing Web Worker |
 | async cancellation | AbortController |
 | theme | CSS custom properties + `color-scheme` 동기화 |
+| Android 상단 크롬 색 | `theme-color` meta를 테마 적용 시 JS로 page token(light `#F5F6F8`/dark `#0B0D12`)과 동기화 |
 | persistence | versioned localStorage JSON |
 | transition | CSS, View Transition progressive only |
 | command/status | fetch + bounded polling |

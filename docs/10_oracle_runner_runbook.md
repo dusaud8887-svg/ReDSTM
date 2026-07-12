@@ -298,8 +298,10 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
 | frontier | lease | 900초로 상향 | detail 180초 × 최대 3 시도(~570초+) + 처리 여유; 현행 300초는 느린 AA 재시도 경로를 못 덮음 |
 | recovery | graceful budget | 2시간 | 대형 backlog에서 5시간 systemd hard kill 전에 WARC/report와 lease를 정상 정리 |
+| cycle | graceful budget | 4시간 | 46 board가 느린 사이트에서 늘어져도 board 경계에서 정상 종료하고 hard kill을 기다리지 않음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
+| session | cycle 내 재검증 TTL | 성공 검증 뒤 30분 재사용 | board별 실행이 매번 인증 확인 GET을 보내면 46-board cycle에서 최대 46회 요청 낭비; preflight 검증을 board 실행이 재사용 |
 | parser/auth | recovery 중단 | 401/403·login form·parse drift 첫 건 | site-wide drift를 일반 retry로 은폐하지 않음 |
 | systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |
 | systemd | run 상한 | oneshot `TimeoutStartSec=5h` | 느린 사이트에서 무한 run 방지; lease/transaction/`.partial` 계약이 강제 종료를 안전하게 함 |
@@ -350,13 +352,11 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 application `7a62dcc0c906a56ae057b4f32266d54aff697718`, resumable canonical transfer와 atomic activation,
 위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 85GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
-Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. `write_free21` 1건 canary는 269.8초,
-stored 1/failure 0/frontier done, 최대 메모리 약 92MB와 WARC partial 0으로 통과했다. 20건 상한은
-48분 28초 동안 scheduled 13/stored 12/network retry 1/dead 0과 WARC partial 0으로 bounded partial을
-통과했고 expired `aa_19` lease도 정상 reclaim했다. 첫 진단 run은 18분에 3건을 저장한 뒤
-중단했으며 gzip-valid WARC는 보존했다. 다음 bounded stop run은 15분 38초에 selected 100/
-scheduled 4/stored 2/network 1, status partial, WARC partial 0을 기록했다. selected 100은 처리 목표가
-아니다. **남음** — latest Git application deploy, Access service-token route-role/D1 smoke와
+Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bounded partial은 WARC partial 0,
+frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 selected 100 중 scheduled 4/
+stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
+아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
+**남음** — latest Git application deploy, Access service-token route-role/D1 smoke와
 bounded full-window·delta canary다. control/schedule timer는
 disabled/inactive 상태를 유지한다.
 

@@ -2,7 +2,8 @@
 
 - 기준일: 2026-07-12
 - 상태: final target specified; implementation and production gates in progress
-- archive: [`완료 기록`](archive/2026-07-11/README.md)
+- archive: [`2026-07-11 완료 기록`](archive/2026-07-11/README.md),
+  [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)
 
 ## 읽는 순서
 
@@ -82,13 +83,13 @@ offline/Access-expired 복구, control API와 responsive Operations를 포함한
 authenticated smoke, 실제 Android와 사용자 시각 acceptance가 남아 있다. Oracle은
 versioned application, resumable canonical activation과 full doctor까지 통과했다. control/schedule
 timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 bucket-scoped R2 조회는
-통과했다. application `d23ce2050fab21bd1ef211bea6861baf6480ee86`에서 `write_free21` 1건
-stored canary, frontier `done`, WARC partial 0과 본문 비노출도 통과했다. 20건 background canary는
-scheduled 13/stored 12/network retry 1/dead 0, WARC partial 0으로 bounded partial을
-통과했다. `100`은 처리 목표가 아니라 하루 후보 선택 상한이다. 첫 진단 run은 18분/stored 3에서
-중단했고, 다음 bounded run은 15분 38초에 selected 100/scheduled 4/stored 2/network failure 1로
-partial report를 남겼으며 WARC partial은 0이었다. application `7a62dcc0`에는 하루 1회·2시간
-graceful recovery가 배포됐고, Git 최신 code의 network/429/auth/parser breaker는 재배포 전이다.
+통과했다. application `d23ce2050fab21bd1ef211bea6861baf6480ee86` 계열의 1건·20건 bounded
+partial과 15분 38초 recovery 종료 진단을 수행했다. 마지막 진단은 selected 100 중 scheduled 4/
+stored 2였고, CPU가 아니라 원본 서버의 network timeout/retry가 지배했다. `100`은 처리 목표가
+아니라 하루 후보 선택 상한이다. 상세 수치와 로그 판정은
+[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다. application `7a62dcc0`에는
+하루 1회·2시간 graceful recovery가 배포됐고, Git 최신 code의 network/429/auth/parser breaker는
+재배포 전이다.
 Oracle static root도 verified baseline과 같은 282,289 objects/5,148,165,450 bytes 및 pointer SHA로
 seed했다. 증거는 `/srv/redstm/reports/oracle-static-seed-20260712.json`이다. Access service
 credential, 새 bounded recovery·delta canary가 남았다.

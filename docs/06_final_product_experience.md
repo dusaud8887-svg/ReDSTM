@@ -176,6 +176,10 @@ history가 없으면 continue 영역을 숨긴다. recent 데이터가 없어도
 runner queue/disk/auth warning은 Home에 표시하지 않는다. publish가 예상 시각을 넘겼을 때만
 최신 갱신이 지연됐다는 quiet label을 보이고 Operations link를 제공한다.
 
+이 순서는 acceptance 기준이다. 슬로건·브랜드 문구·hero heading이 검색 input보다 위에 오거나,
+Home plane에서 검색 진입점이 사라지면 실패다. 소개 문구가 필요하면 freshness label 수준의
+한 줄 보조 텍스트로만 둔다.
+
 Home 데이터 소스는 다음으로 고정한다. capture 시각은 export하지 않으므로 시각을 지어내지 않는다.
 
 - newly archived: 현재 release search index 상단 최대 6건. index는 exporter가 created_at 최신순으로

@@ -171,6 +171,10 @@ import 시 범위를 clamp하거나 알 수 없는 color를 조용히 적용하�
   animation은 허용하지 않는다.
 - dark에서 source color 대비가 읽기 불가능한 fixture는 사용자가 `단색`으로 즉시 바꿀 수 있다.
 - 단색 dark의 기본은 `DESIGN.md`의 AA green이지만 terminal 장식·scanline·glow는 사용하지 않는다.
+- `단색` mode의 글자색은 고정값이 아니라 현재 `aaBackground`의 상대 휘도로 정한다. 밝은
+  배경(상대 휘도 0.5 이상)은 `aa-light-ink`, 어두운 배경은 `aa-dark-ink`(AA green)를 쓴다.
+  사용자가 color picker로 어두운 배경을 고르더라도 단색 글자가 판독 가능해야 하며, app theme는
+  이 계산에 개입하지 않는다(AA 배경 독립 원칙 유지).
 - `#f5f5f0`, white, color picker와 저장 동작은 DSOTM parity 기능으로 유지한다. AA 배경은 외부
   light/dark theme와 독립된 사용자 판독 설정이다.
 - DSOTM의 UI 문구는 “원본 색/그림자”지만 현재 ReDSTM sanitizer는 `text-shadow`를 허용하지 않는다.

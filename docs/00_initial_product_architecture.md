@@ -818,9 +818,10 @@ viewer에 직접 렌더링하지 않는다.
 ### 8.0 2026-07-12 구현 감사 판정
 
 현재 crawler core와 Oracle 수동 canary는 동작하지만 **자동 timer와 7일 shadow 전**이다. canonical
-실측 queue는 약 pending 29.4k/retry 4.3k여서 count 100을 완료 gate로 쓰면 느린 원 서버에서 수시간이
-걸린다. `max-posts=100`은 후보 선택의 hard cap이고 실제 종료는 2시간 budget, 같은 class의
-network/429 3회, auth/parser 첫 실패 중 먼저 도달하는 조건이다.
+실측 queue는 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의 hard cap일 뿐 처리량이나
+완료 gate가 아니다. 15분 38초 종료 진단에서도 CPU는 약 16초였고 원본 서버 network 대기가 시간을
+지배했다. 실제 종료는 2시간 budget, 같은 class의 network/429 3회, auth/parser 첫 실패 중 먼저
+도달하는 조건이다. 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 보존한다.
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
