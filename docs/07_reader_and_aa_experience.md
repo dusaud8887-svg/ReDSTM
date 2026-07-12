@@ -148,7 +148,8 @@ viewModes          { "board_id:external_post_id": "aa" | "prose" }, default {}
 ```
 
 import 시 범위를 clamp하거나 알 수 없는 color를 조용히 적용하지 않는다. schema validation에 실패한
-필드는 기본값으로 되돌리고 결과 요약에 표시한다.
+필드는 기본값으로 되돌리고 결과 요약에 표시한다. 파일 선택은 상태를 즉시 바꾸지 않으며, 같은 설정
+sheet 안에서 읽기/저장/위치/보기 count와 보정 필드를 검토한 뒤 `가져오기 적용`을 눌러야 반영한다.
 
 ### 4.3 Zoom과 횡스크롤
 

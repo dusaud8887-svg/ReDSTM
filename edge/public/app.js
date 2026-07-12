@@ -19,6 +19,11 @@ const defaultSettings = {
   aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
+const settingLabels = {
+  theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비",
+  proseFont: "본문 서체", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
+};
 const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "board-filter", "result-status", "result-list",
@@ -1063,6 +1068,8 @@ function resetImportReview() {
   elements["import-review"].hidden = true;
   elements["import-review"].removeAttribute("data-state");
   elements["import-apply"].disabled = false;
+  elements["import-apply"].hidden = false;
+  elements["import-cancel"].textContent = "취소";
   elements["import-state-file"].value = "";
 }
 
@@ -1078,7 +1085,7 @@ elements["import-state-file"].addEventListener("change", async () => {
     pendingImportPlan = planImport(await file.text(), defaultSettings);
     const summary = pendingImportPlan.summary;
     const defaulted = summary.defaultedSettings.length
-      ? ` · 기본값 보정 ${summary.defaultedSettings.join(", ")}` : "";
+      ? ` · 기본값 보정 ${summary.defaultedSettings.map((key) => settingLabels[key] ?? key).join(", ")}` : "";
     elements["import-review-summary"].textContent =
       `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}${defaulted}`;
     elements["import-review"].dataset.state = "ready";
@@ -1104,8 +1111,12 @@ elements["import-apply"].addEventListener("click", async () => {
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
-    elements["result-status"].textContent = "사용자 상태를 가져왔습니다";
-    resetImportReview();
+    pendingImportPlan = null;
+    elements["import-review-summary"].textContent = "사용자 상태를 가져왔습니다";
+    elements["import-review"].dataset.state = "success";
+    elements["import-apply"].hidden = true;
+    elements["import-cancel"].textContent = "닫기";
+    elements["import-cancel"].focus();
   } catch (error) {
     pendingImportPlan = null;
     elements["import-review-summary"].textContent = error.message;

@@ -117,6 +117,38 @@ test("keeps the settings route symmetric", async ({ page }) => {
   await expect(page).toHaveURL(/\/$/);
 });
 
+test("reviews a state import before applying it", async ({ page }, testInfo) => {
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator('button[data-destination="settings"]:visible').first().click();
+  await page.locator("#theme-select").selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const state = {
+    schema_version: 2,
+    settings: { theme: "dark", aaSize: 99 },
+    history: { "board_a:1": { readAt: "2026-07-12T00:00:00Z" } },
+    bookmarks: {}, scroll: { "board_a:1": 120 }, viewModes: {}, lastCatalogState: null,
+  };
+  await page.locator("#import-state-file").setInputFiles({
+    name: "redstm-state.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(state)),
+  });
+  await expect(page.locator("#import-review")).toBeVisible();
+  await expect(page.locator("#import-review-summary")).toContainText("읽기 1");
+  await expect(page.locator("#import-review-summary")).toContainText("기본값 보정");
+  await expect(page.locator("#import-review-summary")).toContainText("AA 크기");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-import-review.png` });
+  await page.locator("#import-apply").click();
+  await expect(page.locator("#import-review")).toHaveAttribute("data-state", "success");
+  await expect(page.locator("#import-review-summary")).toHaveText("사용자 상태를 가져왔습니다");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.locator("#import-cancel").click();
+  await expect(page.locator("#import-review")).toBeHidden();
+});
+
 test("shows the archive cover and uses a single-plane mobile reader", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await page.goto("/");

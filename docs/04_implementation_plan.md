@@ -184,8 +184,6 @@ acceptance다.
 
 Should — acceptance 직후:
 
-- import 확인을 `window.confirm()` 대신 같은 dialog 체계로 바꾸고, validation에서 기본값으로
-  되돌린 필드 요약을 함께 보여준다(07 §4.2).
 - latest/oldest 정렬과 AA/일반 content-mode filter를 연다(06 §6.2; `is_aa` release 이후).
 - `::selection` accent-soft와 touch `:active` surface를 적용한다(DESIGN §3/§7).
 - collection 다음 글 1건 idle prefetch(06 §7.2, `Save-Data` 제외).
