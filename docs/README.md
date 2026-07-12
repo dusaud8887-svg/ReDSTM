@@ -87,7 +87,9 @@ stored canary, frontier `done`, WARC partial 0과 본문 비노출도 통과했�
 scheduled 13/stored 12/network retry 1/dead 0, WARC partial 0으로 bounded partial을
 통과했다. 첫 100건 상한 run은 18분/stored 3 실측에서 5시간 초과가 예상돼 중단했고, gzip 검증 후
 WARC를 보존했다. application `7a62dcc0`에는 하루 1회·2시간 graceful recovery가 배포됐다.
-Access service credential, 새 bounded recovery·delta canary가 남았다.
+Oracle static root도 verified baseline과 같은 282,289 objects/5,148,165,450 bytes 및 pointer SHA로
+seed했다. 증거는 `/srv/redstm/reports/oracle-static-seed-20260712.json`이다. Access service
+credential, 새 bounded recovery·delta canary가 남았다.
 
 ### 구현 필요
 

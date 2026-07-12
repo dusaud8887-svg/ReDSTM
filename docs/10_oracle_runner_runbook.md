@@ -215,7 +215,9 @@ full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결
 application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
 missing/invalid/orphan WARC 0이다. root free는 약 85GB다. R2/TypeMoon credential은 주입·권한과
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
-민감 가능 journal 폐기도 완료했다. **남음** — Access service credential과 새 bounded recovery·delta canary다.
+민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
+5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
+**남음** — Access service credential과 새 bounded recovery·delta canary다.
 control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
 
 ### G5. Operations client

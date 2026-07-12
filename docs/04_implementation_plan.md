@@ -255,7 +255,10 @@ network/429 3회 breaker와 auth/parse drift 즉시 중단을 적용한다.
    깨지 않는다([09 Freshness](09_frontend_strategy_and_roadmap.md)).
 
 상태(2026-07-12): local delta core 완료, authenticated Worker smoke rollback·Oracle canary·GC는
-남았다. `acd89b7`은 동일 pointer를 `mode=noop`으로 끝내고, `47977f3`은 새 export에 `is_aa`와
+남았다. Oracle `/srv/redstm/static`은 verified local release에서 단일 tar로 옮겨 R2 baseline과 같은
+282,289 objects/5,148,165,450 bytes, pointer SHA
+`d55b7551ddee744ebdae29254b4ba807f7bba54d3bd7e7e4df7ae0011248db9a`를 확인했다.
+`acd89b7`은 동일 pointer를 `mode=noop`으로 끝내고, `47977f3`은 새 export에 `is_aa`와
 board 표시명을 추가하면서 7-field rollback 호환을 유지한다. `c66aa3b`은 verified local ledger와
 remote pointer가 맞을 때 새 post/board/search/collection/versioned release만 `--files-from`으로
 upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20GB/800,000-object hard stop은
