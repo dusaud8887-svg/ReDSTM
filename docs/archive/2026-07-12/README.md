@@ -56,11 +56,14 @@ WARC/report를 닫은 시간이다.
   사라진 뒤 D1 heartbeat와 `/ops`가 idle로 복귀했다.
 - 이 canary는 TypeMoon 요청, DB scan, crawl, publish를 실행하지 않았다. control/schedule timer는
   전후 모두 disabled/inactive다.
+- pause marker가 있는 scheduled path에 로컬 실패 HTTPS origin을 주입했을 때 crawler를 시작하지
+  않고 heartbeat 1건을 outbox에 보존했다. 정상 oneshot은 outbox를 0건으로 비우고 D1 idle
+  heartbeat를 복구했다. marker는 trap으로 제거됐고 timer 상태는 바뀌지 않았다.
 
 ## 남은 live gate
 
 1. bounded full-window/breaker canary
-2. duplicate/expired command와 D1/Worker outage·event replay failure injection
+2. duplicate/expired command와 실제 crawl 중 D1/Worker outage failure injection
 3. 실제 delta publish, Worker readback, 실패 시 pointer rollback
 4. 24시간 반복 canary와 7일 shadow
 5. gate 통과 뒤 schedule/control timer enable과 legacy service cutover
