@@ -1,8 +1,8 @@
 # Viewer 시각·UX 디자인 방향
 
-- 상태: Reader와 Operations visual/core state local 구현; 세부 의미·live/Android acceptance pending
+- 상태: Reader와 Operations visual/core state live 배포; 실제 Android·사용자 시각 acceptance pending
 - 기준일: 2026-07-12
-- live checkpoint: current Worker `c1d1d3f3-4642-437a-afdc-941ff42e756f`; `58a70799`는 과거 시각 검토본
+- live checkpoint: current Worker `dcf9d4e3-4e51-459e-be5f-b90d25724956`; Oracle application `1ffea39...`
 - 범위: Edge Reader와 Operations의 시각 방향, mobile shell, typography, interaction quality
 - normative token: [DESIGN.md](../DESIGN.md)
 - 상위 제품 계약: [06 final product](06_final_product_experience.md)

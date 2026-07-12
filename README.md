@@ -1,8 +1,8 @@
 # ReDSTM
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
-schema v3 Oracle canonical runner가 배포돼 있다. 남은 제품 작업은 새 Operations 자동 수집·진행률
-bundle의 live 적용, bounded delta/failure canary, 실제 Android acceptance와 24시간/7일 운영 관찰이다. 완료된 초기
+schema v3 Oracle canonical runner가 배포돼 있다. 남은 제품 작업은 bounded delta/failure canary,
+실제 Android acceptance와 24시간/7일 운영 관찰이다. 완료된 초기
 migration·타당성 증거는 `docs/done/`에 둔다.
 
 ## 먼저 읽기
@@ -82,7 +82,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 아직 포함하지 않음:
 
-- control heartbeat baseline enable, 자동 schedule live activation과 bounded delta/failure canary
+- 자동 schedule live activation과 bounded delta/failure canary
 - 24시간 반복 canary, 7일 shadow와 legacy service cutover
 - content-addressed direct asset/blob ledger
 - 실제 Android memory gate

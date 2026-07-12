@@ -1438,8 +1438,7 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 ### 13.5 Phase 3: viewer
 
 상태: viewer 기능, Signal Archive 재설계, gzip/zstd full local export, R2 baseline publish와
-이전 bundle authenticated data smoke 완료. 새 bundle live smoke, Operations 세부 의미와 실제
-Android acceptance 대기.
+현재 bundle authenticated data smoke 완료. Operations 세부 provenance와 실제 Android acceptance 대기.
 Full canonical exporter, collection
 연속 읽기, unavailable entry skip, legacy object-key user-state, Saitamaar와 desktop/mobile Playwright를
 구현했다. 기존 gzip 전수 export와 post-export doctor는 완료했고 baseline은
@@ -1448,8 +1447,8 @@ Full canonical exporter, collection
 완료했다. Worker/private R2 bucket/Access email
 allow/TOTP MFA와 인증된 shell smoke는 완료했다. matching bucket-scoped key로 local `rclone`
 연결을 복구했고 immutable baseline 5,148,165,450 bytes/282,289 objects를 게시했다. remote check
-차이 0과 pointer 검증, remote rollback/복귀와 authenticated data smoke가 통과했다. 새 bundle의
-authenticated live smoke, Operations의 field별 source/as-of·eligibility와 실제 Android gate가 남아 있다.
+차이 0과 pointer 검증, remote rollback/복귀와 authenticated data smoke가 통과했다. Operations의
+field별 source/as-of·eligibility와 실제 Android gate가 남아 있다.
 
 현재 live shell은 [`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose,
 Saitamaar AA와 stable identity/mobile flow로 교체됐다. 실기기 acceptance 전까지

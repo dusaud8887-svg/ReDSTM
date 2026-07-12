@@ -19,23 +19,23 @@
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
 | live data | remote pointer rollback/복귀와 authenticated Reader/일반·AA 본문 smoke 완료 | DONE |
-| current UI | Porcelain shell과 Reader continuity 통과; 자동화·수집량·실패·inventory 의미 정리 중 | IN PROGRESS |
+| current UI | Porcelain shell과 Reader continuity live; field provenance·command eligibility 정리 중 | IN PROGRESS |
 | crawler core | P0 safety와 schema v3 inventory cursor 배포; bootstrap/recovery 자동 전환 canary 전 | IN PROGRESS |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; schedule 활성화·관찰 전 | IN PROGRESS |
-| Oracle | schema v3 application/canonical/R2/static/TypeMoon/Access 완료; control baseline·schedule 활성화 전 | IN PROGRESS |
+| Oracle | schema v3 application/canonical/R2/static/TypeMoon/Access와 control baseline 완료; schedule 활성화 전 | IN PROGRESS |
 | remote operations | role/marker/outbox replay/expired 통과; duplicate/full outage 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
 현재 결론은 **데이터 기반·authenticated Reader는 준비됐고 schema v3 runner도 배포됐지만,
-Operations의 자동화 의미·schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
+Operations 세부 provenance·schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
 
 현재 local gate는 Python 187 tests, Ruff와 mypy가 통과했고 Edge는 Node 32 tests/check를 통과했다.
 Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 112건을 통과한다. fixture는
 실제 R2 seed가 없어도 AA/prose와 읽기 위치 복원을 검증하고, 환경변수를 주면 대표 live object로
-교체할 수 있다. authenticated production에서는 이전 bundle 기준 282,239건 index, 일반 본문
-8,738자/댓글 4개와 AA 186,058자/canvas/댓글 7개를 열어 실데이터 경로를 확인했다. canonical schema
-v3 migration과 doctor는 완료됐고, 이번 Operations 의미·자동 bootstrap 변경은 live smoke 전이다.
+교체할 수 있다. authenticated production에서는 현재 bundle의 282,239건 index, 일반 본문
+8,738자/댓글 4개와 AA 본문/canvas/댓글 11개를 열어 실데이터 경로를 확인했다. canonical schema
+v3 migration과 doctor, Operations bundle live smoke는 완료됐고 automatic bootstrap canary가 남았다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -193,10 +193,10 @@ source of truth로 다음을 구현한다.
   통과했다.
 - 세 source의 field별 source/as-of, active run과 latest terminal run의 완전한 분리, board/release
   provenance detail, command별 due/last outcome/cooldown eligibility와 나머지 상태 fixture는 구현이 남았다.
-- 그 뒤 새 bundle의 authenticated live smoke, 실제 Android background/Back/pinch와 사용자 시각
-  acceptance를 통과해야 한다.
+- 새 bundle의 authenticated live smoke는 통과했다. 실제 Android background/Back/pinch와 사용자 시각
+  acceptance가 남았다.
 - local gate는 Node 32, self-contained Playwright 112, font/license check와 startup check를 통과한다.
-- live evidence: Worker version `c1d1d3f3-4642-437a-afdc-941ff42e756f`; 인증한 Reader의 실제
+- live evidence: Worker version `dcf9d4e3-4e51-459e-be5f-b90d25724956`; 인증한 Reader의 실제
   prose/AA 본문·댓글과 `/ops` healthy idle heartbeat를 확인했다. service token은 runner route 200,
   `/ops` 302, anonymous runner 요청은 403으로 역할이 분리된다. live `/search`의 board/oldest/query
   URL 갱신과 390px 설정 sheet의 운영 콘솔 link도 확인했다.
@@ -207,8 +207,8 @@ hero, `enterkeyhint`, wordmark, 큰 post 수신 진행률, AA 배경 휘도별 �
 fixture E2E로 고정했다. 재감사에서 발견한 중복 IA는 홈/탐색/보관함으로 분리했고 `/search`
 query/board/mode/sort, `/saved?view=recent`, catalog scroll/focus와 app bar/설정의 운영 link를 대상
 E2E로 해소했다. 새 Porcelain 전역 palette와 Operations의 핵심
-stale/empty/Reader continuity 표현은 local fixture로 닫았다. 남은 A1 blocking은 A1.5의 세부 의미와
-command eligibility 구현, 새 bundle live smoke, 실제 Android 동작과 사용자 시각 acceptance다.
+stale/empty/Reader continuity 표현은 live smoke까지 닫았다. 남은 A1 blocking은 A1.5의 세부 의미와
+command eligibility 구현, 실제 Android 동작과 사용자 시각 acceptance다.
 
 Should — acceptance 직후:
 
@@ -365,8 +365,8 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): remote D1 migration 2개와 Worker `c1d1d3f3` live 배포, 이전 bundle rollback/복귀
-rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
+상태(2026-07-12): remote D1 migration `0001`–`0003`과 Worker `dcf9d4e3` live 배포를 완료했다.
+이전 `c1d1d3f3` bundle의 rollback/복귀 rehearsal도 유지한다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
 Python 187 tests와 Edge 32 tests를 통과했다. 비인증 user route는 302이고 path-specific runner는
 403 fail-closed다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
@@ -378,7 +378,7 @@ smoke가 통과했다. 실제 control oneshot은 D1에 runner release, idle, nex
 제어 URL failure injection은 paused scheduled path의 heartbeat 1건을 local outbox에 남겼고 정상
 oneshot이 이를 idempotent하게 비운 뒤 D1 idle heartbeat를 복구했다. 별도 queued pause 명령은
 만료 시각을 지난 뒤 claim 0회·runner 미지정 `expired`로 끝나 marker를 만들지 않았다. duplicate
-command와 실제 crawl 중 outage, control baseline/schedule 활성화 전이므로 A3 전체는 DONE이 아니다.
+command와 실제 crawl 중 outage, schedule 활성화 전이므로 A3 전체는 DONE이 아니다.
 
 완료 기준:
 
@@ -405,7 +405,7 @@ command와 실제 crawl 중 outage, control baseline/schedule 활성화 전이�
 
 상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
 pinned uv/Python 3.14, versioned deploy/rollback과 schema-v3-compatible application release
-`9aa6206...` 배포를 마쳤다.
+`1ffea39...` 배포를 마쳤다.
 canonical 12,407,148,544 bytes를 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했고
 schema v3 migration 뒤 doctor는 `ok=true`, `quick_check=ok`, foreign key 0,
 expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 별도 원격 hash는 약
@@ -417,8 +417,8 @@ stop의 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.
 latest deploy 뒤 recovery/cycle/control module smoke와 partial 0을 확인했으며 DB scan이나 긴 canary는
 재실행하지 않았다. Access service credential과 D1 heartbeat는 통과했다.
 원본 요청 없는 pause/resume marker canary도 D1 claim/finish, Oracle marker와 `/ops` 왕복을 통과했고
-heartbeat outbox/replay failure injection도 통과했다. **남음** — control heartbeat timer를 baseline으로
-enable하고, crawl→bounded export→publish/readback→rollback rehearsal smoke 뒤 schedule을 활성화해 실제 crawl 중 D1 outage와
+heartbeat outbox/replay failure injection도 통과했다. control heartbeat timer는 baseline으로
+enabled/active이고 schedule timer/service는 disabled/inactive다. **남음** — crawl→bounded export→publish/readback→rollback rehearsal smoke 뒤 schedule을 활성화해 실제 crawl 중 D1 outage와
 duplicate command를 검증하는 것이다. expired
 command는 claim 0회·marker 미생성으로 live 통과했다. 첫
 100건 상한 run은

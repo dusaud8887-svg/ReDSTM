@@ -247,7 +247,7 @@ bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
 Access service credential, route-role과 D1 idle heartbeat smoke, schema v3 명시 migration과 doctor는
-완료됐다. **남음** — control heartbeat baseline enable과 authenticated bounded smoke 뒤 schedule
+완료됐다. control heartbeat timer는 baseline으로 enabled/active다. **남음** — authenticated bounded smoke 뒤 schedule
 activation, 새 bounded recovery·delta canary다.
 최신 배포 뒤 recovery/cycle/control module `--help` smoke와 canonical/WARC partial 0을 확인했고,
 DB scan이나 긴 canary는 실행하지 않았다.
@@ -404,9 +404,9 @@ Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bo
 frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 selected 100 중 scheduled 4/
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
-최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 schema v3 doctor를
-확인했다. pause/resume marker command 왕복도 통과했다. **남음** — control heartbeat baseline enable,
-crawl→bounded export→publish/readback→rollback rehearsal smoke 뒤 schedule 활성화, duplicate command와 실제 crawl 중 outage
+최신 application `1ffea39...` module smoke, Access service-token route-role/D1 idle heartbeat와 schema v3를
+확인했다. control heartbeat timer는 enabled/active이고 schedule timer/service는 disabled/inactive다.
+pause/resume marker command 왕복도 통과했다. **남음** — crawl→bounded export→publish/readback→rollback rehearsal smoke 뒤 schedule 활성화, duplicate command와 실제 crawl 중 outage
 failure injection이다. expired
 command는 live 통과했다.
 

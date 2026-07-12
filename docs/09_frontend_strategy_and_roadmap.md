@@ -1,6 +1,6 @@
 # Frontend 구현 전략·채택 판단
 
-- 상태: Reader/Operations mobile-first local bundle 구현; live/actual Android acceptance pending
+- 상태: Reader/Operations mobile-first live 배포; actual Android·사용자 acceptance pending
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
@@ -37,8 +37,8 @@
 - search-first Home, medium settings entry, large-post progress, AA dark-ink/overflow cue,
   catalog state badge, row skeleton, 상태 가져오기 검토, 검색 URL 복원과 mobile Ops 진입점
   (`58a70799` historical live checkpoint)
-- 홈/탐색/보관함 IA 분리, `/saved?view=recent`, AA/소설 filter, 미완독 이어읽기, catalog scroll 복원,
-  모바일 직접 저장/집중 종료, 모든 폭의 Operations 진입점, AA 댓글 설정 연동(local)
+- 홈/탐색/보관함 IA 분리, `/saved?view=recent`, AA/소설 filter UI(현재 7-field release에서는 disabled), 미완독 이어읽기, catalog scroll 복원,
+  모바일 직접 저장/집중 종료, 모든 폭의 Operations 진입점, AA 댓글 설정 연동(live)
 - white canvas/near-white chrome 전역 palette, compact Operations verdict, stale/unknown core state,
   disclosure ledger와 기본 state disable/idempotent command retry (`local`, 4 viewport fixture)
 
@@ -46,7 +46,6 @@
 
 - 실제 Android Back/background/pinch/font와 사용자 시각 acceptance
 - 실제 Android에서 282,239건 full search index memory/tab reclaim 측정
-- 새 Reader/Operations bundle의 authenticated live visual smoke
 - duplicate command와 실제 crawl outage의 Operations 상태 증거
 - Operations field별 source/as-of, active/latest 분리와 due/last/cooldown eligibility
 - 7일 shadow의 idle/running/degraded/stale/failed 상태 증거

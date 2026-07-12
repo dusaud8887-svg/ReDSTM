@@ -27,14 +27,15 @@ Reader shell
 감싸지 않는다. 설정 source는 versioned state 하나이며 AA compact controls와 상세 dialog가 같은
 값을 조작한다.
 
-현재 local Signal Archive Reader는 stable identity/deep link, search-first Home/이어읽기, mobile single-plane,
+현재 live Signal Archive Reader는 stable identity/deep link, search-first Home/이어읽기, mobile single-plane,
 prose typography, AA 9–24px·10–300% zoom·세 preset·680/800 canvas·source style/background,
 progress·immersive·keyboard·comments/end navigation과 per-post mode를 구현했다. self-hosted font,
 compact toolbar, loading/offline/Access-expired와 collection missing 상태도 포함하며 Playwright fixture는
 1440/768/390/320px에서 통과했다. 홈/탐색/보관함 IA, `/saved?view=recent`, AA/소설 filter,
 current-release 미완독 후보, catalog scroll state, 직접 저장, 접근 가능한 progress/AA stage, AA 댓글
-크기와 4단계 thread cap, 모든 폭의 Operations link는 local bundle에 반영됐다. live Worker는 이전
-bundle이므로 새 Reader/Operations authenticated smoke, 실제 Android full-index memory/Back/background/
+크기와 4단계 thread cap, 모든 폭의 Operations link까지 배포됐다. authenticated Reader/Operations와
+실제 prose/AA 본문·댓글 smoke는 통과했다. 현재 R2 pointer의 legacy 7-field index에서는 형식 filter를
+disabled로 유지하며 다음 bounded `is_aa` release 뒤 활성화한다. 실제 Android full-index memory/Back/background/
 pinch/font와 사용자 시각 acceptance가 남았다.
 
 ## 2. 공통 reader 상태

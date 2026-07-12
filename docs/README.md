@@ -68,7 +68,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - local loopback read-only Operations C0
 - Oracle read-only audit, target runbook, ADR-014/015
 - Oracle에서 12,407,148,544-byte canonical 활성화, schema v3 migration/full doctor와 application
-  `9aa6206...` 배포 통과
+  `1ffea39...` 배포 통과
 - Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token
 - Oracle control oneshot → Access → Worker → D1 heartbeat와 user/service route 분리 smoke
 - authenticated production Reader 282,239건, 일반/AA 본문·댓글과 `/ops` idle heartbeat smoke
@@ -87,17 +87,17 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 
 ### 현재 gate
 
-현재 live Worker `c1d1d3f3-4642-437a-afdc-941ff42e756f`에서 authenticated Reader/Operations,
-기존 `/search` URL·History 복원과 mobile Operations 진입점을 확인했다. 그 live 검토에서 거절된
+현재 live Worker `dcf9d4e3-4e51-459e-be5f-b90d25724956`에서 authenticated Reader/Operations,
+`/search` URL·History 복원, mobile Operations 진입점, 768px top navigation과 PC rail을 확인했다.
 Operations light palette, 자동 schedule/Runner/Reader/canonical 구분, recent failure와 board inventory
-진척은 로컬 코드와 fixture에서 교정했다. 새 D1 `0003`/Worker/Oracle bundle의 live 배포·실제 Android·
-사용자 시각 acceptance가 남았다. Oracle은 application `9aa6206`, schema v3 canonical doctor, static seed,
+진척을 포함한 D1 `0003`/Worker/Oracle bundle의 live 배포가 끝났다. 실제 Android와
+사용자 시각 acceptance가 남았다. Oracle은 application `1ffea39`, schema v3 canonical doctor, static seed,
 R2/TypeMoon/Access credential과 D1 heartbeat까지 통과했다. 원본 요청 없는 pause/resume marker,
-heartbeat outbox replay와 expired command도 live 검증했다. control/schedule timer는 계속
-disabled/inactive다. crawler는 listing → durable frontier → serial detail lease → capture/outcome과
+heartbeat outbox replay와 expired command도 live 검증했다. control timer는 enabled/active이고 schedule
+timer/service는 disabled/inactive다. crawler는 listing → durable frontier → serial detail lease → capture/outcome과
 done/retry/dead 전이 구조를 갖고, 앞서 확인한 safety gap은 로컬 코드와 회귀 테스트에서 닫혔다.
-다만 새 pass-epoch inventory/recovery와 Operations telemetry bundle은 아직 live가 아니므로 production
-완료가 아니다. 2026-07-12 bounded live crawl은 `write_free21` 한 글을 canonical에 정상 적재했고
+새 pass-epoch inventory/recovery와 Operations telemetry bundle은 live지만, 아직 실제 자동 cycle이 없어
+board 진척 값은 비어 있으며 production 완료가 아니다. 2026-07-12 bounded live crawl은 `write_free21` 한 글을 canonical에 정상 적재했고
 WARC/outcome/frontier까지 검증했다. 이어진 export는 600초 동안 282,240건 중 6,000건을 재검사한 뒤
 시간 상한으로 중단됐다. R2 pointer는 이전 release 그대로이고 `publish.pending`도 보존했으므로 delta
 publish/readback/rollback을 통과했다고 보지 않는다. 이는 한 글 변경에도 전체 canonical을 다시 읽는
@@ -108,11 +108,10 @@ exporter가 남은 P0 병목이라는 증거다. crawler 실측과 남은 근거
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
-1. D1 `0003` → 새 Worker → 새 Oracle application 순으로 Operations/bootstrap bundle 배포
-2. authenticated Reader/Operations live smoke와 실제 Android/frontend acceptance
-3. time/failure-bounded inventory·recovery·실제 delta publish canary
-4. duplicate command와 실제 crawl 중 D1/Worker outage canary
-5. schedule 활성 상태의 24시간 canary, 7일 shadow와 cutover
+1. 실제 Android/frontend acceptance
+2. time/failure-bounded inventory·recovery·실제 delta publish canary
+3. duplicate command와 실제 crawl 중 D1/Worker outage canary
+4. schedule 활성 상태의 24시간 canary, 7일 shadow와 cutover
 
 ## 확정된 UX·기술 결정
 

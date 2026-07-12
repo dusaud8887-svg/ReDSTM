@@ -7,14 +7,14 @@
 - runner: [10](10_oracle_runner_runbook.md)
 - completed C0: [done record](done/2026-07-11/08_local_operations_console_c0.md)
 
-Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 runner AUD를 포함한 Operations
-Worker를 배포했고 현재 version은 `c1d1d3f3`다. 이전 bundle 100% rollback → Access 302 → current 복귀를
+Live checkpoint(2026-07-12): remote D1 migration `0001`–`0003`과 runner AUD를 포함한 Operations
+Worker를 배포했고 현재 version은 `dcf9d4e3`다. 이전 `c1d1d3f3` bundle의 rollback → Access 302 → 복귀도
 재현했다. path-specific runner application/Service Auth policy와 1년 만료 token을 만들고
 Oracle `0640` env에 주입했다. runner heartbeat 200, service→ops 302, anonymous→runner 403과 D1 idle
-row, authenticated `/ops` 표시를 확인했다. duplicate/outage/replay live gate 전이므로 A3 전체 완료로
+row, authenticated `/ops` 표시를 확인했다. duplicate/실제 crawl 중 full outage gate 전이므로 A3 전체 완료로
 보지 않는다. 추가 marker canary에서 pause/resume이 각각 D1 `queued → succeeded`, claim 1회와
-`schedule_paused`/`schedule_resumed`로 끝났고 `/ops`가 paused→idle을 표시했다. 원본 crawl과 timer
-enable은 발생하지 않았다. 로컬 HTTPS failure injection에서는 heartbeat 1건이 outbox에 들어갔고,
+`schedule_paused`/`schedule_resumed`로 끝났고 `/ops`가 paused→idle을 표시했다. 그 marker canary에서는
+원본 crawl과 timer enable이 발생하지 않았다. 로컬 HTTPS failure injection에서는 heartbeat 1건이 outbox에 들어갔고,
 정상 oneshot 재연결이 이를 비운 뒤 D1 idle heartbeat를 복구했다.
 queued pause의 expiry injection은 claim 0회·runner 미지정 `expired`로 끝났고 marker를 만들지
 않았으며 `/ops`가 만료 상태를 표시했다.
@@ -22,9 +22,8 @@ queued pause의 expiry injection은 claim 0회·runner 미지정 `expired`로 �
 Local frontend checkpoint: automatic schedule/Runner/current work, Reader release counts, canonical snapshot,
 recent failure, board inventory cursor와 fixed Controls를 분리했다. API 값을 `textContent`로만 렌더링하고
 secret/path/임의 인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE
-9개 scenario, 36 viewport 실행과 Edge unit 32건이 통과했다. D1 `0003_operations_telemetry.sql`은 local
-migration 적용을 검증했으며 아직 live checkpoint에는 포함하지 않는다. live 적용 순서는
-`D1 0003 → Worker → Oracle application`이다. 새 Worker는 기존 runner board payload를 받지만 새 runner의
+9개 scenario, 36 viewport 실행과 Edge unit 32건이 통과했다. D1 `0003_operations_telemetry.sql` →
+Worker → Oracle application 순서의 live 적용과 authenticated `/ops` idle heartbeat를 확인했다. 새 Worker는 기존 runner board payload를 받지만 새 runner의
 snapshot counter는 이전 Worker가 거절하므로 순서를 바꾸지 않는다. application rollback은
 `Oracle runner → Worker` 순서로 하고 additive `0003` column은 유지한다. duplicate command와 실제 crawl
 중 outage가 다음 gate다.
