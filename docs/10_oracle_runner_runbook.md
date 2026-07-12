@@ -249,7 +249,8 @@ G5 전체를 live 완료로 표시하지 않는다. 원본 요청 없는 pause/r
 번 claim해 succeeded로 끝냈고 marker 생성·해제와 `/ops` paused→idle 복귀를 확인했다. control/schedule
 timer는 계속 disabled/inactive다. 제어 URL failure injection은 paused scheduled heartbeat 1건을
 outbox에 보존했고 정상 oneshot이 이를 비운 뒤 D1 idle로 복귀했다. 실제 crawl 중 outage와
-duplicate/expired command는 아직 live 미검증이다.
+duplicate command는 아직 live 미검증이다. expired pause command는 claim 0회, runner 미지정 상태로
+expired 처리되어 marker를 만들지 않았다.
 
 ## 7. 자동 cycle state machine
 
@@ -369,7 +370,8 @@ stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
 최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 timer
 disabled/inactive를 재확인했다. pause/resume marker command 왕복도 통과했다. **남음** — bounded
-full-window·delta canary와 duplicate/expired command, 실제 crawl 중 outage failure injection이다.
+full-window·delta canary와 duplicate command, 실제 crawl 중 outage failure injection이다. expired
+command는 live 통과했다.
 control/schedule timer는 disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow

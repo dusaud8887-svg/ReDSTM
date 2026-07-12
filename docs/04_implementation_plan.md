@@ -23,7 +23,7 @@
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
 | Oracle | application `4edc1c9...`, canonical/R2/static/TypeMoon/Access 완료; timer 전 | IN PROGRESS |
-| remote operations | role/heartbeat/marker와 heartbeat outbox replay 통과; duplicate/full outage 전 | IN PROGRESS |
+| remote operations | role/marker/outbox replay/expired 통과; duplicate/full outage 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
@@ -329,8 +329,9 @@ smoke가 통과했다. 실제 control oneshot은 D1에 release `4edc1c9...`, idl
 기록했고 authenticated `/ops`가 이를 정상 표시했다. pause/resume 명령은 각각 한 번 claim되어
 `schedule_paused`/`schedule_resumed`로 끝났고 Oracle marker와 `/ops`가 paused→idle로 복귀했다.
 제어 URL failure injection은 paused scheduled path의 heartbeat 1건을 local outbox에 남겼고 정상
-oneshot이 이를 idempotent하게 비운 뒤 D1 idle heartbeat를 복구했다. duplicate/expired command와
-실제 crawl 중 outage, timer 연결 전이므로 A3 전체는 DONE이 아니다.
+oneshot이 이를 idempotent하게 비운 뒤 D1 idle heartbeat를 복구했다. 별도 queued pause 명령은
+만료 시각을 지난 뒤 claim 0회·runner 미지정 `expired`로 끝나 marker를 만들지 않았다. duplicate
+command와 실제 crawl 중 outage, timer 연결 전이므로 A3 전체는 DONE이 아니다.
 
 완료 기준:
 
@@ -369,7 +370,8 @@ latest deploy 뒤 recovery/cycle/control module smoke, timer disabled/inactive�
 DB scan이나 긴 canary는 재실행하지 않았다. Access service credential과 D1 heartbeat는 통과했다.
 원본 요청 없는 pause/resume marker canary도 D1 claim/finish, Oracle marker와 `/ops` 왕복을 통과했고
 heartbeat outbox/replay failure injection도 통과했다. 두 timer는 계속 disabled/inactive다. **남음** —
-bounded full-window·delta publish, 실제 crawl 중 D1 outage와 duplicate/expired command 검증이다. 첫
+bounded full-window·delta publish, 실제 crawl 중 D1 outage와 duplicate command 검증이다. expired
+command는 claim 0회·marker 미생성으로 live 통과했다. 첫
 100건 상한 run은
 18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.
 journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에서 24MiB로 줄였다.

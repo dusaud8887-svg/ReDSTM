@@ -1,6 +1,6 @@
 # Operations Control Plane 사양
 
-- 상태: Worker/D1/`/ops`, runner Access/marker와 heartbeat outbox replay live; full outage/duplicate 전
+- 상태: Worker/D1/`/ops`, marker/outbox replay/expired live; full outage/duplicate 전
 - 기준일: 2026-07-12
 - product UX: [06](06_final_product_experience.md)
 - frontend: [09](09_frontend_strategy_and_roadmap.md)
@@ -16,13 +16,15 @@ row, authenticated `/ops` 표시를 확인했다. duplicate/outage/replay live g
 `schedule_paused`/`schedule_resumed`로 끝났고 `/ops`가 paused→idle을 표시했다. 원본 crawl과 timer
 enable은 발생하지 않았다. 로컬 HTTPS failure injection에서는 heartbeat 1건이 outbox에 들어갔고,
 정상 oneshot 재연결이 이를 비운 뒤 D1 idle heartbeat를 복구했다.
+queued pause의 expiry injection은 claim 0회·runner 미지정 `expired`로 끝났고 marker를 만들지
+않았으며 `/ops`가 만료 상태를 표시했다.
 
 Local frontend checkpoint: Signal Archive graphite/SUIT Operations shell, Overview/Runs/Boards/Releases,
 fixed Controls와 queued cancel을 구현했다. API 값을 `textContent`로만 렌더링하고 secret/path/임의
 인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE E2E 4건과
 Edge unit 30건이 통과했다. `/ops`의 authenticated overview/data와 pause/resume action acceptance는
-완료됐고 heartbeat outbox/replay도 통과했다. duplicate/expired command와 실제 crawl 중 outage는
-다음 gate다.
+완료됐고 heartbeat outbox/replay와 expired command도 통과했다. duplicate command와 실제 crawl 중
+outage가 다음 gate다.
 
 ## 1. 목적
 
