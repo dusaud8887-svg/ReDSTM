@@ -473,6 +473,7 @@ test("leaves immersive mode when browser Back returns to the catalog", async ({ 
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.locator("#home-search").click();
   await page.locator(".result-item").first().click();
+  await expect(page.locator("#reader-title")).toBeFocused();
   await page.keyboard.press("f");
   await expect(page.locator("body")).toHaveClass(/immersive/);
   await expect(page.locator("#immersive-exit")).toBeVisible();
