@@ -170,7 +170,8 @@ cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Ce
 
 상태(2026-07-12): `scripts.crawl_cycle` local core와 failure test 완료, Oracle canary 및 systemd 연결
 전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
-구현됐다. 세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와
+구현됐다. recovery는 2시간 graceful budget과 24시간 completion marker로 하루 한 번만 실행한다.
+세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와
 outage attempt 복원을 적용한다. 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
 30분에 1회로 제한한다. login/logout 표식 조기 판정은 오래된 서버의 비정상 TLS EOF를 기다리지 않는다.
 
@@ -262,7 +263,7 @@ live 20/100건과 24시간 반복 canary가 통과한 뒤 다음에서 시작하
 | 작업 | 시작값 | 제한 |
 |---|---|---|
 | incremental board cycle | 6시간마다 | overlap boundary, concurrency 1, 10초 delay |
-| legacy retry recovery | 하루 100건 | AA -> 창작 -> 팬픽 -> 나머지, sync와 직렬 |
+| legacy retry recovery | 하루 최대 100건·2시간 | AA -> 창작 -> 팬픽 -> 나머지, sync와 직렬; 24시간 marker |
 | doctor | 각 cycle 뒤 lightweight + 하루 1회 full | full DB scan은 crawl과 겹치지 않음 |
 | canonical snapshot | 성공 변경 뒤 하루 최대 1회 | local staging 2개만 유지 |
 | R2 delta publish | 변경 시 하루 최대 1회 | validated object first, pointer last |
@@ -292,6 +293,7 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
 | frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
 | frontier | lease | 900초로 상향 | detail 180초 × 최대 3 시도(~570초+) + 처리 여유; 현행 300초는 느린 AA 재시도 경로를 못 덮음 |
+| recovery | graceful budget | 2시간 | 대형 backlog에서 5시간 systemd hard kill 전에 WARC/report와 lease를 정상 정리 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
 | systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |

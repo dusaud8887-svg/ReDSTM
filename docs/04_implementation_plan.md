@@ -220,6 +220,8 @@ Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 
 
 - AA → 창작 → 팬픽 → 나머지
 - 하루 최대 100건, due retry만 claim
+- 2시간 graceful budget에서 현재 request를 정리하고 종료하며, 성공·부분 완료 뒤 24시간 marker로
+  6시간 schedule과 수동 command의 같은 날 중복 실행을 막는다
 - 429 `Retry-After` 우선, timeout/5xx는 bounded backoff; 연속 429 3회는 run 조기 종료
 - 404는 서로 다른 run 2회 뒤 missing
 - parse drift/auth는 일반 retry와 분리
@@ -228,7 +230,10 @@ Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 
 - `site_unreachable`로 끝난 run의 network 실패는 frontier attempt로 세지 않는다
 - 파라미터 시작값은 [`10 §8.1`](10_oracle_runner_runbook.md)을 따른다
 
-상태(2026-07-12): local core 구현 완료, live 20/100건·대형 AA canary 전이다. 기존 priority/due
+상태(2026-07-12): local core 구현 완료, live 20/100건·대형 AA canary 전이다. Oracle 실측 queue는
+pending 29,379/retry 4,328/running 1이어서 100건 count만으로는 5시간 service 상한을 보장하지 못했다.
+`849fdb34`는 Scrapy native `CLOSESPIDER_TIMEOUT` 2시간과 `recovery.completed` 24시간 marker를 추가해
+WARC/report를 정상 닫고 하루 요청 상한을 실제 schedule과 remote command 모두에서 지킨다. 기존 priority/due
 claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage network attempt
 복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
 dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다.
@@ -252,8 +257,8 @@ dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않�
 board 표시명을 추가하면서 7-field rollback 호환을 유지한다. `c66aa3b`은 verified local ledger와
 remote pointer가 맞을 때 새 post/board/search/collection/versioned release만 `--files-from`으로
 upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20GB/800,000-object hard stop은
-두 경로에서 동일하다. systemd cycle은 crawl/recovery를 6시간마다 실행하되 전체 projection I/O가
-매번 반복되지 않도록 pending publish를 하루 최대 1회만 소비하며 marker를 잃지 않는다.
+두 경로에서 동일하다. systemd cycle은 crawl을 6시간마다 실행하되 recovery와 pending publish는
+각각 24시간 marker로 하루 최대 1회만 소비하며 marker를 잃지 않는다.
 
 완료 기준:
 
