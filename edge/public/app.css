@@ -145,8 +145,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .catalog-heading strong { font-size: 20px; font-weight: 720; letter-spacing: -.025em; }
 .catalog-heading span { color: var(--muted); font-size: 12px; }
 .catalog-count { color: var(--subtle) !important; font-size: 10px !important; font-weight: 650; letter-spacing: .08em; }
-.catalog-controls { display: grid; grid-template-columns: minmax(0, 1fr) 124px; gap: 8px; padding: 8px 12px 14px; }
-.search-field { position: relative; min-width: 0; }
+.catalog-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 8px 12px 14px; }
+.search-field { position: relative; min-width: 0; grid-column: 1 / -1; }
 .search-field svg { position: absolute; left: 11px; top: 12px; width: 18px; height: 18px; color: var(--muted); pointer-events: none; }
 .catalog-controls input, .catalog-controls select {
   width: 100%; min-width: 0; height: 44px; border: 1px solid var(--line); border-radius: 6px;
@@ -302,6 +302,7 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .aa-settings legend { padding: 0 5px; color: var(--muted); font-size: 13px; }
 .aa-settings .aa-control-group { flex-wrap: wrap; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.settings-ops { display: none; min-height: 44px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font-size: 13px; font-weight: 650; text-decoration: none; }
 .reset-settings { margin-right: auto; }
 .import-review { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--page); }
 .import-review[data-state="error"] { border-color: var(--accent); }
@@ -344,7 +345,7 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .workspace { grid-column: 1; width: 100%; min-width: 0; min-height: 0; display: block; overflow: hidden; }
   .catalog { height: 100%; padding-bottom: calc(56px + env(safe-area-inset-bottom)); border: 0; }
   .catalog-heading { min-height: 66px; padding-inline: 14px; }
-  .catalog-controls { grid-template-columns: minmax(0, 1fr) 116px; padding-inline: 10px; }
+  .catalog-controls { padding-inline: 10px; }
   .reader-pane { display: none; width: 100%; max-width: 100vw; height: 100%; overflow: auto; }
   body.home-open:not(.reader-open) .catalog { display: none; }
   body.home-open:not(.reader-open) .reader-pane, body.reader-open .reader-pane { display: block; }
@@ -385,10 +386,11 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .end-navigation button, .end-navigation button:last-child { min-height: 80px; text-align: left; border-right: 0; border-bottom: 1px solid var(--line); }
   dialog { width: 100%; max-width: 100vw; margin: auto 0 0; border-radius: 14px 14px 0 0; border-bottom: 0; }
   dialog form { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  .settings-ops { display: flex; }
 }
 
 @media (max-width: 340px) {
-  .catalog-controls { grid-template-columns: minmax(0, 1fr) 104px; gap: 6px; }
+  .catalog-controls { gap: 6px; }
   .catalog-controls select { font-size: 12px; }
   .home { padding-inline: 14px; }
 }

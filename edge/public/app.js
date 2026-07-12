@@ -26,7 +26,7 @@ const settingLabels = {
 };
 const elements = Object.fromEntries(
   [
-    "archive-count", "archive-state", "search-input", "board-filter", "result-status", "result-list",
+    "archive-count", "archive-state", "search-input", "board-filter", "sort-filter", "result-status", "result-list",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "archive-body", "comment-count", "comment-list", "previous-post", "next-post", "bookmark-post", "source-link",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "aa-size",
@@ -352,6 +352,37 @@ function updateDestinationButtons() {
   }
 }
 
+function currentSearchState() {
+  return {
+    query: elements["search-input"].value,
+    boardId: elements["board-filter"].value,
+    sort: elements["sort-filter"].value,
+  };
+}
+
+function searchUrl(state = currentSearchState()) {
+  const params = new URLSearchParams();
+  if (state.query) params.set("q", state.query);
+  if (state.boardId) params.set("board", state.boardId);
+  if (state.sort !== "latest") params.set("sort", state.sort);
+  const query = params.toString();
+  return query ? `/search?${query}` : "/search";
+}
+
+function applySearchRoute() {
+  const params = new URLSearchParams(location.search);
+  elements["search-input"].value = params.get("q") ?? "";
+  elements["board-filter"].value = params.get("board") ?? "";
+  const sort = params.get("sort");
+  elements["sort-filter"].value = sort === "oldest" ? sort : "latest";
+}
+
+function syncSearchRoute() {
+  if (location.pathname !== "/search") return;
+  const state = currentSearchState();
+  history.replaceState({ redstmSearch: state }, "", searchUrl(state));
+}
+
 function showDestination(destination, navigate = true) {
   if (destination === "settings") {
     if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
@@ -378,8 +409,10 @@ function showDestination(destination, navigate = true) {
     requestSearch();
   }
   updateDestinationButtons();
-  const path = destination === "library" ? "/" : destination === "bookmarks" ? "/saved" : "/search";
-  if (navigate && location.pathname !== path) history.pushState(null, "", path);
+  const path = destination === "library" ? "/" : destination === "bookmarks" ? "/saved" : searchUrl();
+  if (navigate && location.pathname !== new URL(path, location.origin).pathname) {
+    history.pushState(destination === "search" ? { redstmSearch: currentSearchState() } : null, "", path);
+  }
 }
 
 function setImmersive(active) {
@@ -427,7 +460,9 @@ async function handleRoute() {
   if (!summary) {
     const settingsRoute = location.pathname === "/settings";
     const destination = location.pathname === "/saved" ? "bookmarks" : location.pathname === "/search" ? "search" : "library";
+    if (destination === "search") applySearchRoute();
     showDestination(destination, false);
+    if (destination === "search") syncSearchRoute();
     if (settingsRoute && !elements["settings-dialog"].open) elements["settings-dialog"].showModal();
     else if (!settingsRoute && elements["settings-dialog"].open) elements["settings-dialog"].close();
     return;
@@ -486,6 +521,7 @@ function requestSearch() {
     id,
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    sort: elements["sort-filter"].value,
     limit: 100,
   });
 }
@@ -893,9 +929,20 @@ elements["settings-dialog"].addEventListener("close", () => {
 });
 elements["search-input"].addEventListener("input", () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(renderCurrentView, 250);
+  searchTimer = setTimeout(() => {
+    syncSearchRoute();
+    renderCurrentView();
+  }, 250);
 });
-elements["board-filter"].addEventListener("change", renderCurrentView);
+elements["search-input"].addEventListener("focus", () => {
+  if (currentDestination !== "search") showDestination("search");
+});
+for (const filter of [elements["board-filter"], elements["sort-filter"]]) {
+  filter.addEventListener("change", () => {
+    syncSearchRoute();
+    renderCurrentView();
+  });
+}
 for (const tab of document.querySelectorAll("[data-view]")) {
   tab.addEventListener("click", () => {
     currentView = tab.dataset.view;

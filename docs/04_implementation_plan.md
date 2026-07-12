@@ -169,31 +169,26 @@ mobile-first 제품으로 교체한다.
 - A1.3 72/360 wide shell, collapsible 768 medium, 390/320 single-plane/bottom navigation,
   safe-area, keyboard nav hide, reader bar 감쇠, manual scroll restore와 pagehide flush가 fixture를 통과했다.
 - A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation, import preview,
-  offline/Access-expired recovery와 Arrow/Enter navigation이 구현됐다.
-- 남은 gate는 authenticated live data smoke, 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
-- 최신 코드 증거: `4342035`, `1cedd77`, `da92148`, `7a92e86`, `95fd00e`, `368fe1b`; local gate는 Node 30,
-  self-contained Playwright 44, font/license check, startup check와 strict dry-run 통과다.
-- live evidence: Worker version `ef87fd99-ee0d-4d2a-999d-69839ce0f438`; `/`, `/ops`,
-  `/archive/release.json`의 unauthenticated 302 Access challenge를 확인했다. 인증 뒤 data flow는
-  A0 smoke에서 판정한다.
+  offline/Access-expired recovery, Arrow/Enter navigation, 검색 URL/History 상태와 mobile 설정의 운영
+  진입점이 구현됐다.
+- 남은 gate는 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
+- local gate는 Node 30, self-contained Playwright 48, font/license check, startup check와 strict dry-run
+  통과다.
+- live evidence: Worker version `58a70799-eacc-463d-b5d6-5f344dbcd3ab`; 인증한 Reader의 실제
+  prose/AA 본문·댓글과 `/ops` healthy idle heartbeat를 확인했다. service token은 runner route 200,
+  `/ops` 302, anonymous runner 요청은 403으로 역할이 분리된다. live `/search`의 board/oldest/query
+  URL 갱신과 390px 설정 sheet의 운영 콘솔 link도 확인했다.
 
 2026-07-12 배포 소스 실측에서 확인한 A1 local blocking은 해소했다. Home 검색 우선순위와 compact
 hero, `enterkeyhint`, wordmark, 큰 post 수신 진행률, AA 배경 휘도별 단색 잉크, overflow fade/1회
 힌트, Android `theme-color`, catalog AA/저장/읽음 badge, 72px skeleton과 `/settings` 대칭 route를
-fixture E2E로 고정했다. 남은 A1 blocking은 authenticated live data, 실제 Android 동작과 사용자 시각
-acceptance다.
-
-같은 날 심야 재감사에서 A1 local blocking 두 건을 추가한다.
-
-- `/search`의 query/board/sort가 URL(`?q=&board=&sort=`)과 History state에 보존되지 않는다.
-  [06 §4.1](06_final_product_experience.md) 계약 위반으로 새로고침·탭 복원·공유·Back에서 검색
-  상태가 사라진다. destination 전환과 Back 복원은 이 URL 상태를 단일 source로 쓴다.
-- mobile에 운영 상시 진입점이 없다. 운영 link가 있는 rail은 1180px 이상에서만 보이므로 설정
-  sheet 하단에 운영 콘솔 link를 둔다. bottom navigation 4개 계약은 유지한다(06 §4.1).
+fixture E2E로 고정했다. 심야 재감사에서 발견한 `/search` query/board/sort URL·History 복원과 mobile
+설정 sheet의 운영 콘솔 link도 대상 E2E 8건으로 해소했다. 남은 A1 blocking은 실제 Android 동작과
+사용자 시각 acceptance다.
 
 Should — acceptance 직후:
 
-- latest/oldest 정렬과 AA/일반 content-mode filter를 연다(06 §6.2; `is_aa` release 이후).
+- AA/일반 content-mode filter를 연다(06 §6.2; `is_aa` release 이후).
 - `::selection` accent-soft와 touch `:active` surface를 적용한다(DESIGN §3/§7).
 - collection 다음 글 1건 idle prefetch(06 §7.2, `Save-Data` 제외).
 

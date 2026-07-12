@@ -70,6 +70,10 @@
             <span class="sr-only">게시판</span>
             <select id="board-filter"><option value="">전체 게시판</option></select>
           </label>
+          <label class="sort-field">
+            <span class="sr-only">정렬</span>
+            <select id="sort-filter"><option value="latest">최신순</option><option value="oldest">오래된순</option></select>
+          </label>
         </div>
         <nav class="view-tabs" aria-label="목록 보기">
           <button type="button" class="active" data-view="all" aria-pressed="true">전체</button>
@@ -193,6 +197,7 @@
           </div>
         </fieldset>
         <div class="settings-actions"><button class="text-command reset-settings" id="reset-settings" type="button">기본값</button><button class="text-command" id="export-state" type="button">상태 내보내기</button><button class="text-command" id="import-state" type="button">상태 가져오기</button></div>
+        <a class="settings-ops" id="settings-ops" href="/ops">운영 콘솔</a>
         <input id="import-state-file" type="file" accept="application/json" hidden>
         <section class="import-review" id="import-review" aria-live="polite" hidden>
           <p id="import-review-summary"></p>

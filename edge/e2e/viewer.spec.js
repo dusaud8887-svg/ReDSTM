@@ -113,8 +113,34 @@ test("keeps the settings route symmetric", async ({ page }) => {
   await page.locator('button[data-destination="settings"]:visible').first().click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(page.locator("#settings-dialog")).toBeVisible();
+  if (page.viewportSize().width < 760) {
+    await expect(page.locator("#settings-ops")).toBeVisible();
+    await expect(page.locator("#settings-ops")).toHaveAttribute("href", "/ops");
+  }
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await expect(page).toHaveURL(/\/$/);
+});
+
+test("restores search controls from the URL and browser history", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/search?q=둘째&board=board_a&sort=oldest");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#search-input")).toHaveValue("둘째");
+  await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await expect(page.locator("#sort-filter")).toHaveValue("oldest");
+  await expect(page.locator(".result-item", { hasText: "둘째" })).toBeVisible();
+
+  await page.locator("#sort-filter").selectOption("latest");
+  await page.locator("#search-input").fill("첫째");
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("첫째");
+  await expect.poll(() => page.evaluate(() => history.state?.redstmSearch)).toEqual({
+    query: "첫째", boardId: "board_a", sort: "latest",
+  });
+  await page.locator(".result-item", { hasText: "첫째" }).click();
+  await page.goBack();
+  await expect(page.locator("#search-input")).toHaveValue("첫째");
+  await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await expect(page.locator("#sort-filter")).toHaveValue("latest");
 });
 
 test("reviews a state import before applying it", async ({ page }, testInfo) => {
