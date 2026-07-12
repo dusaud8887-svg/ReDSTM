@@ -23,7 +23,7 @@
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
 | Oracle | application `4edc1c9...`, canonical/R2/static/TypeMoon/Access 완료; timer 전 | IN PROGRESS |
-| remote operations | user/service role, D1 idle heartbeat와 authenticated `/ops` 통과; failure canary 전 | IN PROGRESS |
+| remote operations | role/heartbeat/`/ops`와 pause/resume marker canary 통과; duplicate/outage 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
@@ -326,8 +326,9 @@ Python 147 tests와 Edge 30 tests를 통과했다. 비인증 user route는 302�
 fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 1년 service token, path-specific Service Auth
 application/policy, Oracle `0640` secret 주입과 runner 200/service→ops 302/anonymous→runner 403 role
 smoke가 통과했다. 실제 control oneshot은 D1에 release `4edc1c9...`, idle, next schedule과 disk를
-기록했고 authenticated `/ops`가 이를 정상 표시했다. duplicate/outage/replay live failure gate와
-timer 연결 전이므로 A3 전체는 DONE이 아니다.
+기록했고 authenticated `/ops`가 이를 정상 표시했다. pause/resume 명령은 각각 한 번 claim되어
+`schedule_paused`/`schedule_resumed`로 끝났고 Oracle marker와 `/ops`가 paused→idle로 복귀했다.
+duplicate/outage/replay live failure gate와 timer 연결 전이므로 A3 전체는 DONE이 아니다.
 
 완료 기준:
 
@@ -364,7 +365,9 @@ Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. 1건·20건 
 stop의 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 분리했다.
 latest deploy 뒤 recovery/cycle/control module smoke, timer disabled/inactive와 partial 0을 확인했으며
 DB scan이나 긴 canary는 재실행하지 않았다. Access service credential과 D1 heartbeat는 통과했다.
-**남음** — bounded full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
+원본 요청 없는 pause/resume marker canary도 D1 claim/finish, Oracle marker와 `/ops` 왕복을 통과했고
+두 timer는 계속 disabled/inactive다. **남음** — bounded full-window·delta publish, D1 outage/duplicate
+command 검증이다. 첫 100건 상한 run은
 18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.
 journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에서 24MiB로 줄였다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.

@@ -245,7 +245,9 @@ local outbox로 계속되며, 일부만 설정된 경우는 오설정으로 실�
 stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
 실행 명령에 들어가지 않는다. service token 주입, runner 200/service→ops 302/anonymous→runner 403,
 D1 idle heartbeat와 authenticated `/ops`는 통과했다. duplicate command와 D1 outage/replay 전이므로
-G5 전체를 live 완료로 표시하지 않는다.
+G5 전체를 live 완료로 표시하지 않는다. 원본 요청 없는 pause/resume marker canary는 각 명령을 한
+번 claim해 succeeded로 끝냈고 marker 생성·해제와 `/ops` paused→idle 복귀를 확인했다. control/schedule
+timer는 계속 disabled/inactive다.
 
 ## 7. 자동 cycle state machine
 
@@ -364,7 +366,8 @@ frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 sele
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
 최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 timer
-disabled/inactive를 재확인했다. **남음** — bounded full-window·delta canary와 failure injection이다.
+disabled/inactive를 재확인했다. pause/resume marker command 왕복도 통과했다. **남음** — bounded
+full-window·delta canary와 duplicate/expired/outage/replay failure injection이다.
 control/schedule timer는 disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow

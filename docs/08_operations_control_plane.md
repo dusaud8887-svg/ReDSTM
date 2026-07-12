@@ -1,6 +1,6 @@
 # Operations Control Plane 사양
 
-- 상태: Worker/D1/responsive `/ops`와 runner Access/Oracle heartbeat live; failure canary 전
+- 상태: Worker/D1/responsive `/ops`, runner Access/heartbeat와 marker command live; outage/duplicate 전
 - 기준일: 2026-07-12
 - product UX: [06](06_final_product_experience.md)
 - frontend: [09](09_frontend_strategy_and_roadmap.md)
@@ -8,17 +8,19 @@
 - completed C0: [archive record](archive/2026-07-11/08_local_operations_console_c0.md)
 
 Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 runner AUD를 포함한 Operations
-Worker `9344fbbe`를 배포했다. 이전 `c47b2e58` 100% rollback → Access 302 → current 복귀를
+Worker를 배포했고 현재 version은 `58a70799`다. 이전 `c47b2e58` 100% rollback → Access 302 → current 복귀를
 재현했다. path-specific runner application/Service Auth policy와 회전 가능한 1년 token을 만들고
 Oracle `0640` env에 주입했다. runner heartbeat 200, service→ops 302, anonymous→runner 403과 D1 idle
 row, authenticated `/ops` 표시를 확인했다. duplicate/outage/replay live gate 전이므로 A3 전체 완료로
-보지 않는다.
+보지 않는다. 추가 marker canary에서 pause/resume이 각각 D1 `queued → succeeded`, claim 1회와
+`schedule_paused`/`schedule_resumed`로 끝났고 `/ops`가 paused→idle을 표시했다. 원본 crawl과 timer
+enable은 발생하지 않았다.
 
 Local frontend checkpoint: Signal Archive graphite/SUIT Operations shell, Overview/Runs/Boards/Releases,
 fixed Controls와 queued cancel을 구현했다. API 값을 `textContent`로만 렌더링하고 secret/path/임의
 인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE E2E 4건과
-Edge unit 30건이 통과했다. `/ops`의 authenticated overview/data acceptance는 완료됐고 실제 command
-action/failure injection은 다음 gate다.
+Edge unit 30건이 통과했다. `/ops`의 authenticated overview/data와 pause/resume action acceptance는
+완료됐고 duplicate/outage/replay failure injection은 다음 gate다.
 
 ## 1. 목적
 

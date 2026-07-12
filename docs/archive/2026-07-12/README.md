@@ -46,10 +46,21 @@ WARC/report를 닫은 시간이다.
 - 종료 시 남은 running lease는 900초 expiry 뒤 다음 run에서 reclaim하며, 이를 처리 완료로 세지 않는다.
 - 이 partial run은 장기 운영 승인이나 timer enable 근거가 아니다.
 
+## Access와 marker command canary
+
+- Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`의 authenticated Reader/Operations와 runner role
+  분리를 확인했다.
+- `pause-after-current` command `bb112c46…5361`은 D1 queued에서 Oracle `oracle-primary`가 한 번
+  claim해 `schedule_paused`로 완료했고 marker와 `/ops` paused 상태가 일치했다.
+- `resume-schedule` command `054530ab…a02a`도 한 번 claim해 `schedule_resumed`로 완료했고 marker가
+  사라진 뒤 D1 heartbeat와 `/ops`가 idle로 복귀했다.
+- 이 canary는 TypeMoon 요청, DB scan, crawl, publish를 실행하지 않았다. control/schedule timer는
+  전후 모두 disabled/inactive다.
+
 ## 남은 live gate
 
-1. 최신 Git application 배포와 breaker canary
-2. Access service identity/role smoke와 Oracle secret 주입
+1. bounded full-window/breaker canary
+2. duplicate/expired command와 D1/Worker outage·event replay failure injection
 3. 실제 delta publish, Worker readback, 실패 시 pointer rollback
 4. 24시간 반복 canary와 7일 shadow
 5. gate 통과 뒤 schedule/control timer enable과 legacy service cutover
