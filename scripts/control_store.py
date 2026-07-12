@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS command_ledger (
     updated_at TEXT NOT NULL,
     run_id TEXT,
     result_json TEXT NOT NULL DEFAULT '{}',
-    reported_at TEXT
+    reported_at TEXT,
+    report_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (report_state IN ('pending', 'delivered', 'permanently_rejected'))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS outbox (
@@ -75,6 +77,13 @@ CREATE TABLE IF NOT EXISTS outbox (
     created_at TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     next_attempt_at TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS control_rejections (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    rejected_count INTEGER NOT NULL CHECK (rejected_count > 0),
+    last_code TEXT NOT NULL,
+    last_rejected_at TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS outbox_due_idx
@@ -127,6 +136,16 @@ class ControlStore:
             }
             if "reported_at" not in columns:
                 connection.execute("ALTER TABLE command_ledger ADD COLUMN reported_at TEXT")
+            if "report_state" not in columns:
+                connection.execute(
+                    "ALTER TABLE command_ledger ADD COLUMN report_state TEXT NOT NULL "
+                    "DEFAULT 'pending' CHECK (report_state IN "
+                    "('pending', 'delivered', 'permanently_rejected'))"
+                )
+                connection.execute(
+                    "UPDATE command_ledger SET report_state = 'delivered' "
+                    "WHERE reported_at IS NOT NULL"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5)
@@ -201,7 +220,8 @@ class ControlStore:
             connection.execute(
                 """
                 UPDATE command_ledger
-                SET state = ?, result_json = ?, updated_at = ?, reported_at = NULL
+                SET state = ?, result_json = ?, updated_at = ?, reported_at = NULL,
+                    report_state = 'pending'
                 WHERE command_id = ? AND state IN ('claimed', 'running')
                 """,
                 (state, result_json, _timestamp(now), command_id),
@@ -219,7 +239,8 @@ class ControlStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM command_ledger WHERE reported_at IS NULL
+                SELECT * FROM command_ledger
+                WHERE reported_at IS NULL AND report_state = 'pending'
                 ORDER BY claimed_at, command_id LIMIT ?
                 """,
                 (limit,),
@@ -230,13 +251,34 @@ class ControlStore:
         with self._connect() as connection:
             result = connection.execute(
                 """
-                UPDATE command_ledger SET reported_at = ?
+                UPDATE command_ledger SET reported_at = ?, report_state = 'delivered'
                 WHERE command_id = ? AND state IN ('succeeded', 'partial', 'failed')
+                  AND report_state = 'pending'
                 """,
                 (_timestamp(now), command_id),
             )
-        if result.rowcount != 1:
+            row = connection.execute(
+                "SELECT report_state FROM command_ledger WHERE command_id = ?", (command_id,)
+            ).fetchone()
+        if result.rowcount != 1 and (row is None or row["report_state"] != "delivered"):
             raise ValueError("only terminal commands can be marked reported")
+
+    def mark_report_rejected(self, command_id: str, *, now: datetime | None = None) -> None:
+        with self._connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE command_ledger
+                SET reported_at = ?, report_state = 'permanently_rejected'
+                WHERE command_id = ? AND state IN ('succeeded', 'partial', 'failed')
+                  AND report_state = 'pending'
+                """,
+                (_timestamp(now), command_id),
+            )
+            row = connection.execute(
+                "SELECT report_state FROM command_ledger WHERE command_id = ?", (command_id,)
+            ).fetchone()
+        if result.rowcount != 1 and (row is None or row["report_state"] != "permanently_rejected"):
+            raise ValueError("only pending terminal reports can be marked rejected")
 
     def command(self, command_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -357,6 +399,55 @@ class ControlStore:
     def acknowledge(self, item_id: int) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM outbox WHERE id = ?", (item_id,))
+
+    def reject(
+        self,
+        item_id: int,
+        code: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", code) is None:
+            raise ValueError("control rejection code is invalid")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            deleted = connection.execute("DELETE FROM outbox WHERE id = ?", (item_id,))
+            if deleted.rowcount != 1:
+                raise ValueError("outbox rejection item is missing")
+            connection.execute(
+                """
+                INSERT INTO control_rejections (
+                    id, rejected_count, last_code, last_rejected_at
+                ) VALUES (1, 1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    rejected_count = control_rejections.rejected_count + 1,
+                    last_code = excluded.last_code,
+                    last_rejected_at = excluded.last_rejected_at
+                """,
+                (code, _timestamp(now)),
+            )
+
+    def record_rejection(self, code: str, *, now: datetime | None = None) -> None:
+        if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", code) is None:
+            raise ValueError("control rejection code is invalid")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO control_rejections (
+                    id, rejected_count, last_code, last_rejected_at
+                ) VALUES (1, 1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    rejected_count = control_rejections.rejected_count + 1,
+                    last_code = excluded.last_code,
+                    last_rejected_at = excluded.last_rejected_at
+                """,
+                (code, _timestamp(now)),
+            )
+
+    def rejection(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM control_rejections WHERE id = 1").fetchone()
+        return dict(row) if row is not None else None
 
     def defer(self, item_id: int, next_attempt_at: datetime) -> None:
         with self._connect() as connection:

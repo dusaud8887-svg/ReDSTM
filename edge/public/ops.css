@@ -105,8 +105,7 @@ dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere
 .state-text[data-state="partial"] { color: var(--warning); }
 .state-text[data-state="failed"] { color: var(--danger); }
 .release-ledger { display: grid; grid-template-columns: 1fr 1fr 1.4fr; border-top: 1px solid var(--strong); border-bottom: 1px solid var(--line); }
-.release-ledger > div { padding: 22px 22px 22px 0; border-right: 1px solid var(--line); }
-.release-ledger > div:nth-child(2) { padding-left: 22px; }
+.release-ledger > div { padding: 22px; border-right: 1px solid var(--line); }
 .release-ledger span, .release-ledger small { display: block; color: var(--muted); font-size: 12px; }
 .release-ledger strong { display: block; margin: 9px 0 7px; font-size: 14px; overflow-wrap: anywhere; }
 .release-ledger dl { margin: 0; padding: 16px 0 16px 22px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 20px; }
@@ -187,7 +186,6 @@ dialog p:not(.eyebrow) { margin: 0; color: var(--muted); line-height: 1.65; }
   .board-metrics { grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .release-ledger { grid-template-columns: 1fr; }
   .release-ledger > div { border-right: 0; border-bottom: 1px solid var(--line); padding: 18px 0; }
-  .release-ledger > div:nth-child(2) { padding-left: 0; }
   .release-ledger dl { grid-column: auto; grid-template-columns: 1fr; }
   .collection-kpis { grid-template-columns: 1fr; }
   .collection-kpis > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from argparse import Namespace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +26,7 @@ from scripts.sync import (
     _project_settings,
     _run_status,
     _timed_out,
+    run_sync,
 )
 from scripts.sync import _parse_args as parse_sync_args
 
@@ -136,6 +139,60 @@ def test_bounded_sync_fixture_is_idempotent_across_runs(tmp_path: Path) -> None:
     assert _capture_summary(path, second_run) == {}
 
 
+def test_prevalidated_worker_loads_an_authenticated_expired_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    session_path = tmp_path / "session.json"
+    session_path.write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {
+                        "name": "PHPSESSID",
+                        "value": "secret",
+                        "domain": ".typemoon.net",
+                        "path": "/",
+                        "secure": True,
+                        "httpOnly": True,
+                    }
+                ],
+                "created_at": "2000-01-01T00:00:00+00:00",
+                "expires_at": "2000-01-01T04:00:00+00:00",
+                "user_agent": "ReDSTM-test/1.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class WorkerReachedError(RuntimeError):
+        pass
+
+    def process(settings: object) -> None:
+        raise WorkerReachedError
+
+    monkeypatch.setattr("scripts.sync.CrawlerProcess", process)
+
+    with pytest.raises(WorkerReachedError):
+        run_sync(
+            Namespace(
+                archive=path,
+                board="write_free21",
+                session=session_path,
+                session_prevalidated=True,
+                warc_dir=tmp_path / "warc",
+                pause_file=None,
+                parent_lock_held=True,
+                inventory=False,
+                max_seconds=60,
+                max_pages=1,
+                max_posts=1,
+                lease_seconds=60,
+            )
+        )
+
+
 def test_listing_metadata_change_reopens_known_post(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
@@ -145,6 +202,7 @@ def test_listing_metadata_change_reopens_known_post(tmp_path: Path) -> None:
     store.finish_run(first_run, status="succeeded", discovered=1)
     with connect_archive(path) as connection:
         connection.execute("UPDATE posts SET comment_count = 3")
+        connection.execute("UPDATE crawl_frontier SET expected_comment_count = 1")
     run_id = store.start_run("sync")
     spider = TypeMoonSpider(
         board_id="write_free21",
@@ -165,6 +223,12 @@ def test_listing_metadata_change_reopens_known_post(tmp_path: Path) -> None:
 
     assert len(requests) == 1
     assert requests[0].url.endswith("/write_free21/62068")
+    assert requests[0].meta["expected_comment_count"] == 4
+    with connect_archive(path, read_only=True) as connection:
+        assert (
+            connection.execute("SELECT expected_comment_count FROM crawl_frontier").fetchone()[0]
+            == 4
+        )
 
 
 def test_overlap_boundary_stops_next_listing_page(tmp_path: Path) -> None:
@@ -317,6 +381,131 @@ def test_inventory_completes_on_a_notice_only_terminal_page(tmp_path: Path) -> N
     assert spider.inventory_completed is True
 
 
+def test_inventory_requires_rows_or_an_explicit_empty_page_marker(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    url = "https://www.typemoon.net/write_free21?page=7"
+
+    unexplained = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("inventory"),
+        session=_session(),
+        inventory=True,
+        start_page=7,
+    )
+    response = HtmlResponse(
+        url,
+        request=Request(url),
+        body=b"<table><tbody></tbody></table>",
+        encoding="utf-8",
+    )
+
+    assert list(unexplained.parse_listing(response)) == []
+    assert unexplained.failure_codes == {"listing_parse_failed"}
+    assert unexplained.next_inventory_page == 7
+    assert unexplained.inventory_completed is False
+
+    explicit = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("inventory"),
+        session=_session(),
+        inventory=True,
+        start_page=7,
+    )
+    empty = response.replace(
+        body=(
+            "<table><thead><tr><th>번호</th><th>제목</th></tr></thead><tbody>"
+            "<tr><td class='text-center'><i class='fas fa-exclamation-circle'></i>"
+            "게시물이 없습니다.</td></tr></tbody></table>"
+        ).encode()
+    )
+
+    assert list(explicit.parse_listing(empty)) == []
+    assert explicit.failure_codes == set()
+    assert explicit.next_inventory_page == 1
+    assert explicit.inventory_completed is True
+
+
+def test_listing_dataloss_does_not_advance_inventory_coverage(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    run_id = ArchiveStore(path).start_run("inventory")
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=run_id,
+        session=_session(),
+        inventory=True,
+        start_page=3,
+    )
+    url = "https://www.typemoon.net/write_free21?page=3"
+    response = HtmlResponse(
+        url,
+        request=Request(
+            url,
+            meta={
+                "raw_sha256": "d" * 64,
+                "warc_file": "listing.warc.gz",
+                "warc_record_id": "<urn:uuid:dataloss-listing>",
+            },
+        ),
+        body=(_FIXTURES / "listing.html").read_bytes(),
+        encoding="utf-8",
+        flags=["dataloss"],
+    )
+
+    assert list(spider.parse_listing(response)) == []
+    assert spider.failure_codes == {"listing_fetch_failed"}
+    assert spider.next_inventory_page == 3
+    assert spider.inventory_completed is False
+    with connect_archive(path, read_only=True) as connection:
+        capture = connection.execute(
+            """
+            SELECT outcome, error_code, raw_sha256, warc_file, warc_record_id
+            FROM captures WHERE run_id = ? AND entity_type = 'listing'
+            """,
+            (run_id,),
+        ).fetchone()
+        assert tuple(capture) == (
+            "fetch_failed",
+            "network_error",
+            "d" * 64,
+            "listing.warc.gz",
+            "<urn:uuid:dataloss-listing>",
+        )
+
+
+def test_malformed_listing_comment_count_is_not_synthesized_as_zero(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("inventory"),
+        session=_session(),
+        inventory=True,
+        start_page=4,
+    )
+    url = "https://www.typemoon.net/write_free21?page=4"
+    response = HtmlResponse(
+        url,
+        request=Request(url),
+        body=(
+            b"<table><tbody><tr><td class='td-subj-wrap'>"
+            b"<a href='/write_free21/1'><span class='subject'>post</span>"
+            b"<span class='td-comment'>many</span></a></td></tr></tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+
+    assert list(spider.parse_listing(response)) == []
+    assert spider.failure_codes == {"listing_parse_failed"}
+    assert spider.next_inventory_page == 4
+    assert spider.inventory_completed is False
+
+
 def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
@@ -347,7 +536,9 @@ def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
             "SELECT outcome, error_code FROM captures WHERE entity_type = 'post'"
         ).fetchone()
         assert tuple(capture) == ("fetch_failed", "network_error")
-        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "retry"
+        assert tuple(connection.execute("SELECT state FROM crawl_frontier").fetchone()) == (
+            "retry",
+        )
     assert _capture_failure_codes(path, run_id) == ["network_error"]
 
 
@@ -380,15 +571,17 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
     requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
 
     assert len(requests) == 1
+    assert requests[0].meta["expected_comment_count"] == 0
     with connect_archive(path, read_only=True) as connection:
         assert [
             tuple(row)
             for row in connection.execute(
-                "SELECT external_post_id, url, state FROM crawl_frontier ORDER BY external_post_id"
+                "SELECT external_post_id, url, state, expected_comment_count "
+                "FROM crawl_frontier ORDER BY external_post_id"
             )
         ] == [
-            (1, "https://www.typemoon.net/write_free21/1", "running"),
-            (2, "https://www.typemoon.net/write_free21/2", "pending"),
+            (1, "https://www.typemoon.net/write_free21/1", "running", 0),
+            (2, "https://www.typemoon.net/write_free21/2", "pending", 0),
         ]
 
 
@@ -473,6 +666,69 @@ def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
     assert list(spider.parse_listing(listing.replace(url=f"{url}?page=2"))) == []
 
 
+def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    run_id = ArchiveStore(path).start_run("sync")
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=run_id,
+        session=_session(),
+        max_posts=4,
+    )
+    rows = "".join(
+        f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
+        f"<span class='subject'>{post_id}</span></a></td></tr>"
+        for post_id in range(1, 5)
+    )
+    url = "https://www.typemoon.net/write_free21"
+    listing = HtmlResponse(
+        url,
+        request=Request(url),
+        body=f"<table><tbody>{rows}</tbody></table>".encode(),
+        encoding="utf-8",
+    )
+    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+
+    for attempt in range(3):
+        response = HtmlResponse(
+            request.url,
+            request=request,
+            body=(_FIXTURES / "detail.html").read_bytes(),
+            encoding="utf-8",
+            flags=["dataloss"],
+        )
+        outputs = list(spider._parse_sync_detail(response))
+        [item] = [item for item in outputs if isinstance(item, CapturedPostItem)]
+        assert item["outcome"] == "fetch_failed"
+        assert item["error_code"] == "network_error"
+        ArchivePipeline(path, run_id).process_item(item)
+        requests = [item for item in outputs if isinstance(item, Request)]
+        if attempt < 2:
+            [request] = requests
+        else:
+            assert requests == []
+
+    with connect_archive(path, read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT outcome, error_code FROM captures "
+                "WHERE run_id = ? AND entity_type = 'post' ORDER BY id",
+                (run_id,),
+            )
+        ] == [("fetch_failed", "network_error")] * 3
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT external_post_id, state FROM crawl_frontier ORDER BY external_post_id"
+            )
+        ] == [(1, "retry"), (2, "retry"), (3, "retry"), (4, "pending")]
+    assert spider.failure_codes == {"network_error"}
+
+
 def test_pause_marker_stops_before_next_detail_lease(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
@@ -550,7 +806,7 @@ def test_non_html_detail_records_terminal_parse_outcome(tmp_path: Path) -> None:
                 "SELECT outcome, error_code FROM captures WHERE entity_type = 'post'"
             ).fetchone()
         ) == ("parse_failed", "parse_drift")
-        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "dead"
+        assert tuple(connection.execute("SELECT state FROM crawl_frontier").fetchone()) == ("dead",)
 
 
 def test_captured_post_repr_never_logs_content() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -30,6 +31,7 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
         now=_NOW,
     )
     assert terminal["state"] == "succeeded"
+    assert terminal["report_state"] == "pending"
     assert json.loads(terminal["result_json"]) == {
         "code": "cycle_succeeded",
         "payload": payload,
@@ -38,6 +40,68 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
     assert store.begin_command(command_id) is False
     assert [row["command_id"] for row in store.pending_commands()] == [command_id]
     store.mark_reported(command_id, now=_NOW)
+    store.mark_reported(command_id, now=_NOW)
+    assert store.pending_commands() == []
+    reported = store.command(command_id)
+    assert reported is not None and reported["report_state"] == "delivered"
+
+
+def test_permanently_rejected_terminal_report_keeps_result_and_leaves_pending_queue(
+    tmp_path: Path,
+) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    command_id = str(uuid4())
+    store.record_claim(command_id, "sync-now", now=_NOW)
+    terminal = store.finish_command(
+        command_id,
+        "succeeded",
+        "cycle_succeeded",
+        result_payload={"state": "succeeded", "counters": {"changed_posts": 1}},
+        now=_NOW,
+    )
+
+    store.mark_report_rejected(command_id, now=_NOW)
+    store.mark_report_rejected(command_id, now=_NOW)
+
+    row = store.command(command_id)
+    assert row is not None
+    assert row["report_state"] == "permanently_rejected"
+    assert row["reported_at"] == "2026-07-12T00:00:00.000Z"
+    assert row["result_json"] == terminal["result_json"]
+    assert store.pending_commands() == []
+
+
+def test_existing_delivered_ledger_migrates_to_explicit_report_state(tmp_path: Path) -> None:
+    path = tmp_path / "control.sqlite"
+    command_id = str(uuid4())
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE command_ledger (
+                command_id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                state TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                run_id TEXT,
+                result_json TEXT NOT NULL DEFAULT '{}',
+                reported_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO command_ledger (
+                command_id, action, state, claimed_at, updated_at, reported_at
+            ) VALUES (?, 'sync-now', 'succeeded', ?, ?, ?)
+            """,
+            (command_id, *(["2026-07-12T00:00:00.000Z"] * 3)),
+        )
+
+    store = ControlStore(path)
+
+    row = store.command(command_id)
+    assert row is not None and row["report_state"] == "delivered"
     assert store.pending_commands() == []
 
 
@@ -148,6 +212,34 @@ def test_outbox_does_not_replay_past_a_deferred_predecessor(tmp_path: Path) -> N
         "run_start",
         "run_finish",
     ]
+
+
+def test_rejected_outbox_item_keeps_only_bounded_safe_evidence(tmp_path: Path) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    item_id = store.enqueue(
+        "heartbeat",
+        "/api/v1/runner/heartbeat",
+        {"runner_version": "git-1", "state": "idle"},
+        "heartbeat-rejected",
+        now=_NOW,
+    )
+
+    store.reject(item_id, "invalid_heartbeat", now=_NOW)
+
+    assert store.stats()["rows"] == 0
+    assert store.rejection() == {
+        "id": 1,
+        "rejected_count": 1,
+        "last_code": "invalid_heartbeat",
+        "last_rejected_at": "2026-07-12T00:00:00.000Z",
+    }
+    store.record_rejection("invalid_board_status", now=_NOW + timedelta(seconds=1))
+    assert store.rejection() == {
+        "id": 1,
+        "rejected_count": 2,
+        "last_code": "invalid_board_status",
+        "last_rejected_at": "2026-07-12T00:00:01.000Z",
+    }
 
 
 def test_outbox_rejects_unsafe_or_unbounded_payloads(tmp_path: Path) -> None:

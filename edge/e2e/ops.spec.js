@@ -61,16 +61,34 @@ async function useOperationsFixture(page, received, fixture = {}) {
     }
     if (url.pathname === "/api/v1/ops/releases") {
       return route.fulfill({ json: envelope(fixture.releases || {
-        current: { release_id: "a".repeat(64), activated_at: now, counts: {
-          post_count: 282239, unavailable_post_count: 1831,
-          comment_count: 3707484, unavailable_comment_count: 22222,
-          board_count: 46, collection_count: 1200,
-        } },
+        current: {
+          release_id: "a".repeat(64), activated_at: now,
+          validation: {
+            source: "worker", as_of: now, state: "succeeded", release_id: "a".repeat(64),
+          },
+          counts: {
+            post_count: 282239, unavailable_post_count: 1831,
+            comment_count: 3707484, unavailable_comment_count: 22222,
+            board_count: 46, collection_count: 1200,
+          },
+        },
         previous: null,
+        smoke: {
+          source: "systemd", as_of: now, state: "succeeded",
+          release_id: "a".repeat(64), run_id: "scheduled-fixture", code: "publish_succeeded",
+        },
+        local_recovery: {
+          source: "systemd", as_of: now, state: "succeeded",
+          run_id: "recovery-fixture", code: "recovery_succeeded",
+        },
       }) });
     }
     if (url.pathname === "/api/v1/ops/commands" && request.method() === "POST") {
       received.push({ headers: request.headers(), body: request.postDataJSON() });
+      if (fixture.commandFailures > 0) {
+        fixture.commandFailures -= 1;
+        return route.abort("failed");
+      }
       return route.fulfill({ status: 202, json: envelope({
         command_id: "11111111-1111-4111-8111-111111111111", action: "sync-now",
         state: "queued", requested_at: now, expires_at: "2026-07-12T06:30:00Z",
@@ -120,6 +138,9 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
 
   await page.locator(".release-evidence > summary").click();
   await expect(page.locator("#release-current")).toContainText("aaaaaaaaaaaa");
+  await expect(page.locator("#release-validation")).toContainText("포인터·manifest 확인");
+  await expect(page.locator("#release-smoke")).toContainText("성공");
+  await expect(page.locator("#local-recovery")).toContainText("성공");
   await expect(page.locator("#release-counts")).toContainText("Reader 글 댓글");
   await page.locator(".healthy-boards > summary").click();
   await expect(page.getByText("healthy_1")).toBeVisible();
@@ -135,6 +156,25 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
   expect(received[0].headers["idempotency-key"]).toMatch(/^web-[0-9a-f-]{36}$/);
   expect(received[0].body).toEqual({ action: "sync-now", args: {} });
   expect(received[1].headers["idempotency-key"]).toMatch(/^cancel-[0-9a-f-]{36}$/);
+});
+
+test("reuses command intent after response loss and reload", async ({ page }) => {
+  const received = [];
+  await useOperationsFixture(page, received, { commandFailures: 1 });
+  await page.goto("/ops");
+
+  await page.locator('[data-action="sync-now"]').click();
+  await page.locator("#dialog-confirm").click();
+  await expect.poll(() => received.length).toBe(1);
+  const firstKey = received[0].headers["idempotency-key"];
+
+  await page.reload();
+  await page.locator('[data-action="sync-now"]').click();
+  await page.locator("#dialog-confirm").click();
+  await expect(page.locator("#command-result")).toContainText("증분 수집 지금 실행 · 대기");
+
+  expect(received).toHaveLength(2);
+  expect(received[1].headers["idempotency-key"]).toBe(firstKey);
 });
 
 test("keeps stale runner, empty telemetry, and readable release distinct", async ({ page }) => {
@@ -276,6 +316,27 @@ test("warns when the automatic schedule is overdue", async ({ page }) => {
   await expect(page.locator("#automation-mode")).toHaveText("켜짐 · 지연");
   await expect(page.locator("#next-schedule")).toContainText("지연");
   await expect(page.locator("#warning-line")).toBeVisible();
+});
+
+test("does not call an enabled schedule healthy before its first automatic run", async ({ page }) => {
+  await useOperationsFixture(page, [], {
+    overview: {
+      runner: { state: "idle", heartbeat_at: now, next_scheduled_at: nextAutomatic },
+      schedule_enabled: true,
+      active_run: null,
+      latest_run: null,
+      latest_automatic_run: null,
+      recent_issue: null,
+      archive_snapshot: null,
+      active_commands: 0,
+    },
+  });
+  await page.goto("/ops");
+
+  await expect(page.locator("#overview-title")).toHaveText("자동 실행 확인 전");
+  await expect(page.locator("#automation-mode")).toHaveText("켜짐 · 확인 전");
+  await expect(page.locator("#last-automatic")).toHaveText("이력 없음");
+  await expect(page.locator("#warning-label")).toContainText("자동 실행 완료 이력");
 });
 
 test("names the sections affected by a partial refresh failure", async ({ page }) => {

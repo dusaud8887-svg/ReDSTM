@@ -12,9 +12,14 @@ from scrapy.settings import Settings
 from scrapy.utils.project import get_project_settings
 
 from crawler import settings as crawler_settings
-from crawler.archive import connect_archive, initialize_archive
+from crawler.archive import connect_archive, require_archive_schema
 from crawler.session import SessionRefreshError, ensure_session_export, load_session_export
-from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
+from crawler.settings import (
+    REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_SYNC_MAX_PAGES,
+    REDSTM_SYNC_MAX_POSTS,
+    USER_AGENT,
+)
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man
@@ -98,7 +103,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     run_id: str | None = None
     store = ArchiveStore(archive)
     try:
-        initialize_archive(archive)
+        require_archive_schema(archive)
         interrupted_runs = store.interrupt_stale_crawl_runs()
         with connect_archive(archive, read_only=True) as connection:
             board = connection.execute(
@@ -109,7 +114,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("board is missing or disabled in the canonical archive")
 
         session = (
-            load_session_export(session_path)
+            load_session_export(session_path, allow_expired=True)
             if args.session_prevalidated
             else ensure_session_export(
                 session_path,
@@ -211,8 +216,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--board", required=True)
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
-    parser.add_argument("--max-pages", type=int, default=1)
-    parser.add_argument("--max-posts", type=int, default=20)
+    parser.add_argument("--max-pages", type=int, default=REDSTM_SYNC_MAX_PAGES)
+    parser.add_argument("--max-posts", type=int, default=REDSTM_SYNC_MAX_POSTS)
     parser.add_argument("--max-seconds", type=int)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")

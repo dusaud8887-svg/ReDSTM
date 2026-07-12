@@ -9,14 +9,16 @@ from pathlib import Path
 
 from crawler.archive import compress_body, connect_archive
 from crawler.frontier import (
-    MAX_NETWORK_ATTEMPTS,
     FrontierLease,
     complete_lease,
     retry_backoff,
     transition_lease,
 )
 from crawler.pipelines import NormalizedPost
+from crawler.settings import REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS
 from scripts.legacy_common import normalize_source_timestamp
+
+PARSER_VERSION = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,13 +75,77 @@ class ArchiveStore:
         raw_sha256: str | None,
         warc_file: str | None,
         http_status: int = 200,
-        parser_version: str = "1",
+        parser_version: str = PARSER_VERSION,
         lease: FrontierLease | None = None,
     ) -> StoreResult:
         captured_at_text = _timestamp(captured_at)
+        created_at_source = normalize_source_timestamp(post.created_at_raw)
         with connect_archive(self.path) as connection:
             self._require_running_run(connection, run_id)
             connection.execute("BEGIN IMMEDIATE")
+            existing_post = connection.execute(
+                """
+                SELECT canonical_url, title, author, category, created_at_source,
+                       created_at_raw, views, comment_count, is_aa, latest_version_id
+                FROM posts WHERE board_id = ? AND external_post_id = ?
+                """,
+                (post.board_id, post.external_post_id),
+            ).fetchone()
+            effective_author = (
+                post.author
+                if post.author is not None
+                else existing_post["author"]
+                if existing_post is not None
+                else None
+            )
+            effective_category = (
+                post.category
+                if post.category is not None
+                else existing_post["category"]
+                if existing_post is not None
+                else None
+            )
+            effective_created_at_source = (
+                created_at_source
+                if created_at_source is not None
+                else existing_post["created_at_source"]
+                if existing_post is not None
+                else None
+            )
+            effective_created_at_raw = (
+                post.created_at_raw
+                if post.created_at_raw is not None
+                else existing_post["created_at_raw"]
+                if existing_post is not None
+                else None
+            )
+            projection_values = (
+                post.canonical_url,
+                post.title,
+                effective_author,
+                effective_category,
+                effective_created_at_source,
+                effective_created_at_raw,
+                len(post.comments),
+                int(post.is_aa),
+            )
+            projection_changed = (
+                existing_post is None
+                or tuple(
+                    existing_post[key]
+                    for key in (
+                        "canonical_url",
+                        "title",
+                        "author",
+                        "category",
+                        "created_at_source",
+                        "created_at_raw",
+                        "comment_count",
+                        "is_aa",
+                    )
+                )
+                != projection_values
+            )
             connection.execute(
                 """
                 INSERT INTO posts (
@@ -91,12 +157,12 @@ class ArchiveStore:
                 ON CONFLICT (board_id, external_post_id) DO UPDATE SET
                     canonical_url = excluded.canonical_url,
                     title = excluded.title,
-                    author = excluded.author,
-                    category = excluded.category,
+                    author = COALESCE(excluded.author, posts.author),
+                    category = COALESCE(excluded.category, posts.category),
                     created_at_source = COALESCE(
                         excluded.created_at_source, posts.created_at_source
                     ),
-                    created_at_raw = excluded.created_at_raw,
+                    created_at_raw = COALESCE(excluded.created_at_raw, posts.created_at_raw),
                     last_seen_at = excluded.last_seen_at,
                     last_collected_at = excluded.last_collected_at,
                     availability = 'available',
@@ -111,7 +177,7 @@ class ArchiveStore:
                     post.title,
                     post.author,
                     post.category,
-                    normalize_source_timestamp(post.created_at_raw),
+                    created_at_source,
                     post.created_at_raw,
                     captured_at_text,
                     captured_at_text,
@@ -134,8 +200,8 @@ class ArchiveStore:
                 """,
                 (post_id, post.content_sha256, post.comments_sha256),
             ).fetchone()
-            changed = version_row is None
-            if changed:
+            version_created = version_row is None
+            if version_created:
                 version_cursor = connection.execute(
                     """
                     INSERT INTO post_versions (
@@ -158,14 +224,19 @@ class ArchiveStore:
                 )
                 assert version_cursor.lastrowid is not None
                 version_id = version_cursor.lastrowid
+            else:
+                assert version_row is not None
+                version_id = int(version_row["id"])
+            version_changed = (
+                existing_post is None or existing_post["latest_version_id"] != version_id
+            )
+            if version_changed:
                 self._replace_comments(connection, post_id, post)
                 connection.execute(
                     "UPDATE posts SET latest_version_id = ? WHERE id = ?",
                     (version_id, post_id),
                 )
-            else:
-                assert version_row is not None
-                version_id = int(version_row["id"])
+            changed = projection_changed or version_changed
 
             capture_cursor = connection.execute(
                 """
@@ -188,7 +259,7 @@ class ArchiveStore:
             )
             assert capture_cursor.lastrowid is not None
             if lease is not None:
-                complete_lease(connection, lease)
+                complete_lease(connection, lease, stored_comment_count=len(post.comments))
             return StoreResult(post_id, version_id, capture_cursor.lastrowid, changed)
 
     def record_outcome(
@@ -261,7 +332,10 @@ class ArchiveStore:
                 state = frontier_state
                 next_attempt_at = None
                 if state == "retry":
-                    if error_code == "network_error" and lease.attempts >= MAX_NETWORK_ATTEMPTS:
+                    if (
+                        error_code == "network_error"
+                        and lease.attempts >= REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS
+                    ):
                         state = "dead"
                     else:
                         next_attempt_at = retry_backoff(lease.attempts, fetched_at)
@@ -286,31 +360,39 @@ class ArchiveStore:
         raw_sha256: str | None,
         warc_file: str | None,
         warc_record_id: str | None,
+        error_code: str | None = None,
     ) -> int:
         fetched_at_text = _timestamp(fetched_at)
         with connect_archive(self.path) as connection:
             self._require_running_run(connection, run_id)
             previous = connection.execute(
                 "SELECT 1 FROM captures WHERE entity_type = 'listing' AND url = ? "
-                "AND raw_sha256 = ? LIMIT 1",
+                "AND raw_sha256 = ? AND outcome IN ('stored', 'unchanged') LIMIT 1",
                 (url, raw_sha256),
             ).fetchone()
             cursor = connection.execute(
                 """
                 INSERT INTO captures (
                     run_id, url, entity_type, fetched_at, http_status, outcome,
-                    raw_sha256, warc_file, warc_record_id
-                ) VALUES (?, ?, 'listing', ?, ?, ?, ?, ?, ?)
+                    raw_sha256, warc_file, warc_record_id, error_code
+                ) VALUES (?, ?, 'listing', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     url,
                     fetched_at_text,
                     http_status,
-                    "unchanged" if previous is not None else "stored",
+                    (
+                        "fetch_failed"
+                        if error_code is not None
+                        else "unchanged"
+                        if previous is not None
+                        else "stored"
+                    ),
                     raw_sha256,
                     warc_file,
                     warc_record_id,
+                    error_code,
                 ),
             )
             assert cursor.lastrowid is not None

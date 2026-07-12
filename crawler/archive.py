@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 APPLICATION_ID = 0x52445354  # RDST
 BODY_COMPRESSION_LEVEL = 3
 
@@ -215,18 +215,43 @@ ALTER TABLE boards ADD COLUMN inventory_next_page INTEGER NOT NULL DEFAULT 1
     CHECK (inventory_next_page >= 1);
 """
 
+_SCHEMA_V4 = """
+ALTER TABLE crawl_frontier ADD COLUMN expected_comment_count INTEGER
+    CHECK (expected_comment_count >= 0);
+
+UPDATE crawl_frontier
+SET expected_comment_count = (
+    SELECT post.comment_count
+    FROM posts AS post
+    WHERE post.board_id = crawl_frontier.board_id
+      AND post.external_post_id = crawl_frontier.external_post_id
+)
+WHERE EXISTS (
+    SELECT 1
+    FROM posts AS post
+    WHERE post.board_id = crawl_frontier.board_id
+      AND post.external_post_id = crawl_frontier.external_post_id
+);
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
     sql: str
+    static_projection_compatible: bool
 
     @property
     def sha256(self) -> str:
         return hashlib.sha256(self.sql.encode()).hexdigest()
 
 
-MIGRATIONS = (Migration(1, _SCHEMA_V1), Migration(2, _SCHEMA_V2), Migration(3, _SCHEMA_V3))
+MIGRATIONS = (
+    Migration(1, _SCHEMA_V1, False),
+    Migration(2, _SCHEMA_V2, False),
+    Migration(3, _SCHEMA_V3, False),
+    Migration(4, _SCHEMA_V4, True),
+)
 
 
 def compress_body(value: str) -> bytes:
@@ -301,6 +326,76 @@ def initialize_archive(path: str | Path) -> None:
                     connection.rollback()
                 raise
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def validate_archive_for_release(
+    connection: sqlite3.Connection,
+    *,
+    target_schema_version: int,
+    target_migration_hashes: dict[int, str],
+) -> None:
+    if (
+        type(target_schema_version) is not int
+        or target_schema_version < 1
+        or any(
+            type(version) is not int
+            or version < 1
+            or not isinstance(sha256, str)
+            or len(sha256) != 64
+            for version, sha256 in target_migration_hashes.items()
+        )
+        or set(target_migration_hashes) != set(range(1, target_schema_version + 1))
+    ):
+        raise RuntimeError("rollback target migration metadata is invalid")
+
+    if int(connection.execute("PRAGMA application_id").fetchone()[0]) != APPLICATION_ID:
+        raise RuntimeError("canonical archive application id is invalid")
+    user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    applied = {
+        int(row["version"]): str(row["sha256"])
+        for row in connection.execute("SELECT version, sha256 FROM schema_migrations")
+    }
+    if set(applied) != set(range(1, user_version + 1)):
+        raise RuntimeError("canonical migration ledger is inconsistent")
+
+    source_known = {migration.version: migration.sha256 for migration in MIGRATIONS}
+    if any(source_known.get(version) != sha256 for version, sha256 in applied.items()):
+        raise RuntimeError("canonical migration ledger does not match the current release")
+    if user_version > target_schema_version or any(
+        target_migration_hashes.get(version) != sha256 for version, sha256 in applied.items()
+    ):
+        raise RuntimeError(f"rollback release does not support canonical schema v{user_version}")
+
+    if user_version >= 4:
+        columns = [
+            tuple(row)[1:]
+            for row in connection.execute("PRAGMA table_xinfo(crawl_frontier)")
+            if row[1] == "expected_comment_count"
+        ]
+        expected = [("expected_comment_count", "INTEGER", 0, None, 0, 0)]
+        table_row = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'crawl_frontier'"
+        ).fetchone()
+        table_sql = " ".join(str(table_row[0]).split()).upper() if table_row is not None else ""
+        check_clause = "EXPECTED_COMMENT_COUNT INTEGER CHECK (EXPECTED_COMMENT_COUNT >= 0)"
+        if columns != expected or check_clause not in table_sql:
+            raise RuntimeError("canonical schema v4 physical shape is invalid")
+
+
+def require_archive_schema(path: str | Path) -> None:
+    hashes = {migration.version: migration.sha256 for migration in MIGRATIONS}
+    with closing(connect_archive(path, read_only=True)) as connection:
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if user_version != SCHEMA_VERSION:
+            raise RuntimeError(
+                f"canonical schema v{SCHEMA_VERSION} is required; "
+                "run the explicit archive migration"
+            )
+        validate_archive_for_release(
+            connection,
+            target_schema_version=SCHEMA_VERSION,
+            target_migration_hashes=hashes,
+        )
 
 
 def archive_health(path: str | Path) -> dict[str, Any]:

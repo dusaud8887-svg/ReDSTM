@@ -10,30 +10,59 @@ const stepLabels = {
   crawling: "상세 수집", inventory: "전체 목록 확인", recovery: "본문 대기 재시도",
   "retry-batch": "본문 대기 재시도", "bootstrap-recovery": "최초 본문 채우기",
   exporting: "Reader 내보내기", publishing: "Reader 반영", verifying: "게시 검증",
+  smoking: "Reader 게시 검증", rolling_back: "이전 Reader 복구",
+  rollback_smoking: "Reader 복구 검증",
 };
-const safeCodeLabels = {
+export const safeCodeLabels = {
   cycle_succeeded: "증분 수집 완료", inventory_succeeded: "목록 전수 확인 완료",
   bootstrap_recovery_succeeded: "최초 본문 채우기 완료",
   recovery_succeeded: "본문 재시도 완료", publish_succeeded: "Reader 반영 완료",
   scheduled_succeeded: "예약 실행 완료", scheduled_partial: "예약 실행 일부 완료",
   scheduled_failed: "예약 실행 실패", run_partial: "일부 항목 미완료",
-  run_failed: "실행 실패", runner_failed: "수집기 내부 실패",
+  run_failed: "실행 실패", run_stale: "실행 종료 신호 누락", runner_failed: "수집기 내부 실패",
   auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",
   site_unreachable: "원본 연결 실패", rate_limited: "원본 속도 제한",
   export_failed: "Reader 내보내기 실패", publish_failed: "Reader 반영 실패",
+  incremental_base_invalid: "Reader 증분 기준 보존본 검증 실패",
+  incremental_bootstrap_required: "Reader 증분 상태 초기화 필요",
+  incremental_state_invalid: "Reader 증분 상태 불일치",
+  incremental_source_changed: "Reader 원본 identity 변경 확인 필요",
+  incremental_source_rewound: "Reader 원본 이력 후퇴 확인 필요",
+  incremental_projection_untracked: "추적되지 않은 Reader 변경 감지",
+  incremental_snapshot_changed: "Reader snapshot 변경으로 재시도 필요",
+  incremental_delta_too_large: "Reader 변경분 수동 재구축 필요",
+  incremental_publish_bootstrap_required: "Reader 게시 기준선 초기화 필요",
+  incremental_publish_validation_failed: "Reader 증분 검증 실패",
+  incremental_publish_ledger_invalid: "Reader 게시 복구 상태 검증 실패",
+  incremental_publish_smoke_marker_invalid: "Reader 게시 검증 상태 복구 실패",
+  incremental_publish_smoke_pointer_conflict: "Reader 게시 포인터와 복구 상태 충돌",
+  incremental_publish_pointer_unavailable: "Reader 게시 포인터 연결 실패 · 다음 주기 재시도",
+  incremental_publish_predecessor_unavailable: "이전 Reader 보존본 검증 실패 · 다음 주기 재시도",
+  publish_report_invalid: "Reader 게시 결과 검증 실패",
+  publish_smoke_failed: "현재 Reader 보존본 검증 실패",
+  publish_smoke_confirmation_failed: "Reader 게시 검증 완료 상태 저장 실패",
+  publish_reconciliation_limit: "Reader 게시 복구 후 새 변경 반영 재시도 필요",
+  publish_rollback_unavailable: "복구할 이전 Reader 보존본 없음",
+  publish_rollback_failed: "이전 Reader 보존본 복구 실패",
+  publish_smoke_failed_rolled_back: "게시 검증 실패 · 이전 보존본 복구 완료",
+  publish_rollback_smoke_failed: "이전 보존본 복구 후 검증 실패",
+  publish_rollback_confirmation_failed: "이전 보존본 복구 완료 상태 저장 실패",
   schedule_paused: "요청에 따라 일시정지",
 };
 const warningLabels = {
   auth_failed: "원본 인증을 확인해야 합니다.", parse_drift: "원본 구조 변경이 감지됐습니다.",
   rate_limited: "원본 서버의 속도 제한으로 감속했습니다.", site_unreachable: "원본 서버에 도달하지 못했습니다.",
-  disk_low: "Oracle 저장 공간이 부족합니다.", token_expiring: "수집기 인증 갱신이 필요합니다.",
-  publish_stale: "새 보존본 게시가 지연되고 있습니다.", backup_stale: "복구 증거가 오래됐습니다.",
+  disk_low: "Oracle 저장 공간이 부족합니다.",
+  control_rejected: "운영 상태 전달이 영구 거절됐습니다. 배포 호환성을 확인해야 합니다.",
+  token_expiring: "수집기 인증 갱신이 필요합니다.",
+  publish_stale: "새 보존본 게시가 지연되고 있습니다.",
   schedule_overdue: "자동 실행 예정 시각이 지났거나 마지막 자동 실행이 7시간보다 오래됐습니다.",
+  schedule_unverified: "예약은 켜져 있지만 자동 실행 완료 이력이 아직 없습니다.",
 };
-const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청" };
+const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
 const commandCopy = {
-  "sync-now": ["증분 수집 지금 실행", "46개 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "retry-batch": ["본문 대기 재시도", "처리 시각이 된 대기 또는 실패 항목을 우선순위대로 최대 100건 다시 확인합니다."],
+  "sync-now": ["증분 수집 지금 실행", "등록된 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
+  "retry-batch": ["본문 대기 재시도", "처리 시각이 된 대기 또는 실패 항목을 우선순위대로 제한된 한 묶음 다시 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
   "pause-after-current": ["현재 작업 뒤 일시정지", "진행 중 요청과 저장은 끝낸 뒤 다음 예약 실행을 멈춥니다."],
   "resume-schedule": ["일시정지 해제", "다음 자동 실행을 허용합니다. 새 작업을 즉시 시작하거나 꺼진 Oracle timer를 켜지는 않습니다."],
@@ -41,9 +70,17 @@ const commandCopy = {
 
 const byId = (id) => document.getElementById(id);
 const terminal = new Set(["succeeded", "partial", "failed", "expired", "cancelled"]);
-const sevenHours = 7 * 60 * 60 * 1000;
-const sevenDays = 7 * 24 * 60 * 60 * 1000;
-const scheduleGrace = 20 * 60 * 1000;
+const AUTOMATIC_RUN_STALE_MS = 7 * 60 * 60 * 1000;
+const RECENT_ISSUE_MS = 7 * 24 * 60 * 60 * 1000;
+const SCHEDULE_GRACE_MS = 20 * 60 * 1000;
+const RUNNER_STALE_MS = 3 * 60 * 1000;
+const RUN_PAGE_SIZE = 20;
+const BOARD_PAGE_SIZE = 50;
+const COMMAND_WATCH_ATTEMPTS = 20;
+const COMMAND_WATCH_INTERVAL_MS = 3_000;
+const ACTIVE_REFRESH_MS = 15_000;
+const IDLE_REFRESH_MS = 60_000;
+const COMMAND_KEY_PREFIX = "redstm.commandIntent.v1.";
 let runsCursor = null;
 let boardsCursor = null;
 let boardItems = [];
@@ -55,6 +92,36 @@ let lastSnapshot = null;
 let lastScheduleEnabled = false;
 const pendingActions = new Set();
 const commandKeys = new Map();
+
+function commandKey(action) {
+  let key = commandKeys.get(action);
+  let storage = null;
+  try {
+    storage = typeof sessionStorage === "undefined" ? null : sessionStorage;
+    key ||= storage?.getItem(`${COMMAND_KEY_PREFIX}${action}`);
+  } catch {
+    storage = null;
+  }
+  if (!/^web-[0-9a-f-]{36}$/.test(key || "")) key = `web-${crypto.randomUUID()}`;
+  commandKeys.set(action, key);
+  try {
+    storage?.setItem(`${COMMAND_KEY_PREFIX}${action}`, key);
+  } catch {
+    // The in-memory key still protects same-document retries when storage is unavailable.
+  }
+  return key;
+}
+
+function forgetCommandKey(action) {
+  commandKeys.delete(action);
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(`${COMMAND_KEY_PREFIX}${action}`);
+    }
+  } catch {
+    // A successful server response is authoritative even if browser storage is unavailable.
+  }
+}
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -96,7 +163,7 @@ async function api(path, options = {}) {
 function runnerState(runner) {
   if (!runner?.heartbeat_at) return "not_enrolled";
   const heartbeatAge = Date.now() - Date.parse(runner.heartbeat_at);
-  if (!Number.isFinite(heartbeatAge) || heartbeatAge > 180_000) return "stale";
+  if (!Number.isFinite(heartbeatAge) || heartbeatAge > RUNNER_STALE_MS) return "stale";
   return runner.state || "idle";
 }
 
@@ -169,7 +236,7 @@ function renderArchiveSnapshot(snapshot) {
 
 function renderIssue(issue) {
   const issueAt = Date.parse(issue?.finished_at || issue?.started_at);
-  const recent = Number.isFinite(issueAt) && Date.now() - issueAt <= sevenDays ? issue : null;
+  const recent = Number.isFinite(issueAt) && Date.now() - issueAt <= RECENT_ISSUE_MS ? issue : null;
   const section = document.querySelector(".issue-strip");
   const metrics = byId("issue-metrics");
   if (!recent) {
@@ -218,12 +285,19 @@ function renderOverview(data) {
   const automaticAt = Date.parse(latestAutomatic?.finished_at || latestAutomatic?.started_at);
   const nextAt = Date.parse(runner?.next_scheduled_at);
   const nextOverdue = scheduleEnabled && Number.isFinite(nextAt) &&
-    nextAt < Date.now() - scheduleGrace && !automaticRunning;
-  const automaticOverdue = scheduleEnabled && Number.isFinite(automaticAt) && Date.now() - automaticAt > sevenHours;
-  const automation = baseAutomation === "on" && (nextOverdue || automaticOverdue) ? "delayed" : baseAutomation;
+    nextAt < Date.now() - SCHEDULE_GRACE_MS && !automaticRunning;
+  const automaticOverdue = scheduleEnabled && Number.isFinite(automaticAt) &&
+    Date.now() - automaticAt > AUTOMATIC_RUN_STALE_MS;
+  const automaticUnverified = scheduleEnabled && !automaticRunning && !Number.isFinite(automaticAt);
+  const automation = baseAutomation === "on" && automaticUnverified
+    ? "unverified"
+    : baseAutomation === "on" && (nextOverdue || automaticOverdue)
+    ? "delayed"
+    : baseAutomation;
   const verdicts = {
     on: "자동 수집 켜짐", off: "자동 수집 꺼짐", paused: "자동 수집 일시정지",
-    delayed: "자동 수집 지연", unknown: state === "stale" ? "수집기 응답 없음" : "자동 수집 상태 미보고",
+    delayed: "자동 수집 지연", unverified: "자동 실행 확인 전",
+    unknown: state === "stale" ? "수집기 응답 없음" : "자동 수집 상태 미보고",
   };
   const reasons = {
     on: runner?.state === "running"
@@ -232,6 +306,7 @@ function renderOverview(data) {
     delayed: nextOverdue
       ? "다음 자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다. 수집기와 Oracle timer를 확인하세요."
       : "마지막 자동 실행이 7시간보다 오래됐습니다. 다음 실행 시각과 수집기 기록을 확인하세요.",
+    unverified: "Oracle timer는 켜져 있지만 완료된 자동 실행 증거가 없습니다. 첫 실행 결과를 확인하기 전에는 정상 운전으로 판정하지 않습니다.",
     off: "Oracle 자동 예약이 꺼져 있습니다. redstm-schedule.timer를 활성화하기 전까지 정기 수집은 시작되지 않습니다.",
     paused: "현재 요청과 저장은 마친 뒤 다음 예약 실행을 건너뜁니다.",
     unknown: state === "stale"
@@ -240,9 +315,16 @@ function renderOverview(data) {
   };
   byId("overview-title").textContent = verdicts[automation];
   byId("overview-reason").textContent = reasons[automation];
-  const automationLabel = { on: "켜짐", delayed: "켜짐 · 지연", off: "꺼짐", paused: "일시정지", unknown: "확인 불가" }[automation];
+  const automationLabel = {
+    on: "켜짐", delayed: "켜짐 · 지연", unverified: "켜짐 · 확인 전",
+    off: "꺼짐", paused: "일시정지", unknown: "확인 불가",
+  }[automation];
   byId("overview-kicker").textContent = `${automationLabel} · 자동 예약`;
-  byId("status-signal").dataset.state = automation === "on" ? state : automation === "delayed" ? "degraded" : automation;
+  byId("status-signal").dataset.state = automation === "on"
+    ? state
+    : automation === "delayed" || automation === "unverified"
+    ? "degraded"
+    : automation;
   byId("automation-mode").textContent = automationLabel;
   byId("last-heartbeat").textContent = runner?.heartbeat_at
     ? `${stale ? "응답 없음" : labels[runner.state] || runner.state} · ${age(runner.heartbeat_at)}`
@@ -261,7 +343,11 @@ function renderOverview(data) {
     : nextOverdue
     ? `지연 · ${time(runner?.next_scheduled_at)}`
     : time(runner?.next_scheduled_at);
-  const warning = automation === "delayed" ? "schedule_overdue" : runner?.safe_warning_code;
+  const warning = automation === "delayed"
+    ? "schedule_overdue"
+    : automation === "unverified"
+    ? "schedule_unverified"
+    : runner?.safe_warning_code;
   byId("warning-line").hidden = !warning;
   byId("warning-label").textContent = warningLabels[warning] || warning || "";
   const shown = active || latest;
@@ -315,7 +401,7 @@ function runRow(run) {
 }
 
 async function loadRuns(append = false) {
-  const data = await api(`/api/v1/ops/runs?limit=20${append && runsCursor ? `&cursor=${encodeURIComponent(runsCursor)}` : ""}`);
+  const data = await api(`/api/v1/ops/runs?limit=${RUN_PAGE_SIZE}${append && runsCursor ? `&cursor=${encodeURIComponent(runsCursor)}` : ""}`);
   const list = byId("runs-list");
   if (!append) list.replaceChildren();
   if (!data.items.length && !append) list.append(node("p", "empty-row", "아직 기록된 실행이 없습니다."));
@@ -335,6 +421,27 @@ function boardNeedsAttention(board) {
   return Boolean(board.warning_code) || ["partial", "failed"].includes(board.last_outcome) ||
     [board.pending, board.running, board.retry, board.dead].some((value) => Number(value) > 0) ||
     !inventoryComplete(board);
+}
+
+export function compareBoardPriority(left, right) {
+  const leftPriority = [
+    Number(Boolean(left.warning_code)),
+    Number(left.dead ?? 0),
+    Number(left.retry ?? 0),
+    Number(left.pending ?? 0),
+  ];
+  const rightPriority = [
+    Number(Boolean(right.warning_code)),
+    Number(right.dead ?? 0),
+    Number(right.retry ?? 0),
+    Number(right.pending ?? 0),
+  ];
+  for (let index = 0; index < leftPriority.length; index += 1) {
+    if (leftPriority[index] !== rightPriority[index]) {
+      return rightPriority[index] > leftPriority[index] ? 1 : -1;
+    }
+  }
+  return left.board_id.localeCompare(right.board_id);
 }
 
 function boardRow(board) {
@@ -382,10 +489,7 @@ function renderBoards() {
     list.append(node("p", "empty-row", "게시판 운영 기록이 아직 보고되지 않았습니다. Reader 게시판 수와는 별도 상태입니다."));
     return;
   }
-  const severity = (board) => Number(Boolean(board.warning_code)) * 1_000_000 +
-    (board.dead ?? 0) * 10_000 + (board.retry ?? 0) * 100 + (board.pending ?? 0);
-  const ordered = [...boardItems].sort((left, right) =>
-    severity(right) - severity(left) || left.board_id.localeCompare(right.board_id));
+  const ordered = [...boardItems].sort(compareBoardPriority);
   const attention = ordered.filter(boardNeedsAttention);
   const healthy = ordered.filter((board) => !boardNeedsAttention(board));
   for (const board of attention) list.append(boardRow(board));
@@ -400,7 +504,7 @@ function renderBoards() {
 }
 
 async function loadBoards(append = false) {
-  const data = await api(`/api/v1/ops/boards?limit=50${append && boardsCursor ? `&cursor=${encodeURIComponent(boardsCursor)}` : ""}`);
+  const data = await api(`/api/v1/ops/boards?limit=${BOARD_PAGE_SIZE}${append && boardsCursor ? `&cursor=${encodeURIComponent(boardsCursor)}` : ""}`);
   boardItems = append ? [...boardItems, ...data.items] : data.items;
   renderBoards();
   boardsCursor = data.next_cursor;
@@ -424,6 +528,24 @@ function renderReleases(data) {
   byId("release-current-time").textContent = time(data.current?.activated_at);
   byId("release-previous").textContent = data.previous ? shortId(data.previous.release_id) : "이전 보존본 정보 없음";
   byId("release-previous-time").textContent = time(data.previous?.activated_at);
+  byId("release-validation").textContent = data.current?.validation
+    ? `${labels[data.current.validation.state] || data.current.validation.state} · 포인터·manifest 확인`
+    : "현재 Worker 확인 실패";
+  byId("release-validation-time").textContent = data.current?.validation
+    ? `${sourceLabels[data.current.validation.source] || data.current.validation.source} · ${time(data.current.validation.as_of)}`
+    : "—";
+  byId("release-smoke").textContent = data.smoke
+    ? `${labels[data.smoke.state] || data.smoke.state} · ${shortId(data.smoke.release_id)}`
+    : "게시 후 smoke 이력 없음";
+  byId("release-smoke-time").textContent = data.smoke
+    ? `${sourceLabels[data.smoke.source] || data.smoke.source} · ${time(data.smoke.as_of)}`
+    : "—";
+  byId("local-recovery").textContent = data.local_recovery
+    ? `${labels[data.local_recovery.state] || data.local_recovery.state} · ${safeCodeLabels[data.local_recovery.code] || data.local_recovery.code || "결과 미보고"}`
+    : "복구 실행 이력 없음";
+  byId("local-recovery-time").textContent = data.local_recovery
+    ? `${sourceLabels[data.local_recovery.source] || data.local_recovery.source} · ${time(data.local_recovery.as_of)}`
+    : "—";
   const counts = byId("release-counts");
   counts.replaceChildren();
   const names = {
@@ -502,8 +624,9 @@ async function cancelCommand(command) {
 
 async function watchCommand(command) {
   renderCommand(command);
-  for (let attempt = 0; attempt < 20 && !terminal.has(command.state); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+  for (let attempt = 0; attempt < COMMAND_WATCH_ATTEMPTS &&
+      !terminal.has(command.state); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, COMMAND_WATCH_INTERVAL_MS));
     command = await api(`/api/v1/ops/commands/${command.command_id}`);
     renderCommand(command);
   }
@@ -512,8 +635,7 @@ async function watchCommand(command) {
 }
 
 async function createCommand(action) {
-  const key = commandKeys.get(action) || `web-${crypto.randomUUID()}`;
-  commandKeys.set(action, key);
+  const key = commandKey(action);
   pendingActions.add(action);
   updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
   let command;
@@ -523,7 +645,7 @@ async function createCommand(action) {
       headers: { "Content-Type": "application/json", "Idempotency-Key": key, "X-ReDSTM-Command": "1" },
       body: JSON.stringify({ action, args: {} }),
     });
-    commandKeys.delete(action);
+    forgetCommandKey(action);
   } finally {
     pendingActions.delete(action);
     updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
@@ -531,29 +653,31 @@ async function createCommand(action) {
   await watchCommand(command);
 }
 
-document.querySelectorAll("[data-action]").forEach((button) => {
-  button.addEventListener("click", () => {
-    selectedAction = button.dataset.action;
-    const [title, impact] = commandCopy[selectedAction];
-    byId("dialog-title").textContent = title;
-    byId("dialog-impact").textContent = impact;
-    byId("command-dialog").showModal();
+if (typeof document !== "undefined") {
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedAction = button.dataset.action;
+      const [title, impact] = commandCopy[selectedAction];
+      byId("dialog-title").textContent = title;
+      byId("dialog-impact").textContent = impact;
+      byId("command-dialog").showModal();
+    });
   });
-});
-byId("command-dialog").addEventListener("close", () => {
-  if (byId("command-dialog").returnValue === "confirm" && selectedAction) {
-    createCommand(selectedAction).catch((error) => showError(error, "수동 작업"));
-  }
-  selectedAction = null;
-});
-byId("refresh").addEventListener("click", () => { void loadAll(); });
-byId("runs-more").addEventListener("click", () => { void loadRuns(true).catch((error) => showError(error, "실행 기록")); });
-byId("boards-more").addEventListener("click", () => { void loadBoards(true).catch((error) => showError(error, "게시판별 진척")); });
-void loadAll();
+  byId("command-dialog").addEventListener("close", () => {
+    if (byId("command-dialog").returnValue === "confirm" && selectedAction) {
+      createCommand(selectedAction).catch((error) => showError(error, "수동 작업"));
+    }
+    selectedAction = null;
+  });
+  byId("refresh").addEventListener("click", () => { void loadAll(); });
+  byId("runs-more").addEventListener("click", () => { void loadRuns(true).catch((error) => showError(error, "실행 기록")); });
+  byId("boards-more").addEventListener("click", () => { void loadBoards(true).catch((error) => showError(error, "게시판별 진척")); });
+  void loadAll();
+}
 async function refreshLoop() {
-  const delay = lastRunner?.state === "running" ? 15_000 : 60_000;
+  const delay = lastRunner?.state === "running" ? ACTIVE_REFRESH_MS : IDLE_REFRESH_MS;
   await new Promise((resolve) => setTimeout(resolve, delay));
   if (!document.hidden) await loadAll().catch(showError);
   void refreshLoop();
 }
-void refreshLoop();
+if (typeof document !== "undefined") void refreshLoop();

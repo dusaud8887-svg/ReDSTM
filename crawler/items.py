@@ -31,6 +31,7 @@ class CapturedPostItem(scrapy.Item):
     external_post_id = scrapy.Field()
     canonical_url = scrapy.Field()
     outcome = scrapy.Field()
+    error_code = scrapy.Field()
     title = scrapy.Field()
     author = scrapy.Field()
     category = scrapy.Field()

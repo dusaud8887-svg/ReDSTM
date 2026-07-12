@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SEARCH_FIELDS, findPost, prepareSearch, searchPosts } from "../public/search-core.js";
+import { createIndexLoader } from "../public/search-worker.js";
 
 const payload = {
   schema_version: 1,
@@ -49,6 +50,57 @@ test("accepts is_aa appended to the search tuple", () => {
     fields: [...SEARCH_FIELDS, "is_aa"],
     posts: [[...payload.posts[0], 2]],
   }), /row/);
+});
+
+test("retries a failed search index load once after two seconds", async () => {
+  const requests = [];
+  const delays = [];
+  let searchAttempts = 0;
+  const load = createIndexLoader({
+    fetcher: async (url) => {
+      requests.push(url);
+      if (url === "/archive/release.json") {
+        return Response.json({ schema_version: 1, search: { object_key: "search/test.json" } });
+      }
+      searchAttempts += 1;
+      return searchAttempts === 1
+        ? new Response("unavailable", { status: 503 })
+        : Response.json(payload);
+    },
+    sleep: async (milliseconds) => { delays.push(milliseconds); },
+  });
+
+  const loaded = await load();
+  assert.equal(loaded.index.rows.length, payload.posts.length);
+  assert.deepEqual(requests, [
+    "/archive/release.json",
+    "/archive/search/test.json",
+    "/archive/release.json",
+    "/archive/search/test.json",
+  ]);
+  assert.deepEqual(delays, [2_000]);
+});
+
+test("clears a rejected index promise so a later message can recover", async () => {
+  let available = false;
+  let requests = 0;
+  const delays = [];
+  const load = createIndexLoader({
+    fetcher: async (url) => {
+      requests += 1;
+      if (!available) return new Response("unavailable", { status: 503 });
+      return url === "/archive/release.json"
+        ? Response.json({ schema_version: 1, search: { object_key: "search/test.json" } })
+        : Response.json(payload);
+    },
+    sleep: async (milliseconds) => { delays.push(milliseconds); },
+  });
+
+  await assert.rejects(load(), /Release manifest could not be loaded/);
+  available = true;
+  assert.equal((await load()).index.rows.length, payload.posts.length);
+  assert.equal(requests, 4);
+  assert.deepEqual(delays, [2_000]);
 });
 
 test("worker exposes release metadata, exact totals, and stable identity resolution", async (context) => {

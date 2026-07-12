@@ -15,6 +15,7 @@ from scrapy.http import Request, Response
 from warcio.statusandheaders import StatusAndHeaders  # type: ignore[import-untyped]
 from warcio.warcwriter import WARCWriter  # type: ignore[import-untyped]
 
+from crawler.settings import REDSTM_WARC_MAX_BYTES
 from crawler.store import ArchiveStore
 
 _CAPTURE_PATH = re.compile(r"^/[a-z0-9_]+(?:/[0-9]+)?$")
@@ -63,7 +64,10 @@ def _response_headers(response: Response) -> list[tuple[str, str]]:
 
 class WarcCaptureMiddleware:
     def __init__(
-        self, path: Path, max_bytes: int = 1 << 30, archive_path: Path | None = None
+        self,
+        path: Path,
+        max_bytes: int = REDSTM_WARC_MAX_BYTES,
+        archive_path: Path | None = None,
     ) -> None:
         if max_bytes < 1:
             raise ValueError("WARC max_bytes must be positive")

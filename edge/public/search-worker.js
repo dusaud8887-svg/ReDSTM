@@ -1,6 +1,8 @@
 import { findPost, prepareSearch, searchPosts } from "./search-core.js";
 
-let indexPromise;
+const INDEX_LOAD_RETRY_DELAY_MS = 2_000;
+const RECENT_POST_LIMIT = 6;
+const MAX_RESOLVE_IDENTITIES = 500;
 
 function requireArchiveResponse(response, message) {
   if (
@@ -14,15 +16,15 @@ function requireArchiveResponse(response, message) {
   if (!response.ok) throw new Error(message);
 }
 
-async function loadIndex() {
-  const releaseResponse = await fetch("/archive/release.json");
+async function loadIndex(fetcher) {
+  const releaseResponse = await fetcher("/archive/release.json");
   requireArchiveResponse(releaseResponse, "Release manifest could not be loaded");
   const release = await releaseResponse.json();
   if (release.schema_version !== 1 || !release.search?.object_key) {
     throw new Error("Release manifest has no supported search index");
   }
 
-  const searchResponse = await fetch(`/archive/${release.search.object_key}`);
+  const searchResponse = await fetcher(`/archive/${release.search.object_key}`);
   requireArchiveResponse(searchResponse, "Search index could not be loaded");
   const index = prepareSearch(await searchResponse.json());
   const lastModified = releaseResponse.headers.get("Last-Modified");
@@ -44,11 +46,34 @@ async function loadIndex() {
   return { index, publishedAt, boardMetadata };
 }
 
-self.addEventListener("message", async ({ data }) => {
+export function createIndexLoader({
+  fetcher = (...args) => fetch(...args),
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  let indexPromise;
+  return function getIndex() {
+    indexPromise ??= (async () => {
+      try {
+        return await loadIndex(fetcher);
+      } catch (error) {
+        if (error?.code === "access_expired") throw error;
+        await sleep(INDEX_LOAD_RETRY_DELAY_MS);
+        return loadIndex(fetcher);
+      }
+    })().catch((error) => {
+      indexPromise = undefined;
+      throw error;
+    });
+    return indexPromise;
+  };
+}
+
+const getIndex = createIndexLoader();
+
+async function handleMessage({ data }) {
   const id = data?.id;
   try {
-    indexPromise ??= loadIndex();
-    const { index, publishedAt, boardMetadata } = await indexPromise;
+    const { index, publishedAt, boardMetadata } = await getIndex();
     if (data?.type === "init") {
       self.postMessage({
         type: "ready",
@@ -57,7 +82,7 @@ self.addEventListener("message", async ({ data }) => {
         boardMetadata,
         count: index.rows.length,
         hasIsAa: index.hasIsAa,
-        recentPosts: searchPosts(index, { limit: 6 }).posts,
+        recentPosts: searchPosts(index, { limit: RECENT_POST_LIMIT }).posts,
         publishedAt,
       });
       return;
@@ -75,8 +100,10 @@ self.addEventListener("message", async ({ data }) => {
       return;
     }
     if (data?.type === "resolve") {
-      if (!Array.isArray(data.identities) || data.identities.length > 500) {
-        throw new Error("Resolve identities must be an array of at most 500 items");
+      if (!Array.isArray(data.identities) || data.identities.length > MAX_RESOLVE_IDENTITIES) {
+        throw new Error(
+          `Resolve identities must be an array of at most ${MAX_RESOLVE_IDENTITIES} items`,
+        );
       }
       const summaries = data.identities.map((identity) => {
         const match = /^([a-z0-9_]+):([1-9]\d*)$/.exec(identity);
@@ -95,4 +122,6 @@ self.addEventListener("message", async ({ data }) => {
       message: error instanceof Error ? error.message : "Search worker failed",
     });
   }
-});
+}
+
+if (typeof self !== "undefined") self.addEventListener("message", handleMessage);

@@ -234,9 +234,12 @@ Reader와 같은 brand/token이지만 더 조밀한 **운영 브리프 + 원장*
 
 stale 사실은 모두 `마지막 보고` 문법을 사용하고 unknown count는 `—`다. status mark는 8px 수준으로
 축소하고 28~34px verdict를 넘지 않는다. mobile은 가로 표나 card stack이 아니라 native disclosure
-row를 쓴다. `sync-now`는 놓친 schedule 보완, `retry-batch`는 due 최대 100건,
-`publish-if-changed`는 `publish.pending` 변경이 있을 때만, pause는 현재 요청을 끝낸 뒤 다음 schedule을
-막고 resume은 marker만 해제한다.
+row를 쓴다. `sync-now`는 놓친 schedule 보완, `retry-batch`는 due 최대 100건이다.
+schedule enabled와 실제 automatic run evidence는 분리한다. enabled지만 running/completed automatic
+run 이력이 없으면 `자동 실행 확인 전`으로 표시하고 healthy/on으로 합성하지 않는다.
+`publish-if-changed`는 `publish.pending` 유무와 무관하게 bounded state/fingerprint reconciliation과
+authenticated smoke를 실행하며, marker는 최초 미게시 변경의 age/intent 신호로만 표시한다. pause는
+현재 요청을 끝낸 뒤 다음 schedule을 막고 resume은 marker만 해제한다.
 
 KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 시각과 정확한 denominator를 둔다.
 
@@ -252,6 +255,7 @@ KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 �
 | unavailable | restricted/deleted/missing 구분 | source/prev/next |
 | fetch failure | short safe code와 last good release | retry/back |
 | stale ops | expected time와 마지막 heartbeat | refresh/diagnose |
+| schedule unverified | enabled, automatic run evidence 없음 | 첫 자동 실행/canary 확인 |
 | active run | step, board, counts, stop availability | pause-after-current |
 | command queued | command ID, expiry, requester | cancel before claim |
 
@@ -278,10 +282,10 @@ KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 �
 8. never-enrolled/stale/empty-telemetry/readable-release fixtures
 9. actual device and live Access screenshot acceptance
 
-1~5와 7~8의 visual/core state는 1440/768/390/320px self-contained fixture에서 완료했다. 6의
-field별 source/as-of, active/latest 분리와 due/last/cooldown eligibility, 9와 새 bundle의
-authenticated 실데이터 smoke가 남았다. 기능 baseline을 먼저 보존하고 한 Phase당 최대 5개 파일로
-적용한다.
+1~8의 visual/core state와 6의 field별 source/as-of, active/latest 분리, action
+eligibility/disabled reason, Worker validation/publish smoke/local recovery evidence는 local fixture에서
+완료했다. 9의 actual device와 새 bundle의 authenticated live acceptance가 남았다. 기능 baseline을
+먼저 보존하고 한 Phase당 최대 5개 파일로 적용한다.
 
 ## 10. 디자인 완료 정의
 

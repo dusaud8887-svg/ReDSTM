@@ -39,15 +39,16 @@
   (`58a70799` historical live checkpoint)
 - 홈/탐색/보관함 IA 분리, `/saved?view=recent`, AA/소설 filter UI(현재 7-field release에서는 disabled), 미완독 이어읽기, catalog scroll 복원,
   모바일 직접 저장/집중 종료, 모든 폭의 Operations 진입점, AA 댓글 설정 연동(live)
-- white canvas/near-white chrome 전역 palette, compact Operations verdict, stale/unknown core state,
-  disclosure ledger와 기본 state disable/idempotent command retry (`local`, 4 viewport fixture)
+- white canvas/near-white chrome 전역 palette, compact Operations verdict, stale/unknown/unverified core state,
+  disclosure ledger와 기본 state disable, server same-intent replay 및 same-tab reload command-key 재사용
+  (`local`, 4 viewport fixture)
 
 ### 남은 acceptance
 
 - 실제 Android Back/background/pinch/font와 사용자 시각 acceptance
 - 실제 Android에서 282,239건 full search index memory/tab reclaim 측정
 - duplicate command와 실제 crawl outage의 Operations 상태 증거
-- Operations field별 source/as-of, active/latest 분리와 due/last/cooldown eligibility
+- Operations local 의미 계약의 production 재검증과 duplicate/outage 상태 증거
 - 7일 shadow의 idle/running/degraded/stale/failed 상태 증거
 - cross-tab user-state 충돌 처리, collection 목차 sheet와 100건 초과 탐색은 실사용 증거 뒤 P1
 
@@ -151,7 +152,7 @@ Freshness 계약:
 | transition | CSS, View Transition progressive only |
 | command/status | fetch + bounded polling |
 
-Operations live 상태는 active screen에서 5–10초 polling, background에서 30–60초로 낮춘다. D1/Worker
+Operations live 상태는 active run 중 15초, idle 중 60초 polling하고 background tab에서는 요청하지 않는다. D1/Worker
 장애 때 aggressive reconnect loop를 만들지 않고 capped exponential backoff를 쓴다.
 
 ## 6. Library·fork 판정
@@ -197,7 +198,7 @@ fork할 project는 없다.
 ### Redesign
 
 - 5-item legacy mobile nav → 4 top-level destinations
-- FloatingToolbar → Reader primary action 4개
+- FloatingToolbar → Reader primary action 5개
 - crawler presets → fixed safe workflow
 - raw logs → structured steps + safe tail
 - coverage percentage → exact numerator/denominator/state

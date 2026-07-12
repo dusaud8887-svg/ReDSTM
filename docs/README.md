@@ -25,10 +25,21 @@
    native-first file layout, library 판단, frontend implementation order
 9. [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md)
    Oracle runtime, systemd, recovery evidence, canary, cutover와 cleanup
+10. [`11_configuration_and_policy.md`](11_configuration_and_policy.md)
+   설정 분류, source of truth, 환경변수, 운영 기본값과 변경 gate
+11. [`12_release_and_recovery.md`](12_release_and_recovery.md)
+   CI와 production 분리, coordinated Cloudflare/Oracle release, rollback과 report 계약
 
 `00`이 제품/architecture의 source of truth이고 `04`가 실행 상태의 source of truth다.
-`05`~`10`은 각각 시각, 제품 경험, reader/AA, operations, frontend, runner의 세부 계약이다.
+`05`~`12`는 각각 시각, 제품 경험, reader/AA, operations, frontend, runner, 설정, release의 세부 계약이다.
 상충하면 임의 구현하지 않고 `00`/ADR을 먼저 갱신한다.
+
+문서의 상태 표현은 다음처럼 구분한다.
+
+- **Repository target**: 현재 코드·migration·배포 선언이 구현하고 local gate로 검증한 계약
+- **Live checkpoint**: 날짜와 증거가 있는 마지막 Cloudflare/Oracle 관측값; repository target에서 추론하지 않음
+- **Pending gate**: production 완료로 판정하기 전에 실제 환경에서 통과해야 할 검증
+- `done/`과 `archive/`: 당시 실행 증거인 역사 기록이며 현재 계약을 덮어쓰지 않음
 
 ## 최종 배치
 
@@ -59,7 +70,8 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 
 - verified legacy source와 schema v3 canonical/independent local restore
 - bounded crawler core, session/parser/WARC/frontier와 recovery retry/failure regression
-- deterministic gzip/zstd level 15 full export와 count 검증
+- 초기 deterministic gzip/zstd level 15 full baseline과 count 검증; 현재 repository target은 post
+  object level 15, bounded aggregate `-v2` object level 6
 - Worker Static Assets, private R2, Access email/MFA와 authenticated shell
 - R2 baseline 5,148,165,450 bytes/282,289 objects, check 차이 0와 pointer 검증
 - R2 synthetic versioned manifest pointer rollback과 현재 release 복귀 검증
@@ -79,7 +91,8 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
   4-viewport 구현
 - complete listing seed, sync mid-board breaker, 30분 session 재검증, cycle-wide writer lock,
   subprocess hard bound와 bounded dead revive의 local crawler 구현
-- schema v3 inventory cursor와 automatic bootstrap/recovery, Operations telemetry의 local 검증
+- schema v3 inventory cursor, schema v4 durable listing 댓글 기대치와 automatic bootstrap/recovery,
+  Operations telemetry의 local 검증
 - 홈/탐색/보관함 IA, current-release 미완독 이어읽기, catalog scroll, 모바일 직접 저장/집중 종료,
   AA 댓글 설정 연동의 4-viewport local 검증
 
@@ -100,16 +113,22 @@ done/retry/dead 전이 구조를 갖고, 앞서 확인한 safety gap은 로컬 �
 board 진척 값은 비어 있으며 production 완료가 아니다. 2026-07-12 bounded live crawl은 `write_free21` 한 글을 canonical에 정상 적재했고
 WARC/outcome/frontier까지 검증했다. 이어진 export는 600초 동안 282,240건 중 6,000건을 재검사한 뒤
 시간 상한으로 중단됐다. R2 pointer는 이전 release 그대로이고 `publish.pending`도 보존했으므로 delta
-publish/readback/rollback을 통과했다고 보지 않는다. 이는 한 글 변경에도 전체 canonical을 다시 읽는
-exporter가 남은 P0 병목이라는 증거다. crawler 실측과 남은 근거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에
-두며, bounded recovery·delta, duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
+publish/readback/rollback을 통과했다고 보지 않는다. 이 과거 실측을 근거로 repository target은
+finalized export state, changed-post cap과 bounded manifest/object 검증을 사용하는 incremental
+export/publish로 교체됐다. `/srv/redstm/static/.export-state.json`과 publish ledger는 R2에서 제외되며,
+없거나 불일치한 automatic run은 full scan 대신 partial로 닫고 기존 `publish.pending`이 있으면
+유지한다. marker 부재와 무관하게 각 publish 단계는 bounded state/ledger reconciliation을 수행한다. 현재
+baseline은 명시적 full export/publish bootstrap과 authenticated delta readback/rollback canary를
+통과하지 않았으므로 schedule은 disabled다. crawler 실측과 남은 근거는
+[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에
+두며, bounded recovery/delta live canary, duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 
 ### 구현 필요
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
 1. 실제 Android/frontend acceptance
-2. time/failure-bounded inventory·recovery·실제 delta publish canary
+2. 명시적 full export/publish bootstrap 뒤 time/failure-bounded inventory·recovery·실제 delta publish canary
 3. duplicate command와 실제 crawl 중 D1/Worker outage canary
 4. schedule 활성 상태의 24시간 canary, 7일 shadow와 cutover
 
@@ -140,8 +159,8 @@ exporter가 남은 P0 병목이라는 증거다. crawler 실측과 남은 근거
 구성, 배포, canary, recovery 검증, Git commit/push와 rollback을 에이전트가 직접 수행하도록 승인했다.
 비파괴·복구 가능한 작업은 반복 승인을 요구하지 않는다.
 
-GitHub CLI login과 remote read는 확인됐다. Wrangler OAuth에 Access 관리 권한이 없으므로 A3에는
-scoped API token 또는 로그인된 Chrome 사용의 명시 승인이 필요하다([04 §6.3](04_implementation_plan.md)).
+GitHub CLI login과 remote read는 확인됐다. Wrangler OAuth의 Access 관리 권한 부족은 사용자가
+승인한 로그인 Chrome으로 필요한 Access application/policy/service token을 구성해 해소했다.
 
 instance/volume/network, 마지막 검증 사본, manifest 없는 data 삭제와 합의 예산 초과는 hard stop이다.
 credential 원문은 docs/chat/Git/log에 기록하지 않는다. 전체 경계는

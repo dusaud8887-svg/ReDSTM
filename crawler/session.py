@@ -17,6 +17,13 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 from filelock import FileLock, Timeout
 from parsel import Selector
 
+from crawler.settings import (
+    REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECONDS,
+    REDSTM_SESSION_HTML_MAX_BYTES,
+    REDSTM_SESSION_LIFETIME_SECONDS,
+    REDSTM_SESSION_TIMEOUT_SECONDS,
+)
+
 if TYPE_CHECKING:
     from scrapy.http.request import VerboseCookie
 
@@ -25,9 +32,8 @@ _TYPEMOON_DOMAINS = {"typemoon.net", "www.typemoon.net"}
 _BASE_URL = "https://www.typemoon.net/"
 _LOGIN_PAGE_URL = f"{_BASE_URL}bbs/login.php"
 _LOGIN_CHECK_URL = f"{_BASE_URL}bbs/login_check.php"
-_SESSION_LIFETIME = timedelta(hours=4)
-_AUTO_LOGIN_MIN_INTERVAL = timedelta(minutes=30)
-_MAX_SESSION_HTML_BYTES = 8 * 1024 * 1024
+_SESSION_LIFETIME = timedelta(seconds=REDSTM_SESSION_LIFETIME_SECONDS)
+_AUTO_LOGIN_MIN_INTERVAL = timedelta(seconds=REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECONDS)
 
 
 class SessionRefreshError(RuntimeError):
@@ -112,17 +118,17 @@ def ensure_session_export(
     password: str,
     user_agent: str,
     now: datetime | None = None,
-    timeout: float = 30.0,
+    timeout: float = REDSTM_SESSION_TIMEOUT_SECONDS,
 ) -> SessionExport:
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
         raise SessionRefreshError("current time must include a timezone")
     try:
-        session = load_session_export(path, now=current, allow_expired=True)
-    except OSError, ValueError:
-        session = None
-    if session is not None and _session_is_authenticated(session, timeout=timeout):
-        return session
+        return validate_session_export(path, now=current, timeout=timeout)
+    except SessionNetworkError:
+        raise
+    except OSError, SessionRefreshError, ValueError:
+        pass
     _reserve_automatic_login(Path(path), current)
     return refresh_session_export(
         path,
@@ -132,6 +138,22 @@ def ensure_session_export(
         now=current,
         timeout=timeout,
     )
+
+
+def validate_session_export(
+    path: str | Path,
+    *,
+    now: datetime | None = None,
+    timeout: float = REDSTM_SESSION_TIMEOUT_SECONDS,
+) -> SessionExport:
+    """Validate an existing export without ever attempting a form login."""
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        raise SessionRefreshError("current time must include a timezone")
+    session = load_session_export(path, now=current, allow_expired=True)
+    if not _session_is_authenticated(session, timeout=timeout):
+        raise SessionRefreshError("TypeMoon session is no longer authenticated")
+    return session
 
 
 def _reserve_automatic_login(path: Path, now: datetime) -> None:
@@ -153,7 +175,7 @@ def _reserve_automatic_login(path: Path, now: datetime) -> None:
                     raise AutomaticLoginThrottleError("automatic login throttle marker is invalid")
                 if now < previous or now - previous < _AUTO_LOGIN_MIN_INTERVAL:
                     raise AutomaticLoginThrottleError(
-                        "automatic login is limited to once every 30 minutes"
+                        "automatic login is limited by the configured retry interval"
                     )
             temporary: Path | None = None
             try:
@@ -219,7 +241,7 @@ def refresh_session_export(
     password: str,
     user_agent: str,
     now: datetime | None = None,
-    timeout: float = 30.0,
+    timeout: float = REDSTM_SESSION_TIMEOUT_SECONDS,
 ) -> SessionExport:
     if not user_id or not password:
         raise SessionRefreshError("TypeMoon credentials are missing")
@@ -306,9 +328,9 @@ def refresh_session_export(
 def _read_html(response: object, *, complete: Callable[[str], bool]) -> str:
     charset = response.headers.get_content_charset() or "utf-8"  # type: ignore[attr-defined]
     body = bytearray()
-    while len(body) < _MAX_SESSION_HTML_BYTES:
+    while len(body) < REDSTM_SESSION_HTML_MAX_BYTES:
         chunk = response.read(  # type: ignore[attr-defined]
-            min(16 * 1024, _MAX_SESSION_HTML_BYTES - len(body))
+            min(16 * 1024, REDSTM_SESSION_HTML_MAX_BYTES - len(body))
         )
         if not chunk:
             break
@@ -316,8 +338,8 @@ def _read_html(response: object, *, complete: Callable[[str], bool]) -> str:
         html = body.decode(charset, "replace")
         if complete(html):
             return html
-    if len(body) == _MAX_SESSION_HTML_BYTES:
-        raise SessionRefreshError("TypeMoon session response exceeded 8 MiB")
+    if len(body) == REDSTM_SESSION_HTML_MAX_BYTES:
+        raise SessionRefreshError("TypeMoon session response exceeded the configured safety limit")
     return body.decode(charset, "replace")
 
 

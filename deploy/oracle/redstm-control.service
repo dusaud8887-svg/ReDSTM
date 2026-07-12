@@ -15,6 +15,7 @@ ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner
 Restart=no
 TimeoutStartSec=5h
 Nice=10
+IOSchedulingClass=idle
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

@@ -18,6 +18,9 @@ const counterNames = new Set([
   "inventory_in_progress_boards",
 ]);
 
+export const CLIENT_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+export const NEXT_SCHEDULE_MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
+
 export function envelope(requestId, data, status = 200) {
   return Response.json(
     { api_version: 1, request_id: requestId, server_time: new Date().toISOString(), data },

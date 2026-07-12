@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, cast
 from uuid import uuid4
 
 import pytest
 
 from crawler.archive import connect_archive, initialize_archive
 from scripts.control_client import ControlClient
-from scripts.control_runner import ControlRunner, RunnerProfile, _next_scheduled_at
+from scripts.control_runner import (
+    ControlRunner,
+    RunnerProfile,
+    _installed_next_scheduled_at,
+    _next_scheduled_at,
+    _parse_args,
+)
 from scripts.control_store import ControlStore
 
 
@@ -77,6 +86,38 @@ def _runner(tmp_path: Path, api: Api) -> tuple[ControlRunner, ControlStore]:
     return ControlRunner(profile, client, store), store
 
 
+def _static_release(root: Path, marker: str) -> str:
+    body = (json.dumps({"schema_version": 1, "marker": marker}, sort_keys=True) + "\n").encode()
+    release_key = f"releases/{hashlib.sha256(body).hexdigest()}.json"
+    target = root / release_key
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(body)
+    return release_key
+
+
+def _write_smoke_marker(
+    profile: RunnerProfile,
+    release_key: str,
+    previous_release_key: str | None,
+) -> Path:
+    marker = profile.static_root / ".publish-smoke.pending.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "remote": profile.remote,
+                "release_key": release_key,
+                "previous_release_key": previous_release_key,
+                "remote_bytes": 1000,
+                "remote_objects": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return marker
+
+
 def _command(action: str) -> dict[str, Any]:
     return {
         "command_id": str(uuid4()),
@@ -96,7 +137,23 @@ def _command(action: str) -> dict[str, Any]:
     ],
 )
 def test_next_schedule_uses_the_systemd_base_slots(now: datetime, expected: str) -> None:
-    assert _next_scheduled_at(now) == expected
+    assert _next_scheduled_at("*-*-* 00,06,12,18:17:00 UTC", now) == expected
+
+
+def test_installed_schedule_rejects_unsupported_systemd_calendar_syntax(tmp_path: Path) -> None:
+    timer = tmp_path / "redstm-schedule.timer"
+    timer.write_text(
+        "[Timer]\nOnCalendar=*-*-* 00,06,12,18:17:00 UTC\n",
+        encoding="utf-8",
+    )
+    assert (
+        _installed_next_scheduled_at(timer, datetime(2026, 7, 12, 0, 17, tzinfo=UTC))
+        == "2026-07-12T06:17:00Z"
+    )
+
+    timer.write_text("[Timer]\nOnCalendar=*-*-* 00/6:17:00 UTC\n", encoding="utf-8")
+
+    assert _installed_next_scheduled_at(timer) is None
 
 
 def test_heartbeat_only_reports_a_next_run_for_an_active_timer(
@@ -105,11 +162,109 @@ def test_heartbeat_only_reports_a_next_run_for_an_active_timer(
     api = Api([None])
     runner, _store = _runner(tmp_path, api)
     monkeypatch.setattr(runner, "_schedule_timer_active", lambda: True)
+    monkeypatch.setattr(runner, "_next_scheduled_at", lambda: "2026-07-12T06:17:00Z")
 
     assert runner.run_once()["status"] == "idle"
 
     heartbeat = next(payload for path, payload in api.calls if path.endswith("/heartbeat"))
     assert heartbeat["next_scheduled_at"] is not None
+
+
+def test_active_timer_with_an_unreadable_calendar_is_degraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = Api([None])
+    runner, _store = _runner(tmp_path, api)
+    monkeypatch.setattr(runner, "_schedule_timer_active", lambda: True)
+    monkeypatch.setattr(runner, "_next_scheduled_at", lambda: None)
+
+    runner.run_once()
+
+    heartbeat = next(payload for path, payload in api.calls if path.endswith("/heartbeat"))
+    assert heartbeat["state"] == "degraded"
+    assert heartbeat["next_scheduled_at"] is None
+
+
+def test_heartbeat_warning_producers_use_configured_thresholds(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    now = datetime(2026, 7, 12, tzinfo=UTC)
+
+    runner.profile = replace(runner.profile, disk_low_bytes=100)
+    assert runner._safe_warning(99, now) == "disk_low"
+
+    runner.profile = replace(
+        runner.profile,
+        disk_low_bytes=0,
+        token_expires_at=now + timedelta(hours=1),
+        token_expiring_seconds=2 * 60 * 60,
+    )
+    assert runner._safe_warning(99, now) == "token_expiring"
+
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    os.utime(marker, (now.timestamp() - 7200, now.timestamp() - 7200))
+    runner.profile = replace(
+        runner.profile,
+        token_expires_at=None,
+        publish_stale_seconds=60 * 60,
+    )
+    assert runner._safe_warning(99, now) == "publish_stale"
+
+    marker.unlink()
+    smoke_marker = runner.profile.static_root / ".publish-smoke.pending.json"
+    smoke_marker.parent.mkdir(parents=True, exist_ok=True)
+    smoke_marker.touch()
+    os.utime(smoke_marker, (now.timestamp() - 7200, now.timestamp() - 7200))
+    assert runner._safe_warning(99, now) == "publish_stale"
+
+
+def test_recent_permanent_control_rejection_becomes_a_generic_warning(tmp_path: Path) -> None:
+    runner, store = _runner(tmp_path, Api([]))
+    now = datetime(2026, 7, 12, tzinfo=UTC)
+    runner.profile = replace(
+        runner.profile,
+        disk_low_bytes=0,
+        control_rejection_warning_seconds=24 * 60 * 60,
+        token_expires_at=None,
+        publish_stale_seconds=0,
+    )
+    store.record_rejection("invalid_payload", now=now - timedelta(hours=1))
+
+    assert runner._safe_warning(0, now) == "control_rejected"
+    assert runner._safe_warning(0, now + timedelta(hours=25)) is None
+    assert runner._safe_warning(0, now - timedelta(hours=2)) is None
+
+
+def test_warning_thresholds_load_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDSTM_DISK_LOW_BYTES", "123")
+    monkeypatch.setenv("REDSTM_CONTROL_REJECTION_WARNING_SECONDS", "234")
+    monkeypatch.setenv("REDSTM_ACCESS_TOKEN_EXPIRES_AT", "2026-07-13T00:00:00Z")
+    monkeypatch.setenv("REDSTM_TOKEN_EXPIRING_SECONDS", "456")
+    monkeypatch.setenv("REDSTM_PUBLISH_STALE_SECONDS", "789")
+    monkeypatch.setattr("sys.argv", ["control-runner"])
+
+    args = _parse_args()
+
+    assert args.disk_low_bytes == 123
+    assert args.control_rejection_warning_seconds == 234
+    assert args.token_expires_at == datetime(2026, 7, 13, tzinfo=UTC)
+    assert args.token_expiring_seconds == 456
+    assert args.publish_stale_seconds == 789
+
+
+def test_new_changes_preserve_the_oldest_pending_publish_age(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.write_text("changed_at=2026-07-11T00:00:00Z\n", encoding="utf-8")
+    os.utime(marker, (1_000_000_000, 1_000_000_000))
+    before = marker.stat().st_mtime_ns
+
+    runner._write_publish_marker()
+
+    assert marker.read_text(encoding="utf-8") == "changed_at=2026-07-11T00:00:00Z\n"
+    assert marker.stat().st_mtime_ns == before
 
 
 def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> None:
@@ -296,23 +451,346 @@ def test_interrupted_local_run_replays_failure_without_reexecution(tmp_path: Pat
     assert row is not None and row["reported_at"] is not None
 
 
-def test_publish_without_change_is_a_process_free_noop(
+def test_permanent_terminal_rejection_does_not_block_the_next_local_command(
+    tmp_path: Path,
+) -> None:
+    profile = _profile(tmp_path)
+    store = ControlStore(profile.state_db)
+    first = _command("pause-after-current")
+    second = _command("resume-schedule")
+    for offset, command in enumerate((first, second)):
+        store.record_claim(
+            command["command_id"],
+            command["action"],
+            now=datetime(2026, 7, 12, 0, offset, tzinfo=UTC),
+        )
+        store.finish_command(
+            command["command_id"],
+            "succeeded",
+            "schedule_paused" if offset == 0 else "schedule_resumed",
+        )
+
+    def sender(
+        path: str, _body: bytes, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        if first["command_id"] in path:
+            payload = {
+                "api_version": 1,
+                "request_id": headers["X-Request-Id"],
+                "server_time": "2026-07-12T00:00:00.000Z",
+                "error": {"code": "command_not_found", "message": "rejected"},
+            }
+            return 404, {}, json.dumps(payload).encode()
+        payload = {
+            "api_version": 1,
+            "request_id": headers["X-Request-Id"],
+            "server_time": "2026-07-12T00:00:00.000Z",
+            "data": {"accepted": True},
+        }
+        return 200, {}, json.dumps(payload).encode()
+
+    runner = ControlRunner(
+        profile,
+        ControlClient("https://archive.example", "client-id", "client-secret", sender=sender),
+        store,
+    )
+
+    assert runner.run_once()["command_id"] == first["command_id"]
+    first_row = store.command(first["command_id"])
+    assert first_row is not None
+    assert first_row["report_state"] == "permanently_rejected"
+    assert json.loads(first_row["result_json"])["code"] == "schedule_paused"
+    assert runner.run_once()["command_id"] == second["command_id"]
+    second_row = store.command(second["command_id"])
+    assert second_row is not None and second_row["report_state"] == "delivered"
+    assert store.pending_commands() == []
+    rejection = store.rejection()
+    assert rejection is not None and rejection["last_code"] == "command_not_found"
+
+
+def test_publish_without_marker_always_reconciles_and_smokes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     command = _command("publish-if-changed")
     api = Api([command])
     runner, store = _runner(tmp_path, api)
-    monkeypatch.setattr(
-        "scripts.control_runner.subprocess.Popen",
-        lambda *_args, **_kwargs: pytest.fail("publish process must not start"),
-    )
+    commands: list[list[str]] = []
+
+    def wait(command_line: list[str], *_args: object, **kwargs: object) -> int:
+        commands.append(command_line)
+        module = command_line[command_line.index("-m") + 1]
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": f"releases/{'a' * 64}.json",
+                        "previous_release_key": None,
+                        "previous_release_verified": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
 
     report = runner.run_once()
 
     assert report["status"] == "succeeded"
+    assert [command_line[command_line.index("-m") + 1] for command_line in commands] == [
+        "scripts.export_static",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+    ]
+    assert "--incremental-only" in commands[0]
+    assert "--verified-incremental" in commands[1]
     row = store.command(command["command_id"])
     assert row is not None
-    assert json.loads(row["result_json"])["code"] == "publish_no_change"
+    assert json.loads(row["result_json"])["code"] == "publish_succeeded"
+    assert not (runner.profile.state_dir / "publish.pending").exists()
+
+
+def test_publish_smoke_success_closes_the_durable_activation_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    current = _static_release(runner.profile.static_root, "current")
+    smoke_marker = _write_smoke_marker(runner.profile, current, None)
+    publish_calls = 0
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        nonlocal publish_calls
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static":
+            publish_calls += 1
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "activation_pending_smoke": publish_calls == 1,
+                        "previous_release_key": None,
+                        "previous_release_verified": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report["ok"] is True
+    assert report["status"] == "succeeded"
+    assert report["release_smoke_verified"] is True
+    assert report["preexisting_activation_reconciled"] is True
+    assert not smoke_marker.exists()
+
+
+def test_pending_smoke_is_reconciled_before_a_failing_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    publish_marker = runner.profile.state_dir / "publish.pending"
+    publish_marker.touch()
+    current = _static_release(runner.profile.static_root, "current")
+    smoke_marker = _write_smoke_marker(runner.profile, current, None)
+    commands: list[str] = []
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        module = command[command.index("-m") + 1]
+        commands.append(module)
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "pending_smoke": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "smoke_marker_release_key": current,
+                        "activation_pending_smoke": True,
+                        "rollback_already_active": False,
+                        "previous_release_key": None,
+                        "previous_release_verified": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 1 if module == "scripts.export_static" else 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report["safe_code"] == "export_failed"
+    assert commands == [
+        "scripts.publish_static",
+        "scripts.release_smoke",
+        "scripts.export_static",
+    ]
+    assert not smoke_marker.exists()
+    assert publish_marker.is_file()
+
+
+def test_publish_reconciles_an_unverified_active_release_before_the_new_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    publish_marker = runner.profile.state_dir / "publish.pending"
+    publish_marker.touch()
+    active = _static_release(runner.profile.static_root, "active")
+    desired = _static_release(runner.profile.static_root, "desired")
+    smoke_marker = _write_smoke_marker(runner.profile, active, None)
+    commands: list[str] = []
+    publish_calls = 0
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        nonlocal publish_calls
+        module = command[command.index("-m") + 1]
+        commands.append(module)
+        if module == "scripts.publish_static":
+            publish_calls += 1
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            if publish_calls == 1:
+                report = {
+                    "ok": True,
+                    "mode": "noop",
+                    "release_key": active,
+                    "activation_pending_smoke": True,
+                    "previous_release_key": None,
+                    "previous_release_verified": False,
+                }
+            else:
+                _write_smoke_marker(runner.profile, desired, active)
+                report = {
+                    "ok": True,
+                    "mode": "delta",
+                    "release_key": desired,
+                    "activation_pending_smoke": True,
+                    "previous_release_key": active,
+                    "previous_release_verified": True,
+                }
+            output.write_text(json.dumps(report), encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report["ok"] is True
+    assert report["release_key"] == desired
+    assert report["preexisting_activation_reconciled"] is True
+    assert commands == [
+        "scripts.publish_static",
+        "scripts.release_smoke",
+        "scripts.export_static",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+    ]
+    assert not smoke_marker.exists()
+    assert not publish_marker.exists()
+
+
+def test_publish_smoke_confirmation_failure_is_terminal_and_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    publish_marker = runner.profile.state_dir / "publish.pending"
+    publish_marker.touch()
+    current = _static_release(runner.profile.static_root, "current")
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "activation_pending_smoke": True,
+                        "previous_release_key": None,
+                        "previous_release_verified": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report == {
+        "ok": False,
+        "status": "failed",
+        "safe_code": "publish_smoke_confirmation_failed",
+        "attempted_release_key": current,
+        "release_smoke_verified": True,
+    }
+    assert publish_marker.is_file()
+
+
+def test_manual_terminal_replay_without_marker_does_not_hide_a_later_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, store = _runner(tmp_path, Api([]))
+    command = _command("sync-now")
+    store.record_claim(command["command_id"], command["action"])
+    store.finish_command(
+        command["command_id"],
+        "succeeded",
+        "cycle_succeeded",
+        result_payload=runner._finish_payload(
+            "succeeded",
+            "cycle_succeeded",
+            {"changed_posts": 1, "failed_posts": 0, "boards_ok": 1, "boards_failed": 0},
+        ),
+    )
+    assert runner.run_once()["status"] == "replayed"
+    assert not (runner.profile.state_dir / "publish.pending").exists()
+    commands: list[str] = []
+
+    def wait(command_line: list[str], *_args: object, **kwargs: object) -> int:
+        module = command_line[command_line.index("-m") + 1]
+        commands.append(module)
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "delta",
+                        "release_key": f"releases/{'a' * 64}.json",
+                        "previous_release_key": f"releases/{'b' * 64}.json",
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report["ok"] is True
+    assert commands == ["scripts.export_static", "scripts.publish_static", "scripts.release_smoke"]
 
 
 def test_publish_retries_on_the_next_cycle_even_with_a_legacy_completion_marker(
@@ -341,11 +819,385 @@ def test_publish_retries_on_the_next_cycle_even_with_a_legacy_completion_marker(
 
     monkeypatch.setattr(runner, "_wait", wait)
 
-    report = runner._execute_action("publish-if-changed", "publish", "publish")
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
 
     assert report["status"] == "succeeded"
-    assert len(commands) == 2
+    assert [command[command.index("-m") + 1] for command in commands] == [
+        "scripts.export_static",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+    ]
+    assert "--incremental-only" in commands[0]
+    assert "--verified-incremental" in commands[1]
     assert not (runner.profile.state_dir / "publish.pending").exists()
+
+
+def test_publish_smoke_failure_rolls_back_and_verifies_the_previous_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    current = f"releases/{'a' * 64}.json"
+    previous = f"releases/{'b' * 64}.json"
+    commands: list[list[str]] = []
+    smoke_calls = 0
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        nonlocal smoke_calls
+        commands.append(command)
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static" and "--activate" not in command:
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "delta",
+                        "release_key": current,
+                        "previous_release_key": previous,
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        if module == "scripts.release_smoke":
+            smoke_calls += 1
+            return 1 if smoke_calls == 1 else 0
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
+
+    assert report == {
+        "ok": False,
+        "status": "failed",
+        "safe_code": "publish_smoke_failed_rolled_back",
+        "attempted_release_key": current,
+        "previous_release_key": previous,
+        "rollback_pointer_verified": True,
+        "rollback_smoke_verified": True,
+    }
+    assert marker.is_file()
+    assert [command[command.index("-m") + 1] for command in commands] == [
+        "scripts.export_static",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+    ]
+    rollback = commands[3]
+    assert rollback[rollback.index("--activate") + 1] == previous
+    assert commands[4][-1] == "b" * 64
+
+
+@pytest.mark.parametrize(
+    ("failure", "safe_code", "pointer_verified", "command_count"),
+    [
+        ("activate", "publish_rollback_failed", False, 4),
+        ("smoke", "publish_rollback_smoke_failed", True, 5),
+    ],
+)
+def test_publish_rollback_failure_is_terminal_and_keeps_the_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    safe_code: str,
+    pointer_verified: bool,
+    command_count: int,
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    current = f"releases/{'a' * 64}.json"
+    previous = f"releases/{'b' * 64}.json"
+    commands: list[list[str]] = []
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        commands.append(command)
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static" and "--activate" not in command:
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "delta",
+                        "release_key": current,
+                        "previous_release_key": previous,
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        if module == "scripts.release_smoke":
+            return 1
+        if "--activate" in command:
+            return 1 if failure == "activate" else 0
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
+
+    assert report["safe_code"] == safe_code
+    assert report["rollback_pointer_verified"] is pointer_verified
+    assert report["rollback_smoke_verified"] is False
+    assert report["ok"] is False
+    assert marker.is_file()
+    assert len(commands) == command_count
+
+
+def test_publish_smoke_failure_without_a_previous_release_never_claims_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    current = f"releases/{'a' * 64}.json"
+    commands: list[list[str]] = []
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        commands.append(command)
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "delta",
+                        "release_key": current,
+                        "previous_release_key": None,
+                        "previous_release_verified": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 1 if module == "scripts.release_smoke" else 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
+
+    assert report["safe_code"] == "publish_rollback_unavailable"
+    assert report["previous_release_key"] is None
+    assert report["rollback_pointer_verified"] is False
+    assert report["rollback_smoke_verified"] is False
+    assert marker.is_file()
+    assert len(commands) == 3
+
+
+def test_publish_noop_smoke_failure_never_rolls_back_an_unchanged_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    current = f"releases/{'a' * 64}.json"
+    previous = f"releases/{'b' * 64}.json"
+    commands: list[list[str]] = []
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        commands.append(command)
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "previous_release_key": previous,
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 1 if module == "scripts.release_smoke" else 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
+
+    assert report["safe_code"] == "publish_smoke_failed"
+    assert report["previous_release_key"] is None
+    assert report["rollback_pointer_verified"] is False
+    assert marker.is_file()
+    assert [command[command.index("-m") + 1] for command in commands] == [
+        "scripts.export_static",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+    ]
+
+
+def test_publish_noop_after_interrupted_activation_rolls_back_on_smoke_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    current = _static_release(runner.profile.static_root, "current")
+    previous = _static_release(runner.profile.static_root, "previous")
+    smoke_marker = _write_smoke_marker(runner.profile, current, previous)
+    commands: list[list[str]] = []
+    smoke_calls = 0
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        nonlocal smoke_calls
+        commands.append(command)
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static" and "--activate" not in command:
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "activation_pending_smoke": True,
+                        "ledger_recovered": False,
+                        "previous_release_key": previous,
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        if module == "scripts.release_smoke":
+            smoke_calls += 1
+            return 1 if smoke_calls == 1 else 0
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
+
+    assert report["safe_code"] == "publish_smoke_failed_rolled_back"
+    assert report["rollback_pointer_verified"] is True
+    assert report["rollback_smoke_verified"] is True
+    assert marker.is_file()
+    assert not smoke_marker.exists()
+    rollback = commands[2]
+    assert rollback[rollback.index("--activate") + 1] == previous
+
+
+def test_publish_recovery_finishes_an_interrupted_rollback_before_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    publish_marker = runner.profile.state_dir / "publish.pending"
+    publish_marker.touch()
+    attempted = _static_release(runner.profile.static_root, "attempted")
+    previous = _static_release(runner.profile.static_root, "previous")
+    smoke_marker = _write_smoke_marker(runner.profile, attempted, previous)
+    commands: list[str] = []
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        module = command[command.index("-m") + 1]
+        commands.append(module)
+        if module == "scripts.publish_static":
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "pending_smoke": True,
+                        "mode": "noop",
+                        "release_key": previous,
+                        "smoke_marker_release_key": attempted,
+                        "activation_pending_smoke": True,
+                        "rollback_already_active": True,
+                        "previous_release_key": None,
+                        "previous_release_verified": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report == {
+        "ok": False,
+        "status": "failed",
+        "safe_code": "publish_smoke_failed_rolled_back",
+        "attempted_release_key": attempted,
+        "previous_release_key": previous,
+        "rollback_pointer_verified": True,
+        "rollback_smoke_verified": True,
+    }
+    assert commands == ["scripts.publish_static", "scripts.release_smoke"]
+    assert not smoke_marker.exists()
+    assert publish_marker.is_file()
+
+
+def test_publish_rollback_confirmation_failure_keeps_the_publish_retry_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    publish_marker = runner.profile.state_dir / "publish.pending"
+    publish_marker.touch()
+    current = _static_release(runner.profile.static_root, "current")
+    previous = _static_release(runner.profile.static_root, "previous")
+    smoke_marker = _write_smoke_marker(runner.profile, current, previous)
+    smoke_calls = 0
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        nonlocal smoke_calls
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static" and "--activate" not in command:
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "activation_pending_smoke": True,
+                        "previous_release_key": previous,
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        if module == "scripts.release_smoke":
+            smoke_calls += 1
+            if smoke_calls == 1:
+                return 1
+            smoke_marker.unlink()
+        return 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action("publish-if-changed", "publish", "publish")
+
+    assert report["safe_code"] == "publish_rollback_confirmation_failed"
+    assert report["rollback_pointer_verified"] is True
+    assert report["rollback_smoke_verified"] is True
+    assert publish_marker.is_file()
 
 
 def test_retry_batch_runs_each_cycle_even_with_a_legacy_completion_marker(
@@ -367,7 +1219,7 @@ def test_retry_batch_runs_each_cycle_even_with_a_legacy_completion_marker(
     assert commands[0][commands[0].index("--max-posts") + 1] == "100"
 
 
-def test_scheduled_run_crawls_recovers_and_publishes_without_command(
+def test_scheduled_run_requires_explicit_export_bootstrap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api = Api([])
@@ -383,7 +1235,8 @@ def test_scheduled_run_crawls_recovers_and_publishes_without_command(
         def __init__(self, arguments: list[str], **kwargs: object) -> None:
             commands.append(arguments)
             module = arguments[arguments.index("-m") + 1]
-            if "--output" in arguments:
+            self.return_code = 0
+            if module in {"scripts.crawl_cycle", "scripts.recover_queue"}:
                 output = Path(arguments[arguments.index("--output") + 1])
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(
@@ -400,37 +1253,38 @@ def test_scheduled_run_crawls_recovers_and_publishes_without_command(
                     ),
                     encoding="utf-8",
                 )
-            if module == "scripts.publish_static":
-                stdout: Any = kwargs["stdout"]
-                assert hasattr(stdout, "write")
-                stdout.write(
+            elif module == "scripts.export_static":
+                stream = cast(BinaryIO, kwargs["stdout"])
+                stream.write(
                     json.dumps(
                         {
-                            "ok": True,
-                            "status": "succeeded",
-                            "release_key": f"releases/{'a' * 64}.json",
+                            "ok": False,
+                            "status": "partial",
+                            "safe_code": "incremental_bootstrap_required",
                         }
                     ).encode()
                 )
-                stdout.flush()
+                stream.flush()
+                self.return_code = 2
 
         def wait(self, timeout: int) -> int:
             assert timeout == 30
-            return 0
+            return self.return_code
 
     monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
 
     report = runner.run_scheduled()
 
-    assert report["status"] == "succeeded"
-    assert len(commands) == 4
+    assert report["status"] == "partial"
+    assert len(commands) == 3
     start = next(payload for path, payload in api.calls if path == "/api/v1/runner/runs")
     assert start["kind"] == "scheduled" and start["source"] == "systemd"
     assert "command_id" not in start
     finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
-    assert finish["release_id"] == "a" * 64
+    assert "release_id" not in finish
+    assert finish["safe_summary_code"] == "incremental_bootstrap_required"
     assert finish["counters"]["changed_posts"] == 1
-    assert not (runner.profile.state_dir / "publish.pending").exists()
+    assert (runner.profile.state_dir / "publish.pending").is_file()
 
 
 def test_scheduled_run_preserves_the_first_actionable_failure_code(
@@ -472,6 +1326,35 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
     assert sync_event["safe_message"] == "parse_drift"
 
 
+def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    actions: list[str] = []
+    monkeypatch.setattr(runner, "_inventory_due", lambda: False)
+    monkeypatch.setattr(runner, "_bootstrap_pending", lambda: False)
+
+    def execute(action: str, *_args: object) -> dict[str, Any]:
+        actions.append(action)
+        if action == "sync-now":
+            return {"ok": False, "status": "runner_failed"}
+        return {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"}
+
+    monkeypatch.setattr(runner, "_execute_action", execute)
+
+    report = runner.run_scheduled()
+
+    assert report["status"] == "failed"
+    assert actions == ["sync-now", "publish-if-changed"]
+    skipped = next(
+        payload["events"][0]
+        for path, payload in api.calls
+        if path.endswith("/events:batch") and payload["events"][0]["state"] == "skipped"
+    )
+    assert skipped["step"] == "retry-batch"
+
+
 def test_scheduled_run_uses_weekly_inventory_instead_of_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -481,33 +1364,49 @@ def test_scheduled_run_uses_weekly_inventory_instead_of_recovery(
     class Process:
         def __init__(self, arguments: list[str], **_kwargs: object) -> None:
             commands.append(arguments)
-            output = Path(arguments[arguments.index("--output") + 1])
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
-                json.dumps(
-                    {
-                        "ok": True,
-                        "status": "succeeded",
-                        "changed_posts": 0,
-                        "failed_posts": 0,
-                        "boards_ok": 1,
-                        "boards_failed": 0,
-                        "boards": [{"board_id": "aa", "status": "succeeded"}],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            if "--inventory" in arguments:
-                started_at = arguments[arguments.index("--inventory-since") + 1]
-                with connect_archive(runner.profile.archive) as connection:
-                    connection.execute(
-                        """
-                        UPDATE boards SET inventory_next_page = 1,
-                            last_inventory_at = ?
-                        WHERE board_id = 'aa'
-                        """,
-                        (started_at,),
-                    )
+            module = arguments[arguments.index("-m") + 1]
+            if module == "scripts.crawl_cycle":
+                output = Path(arguments[arguments.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "status": "succeeded",
+                            "changed_posts": 0,
+                            "failed_posts": 0,
+                            "boards_ok": 1,
+                            "boards_failed": 0,
+                            "boards": [{"board_id": "aa", "status": "succeeded"}],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                if "--inventory" in arguments:
+                    started_at = arguments[arguments.index("--inventory-since") + 1]
+                    with connect_archive(runner.profile.archive) as connection:
+                        connection.execute(
+                            """
+                            UPDATE boards SET inventory_next_page = 1,
+                                last_inventory_at = ?
+                            WHERE board_id = 'aa'
+                            """,
+                            (started_at,),
+                        )
+            elif module == "scripts.publish_static":
+                stream = cast(BinaryIO, _kwargs["stdout"])
+                stream.write(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "mode": "noop",
+                            "release_key": f"releases/{'a' * 64}.json",
+                            "previous_release_key": None,
+                            "previous_release_verified": False,
+                        }
+                    ).encode()
+                )
+                stream.flush()
 
         def wait(self, timeout: int) -> int:
             assert timeout == 30
@@ -516,7 +1415,13 @@ def test_scheduled_run_uses_weekly_inventory_instead_of_recovery(
     monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
 
     assert runner.run_scheduled()["status"] == "succeeded"
-    assert len(commands) == 2
+    assert [command[command.index("-m") + 1] for command in commands] == [
+        "scripts.crawl_cycle",
+        "scripts.crawl_cycle",
+        "scripts.export_static",
+        "scripts.publish_static",
+        "scripts.release_smoke",
+    ]
     assert "--inventory" not in commands[0]
     assert "--inventory" in commands[1]
     assert "scripts.recover_queue" not in commands[1]
@@ -602,12 +1507,28 @@ def test_scheduled_bootstrap_recovery_drains_outline_only_without_daily_throttle
     class Process:
         def __init__(self, arguments: list[str], **_kwargs: object) -> None:
             commands.append(arguments)
-            output = Path(arguments[arguments.index("--output") + 1])
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
-                json.dumps({"ok": True, "status": "succeeded", "boards": []}),
-                encoding="utf-8",
-            )
+            module = arguments[arguments.index("-m") + 1]
+            if module in {"scripts.crawl_cycle", "scripts.recover_queue"}:
+                output = Path(arguments[arguments.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    json.dumps({"ok": True, "status": "succeeded", "boards": []}),
+                    encoding="utf-8",
+                )
+            elif module == "scripts.publish_static":
+                stream = cast(BinaryIO, _kwargs["stdout"])
+                stream.write(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "mode": "noop",
+                            "release_key": f"releases/{'a' * 64}.json",
+                            "previous_release_key": None,
+                            "previous_release_verified": False,
+                        }
+                    ).encode()
+                )
+                stream.flush()
 
         def wait(self, timeout: int) -> int:
             assert timeout == 30

@@ -7,6 +7,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from crawler.archive import connect_archive, initialize_archive
+from crawler.settings import (
+    REDSTM_FRONTIER_BACKOFF_BASE_SECONDS,
+    REDSTM_FRONTIER_BACKOFF_CAP_SECONDS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +21,7 @@ class FrontierLease:
     attempts: int
     lease_token: str
     lease_expires_at: datetime
+    expected_comment_count: int | None = None
 
 
 def _timestamp(value: datetime) -> str:
@@ -25,17 +30,13 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
-# Network failures die after this many attempts; auth failures stay in retry
-# with backoff because recovering the session may need operator action.
-MAX_NETWORK_ATTEMPTS = 5
-_BACKOFF_BASE_SECONDS = 120
-_BACKOFF_CAP_SECONDS = 6 * 60 * 60
-
-
 def retry_backoff(attempts: int, now: datetime) -> datetime:
     if attempts < 1:
         raise ValueError("attempts must be positive")
-    delay = min(_BACKOFF_BASE_SECONDS * 2 ** (attempts - 1), _BACKOFF_CAP_SECONDS)
+    delay = min(
+        REDSTM_FRONTIER_BACKOFF_BASE_SECONDS * 2 ** (attempts - 1),
+        REDSTM_FRONTIER_BACKOFF_CAP_SECONDS,
+    )
     return now.astimezone(UTC) + timedelta(seconds=delay)
 
 
@@ -72,8 +73,34 @@ def transition_lease(
         raise RuntimeError("stale or missing frontier lease")
 
 
-def complete_lease(connection: sqlite3.Connection, lease: FrontierLease) -> None:
-    transition_lease(connection, lease, state="done")
+def complete_lease(
+    connection: sqlite3.Connection,
+    lease: FrontierLease,
+    *,
+    stored_comment_count: int | None = None,
+) -> None:
+    if stored_comment_count is not None and (
+        type(stored_comment_count) is not int or stored_comment_count < 0
+    ):
+        raise ValueError("stored_comment_count must be a non-negative integer or None")
+    cursor = connection.execute(
+        """
+        UPDATE crawl_frontier
+        SET state = 'done', next_attempt_at = NULL, last_error_code = NULL,
+            lease_token = NULL, lease_expires_at = NULL,
+            expected_comment_count = COALESCE(?, expected_comment_count)
+        WHERE board_id = ? AND external_post_id = ?
+          AND state = 'running' AND lease_token = ?
+        """,
+        (
+            stored_comment_count,
+            lease.board_id,
+            lease.external_post_id,
+            lease.lease_token,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("stale or missing frontier lease")
 
 
 class FrontierStore:
@@ -94,15 +121,23 @@ class FrontierStore:
         priority: int = 0,
         *,
         reopen_done: bool = False,
+        expected_comment_count: int | None = None,
     ) -> None:
+        if expected_comment_count is not None and (
+            type(expected_comment_count) is not int or expected_comment_count < 0
+        ):
+            raise ValueError("expected_comment_count must be a non-negative integer or None")
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO crawl_frontier (board_id, external_post_id, url, priority)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO crawl_frontier (
+                    board_id, external_post_id, url, priority, expected_comment_count
+                )
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (board_id, external_post_id) DO UPDATE SET
                     url = excluded.url,
                     priority = excluded.priority,
+                    expected_comment_count = excluded.expected_comment_count,
                     state = CASE
                         WHEN ? AND crawl_frontier.state = 'done' THEN 'pending'
                         ELSE crawl_frontier.state
@@ -125,6 +160,7 @@ class FrontierStore:
                     external_post_id,
                     url,
                     priority,
+                    expected_comment_count,
                     reopen_done,
                     reopen_done,
                     reopen_done,
@@ -186,7 +222,7 @@ class FrontierStore:
                 WHERE board_id = ? AND external_post_id = ?
                   AND state IN ('pending', 'retry')
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                RETURNING url, attempts
+                RETURNING url, attempts, expected_comment_count
                 """,
                 (
                     claimed_at_text,
@@ -206,6 +242,11 @@ class FrontierStore:
             attempts=int(row["attempts"]),
             lease_token=lease_token,
             lease_expires_at=expires_at,
+            expected_comment_count=(
+                int(row["expected_comment_count"])
+                if row["expected_comment_count"] is not None
+                else None
+            ),
         )
 
     def recovery_candidates(
@@ -253,6 +294,47 @@ class FrontierStore:
                 """,
                 (selected_at, limit),
             ).fetchall()
+        return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
+
+    def requeue_stale_details(
+        self,
+        *,
+        limit: int,
+        stale_before: datetime,
+    ) -> list[tuple[str, int]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        stale_before_text = _timestamp(stale_before)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT frontier.board_id, frontier.external_post_id
+                FROM crawl_frontier AS frontier
+                LEFT JOIN posts AS post
+                  ON post.board_id = frontier.board_id
+                 AND post.external_post_id = frontier.external_post_id
+                WHERE frontier.state = 'done'
+                  AND julianday(
+                    COALESCE(post.last_collected_at, frontier.last_attempt_at)
+                  ) <= julianday(?)
+                ORDER BY julianday(
+                           COALESCE(post.last_collected_at, frontier.last_attempt_at)
+                         ),
+                         frontier.board_id, frontier.external_post_id
+                LIMIT ?
+                """,
+                (stale_before_text, limit),
+            ).fetchall()
+            connection.executemany(
+                """
+                UPDATE crawl_frontier
+                SET state = 'pending', attempts = 0, next_attempt_at = NULL,
+                    last_error_code = NULL, lease_token = NULL, lease_expires_at = NULL
+                WHERE board_id = ? AND external_post_id = ? AND state = 'done'
+                """,
+                [(row["board_id"], row["external_post_id"]) for row in rows],
+            )
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
     def requeue_dead(self, *, error_code: str, limit: int) -> int:
@@ -325,7 +407,7 @@ class FrontierStore:
             )
             rows = connection.execute(
                 """
-                SELECT board_id, external_post_id, url, attempts
+                SELECT board_id, external_post_id, url, attempts, expected_comment_count
                 FROM crawl_frontier
                 WHERE state IN ('pending', 'retry')
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
@@ -361,6 +443,11 @@ class FrontierStore:
                 attempts=row["attempts"] + 1,
                 lease_token=lease_token,
                 lease_expires_at=expires_at,
+                expected_comment_count=(
+                    int(row["expected_comment_count"])
+                    if row["expected_comment_count"] is not None
+                    else None
+                ),
             )
             for row in rows
         ]

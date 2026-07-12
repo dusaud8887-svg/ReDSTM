@@ -3,16 +3,24 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from filelock import FileLock, Timeout
 from scrapy.crawler import CrawlerProcess
 
-from crawler.archive import initialize_archive
+from crawler.archive import require_archive_schema
 from crawler.frontier import FrontierStore
 from crawler.session import SessionRefreshError, ensure_session_export
-from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
+from crawler.settings import (
+    REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_RECOVERY_MAX_POSTS,
+    REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
+    REDSTM_STALE_DETAIL_RESERVED_POSTS,
+    REDSTM_STALE_DETAIL_REVISIT_SECONDS,
+    USER_AGENT,
+)
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man
@@ -25,7 +33,31 @@ from scripts.sync import (
     _write_report,
 )
 
-_RECOVERY_TIME_BUDGET_SECONDS = 2 * 60 * 60
+
+def _recovery_batch(
+    frontier: FrontierStore,
+    *,
+    limit: int,
+    now: datetime | None = None,
+) -> tuple[list[tuple[str, int]], int]:
+    selected_at = now or datetime.now(UTC)
+    due = frontier.recovery_candidates(limit=limit, now=selected_at)
+    # Reserve bounded forward progress even while the due queue stays full. Increase only
+    # after canary evidence because every reserved slot is another old-source request.
+    stale_limit = max(
+        min(REDSTM_STALE_DETAIL_RESERVED_POSTS, limit),
+        limit - len(due),
+    )
+    revisited = (
+        frontier.requeue_stale_details(
+            limit=stale_limit,
+            stale_before=selected_at - timedelta(seconds=REDSTM_STALE_DETAIL_REVISIT_SECONDS),
+        )
+        if stale_limit
+        else []
+    )
+    candidates = due[: limit - len(revisited)] + revisited
+    return candidates, len(revisited)
 
 
 def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
@@ -44,23 +76,27 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     run_id: str | None = None
     store = ArchiveStore(archive)
     try:
-        initialize_archive(archive)
+        require_archive_schema(archive)
         interrupted_runs = store.interrupt_stale_crawl_runs()
         frontier = FrontierStore(archive)
         requeue_code = getattr(args, "requeue_dead", None)
-        requeued_dead = (
-            frontier.requeue_dead(error_code=requeue_code, limit=args.max_posts)
-            if requeue_code
-            else 0
-        )
-        candidates = frontier.recovery_candidates(limit=args.max_posts)
+        paused = pause_file is not None and pause_file.exists()
+        if paused:
+            requeued_dead = revisited_posts = 0
+            candidates: list[tuple[str, int]] = []
+        else:
+            requeued_dead = (
+                frontier.requeue_dead(error_code=requeue_code, limit=args.max_posts)
+                if requeue_code
+                else 0
+            )
+            candidates, revisited_posts = _recovery_batch(frontier, limit=args.max_posts)
         run_id = store.start_run("retry")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
 
         scheduled = 0
         failures: list[str] = []
-        paused = pause_file is not None and pause_file.exists()
         if candidates and not paused:
             session = ensure_session_export(
                 session_path,
@@ -107,6 +143,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 "failures": failures,
                 "interrupted_runs": interrupted_runs,
                 "requeued_dead": requeued_dead,
+                "revisited_posts": revisited_posts,
             },
         )
         if not paused:
@@ -123,6 +160,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "failures": failures,
             "interrupted_runs": interrupted_runs,
             "requeued_dead": requeued_dead,
+            "revisited_posts": revisited_posts,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
         }
@@ -142,8 +180,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
-    parser.add_argument("--max-posts", type=int, default=20)
-    parser.add_argument("--max-seconds", type=int, default=_RECOVERY_TIME_BUDGET_SECONDS)
+    parser.add_argument("--max-posts", type=int, default=REDSTM_RECOVERY_MAX_POSTS)
+    parser.add_argument("--max-seconds", type=int, default=REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(

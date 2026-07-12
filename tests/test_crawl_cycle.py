@@ -9,7 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from crawler.archive import connect_archive, initialize_archive
-from crawler.session import SessionNetworkError, SessionRefreshError
+from crawler.session import (
+    AutomaticLoginThrottleError,
+    SessionNetworkError,
+    SessionRefreshError,
+)
 from scripts.crawl_cycle import _boards, run_cycle
 
 
@@ -173,9 +177,14 @@ def test_cycle_revalidates_session_after_thirty_minutes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     args = _args(tmp_path)
+    initial_logins = 0
     validations = 0
     clock = iter((0.0, 0.0, 1_801.0, 1_802.0, 1_803.0))
     monkeypatch.setattr("scripts.crawl_cycle.time.monotonic", lambda: next(clock))
+
+    def ensure(*args: object, **kwargs: object) -> None:
+        nonlocal initial_logins
+        initial_logins += 1
 
     def validate(*args: object, **kwargs: object) -> None:
         nonlocal validations
@@ -188,11 +197,13 @@ def test_cycle_revalidates_session_after_thirty_minutes(
         )
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", validate)
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", ensure)
+    monkeypatch.setattr("scripts.crawl_cycle.validate_session_export", validate)
     monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
 
     assert run_cycle(args)["status"] == "succeeded"
-    assert validations == 2
+    assert initial_logins == 1
+    assert validations == 1
 
 
 def test_cycle_bounds_hung_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -245,6 +256,31 @@ def test_cycle_preflight_stops_before_boards(
 
     assert report["status"] == status
     assert calls == (2 if isinstance(error, SessionNetworkError) else 1)
+
+
+def test_cycle_preserves_network_classification_when_login_retry_is_throttled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    errors = iter(
+        [
+            SessionNetworkError("login request offline"),
+            AutomaticLoginThrottleError("retry interval"),
+        ]
+    )
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.ensure_session_export",
+        lambda *args, **kwargs: (_ for _ in ()).throw(next(errors)),
+    )
+    monkeypatch.setattr("scripts.crawl_cycle.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("worker must not run"),
+    )
+
+    report = run_cycle(args)
+
+    assert report["status"] == "site_unreachable"
 
 
 def test_cycle_breaks_after_three_network_boards(

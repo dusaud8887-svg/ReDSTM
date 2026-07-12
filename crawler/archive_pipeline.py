@@ -76,7 +76,15 @@ class ArchivePipeline:
             elif outcome == "parse_failed":
                 error_code, frontier_state = "parse_drift", "dead"
             else:
-                error_code, frontier_state = "auth_required", "retry"
+                raw_error_code = item.get("error_code")
+                if not isinstance(raw_error_code, str) or raw_error_code not in {
+                    "auth_required",
+                    "network_error",
+                    "rate_limited",
+                }:
+                    raise ValueError("fetch_failed capture requires a recognized error_code")
+                error_code = raw_error_code
+                frontier_state = "retry"
             self.store.record_outcome(
                 self.run_id,
                 url=str(item["canonical_url"]),

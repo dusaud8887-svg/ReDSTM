@@ -19,10 +19,18 @@ row, authenticated `/ops` 표시를 확인했다. duplicate/실제 crawl 중 ful
 queued pause의 expiry injection은 claim 0회·runner 미지정 `expired`로 끝났고 marker를 만들지
 않았으며 `/ops`가 만료 상태를 표시했다.
 
+Repository target(2026-07-12)은 additive `0004_retention_indexes.sql`과
+`0005_control_integrity.sql`까지이며 local empty DB와 production-shaped `0003` seeded upgrade fixture,
+conflict race, legacy 미래시각
+회귀 test를 통과했다. 이 두 migration과 새 Worker는 아직 위 live checkpoint로 올리지 않는다.
+production release는 migration write 전에 remote process/marker active-command 중복만 read-only
+preflight하고, migration을 적용한 뒤 machine smoke가 retention/snapshot index와
+`commands_active_conflict_group_idx`까지 읽은 뒤에만 새 Worker 완료로 판정한다.
+
 Local frontend checkpoint: automatic schedule/Runner/current work, Reader release counts, canonical snapshot,
 recent failure, board inventory cursor와 fixed Controls를 분리했다. API 값을 `textContent`로만 렌더링하고
 secret/path/임의 인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE
-9개 scenario, 36 viewport 실행과 Edge unit 32건이 통과했다. D1 `0003_operations_telemetry.sql` →
+scenario와 당시 Edge unit suite가 통과했다. D1 `0003_operations_telemetry.sql` →
 Worker → Oracle application 순서의 live 적용과 authenticated `/ops` idle heartbeat를 확인했다. 새 Worker는 기존 runner board payload를 받지만 새 runner의
 snapshot counter는 이전 Worker가 거절하므로 순서를 바꾸지 않는다. application rollback은
 `Oracle runner → Worker` 순서로 하고 additive `0003` column은 유지한다. duplicate command와 실제 crawl
@@ -124,10 +132,10 @@ inbound firewall port를 열지 않는다.
 | content | request/response 모두 `application/json; charset=utf-8` |
 | request trace | caller가 `X-Request-Id` UUID를 보내고 응답이 그대로 반환 |
 | protocol | `X-ReDSTM-Protocol: 1`; 불일치 시 409 |
-| mutation replay | 모든 POST/DELETE에 `Idempotency-Key`, D1 unique constraint |
+| mutation replay | 모든 POST/DELETE에 `Idempotency-Key`; command create는 same action/empty args만 replay, run/event는 각 natural key, cancel은 terminal state replay |
 | response | `api_version`, `request_id`, `server_time`, `data` 또는 `error` |
 | page | opaque `cursor`, `limit` 최대 50; offset pagination 금지 |
-| clock | 입력 시간은 UTC RFC 3339, 저장 전 millisecond ISO UTC로 정규화; 순서는 DB sequence/ID로 결정 |
+| clock | 입력 시간은 UTC RFC 3339, 저장 전 millisecond ISO UTC로 정규화; server 기준 미래 5분 초과는 거부 |
 | body cap | runner batch 64KiB, 나머지 16KiB; 초과 시 413 |
 
 오류는 `code`, 사용자용 `message`, `retryable`, 선택적 `retry_after_seconds`만 반환한다.
@@ -164,14 +172,19 @@ authorization test는 URL prefix 전체와 unknown method를 포함한다.
 ### 5.4 통신 효율과 장애 복구
 
 - idle heartbeat/claim은 60초, active heartbeat는 30초가 기본이다.
-- heartbeat의 `next_scheduled_at`은 systemd UTC base slot(00/06/12/18:17) 중 다음 값이다.
+- heartbeat의 `next_scheduled_at`은 설치된 `redstm-schedule.timer`의 엄격히 지원되는 UTC
+  `OnCalendar` slot에서 계산한다. timer가 enabled/active인데 선언을 해석할 수 없으면 임의 시각을
+  만들지 않고 runner를 degraded로 보고한다. `RandomizedDelaySec`는 UI의 20분 grace가 흡수한다.
   실제 시작은 `RandomizedDelaySec=15m` 범위 안에서 늦어질 수 있다.
 - browser는 active run일 때 15초, idle일 때 60초 poll하고 hidden tab에서는 중단한다.
-- event는 step 전환 즉시 또는 최대 50개/30초 단위로 batch한다. post별 event는 보내지 않는다.
+- event는 step 전환과 bounded archive snapshot 단위로 보낸다. API는 한 요청 최대 50개를 받지만
+  post별 event와 raw report는 보내지 않는다.
 - D1은 prepared statement와 transactional `batch()`로 claim+audit, event upsert를 묶는다.
 - Oracle HTTP timeout은 connect 5초/total 15초다. retryable 429/5xx/network만 jitter backoff
   2초/5초/15초로 최대 3회 재시도하고 `Retry-After`를 우선한다.
-- 모든 mutation이 idempotent하므로 응답 유실 뒤 같은 key/sequence로 재전송한다.
+- mutation은 endpoint별 identity로 재전송한다. command create는 같은 key의 same action/empty args만
+  기존 command를 반환하고 다른 intent는 409다. run/event/report는 문서화된 run ID·sequence·dedupe
+  identity를 재사용하며 payload가 다른데 key만 같은 요청을 일반적으로 동일하다고 가정하지 않는다.
 - 3회 실패하면 local cycle은 계속하고 10MiB 또는 10,000 event 중 먼저 도달한 bounded outbox에
   둔다. 초과 시 heartbeat/step/terminal을 우선하고 세부 progress를 합친다.
 - WebSocket, Durable Object, Queue, Oracle inbound API는 이 트래픽 규모에 추가하지 않는다.
@@ -236,7 +249,6 @@ Control DB 이름은 redstm-control이다. schema는 command/status 책임만 �
 
 ### run_events
 
-    event_id
     run_id
     sequence
     step
@@ -246,6 +258,11 @@ Control DB 이름은 redstm-control이다. schema는 command/status 책임만 �
     safe_message
 
 Unique run_id+sequence로 duplicate event를 무시한다.
+
+queued/claimed command에는 action을 process 또는 schedule-marker로 계산하는 partial expression
+unique index를 둔다. 별도 conflict column이나 기존 row rewrite 없이, 사전 conflict 조회와 INSERT
+사이에 두 요청이 경합해도 DB가 각 group 하나만 허용한다. constraint race는 stable
+`409 command_conflict`로 변환한다.
 
 run 종료의 `archive_snapshot` event는 `outline_only`, frontier state counts와
 `inventory_completed_boards`/`inventory_total_boards`만 담고 `recorded_at`을 as-of로 쓴다.
@@ -268,11 +285,16 @@ full row는 담지 않으며 이 snapshot이 Operations의 canonical 요약 sour
     dead
     inventory_next_page
     last_inventory_at
+    inventory_pass_started_at
     warning_code
 
 full canonical count를 매 poll마다 다시 세거나 복제하지 않는다. run 종료 또는 board 완료 때 목차-only
 frontier와 inventory 진행 summary만 upsert하고, 각 값에 source/as-of를 붙인다. Reader 공개 본문·댓글
 수는 D1 counter가 아니라 R2 active release에서 읽는다.
+
+runner가 보낸 원 timestamp는 evidence로 보존한다. 신규 run/board/event는 Worker 수신 시각보다
+5분을 넘는 미래값을 거부한다. upgrade 전에 저장된 과도한 미래 run/event는 최신 조회에서 제외하고
+running row는 `run_stale`로 수렴시킨다. 미래에 고정된 board row는 다음 정상 보고가 덮을 수 있다.
 
 D1 Free는 DB당 500MB, 계정 5GB, 하루 5M row reads와 100k row writes를 제공한다. 작은 indexed control
 rows와 30일 retention은 충분한 범위다. [D1 limits](https://developers.cloudflare.com/d1/platform/limits/),
@@ -286,7 +308,7 @@ rows와 30일 retention은 충분한 범위다. [D1 limits](https://developers.c
 |---|---|---|
 | sync-now | one normal incremental board cycle | run report |
 | retry-batch | due entries max 100 | outcome counts |
-| publish-if-changed | changed marker 없으면 no-op | release/smoke |
+| publish-if-changed | marker 유무와 무관한 bounded incremental reconcile | release/smoke |
 | pause-after-current | current request/transaction 뒤 stop | paused run |
 | resume-schedule | paused marker만 해제 | next schedule |
 
@@ -315,7 +337,10 @@ Worker는 POST 전에 다음을 확인한다.
 5. client idempotency key
 6. impact/preflight version
 
-같은 idempotency key는 기존 command를 반환한다. action별 cooldown을 둔다.
+같은 idempotency key와 같은 action/empty args는 기존 command를 반환하고, 같은 key의 다른 action은
+`idempotency_conflict` 409로 거부한다. 별도 시간 기반 cooldown을 만들지 않고 queued/claimed
+conflict, runner 상태, due queue와 pause 상태로 eligibility를 제한한다. conflict 판단은
+action 기반 partial expression unique index가 최종 원자성 경계다.
 
 ### 7.4 Claim
 
@@ -332,6 +357,9 @@ local ledger가 running/terminal이면 그 결과를 replay하고, 실행 흔적
 때만 queued로 되돌린다. attempts가 2에 도달하면 failed/claim_lost로 끝낸다. expires_at이 지난
 queued command는 expired가 된다. Oracle local command ledger에도 command_id와 terminal result를
 기록해 D1 replay가 중복 실행을 만들지 못하게 한다.
+terminal 결과의 전송 상태는 `pending`, `delivered`, `permanently_rejected`로 별도 기록한다. 일시적
+단절은 `pending`과 outbox를 유지하지만 재시도해도 성공하지 않는 4xx는 결과와 rejection evidence를
+보존한 채 `permanently_rejected`로 종결해 다음 local command 보고를 막지 않는다.
 
 heartbeat가 `runner_id`와 `active_command_id`를 함께 보내면 Worker는 같은 runner가 claim한 행만
 2분 연장하고 갱신 여부를 반환한다. 둘 중 하나만 보내면 400이다. claim poll 직전 Worker는 run_id가
@@ -356,7 +384,7 @@ Remote command와 무관하게 systemd가 실행한다.
 |---|---|
 | incremental cycle | 6시간 |
 | bounded recovery | 매 cycle due 후보 최대 100건, 2시간/장애 breaker 우선 |
-| delta publish | `publish.pending`이 있을 때 매 cycle 재시도 |
+| delta publish | marker 유무와 무관하게 매 cycle bounded reconcile |
 | 최초 board inventory | enabled board cursor가 모두 완료될 때까지 매 cycle bounded window 재개 |
 | 완료 뒤 board inventory | 주 1회 bounded listing audit |
 
@@ -373,8 +401,9 @@ backlog가 정리되면 매 cycle due item 최대 100건의 normal recovery를 �
 본문 전체를 재검증하는 full recrawl이 아니다.
 
 `redstm-control.timer`는 application release 설치 뒤 heartbeat와 fixed-command poll을 유지하는 baseline으로
-enable한다. `redstm-schedule.timer`는 authenticated route, schema v3 doctor와
-crawl→bounded export→publish/readback→rollback rehearsal smoke가 성공하면 enable한다. 이후 24시간
+enable한다. `redstm-schedule.timer`는 authenticated route, repository schema v4 doctor, 명시적 full
+export/publish baseline bootstrap과 crawl→bounded export→publish/readback→rollback rehearsal canary가
+성공할 때까지 disabled로 둔다. 이후 24시간
 canary와 7일 shadow는 켜진 자동 운전을 관찰하는 milestone이며,
 schedule 활성화를 늦추는 선행 gate가 아니다.
 service unit은 recoverable file 누락을 `ConditionPathExists`로 조용히 skip하지 않는다. application을
@@ -387,7 +416,7 @@ Worker/API가 계산하는 UI state:
 | 조건 | state | 사용자 의미/행동 |
 |---|---|---|
 | runner row/heartbeat가 한 번도 없음 | not_enrolled | 초기 연결 대기; 설치/telemetry 연결 확인 |
-| heartbeat within 3분, no warning, no run | idle | 정상 대기; 개입 없음 |
+| heartbeat within 3분, no warning, no run | idle | Runner 정상 대기; automation 이력은 별도 판정 |
 | heartbeat within 3분, active run | running | 현재 step/board 관찰; 필요할 때만 pause-after-current |
 | heartbeat fresh, partial/warning | degraded | warning 이유와 bounded recovery 확인 |
 | terminal failure | failed | safe reason과 실패 board 확인 |
@@ -402,6 +431,8 @@ healthy percentage를 만들지 않는다.
 automatic schedule의 `enabled/disabled/paused`는 Runner freshness와 별도 차원이다. 예를 들어 fresh
 heartbeat + schedule disabled는 “연결 정상, 자동 수집 꺼짐”이고, stale + schedule last-reported enabled는
 “마지막 보고 당시 자동 수집 켜짐”이다. 고정 slot 계산만으로 disabled timer를 켜짐으로 추정하지 않는다.
+schedule이 enabled지만 running/completed automatic run 이력이 하나도 없으면 healthy/on으로 합성하지
+않고 `unverified`·`자동 실행 확인 전`과 `schedule_unverified` warning을 표시한다.
 next slot이 randomized-delay 여유 20분을 넘겨 과거이거나 마지막 자동 실행이 7시간보다 오래되면
 fresh heartbeat와 별개로 `자동 수집 지연`을 표시한다.
 
@@ -469,13 +500,15 @@ fresh heartbeat와 별개로 `자동 수집 지연`을 표시한다.
 
 ### Controls
 
-Button은 action, bound, last run, cooldown을 함께 보여준다. confirmation은 영향을 설명하며 command ID와
-expiry를 결과로 표시한다. claim 전 cancel만 허용한다.
+Button은 action, bound, 현재 eligibility와 disabled reason을 함께 보여준다. confirmation은 영향을
+설명하며 command ID와 expiry를 결과로 표시한다. claim 전 cancel만 허용한다. 실행 결과와 이력은
+Runs/Releases ledger에서 별도로 확인한다.
 
 - `sync-now`: 놓친 schedule을 보완하는 1회 bounded incremental cycle이며 정상 운영의 기본 버튼이 아니다.
 - `retry-batch`: due frontier 최대 100건; due 0이면 disable한다.
-- `publish-if-changed`: pending change가 있을 때만 실행하며 없으면 process-free no-op이다. 실패하면
-  pending을 남겨 다음 6시간 cycle에서 다시 시도한다.
+- `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,
+  authenticated release smoke를 실행한다. 실제 delta가 없으면 exporter/publisher가 검증된 no-op으로
+  끝나며, 실패 시 기존 marker가 있으면 지우지 않고 다음 6시간 cycle에서 다시 reconcile한다.
 - `pause-after-current`: 현재 request/transaction을 끝내고 이후 schedule을 막는다. 현재 작업 취소가 아니다.
 - `resume-schedule`: UI에서는 `일시정지 해제`라고 부르며 pause marker만 해제한다. 즉시 crawl하거나
   disabled systemd timer를 enable하지 않는다.
@@ -485,6 +518,11 @@ expiry를 결과로 표시한다. claim 전 cancel만 허용한다.
   표시한다.
 - create 응답 전 button을 잠그고 동일 intent retry는 동일 client idempotency key를 사용한다. bounded
   polling이 끝나도 terminal로 위장하지 않고 background continuation, command ID/expiry/reopen을 남긴다.
+
+automatic/manual publish action은 `publish.pending`을 correctness trigger로 사용하지 않고 매번 verified
+exporter state와 active publish ledger를 reconcile한다. state/ledger가 없거나 불일치하면 full scan으로
+강등하지 않고 partial로 끝내며, marker가 있으면 유지한다. marker가 없어도 실행을 생략하지 않는다.
+최초 state/ledger 생성은 Operations command가 아니라 명시적 full export/publish bootstrap 절차다.
 
 ## 11. Mobile UX
 
@@ -511,9 +549,22 @@ API/D1/DOM 금지:
 safe_message는 stable code와 operator-facing summary만 가진다.
 
 safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rate_limited`,
-`site_unreachable`, `disk_low`, `token_expiring`, `publish_stale`, `backup_stale`.
+`site_unreachable`, `disk_low`, `control_rejected`, `token_expiring`, `publish_stale`.
 새 code가 필요하면 이 문서를 먼저 갱신한다. `site_unreachable`은 원 사이트 outage로 run이
-조기 종료됐음을 뜻하며 runner 장애(stale)와 구분해 표시한다.
+조기 종료됐음을 뜻하며 runner 장애(stale)와 구분해 표시한다. `control_rejected`는 재시도해도
+성공하지 않는 control 4xx가 최근 24시간 안에 발생했다는 generic 경고다. 원래 code는 Oracle local
+evidence에만 보존하고 D1/UI에 노출하지 않는다.
+
+incremental export/publish의 terminal safe code는 기존 `publish.pending`을 지우지 않는다. marker가
+없다는 사실도 다음 bounded reconcile을 생략하는 근거가 아니다.
+
+| safe code | automatic behavior | operator action |
+|---|---|---|
+| `incremental_base_invalid`, `incremental_bootstrap_required`, `incremental_state_invalid`, `incremental_publish_bootstrap_required` | full fallback 없이 partial 재시도 | active pointer/source를 확인하고 [`10 §G3`](10_oracle_runner_runbook.md)의 explicit full bootstrap |
+| `incremental_source_changed`, `incremental_source_rewound` | canonical을 덮거나 state를 추정하지 않음 | canonical activation/restore identity와 capture high-water 조사 후 full bootstrap |
+| `incremental_projection_untracked`, `incremental_snapshot_changed` | pointer 변경 없이 marker 유지 | 한 번 재시도 후 반복되면 canonical/store invariant 조사 |
+| `incremental_delta_too_large` | 2,000건 상한에서 중단 | 변경량 원인을 확인하고 maintenance full export/publish |
+| `incremental_publish_validation_failed`, `incremental_publish_ledger_invalid`, `incremental_publish_smoke_marker_invalid`, `incremental_publish_pointer_unavailable`, `incremental_publish_predecessor_unavailable`, `incremental_publish_smoke_pointer_conflict` | remote pointer 추정·pending 삭제 없이 중단 | local state/pending ledger/smoke marker와 active/previous remote release를 함께 확인한 뒤 다음 cycle 재시도 또는 복구 |
 
 ## 13. Retention
 
@@ -521,8 +572,9 @@ safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rat
 - failed/security audit: 90일 summary
 - board_status/runner_status: current upsert
 - raw reports/logs: Oracle/local report에만 보존, D1에 복제 금지
-- 목표 cleanup은 indexed DELETE와 batch size 제한을 쓴다. 자동 cleanup handler는 아직 구현하지
-  않았으므로 현재 D1 row는 자동 삭제된다고 가정하지 않는다.
+- 매일 03:00 UTC Worker cron이 8시간을 넘긴 running run/연결 command를 `failed/run_stale`로
+  reconcile한 뒤 indexed DELETE를 실행한다. run 삭제 시 `run_events`는 foreign-key cascade로 함께
+  지운다. queued/claimed와 current upsert row는 retention 삭제 대상이 아니다.
 
 ## 14. Failure matrix
 
@@ -531,6 +583,7 @@ safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rat
 | D1 unavailable | automatic runner continues, /ops degraded |
 | Worker unavailable | runner continues, event retry, Reader last R2 release |
 | service token missing/expired | local outbox, /ops stale + auth warning, systemd continues |
+| permanent control payload rejection | poison outbox row 제거 + local rejection evidence, terminal command report를 `permanently_rejected`로 종결해 다음 pending 보고 진행, `/ops` 24시간 generic warning |
 | duplicate command | same command returned, one local execution |
 | command expires | expired/cancelled, never executed |
 | runner dies after claim | stale claim reconciled from local ledger or marked failed |
@@ -543,9 +596,11 @@ safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rat
 - command/audit의 source는 D1이며 Worker log에 request/response body를 중복 저장하지 않는다.
 - 배포 직후는 `wrangler tail`로 smoke하고 평상시에는 Cloudflare dashboard의 bounded retention을
   사용한다. Paid Tail Worker, 외부 APM, 항상 켜진 log shipping은 장애 증거가 생길 때까지 넣지 않는다.
-- D1 dashboard에서 storage/rows read/rows written을 월 1회 기록하고 50%/80% warning을 `/ops`에
-  표시한다. Free 한도 접근 시 retention 축소가 첫 대응이고 자동 유료 전환은 하지 않는다.
-- 마지막 successful machine auth를 Overview에 표시한다.
+- D1 dashboard에서 storage/rows read/rows written을 월 1회 기록한다. 현재 API가 Cloudflare quota를
+  조회하지 않으므로 근거 없는 50%/80% 값을 `/ops`에 합성하지 않는다. 한도 접근 시 retention 축소가
+  첫 대응이고 자동 유료 전환은 하지 않는다.
+- runner `heartbeat_at`은 Access machine auth와 D1 write가 함께 성공한 마지막 근거로 Overview에
+  표시한다. 별도 “machine auth 성공” 값을 합성하지 않는다.
 
 [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)와
 [real-time logs](https://developers.cloudflare.com/workers/observability/logs/real-time-logs/)의
@@ -582,9 +637,10 @@ legacy service stop과 manifest 단위 cleanup은 `10`의 O3/O4 gate를 만족�
 - stale state detects killed runner
 - wrong Origin/Host/content-type/custom command header is denied
 - API/DOM/log secret-path regression test
-- desktop/390/320px idle/running/degraded/stale/failed/not_enrolled/queued visual fixture
+- desktop/390/320px idle/running/degraded/stale/failed/not_enrolled/queued와 schedule-unverified visual fixture
 - stale + last-reported facts + readable release fixture
 - empty run/board telemetry + nonempty release에서 false zero가 없는 fixture
-- state별 disabled controls, idempotency retry와 polling timeout/background continuation fixture
+- state별 disabled controls, server same-intent replay, 응답 유실 뒤 same-tab reload key 재사용과 polling
+  timeout/background continuation fixture
 
 Remote control 구현 전에도 archived local C0와 SSH CLI는 fallback으로 남는다.

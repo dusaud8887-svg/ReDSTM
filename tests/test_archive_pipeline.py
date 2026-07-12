@@ -51,6 +51,8 @@ def _item(lease: FrontierLease, outcome: str) -> CapturedPostItem:
     }
     if outcome == "stored":
         values.update(title="Title", views=1, body_html="<p>Body</p>", comments=[])
+    elif outcome == "fetch_failed":
+        values["error_code"] = "auth_required"
     return CapturedPostItem(values)
 
 
@@ -66,12 +68,15 @@ def test_pipeline_stores_post_and_completes_lease_atomically(tmp_path: Path) -> 
         capture = connection.execute(
             "SELECT outcome, raw_sha256, warc_file FROM captures WHERE run_id = ?", (run_id,)
         ).fetchone()
-        state = connection.execute(
-            "SELECT state FROM crawl_frontier WHERE board_id = ? AND external_post_id = ?",
+        frontier_row = connection.execute(
+            """
+            SELECT state FROM crawl_frontier
+            WHERE board_id = ? AND external_post_id = ?
+            """,
             (lease.board_id, lease.external_post_id),
-        ).fetchone()[0]
+        ).fetchone()
     assert tuple(capture) == ("stored", "a" * 64, "capture.warc.gz")
-    assert state == "done"
+    assert tuple(frontier_row) == ("done",)
 
 
 @pytest.mark.parametrize(
@@ -152,9 +157,8 @@ def test_pipeline_records_storage_error_before_reraising(
                 "SELECT outcome, error_code FROM captures WHERE run_id = ?", (run_id,)
             ).fetchone()
         ) == ("parse_failed", "storage_error")
-        assert (
+        assert tuple(
             connection.execute(
                 "SELECT state FROM crawl_frontier WHERE external_post_id = 4"
-            ).fetchone()[0]
-            == "retry"
-        )
+            ).fetchone()
+        ) == ("retry",)

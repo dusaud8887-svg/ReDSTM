@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
     <title>Operations · ReDSTM</title>
     <link rel="stylesheet" href="/ops.css">
     <script type="module" src="/ops.js"></script>
@@ -47,7 +49,7 @@
         </div>
         <dl class="overview-facts">
           <div><dt>자동 예약</dt><dd id="automation-mode">—</dd></div>
-          <div><dt>수집기 신호</dt><dd id="last-heartbeat">—</dd></div>
+          <div><dt>수집기 인증·신호</dt><dd id="last-heartbeat">—</dd></div>
           <div><dt>마지막 자동 실행</dt><dd id="last-automatic">—</dd></div>
           <div><dt id="next-schedule-label">다음 자동 실행</dt><dd id="next-schedule">—</dd></div>
           <div><dt id="active-step-label">현재 작업</dt><dd id="active-step">—</dd></div>
@@ -91,6 +93,9 @@
           <div class="release-ledger">
             <div><span>현재 Reader 보존본</span><strong id="release-current">확인 중</strong><small id="release-current-time">—</small></div>
             <div><span>이전 보존본 정보</span><strong id="release-previous">—</strong><small id="release-previous-time">—</small></div>
+            <div><span>현재 Worker 확인</span><strong id="release-validation">—</strong><small id="release-validation-time">—</small></div>
+            <div><span>게시 후 smoke</span><strong id="release-smoke">—</strong><small id="release-smoke-time">—</small></div>
+            <div><span>최근 본문 복구</span><strong id="local-recovery">—</strong><small id="local-recovery-time">—</small></div>
             <dl id="release-counts"></dl>
           </div>
           <p id="archive-as-of" class="source-note">Oracle 원본 DB 집계가 아직 보고되지 않았습니다.</p>
@@ -136,9 +141,9 @@
           <p id="control-summary">상태를 확인한 뒤 필요한 작업만 요청합니다.</p>
         </header>
         <div class="control-list">
-          <button type="button" data-action="sync-now" disabled><span>증분 수집 지금 실행</span><small>46개 게시판의 최신 페이지를 한 번 확인</small></button>
-          <button type="button" data-action="retry-batch" disabled><span>본문 대기 재시도</span><small>처리 시각이 된 항목 최대 100건</small></button>
-          <button type="button" data-action="publish-if-changed" disabled><span>변경분 Reader 반영</span><small>새 변경이 있을 때만 검증 후 반영</small></button>
+          <button type="button" data-action="sync-now" disabled><span>증분 수집 지금 실행</span><small>등록된 게시판의 최신 페이지를 한 번 확인</small></button>
+          <button type="button" data-action="retry-batch" disabled><span>본문 대기 재시도</span><small>처리 시각이 된 항목을 제한된 한 묶음 처리</small></button>
+          <button type="button" data-action="publish-if-changed" disabled><span>변경분 Reader 반영</span><small>새 변경이 있을 때만 검증 후 Reader 보존본을 바꿈</small></button>
           <button type="button" data-action="pause-after-current" disabled><span>현재 작업 뒤 일시정지</span><small>진행 중 요청과 저장 작업은 완료</small></button>
           <button type="button" data-action="resume-schedule" disabled><span>일시정지 해제</span><small>일시정지 상태에서 다음 자동 실행을 허용</small></button>
         </div>

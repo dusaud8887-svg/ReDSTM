@@ -286,7 +286,12 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#home-search")).toBeVisible();
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#ffffff");
+  await expect(
+    page.locator('meta[name="theme-color"][media="(prefers-color-scheme: light)"]'),
+  ).toHaveAttribute("content", "#ffffff");
+  await expect(
+    page.locator('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]'),
+  ).toHaveAttribute("content", "#0b0d12");
 
   if (testInfo.project.name === "desktop") {
     await expect(page.locator('.rail a[href="/ops"]')).toBeVisible();
@@ -295,7 +300,10 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover.png" });
     await page.locator("#theme-toggle").click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#0b0d12");
+    const themeColors = page.locator('meta[name="theme-color"]');
+    await expect(themeColors).toHaveCount(2);
+    await expect(themeColors.first()).toHaveAttribute("content", "#0b0d12");
+    await expect(themeColors.nth(1)).toHaveAttribute("content", "#0b0d12");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
   } else {
     await expect(page.locator('.app-bar a[href="/ops"]')).toBeVisible();
@@ -608,6 +616,21 @@ test("distinguishes a missing preserved object", async ({ page }) => {
   await page.goto("/read/board_a/404");
   await expect(page.locator("#archive-state")).toHaveText("본문 오류");
   await expect(page.locator("#empty-reader")).toContainText("현재 보존본에서 글을 찾을 수 없습니다");
+});
+
+test("keeps Reader content open when local storage is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    Storage.prototype.setItem = () => {
+      throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+    };
+  });
+  await useCollectionFixture(page);
+
+  await page.goto(stableUrl(secondKey));
+
+  await expect(page.locator("#reader-title")).toHaveText("둘째");
+  await expect(page.locator("#archive-body")).toContainText("둘째 본문 1");
+  await expect(page.locator("#archive-state")).toHaveText("로컬 저장 실패");
 });
 
 test("distinguishes Access expiry from an archive failure", async ({ page }) => {

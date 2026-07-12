@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-10",
   "workers_dev": true,
   "preview_urls": false,
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  },
   "vars": {
     "TEAM_DOMAIN": "https://redstm-archive-private.cloudflareaccess.com",
     "POLICY_AUD": "fe751d9940fe39ebdf36da5a3e5d3465ef206eb3c59e98f537c5c6df817c0604",
@@ -33,5 +36,8 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 0.1
+  },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
   }
 }

@@ -8,7 +8,9 @@ import pytest
 from scrapy.http import HtmlResponse, Request, Response
 
 from crawler import settings
+from crawler.items import CapturedPostItem
 from crawler.pipelines import normalize_captured_post
+from crawler.session import SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider, _retry_after, parse_post_ref
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
@@ -97,6 +99,54 @@ def test_parse_current_listing_shape() -> None:
     assert items[1]["comment_count"] == 4
 
 
+@pytest.mark.parametrize("page", ["", "0", "-1", "not-a-page"])
+def test_invalid_listing_page_fails_before_discovery(page: str) -> None:
+    spider = TypeMoonSpider(inventory=True)
+
+    items = list(
+        spider.parse_listing(
+            _response("listing.html", f"https://www.typemoon.net/write_free21?page={page}")
+        )
+    )
+
+    assert items == []
+    assert spider.failure_codes == {"listing_parse_failed"}
+    assert spider._halted is True
+    assert spider.next_inventory_page == 1
+    assert spider.inventory_completed is False
+
+
+def test_parse_drift_breaker_allows_isolated_failures_and_resets_on_success() -> None:
+    spider = TypeMoonSpider()
+    failed = CapturedPostItem(outcome="parse_failed")
+    stored = CapturedPostItem(outcome="stored")
+
+    assert spider._detail_result_halted(failed) is False
+    assert spider._detail_result_halted(stored) is False
+    assert spider._detail_result_halted(failed) is False
+    assert spider._detail_result_halted(failed) is False
+    assert spider._detail_result_halted(failed) is True
+    assert spider.failure_codes == {"parse_drift"}
+
+
+def test_breaker_counts_only_consecutive_failures_of_the_same_class() -> None:
+    spider = TypeMoonSpider()
+    failed = CapturedPostItem(outcome="parse_failed")
+    network = CapturedPostItem(outcome="fetch_failed", error_code="network_error")
+    rate_limited = CapturedPostItem(outcome="fetch_failed", error_code="rate_limited")
+
+    for _ in range(3):
+        assert spider._detail_result_halted(network) is False
+        assert spider._detail_result_halted(rate_limited) is False
+        assert spider._detail_result_halted(failed) is False
+    assert spider.failure_codes == set()
+
+    for _ in range(2):
+        assert spider._detail_result_halted(failed) is False
+        assert spider._transport_failure_halted("network_error") is False
+    assert spider.failure_codes == set()
+
+
 def test_restricted_detail_is_not_misparsed() -> None:
     spider = TypeMoonSpider()
     items = list(
@@ -129,6 +179,40 @@ def test_detail_and_comments_use_explicit_selectors() -> None:
     assert post["comments"][0]["content_text"] == "댓글\n 내용"
 
 
+def test_listing_comment_expectation_fails_closed_on_incomplete_detail() -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    response = _response("detail.html", url).replace(
+        request=Request(url=url, meta={"expected_comment_count": 2})
+    )
+
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+
+    assert item["outcome"] == "parse_failed"
+    assert item["warnings"] == ["incomplete_comments"]
+    assert "comments" not in item
+
+
+def test_listing_comment_expectation_accepts_complete_detail() -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    response = _response("detail.html", url).replace(
+        request=Request(url=url, meta={"expected_comment_count": 1})
+    )
+
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+
+    assert item["outcome"] == "stored"
+    assert len(item["comments"]) == 1
+
+
+def test_detail_request_rejects_invalid_comment_expectation() -> None:
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    session = SessionExport((), now, now + timedelta(hours=1), "test")
+    spider = TypeMoonSpider()
+    for invalid in (-1, True):
+        with pytest.raises(ValueError, match="expected_comment_count"):
+            spider.detail_request("write_free21", 62068, session, expected_comment_count=invalid)
+
+
 def test_redirected_query_detail_url_normalizes_to_short_canonical() -> None:
     url = "https://www.typemoon.net/bbs/board.php?bo_table=write_free21&wr_id=62068"
     item = list(TypeMoonSpider().parse_detail(_response("detail.html", url)))[0]
@@ -144,6 +228,7 @@ def test_restricted_phrase_inside_real_content_is_stored() -> None:
         url=url,
         body=(
             "<article class='board-view'><h4><strong>인용문</strong></h4>"
+            "<div class='views'>1</div>"
             "<div class='wr-content'>로그인이 필요하다는 문장을 인용한다.</div></article>"
         ).encode(),
         encoding="utf-8",
@@ -162,6 +247,7 @@ def test_bracketed_series_title_is_preserved_without_category_badge() -> None:
         body=(
             "<article class='board-view'><h4><strong>[Fate] 1화</strong></h4>"
             "<div class='view-info-box'><span class='sv_wrap'><a>작성자</a></span></div>"
+            "<div class='views'>1</div>"
             "<div class='wr-content'>본문</div></article>"
         ).encode(),
         encoding="utf-8",
@@ -195,6 +281,7 @@ def test_root_aa_class_alone_does_not_force_aa_mode() -> None:
         url=url,
         body=(
             "<article class='board-view'><h4><strong>산문</strong></h4>"
+            "<div class='views'>1</div>"
             "<div class='wr-content AA_Text'><p>일반 산문이다.</p></div></article>"
         ).encode(),
         encoding="utf-8",
@@ -212,6 +299,7 @@ def test_aa_font_hint_ignores_body_text_and_reads_style_attributes() -> None:
             url=url,
             body=(
                 "<article class='board-view'><h4><strong>산문</strong></h4>"
+                "<div class='views'>1</div>"
                 f"<div class='wr-content'>{content}</div></article>"
             ).encode(),
             encoding="utf-8",
@@ -235,6 +323,7 @@ def test_comment_identity_and_reply_depth_are_preserved() -> None:
         url=url,
         body=b"""
         <article class='board-view'><h4><strong>post</strong></h4>
+          <div class='views'>1</div>
           <div class='wr-content'>body</div></article>
         <section class='view-comment'>
           <div class='view-comment-item' id='comment-101'>
@@ -261,6 +350,26 @@ def test_comment_identity_and_reply_depth_are_preserved() -> None:
     ]
 
 
+def test_comment_margin_depth_uses_exact_fifteen_pixel_dom_invariant() -> None:
+    item = list(
+        TypeMoonSpider().parse_detail(
+            _response("comment_depth.html", "https://www.typemoon.net/write_free21/62068")
+        )
+    )[0]
+
+    assert [
+        (comment["source_comment_id"], comment["parent_position"], comment["depth"])
+        for comment in item["comments"]
+    ] == [
+        ("100", None, 0),
+        ("101", 1, 1),
+        ("102", 2, 2),
+        ("103", None, 0),
+        ("104", None, 0),
+        ("105", None, 0),
+    ]
+
+
 def test_unknown_detail_shape_is_parse_failed() -> None:
     spider = TypeMoonSpider()
     response = HtmlResponse(
@@ -272,4 +381,28 @@ def test_unknown_detail_shape_is_parse_failed() -> None:
 
     item = list(spider.parse_detail(response))[0]
     assert item["outcome"] == "parse_failed"
-    assert item["warnings"] == ["missing_title", "missing_content"]
+    assert item["warnings"] == ["missing_title", "missing_content", "missing_views"]
+
+
+@pytest.mark.parametrize(
+    ("views", "warning"),
+    [("", "missing_views"), ("many", "invalid_views")],
+)
+def test_detail_numeric_parse_failure_is_not_synthesized_as_zero(views: str, warning: str) -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    views_html = f"<div class='views'>{views}</div>" if views else ""
+    response = HtmlResponse(
+        url=url,
+        body=(
+            "<article class='board-view'><h4><strong>post</strong></h4>"
+            f"{views_html}<div class='wr-content'>body</div></article>"
+        ).encode(),
+        encoding="utf-8",
+        request=Request(url=url),
+    )
+
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+
+    assert item["outcome"] == "parse_failed"
+    assert item["warnings"] == [warning]
+    assert "views" not in item

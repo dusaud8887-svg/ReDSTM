@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from crawler.archive import SCHEMA_VERSION, connect_archive
-from crawler.frontier import FrontierLease, FrontierStore
+from crawler.frontier import FrontierLease, FrontierStore, transition_lease
 
 
 def _claim_then_crash(path: str, now_text: str) -> None:
@@ -26,11 +26,11 @@ def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
     store = FrontierStore(path)
     store.initialize()
     url = "https://www.typemoon.net/write_free21/62068"
-    store.seed("write_free21", 62068, url, priority=10)
+    store.seed("write_free21", 62068, url, priority=10, expected_comment_count=9)
 
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    store.seed("write_free21", 62068, url, priority=10)
+    store.seed("write_free21", 62068, url, priority=10, expected_comment_count=9)
     started_at = datetime(2026, 7, 11, tzinfo=UTC)
 
     process = multiprocessing.get_context("spawn").Process(
@@ -44,7 +44,8 @@ def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
     with sqlite3.connect(path) as connection:
         row = connection.execute(
             """
-            SELECT board_id, external_post_id, url, attempts, lease_token, lease_expires_at
+            SELECT board_id, external_post_id, url, attempts, lease_token, lease_expires_at,
+                   expected_comment_count
             FROM crawl_frontier
             """
         ).fetchone()
@@ -56,6 +57,7 @@ def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
         attempts=row[3],
         lease_token=row[4],
         lease_expires_at=datetime.fromisoformat(row[5]),
+        expected_comment_count=row[6],
     )
 
     assert store.claim(limit=1, lease_seconds=60, now=started_at + timedelta(seconds=59)) == []
@@ -63,11 +65,52 @@ def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
     assert len(recovered) == 1
     assert recovered[0].attempts == 2
     assert recovered[0].lease_token != old_lease.lease_token
+    assert recovered[0].expected_comment_count == 9
 
     with pytest.raises(RuntimeError, match="stale or missing frontier lease"):
         store.complete(old_lease)
     store.complete(recovered[0])
     assert store.claim(limit=1, lease_seconds=60, now=started_at + timedelta(minutes=3)) == []
+
+
+def test_latest_listing_expectation_survives_retry_and_can_be_cleared(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    url = "https://www.typemoon.net/write_free21/1"
+
+    store.seed("write_free21", 1, url, expected_comment_count=7)
+    store.seed("write_free21", 1, url, expected_comment_count=0)
+    lease = store.claim_identity("write_free21", 1, lease_seconds=60)
+    assert lease is not None
+    assert lease.expected_comment_count == 0
+
+    with connect_archive(path) as connection:
+        transition_lease(connection, lease, state="retry", error_code="network_error")
+    retried = store.claim_identity("write_free21", 1, lease_seconds=60)
+    assert retried is not None
+    assert retried.expected_comment_count == 0
+    with connect_archive(path) as connection:
+        transition_lease(connection, retried, state="dead", error_code="parse_drift")
+
+    assert store.requeue_dead(error_code="parse_drift", limit=1) == 1
+    requeued = store.claim_identity("write_free21", 1, lease_seconds=60)
+    assert requeued is not None
+    assert requeued.expected_comment_count == 0
+    with connect_archive(path) as connection:
+        transition_lease(connection, requeued, state="done")
+
+    store.seed("write_free21", 1, url, expected_comment_count=None)
+    with connect_archive(path, read_only=True) as connection:
+        value = connection.execute(
+            "SELECT expected_comment_count FROM crawl_frontier "
+            "WHERE board_id = 'write_free21' AND external_post_id = 1"
+        ).fetchone()[0]
+    assert value is None
+
+    for invalid in (-1, True):
+        with pytest.raises(ValueError, match="expected_comment_count"):
+            store.seed("write_free21", 2, f"{url}2", expected_comment_count=invalid)
 
 
 def test_reopen_done_and_claim_only_requested_identity(tmp_path: Path) -> None:

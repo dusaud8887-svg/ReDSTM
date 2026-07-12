@@ -5,14 +5,17 @@ from pathlib import Path
 
 import pytest
 
+import crawler.archive as archive_module
 from crawler.archive import (
     APPLICATION_ID,
+    MIGRATIONS,
     SCHEMA_VERSION,
     archive_health,
     compress_body,
     connect_archive,
     decompress_body,
     initialize_archive,
+    validate_archive_for_release,
 )
 
 
@@ -77,10 +80,141 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
     with connect_archive(path) as connection:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
         assert (
             connection.execute("SELECT inventory_next_page FROM boards LIMIT 1").fetchone() is None
         )
+        column = connection.execute(
+            "SELECT name, type, [notnull], dflt_value, pk "
+            "FROM pragma_table_info('crawl_frontier') "
+            "WHERE name = 'expected_comment_count'"
+        ).fetchone()
+        assert tuple(column) == ("expected_comment_count", "INTEGER", 0, None, 0)
+        assert MIGRATIONS[-1].version == 4
+        assert MIGRATIONS[-1].static_projection_compatible is True
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            connection.execute(
+                "INSERT INTO crawl_frontier "
+                "(board_id, external_post_id, url, expected_comment_count) "
+                "VALUES ('ss_temp01', 1, 'https://www.typemoon.net/ss_temp01/1', -1)"
+            )
+
+
+def test_schema_v4_backfills_frontier_comment_expectation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    with monkeypatch.context() as patch:
+        patch.setattr(archive_module, "SCHEMA_VERSION", 3)
+        patch.setattr(archive_module, "MIGRATIONS", MIGRATIONS[:3])
+        initialize_archive(path)
+
+    with connect_archive(path) as connection:
+        _board(connection, "ss_temp01")
+        _post(connection, "ss_temp01", 1)
+        connection.execute(
+            "UPDATE posts SET comment_count = 5 "
+            "WHERE board_id = 'ss_temp01' AND external_post_id = 1"
+        )
+        connection.executemany(
+            "INSERT INTO crawl_frontier (board_id, external_post_id, url) VALUES (?, ?, ?)",
+            [
+                ("ss_temp01", 1, "https://www.typemoon.net/ss_temp01/1"),
+                ("ss_temp01", 2, "https://www.typemoon.net/ss_temp01/2"),
+            ],
+        )
+
+    initialize_archive(path)
+
+    with connect_archive(path, read_only=True) as connection:
+        rows = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT external_post_id, expected_comment_count "
+                "FROM crawl_frontier ORDER BY external_post_id"
+            )
+        ]
+        assert rows == [(1, 5), (2, None)]
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+
+
+def test_release_schema_guard_accepts_exact_v4_and_rejects_actual_v3_target(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    initialize_archive(path)
+    hashes = {migration.version: migration.sha256 for migration in MIGRATIONS}
+
+    with connect_archive(path, read_only=True) as connection:
+        validate_archive_for_release(
+            connection,
+            target_schema_version=4,
+            target_migration_hashes=hashes,
+        )
+        with pytest.raises(RuntimeError, match="does not support canonical schema v4"):
+            validate_archive_for_release(
+                connection,
+                target_schema_version=3,
+                target_migration_hashes={version: hashes[version] for version in range(1, 4)},
+            )
+
+
+@pytest.mark.parametrize(
+    "column_sql",
+    [None, "ALTER TABLE crawl_frontier ADD COLUMN expected_comment_count TEXT"],
+)
+def test_release_schema_guard_rejects_missing_or_wrong_v4_column(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    column_sql: str | None,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    with monkeypatch.context() as patch:
+        patch.setattr(archive_module, "SCHEMA_VERSION", 3)
+        patch.setattr(archive_module, "MIGRATIONS", MIGRATIONS[:3])
+        initialize_archive(path)
+    with connect_archive(path) as connection:
+        if column_sql is not None:
+            connection.execute(column_sql)
+        connection.execute(
+            "INSERT INTO schema_migrations (version, sha256) VALUES (4, ?)",
+            (MIGRATIONS[3].sha256,),
+        )
+        connection.execute("PRAGMA user_version = 4")
+
+    with connect_archive(path, read_only=True) as connection:
+        with pytest.raises(RuntimeError, match="physical shape"):
+            validate_archive_for_release(
+                connection,
+                target_schema_version=4,
+                target_migration_hashes={
+                    migration.version: migration.sha256 for migration in MIGRATIONS
+                },
+            )
+
+
+def test_release_schema_guard_rejects_inconsistent_ledger_and_target_metadata(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    initialize_archive(path)
+    hashes = {migration.version: migration.sha256 for migration in MIGRATIONS}
+    with connect_archive(path) as connection:
+        connection.execute("DELETE FROM schema_migrations WHERE version = 4")
+
+    with connect_archive(path, read_only=True) as connection:
+        with pytest.raises(RuntimeError, match="ledger is inconsistent"):
+            validate_archive_for_release(
+                connection,
+                target_schema_version=4,
+                target_migration_hashes=hashes,
+            )
+        with pytest.raises(RuntimeError, match="target migration metadata"):
+            validate_archive_for_release(
+                connection,
+                target_schema_version=4,
+                target_migration_hashes={version: hashes[version] for version in range(1, 4)},
+            )
 
 
 def test_schema_v2_indexes_raw_capture_hash(tmp_path: Path) -> None:

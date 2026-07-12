@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import configparser
+import hashlib
 import json
 import os
 import re
@@ -22,6 +24,7 @@ from scripts.control_client import (
     ControlClient,
     ControlProtocolError,
     ControlUnavailableError,
+    DeliveryResult,
 )
 from scripts.control_store import ControlStore, OutboxFullError
 
@@ -61,7 +64,19 @@ _WARNING_CODES = {
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SNAPSHOT_TIME_BUDGET_SECONDS = 30
-_SCHEDULE_HOURS = (0, 6, 12, 18, 24)
+_INVENTORY_TIME_BUDGET_SECONDS = 2 * 60 * 60
+_BOOTSTRAP_RECOVERY_MAX_POSTS = 600
+_RETRY_MAX_POSTS = 100
+_EXPORT_WORKERS = 1
+_DEFAULT_DISK_LOW_BYTES = 40 * 1024**3
+_DEFAULT_CONTROL_REJECTION_WARNING_SECONDS = _DAILY_INTERVAL_SECONDS
+_DEFAULT_TOKEN_EXPIRING_SECONDS = _DAILY_INTERVAL_SECONDS
+_DEFAULT_PUBLISH_STALE_SECONDS = _DAILY_INTERVAL_SECONDS
+_SCHEDULE_TIMER_PATH = Path("/etc/systemd/system/redstm-schedule.timer")
+_CALENDAR_PATTERN = re.compile(
+    r"\*-\*-\* (?P<hours>(?:[01][0-9]|2[0-3])(?:,(?:[01][0-9]|2[0-3]))*)"
+    r":(?P<minute>[0-5][0-9]):(?P<second>[0-5][0-9]) UTC"
+)
 _INVENTORY_STARTED = "inventory.started"
 _INVENTORY_COMPLETED = "inventory.completed"
 
@@ -82,18 +97,61 @@ def _normalized_timestamp(value: object) -> str | None:
     return parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _next_scheduled_at(now: datetime | None = None) -> str:
+def _next_scheduled_at(on_calendar: str, now: datetime | None = None) -> str | None:
+    # ponytail: this deliberately accepts one fixed UTC-slot calendar. If the unit grows
+    # ranges or multiple calendars, read NextElapseUSecRealtime through systemd D-Bus instead.
+    match = _CALENDAR_PATTERN.fullmatch(on_calendar)
+    if match is None:
+        return None
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    anchor = current.replace(hour=0, minute=17, second=0, microsecond=0)
-    return next(
-        (anchor + timedelta(hours=hours)).isoformat(timespec="seconds").replace("+00:00", "Z")
-        for hours in _SCHEDULE_HOURS
-        if anchor + timedelta(hours=hours) > current
-    )
+    anchor = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    hours = sorted({int(hour) for hour in match.group("hours").split(",")})
+    for day in (0, 1):
+        for hour in hours:
+            candidate = anchor + timedelta(
+                days=day,
+                hours=hour,
+                minutes=int(match.group("minute")),
+                seconds=int(match.group("second")),
+            )
+            if candidate > current:
+                return candidate.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return None
+
+
+def _installed_next_scheduled_at(timer_path: Path, now: datetime | None = None) -> str | None:
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    try:
+        with timer_path.open(encoding="utf-8") as source:
+            parser.read_file(source)
+        on_calendar = parser["Timer"]["OnCalendar"]
+    except OSError, KeyError, configparser.Error:
+        return None
+    return _next_scheduled_at(on_calendar, now)
 
 
 def _integer(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _nonnegative_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
+def _aware_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an ISO timestamp") from error
+    if parsed.utcoffset() is None:
+        raise argparse.ArgumentTypeError("must include a timezone")
+    return parsed.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -108,10 +166,27 @@ class RunnerProfile:
     remote: str
     runner_id: str
     runner_version: str
+    disk_low_bytes: int = _DEFAULT_DISK_LOW_BYTES
+    control_rejection_warning_seconds: int = _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS
+    token_expires_at: datetime | None = None
+    token_expiring_seconds: int = _DEFAULT_TOKEN_EXPIRING_SECONDS
+    publish_stale_seconds: int = _DEFAULT_PUBLISH_STALE_SECONDS
 
 
 class ControlRunner:
     def __init__(self, profile: RunnerProfile, client: ControlClient, store: ControlStore) -> None:
+        if (
+            min(
+                profile.disk_low_bytes,
+                profile.control_rejection_warning_seconds,
+                profile.token_expiring_seconds,
+                profile.publish_stale_seconds,
+            )
+            < 0
+        ):
+            raise ValueError("warning thresholds cannot be negative")
+        if profile.token_expires_at is not None and profile.token_expires_at.utcoffset() is None:
+            raise ValueError("token expiry must include a timezone")
         self.profile = profile
         self.client = client
         self.store = store
@@ -181,6 +256,8 @@ class ControlRunner:
                     intentional_pause = True
                 break
             if action in {"inventory", "bootstrap-recovery", "retry-batch"} and crawl_status in {
+                "failed",
+                "runner_failed",
                 "site_unreachable",
                 "rate_limited",
                 "auth_failed",
@@ -304,13 +381,13 @@ class ControlRunner:
         terminal = self.store.finish_command(
             command_id, "succeeded", safe_code, result_payload=payload
         )
-        if self._send(
+        delivery = self._send(
             "command_finish",
             f"/api/v1/runner/commands/{command_id}/finish",
             payload,
             f"finish-{command_id}",
-        ):
-            self.store.mark_reported(command_id)
+        )
+        self._finish_command_reporting(command_id, delivery)
         self._heartbeat("paused" if marker.exists() else "idle")
         return {"ok": True, "status": terminal["state"], "command_id": command_id}
 
@@ -358,13 +435,13 @@ class ControlRunner:
         )
         if action in {"sync-now", "retry-batch"}:
             self._archive_snapshot_event(run_id, 2)
-        if self._send(
+        delivery = self._send(
             "run_finish",
             f"/api/v1/runner/runs/{run_id}/finish",
             finish_payload,
             f"finish-{command_id}",
-        ):
-            self.store.mark_reported(command_id)
+        )
+        self._finish_command_reporting(command_id, delivery)
         self._heartbeat(
             "paused" if (self.profile.state_dir / "schedule.paused").exists() else "idle"
         )
@@ -381,6 +458,8 @@ class ControlRunner:
         run_id: str,
         *,
         command_id: str | None = None,
+        reconcile_attempt: int = 0,
+        pending_recovery_checked: bool = False,
     ) -> dict[str, Any]:
         command_reports = self.profile.report_dir / "commands"
         command_reports.mkdir(parents=True, exist_ok=True)
@@ -421,7 +500,7 @@ class ControlRunner:
                         "--inventory-since",
                         str(inventory_started_at),
                         "--max-seconds",
-                        str(2 * 60 * 60),
+                        str(_INVENTORY_TIME_BUDGET_SECONDS),
                     )
                 )
             report = self._execute_report(
@@ -447,7 +526,11 @@ class ControlRunner:
                 "--warc-dir",
                 str(self.profile.warc_dir),
                 "--max-posts",
-                "600" if action == "bootstrap-recovery" else "100",
+                str(
+                    _BOOTSTRAP_RECOVERY_MAX_POSTS
+                    if action == "bootstrap-recovery"
+                    else _RETRY_MAX_POSTS
+                ),
                 "--pause-file",
                 str(self.profile.state_dir / "schedule.paused"),
                 "--output",
@@ -458,42 +541,317 @@ class ControlRunner:
             )
             return report
         marker = self.profile.state_dir / "publish.pending"
-        if not marker.exists():
-            return {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"}
-        export_report = report_path.with_suffix(".export.json")
-        export = [
-            sys.executable,
-            "-m",
-            "scripts.export_static",
-            "export",
-            str(self.profile.archive),
-            "--output",
-            str(self.profile.static_root),
-            "--workers",
-            "1",
-        ]
-        if (
-            self._wait(export, run_id, "exporting", stdout=export_report, command_id=command_id)
-            != 0
-        ):
-            return {"ok": False, "status": "failed", "safe_code": "export_failed"}
-        publish = [
-            sys.executable,
-            "-m",
-            "scripts.publish_static",
-            str(self.profile.static_root),
-            "--remote",
-            self.profile.remote,
-        ]
-        if (
-            self._wait(publish, run_id, "publishing", stdout=report_path, command_id=command_id)
-            != 0
-        ):
+        recovery_only = (
+            not pending_recovery_checked
+            and (self.profile.static_root / ".publish-smoke.pending.json").is_file()
+        )
+        if recovery_only:
+            publish = [
+                sys.executable,
+                "-m",
+                "scripts.publish_static",
+                str(self.profile.static_root),
+                "--remote",
+                self.profile.remote,
+                "--reconcile-smoke",
+            ]
+        else:
+            export_report = report_path.with_suffix(".export.json")
+            export = [
+                sys.executable,
+                "-m",
+                "scripts.export_static",
+                "export",
+                str(self.profile.archive),
+                "--output",
+                str(self.profile.static_root),
+                "--workers",
+                str(_EXPORT_WORKERS),
+                "--incremental-only",
+            ]
+            export_return_code = self._wait(
+                export, run_id, "exporting", stdout=export_report, command_id=command_id
+            )
+            if export_return_code != 0:
+                try:
+                    export_failure = self._read_report(export_report)
+                except OSError, ValueError, json.JSONDecodeError:
+                    export_failure = {}
+                if (
+                    export_return_code == 2
+                    and export_failure.get("status") == "partial"
+                    and str(export_failure.get("safe_code", "")).startswith("incremental_")
+                ):
+                    return export_failure
+                return {"ok": False, "status": "failed", "safe_code": "export_failed"}
+            publish = [
+                sys.executable,
+                "-m",
+                "scripts.publish_static",
+                str(self.profile.static_root),
+                "--remote",
+                self.profile.remote,
+                "--verified-incremental",
+            ]
+        publish_return_code = self._wait(
+            publish, run_id, "publishing", stdout=report_path, command_id=command_id
+        )
+        if publish_return_code != 0:
+            try:
+                publish_failure = self._read_report(report_path)
+            except OSError, ValueError, json.JSONDecodeError:
+                publish_failure = {}
+            if (
+                publish_return_code == 2
+                and publish_failure.get("status") == "partial"
+                and str(publish_failure.get("safe_code", "")).startswith("incremental_")
+            ):
+                return publish_failure
             return {"ok": False, "status": "failed", "safe_code": "publish_failed"}
         report = self._read_report(report_path)
-        if report.get("ok") is True:
+        if report.get("ok") is not True:
+            return report
+        if recovery_only and report.get("pending_smoke") is False:
+            return self._execute_action(
+                action,
+                report_id,
+                run_id,
+                command_id=command_id,
+                reconcile_attempt=reconcile_attempt,
+                pending_recovery_checked=True,
+            )
+        release_key = report.get("release_key")
+        release_match = (
+            re.fullmatch(r"releases/([0-9a-f]{64})\.json", release_key)
+            if isinstance(release_key, str)
+            else None
+        )
+        deferred_release_key = report.get("deferred_release_key")
+        deferred_match = (
+            re.fullmatch(r"releases/([0-9a-f]{64})\.json", deferred_release_key)
+            if isinstance(deferred_release_key, str)
+            else None
+        )
+        smoke_marker_release_key = report.get("smoke_marker_release_key", release_key)
+        smoke_marker_match = (
+            re.fullmatch(r"releases/([0-9a-f]{64})\.json", smoke_marker_release_key)
+            if isinstance(smoke_marker_release_key, str)
+            else None
+        )
+        rollback_already_active = report.get("rollback_already_active") is True
+        if (
+            release_match is None
+            or (
+                deferred_release_key is not None
+                and (
+                    deferred_match is None
+                    or deferred_release_key == release_key
+                    or report.get("activation_pending_smoke") is not True
+                )
+            )
+            or smoke_marker_match is None
+            or (
+                rollback_already_active
+                and (
+                    not recovery_only
+                    or smoke_marker_release_key == release_key
+                    or report.get("activation_pending_smoke") is not True
+                )
+            )
+        ):
+            result: dict[str, Any] = {
+                "ok": False,
+                "status": "failed",
+                "safe_code": "publish_report_invalid",
+            }
+        else:
+            release_sha256 = release_match.group(1)
+            smoke = [
+                sys.executable,
+                "-m",
+                "scripts.release_smoke",
+                "--expected-release-sha256",
+                release_sha256,
+            ]
+            if (
+                self._wait(
+                    smoke,
+                    run_id,
+                    "smoking",
+                    stdout=report_path,
+                    command_id=command_id,
+                )
+                == 0
+            ):
+                if report.get("activation_pending_smoke") is True:
+                    try:
+                        self._confirm_publish_smoke(str(smoke_marker_release_key))
+                    except OSError, ValueError, json.JSONDecodeError:
+                        result = {
+                            "ok": False,
+                            "status": "failed",
+                            "safe_code": "publish_smoke_confirmation_failed",
+                            "attempted_release_key": smoke_marker_release_key,
+                            "release_smoke_verified": True,
+                        }
+                    else:
+                        result = {
+                            **report,
+                            "status": "succeeded",
+                            "release_smoke_verified": True,
+                            "activation_pending_smoke": False,
+                            "activation_smoke_confirmed": True,
+                        }
+                else:
+                    result = {**report, "status": "succeeded", "release_smoke_verified": True}
+                if result.get("ok") is True and rollback_already_active:
+                    result = {
+                        "ok": False,
+                        "status": "failed",
+                        "safe_code": "publish_smoke_failed_rolled_back",
+                        "attempted_release_key": smoke_marker_release_key,
+                        "previous_release_key": release_key,
+                        "rollback_pointer_verified": True,
+                        "rollback_smoke_verified": True,
+                    }
+                elif result.get("ok") is True and recovery_only:
+                    reconciled = self._execute_action(
+                        action,
+                        report_id,
+                        run_id,
+                        command_id=command_id,
+                        reconcile_attempt=reconcile_attempt,
+                        pending_recovery_checked=True,
+                    )
+                    reconciled["preexisting_activation_reconciled"] = True
+                    report_path.write_text(
+                        json.dumps(reconciled, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    return reconciled
+                elif result.get("ok") is True and deferred_match is not None:
+                    if reconcile_attempt >= 1:
+                        self._write_publish_marker()
+                        result = {
+                            "ok": False,
+                            "status": "failed",
+                            "safe_code": "publish_reconciliation_limit",
+                            "release_smoke_verified": True,
+                            "reconciled_release_key": release_key,
+                            "deferred_release_key": deferred_release_key,
+                        }
+                    else:
+                        reconciled = self._execute_action(
+                            action,
+                            report_id,
+                            run_id,
+                            command_id=command_id,
+                            reconcile_attempt=reconcile_attempt + 1,
+                            pending_recovery_checked=True,
+                        )
+                        reconciled["preexisting_activation_reconciled"] = True
+                        report_path.write_text(
+                            json.dumps(reconciled, sort_keys=True) + "\n",
+                            encoding="utf-8",
+                        )
+                        return reconciled
+            else:
+                pointer_changed = report.get("mode") in {"delta", "publish"} or (
+                    report.get("mode") == "noop"
+                    and (
+                        report.get("activation_pending_smoke") is True
+                        or report.get("ledger_recovered") is True
+                    )
+                )
+                previous_release_key = report.get("previous_release_key")
+                previous_match = (
+                    re.fullmatch(r"releases/([0-9a-f]{64})\.json", previous_release_key)
+                    if pointer_changed
+                    and report.get("previous_release_verified") is True
+                    and isinstance(previous_release_key, str)
+                    else None
+                )
+                result = {
+                    "ok": False,
+                    "status": "failed",
+                    "safe_code": (
+                        "publish_rollback_unavailable"
+                        if pointer_changed
+                        else "publish_smoke_failed"
+                    ),
+                    "attempted_release_key": release_key,
+                    "previous_release_key": previous_release_key if previous_match else None,
+                    "rollback_pointer_verified": False,
+                    "rollback_smoke_verified": False,
+                }
+                if rollback_already_active:
+                    result.update(
+                        {
+                            "safe_code": "publish_rollback_smoke_failed",
+                            "attempted_release_key": smoke_marker_release_key,
+                            "previous_release_key": release_key,
+                            "rollback_pointer_verified": True,
+                        }
+                    )
+                if previous_match is not None:
+                    rollback = [
+                        sys.executable,
+                        "-m",
+                        "scripts.publish_static",
+                        str(self.profile.static_root),
+                        "--remote",
+                        self.profile.remote,
+                        "--activate",
+                        str(previous_release_key),
+                        "--expected-current",
+                        str(release_key),
+                    ]
+                    if (
+                        self._wait(
+                            rollback,
+                            run_id,
+                            "rolling_back",
+                            stdout=report_path,
+                            command_id=command_id,
+                        )
+                        != 0
+                    ):
+                        result["safe_code"] = "publish_rollback_failed"
+                    else:
+                        result["rollback_pointer_verified"] = True
+                        rollback_smoke = [
+                            sys.executable,
+                            "-m",
+                            "scripts.release_smoke",
+                            "--expected-release-sha256",
+                            previous_match.group(1),
+                        ]
+                        if (
+                            self._wait(
+                                rollback_smoke,
+                                run_id,
+                                "rollback_smoking",
+                                stdout=report_path,
+                                command_id=command_id,
+                            )
+                            == 0
+                        ):
+                            result["rollback_smoke_verified"] = True
+                            if report.get("activation_pending_smoke") is True:
+                                try:
+                                    self._confirm_publish_smoke(str(smoke_marker_release_key))
+                                except OSError, ValueError, json.JSONDecodeError:
+                                    result["safe_code"] = "publish_rollback_confirmation_failed"
+                                else:
+                                    result["safe_code"] = "publish_smoke_failed_rolled_back"
+                            else:
+                                result["safe_code"] = "publish_smoke_failed_rolled_back"
+                        else:
+                            result["safe_code"] = "publish_rollback_smoke_failed"
+        report_path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+        if result.get("ok") is True:
             marker.unlink(missing_ok=True)
-        return report
+        return result
 
     def _inventory_due(self) -> bool:
         started = self.profile.state_dir / _INVENTORY_STARTED
@@ -670,6 +1028,47 @@ class ControlRunner:
             raise ValueError("command report must be an object")
         return value
 
+    def _confirm_publish_smoke(self, release_key: str) -> None:
+        lock = FileLock(str(self.profile.static_root / ".publish.lock"), timeout=0)
+        try:
+            with lock:
+                self._confirm_publish_smoke_locked(release_key)
+        except Timeout as error:
+            raise ValueError("static publisher is active during smoke confirmation") from error
+
+    def _confirm_publish_smoke_locked(self, release_key: str) -> None:
+        marker = self.profile.static_root / ".publish-smoke.pending.json"
+        if not marker.is_file() or marker.stat().st_size > 1024 * 1024:
+            raise ValueError("publish smoke marker is missing or too large")
+        raw = marker.read_bytes()
+        value = json.loads(raw)
+        release_match = re.fullmatch(r"releases/([0-9a-f]{64})\.json", release_key)
+        if (
+            not isinstance(value, dict)
+            or value.get("schema_version") != 1
+            or value.get("remote") != self.profile.remote.rstrip("/")
+            or value.get("release_key") != release_key
+            or release_match is None
+            or type(value.get("remote_bytes")) is not int
+            or type(value.get("remote_objects")) is not int
+            or value["remote_bytes"] < 0
+            or value["remote_objects"] < 0
+        ):
+            raise ValueError("publish smoke marker is invalid")
+        release_path = self.profile.static_root / release_key
+        release_body = release_path.read_bytes()
+        if hashlib.sha256(release_body).hexdigest() != release_match.group(1):
+            raise ValueError("publish smoke release is invalid")
+        if marker.read_bytes() != raw:
+            raise ValueError("publish smoke marker changed during confirmation")
+        marker.unlink()
+        if os.name != "nt":
+            directory = os.open(marker.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+
     def _result(self, action: str, report: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         raw_status = str(report.get("status", "failed"))
         if report.get("ok") is True:
@@ -751,8 +1150,8 @@ class ControlRunner:
         else:
             kind = "command_finish"
             path = f"/api/v1/runner/commands/{command_id}/finish"
-        if self._send(kind, path, payload, f"finish-{command_id}"):
-            self.store.mark_reported(command_id)
+        delivery = self._send(kind, path, payload, f"finish-{command_id}")
+        self._finish_command_reporting(command_id, delivery)
         return {
             "ok": record["state"] == "succeeded",
             "status": "replayed",
@@ -939,6 +1338,51 @@ class ControlRunner:
             return False
         return enabled.returncode == 0 and active.returncode == 0
 
+    @staticmethod
+    def _next_scheduled_at() -> str | None:
+        return _installed_next_scheduled_at(_SCHEDULE_TIMER_PATH)
+
+    def _safe_warning(self, disk_free_bytes: int, now: datetime) -> str | None:
+        if self.profile.disk_low_bytes and disk_free_bytes < self.profile.disk_low_bytes:
+            return "disk_low"
+        rejection = self.store.rejection()
+        rejected_at = _normalized_timestamp(
+            rejection.get("last_rejected_at") if rejection is not None else None
+        )
+        if self.profile.control_rejection_warning_seconds and rejected_at is not None:
+            parsed_rejected_at = datetime.fromisoformat(rejected_at.replace("Z", "+00:00"))
+            rejection_age = now.astimezone(UTC) - parsed_rejected_at
+            if (
+                timedelta(0)
+                <= rejection_age
+                <= timedelta(seconds=self.profile.control_rejection_warning_seconds)
+            ):
+                return "control_rejected"
+        if (
+            self.profile.token_expires_at is not None
+            and self.profile.token_expiring_seconds
+            and self.profile.token_expires_at.astimezone(UTC) - now
+            <= timedelta(seconds=self.profile.token_expiring_seconds)
+        ):
+            return "token_expiring"
+        if self.profile.publish_stale_seconds:
+            changed_at: list[datetime] = []
+            for marker in (
+                self.profile.state_dir / "publish.pending",
+                self.profile.static_root / ".publish-smoke.pending.json",
+            ):
+                try:
+                    changed_at.append(datetime.fromtimestamp(marker.stat().st_mtime, UTC))
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    return "publish_stale"
+            if changed_at and now - min(changed_at) >= timedelta(
+                seconds=self.profile.publish_stale_seconds
+            ):
+                return "publish_stale"
+        return None
+
     def _heartbeat(
         self,
         state: str,
@@ -949,11 +1393,17 @@ class ControlRunner:
     ) -> None:
         if state == "idle" and (self.profile.state_dir / "schedule.paused").exists():
             state = "paused"
+        disk_free_bytes = shutil.disk_usage(self.profile.state_dir).free
+        timer_active = self._schedule_timer_active()
+        next_scheduled_at = self._next_scheduled_at() if timer_active else None
+        if state == "idle" and timer_active and next_scheduled_at is None:
+            state = "degraded"
         payload: dict[str, Any] = {
             "runner_version": self.profile.runner_version,
             "state": state,
-            "disk_free_bytes": shutil.disk_usage(self.profile.state_dir).free,
-            "next_scheduled_at": _next_scheduled_at() if self._schedule_timer_active() else None,
+            "disk_free_bytes": disk_free_bytes,
+            "next_scheduled_at": next_scheduled_at,
+            "safe_warning_code": self._safe_warning(disk_free_bytes, datetime.now(UTC)),
         }
         if run_id is not None:
             payload.update(
@@ -982,15 +1432,22 @@ class ControlRunner:
         path: str,
         payload: dict[str, Any],
         idempotency_key: str,
-    ) -> bool:
+    ) -> DeliveryResult | None:
         try:
-            self.client.send_or_enqueue(self.store, kind, path, payload, idempotency_key)
-            return True
+            return self.client.send_or_enqueue(self.store, kind, path, payload, idempotency_key)
         except ControlProtocolError, OutboxFullError, OSError, ValueError:
-            return False
+            return None
+
+    def _finish_command_reporting(self, command_id: str, delivery: DeliveryResult | None) -> None:
+        if delivery is DeliveryResult.DELIVERED:
+            self.store.mark_reported(command_id)
+        elif delivery is DeliveryResult.PERMANENTLY_REJECTED:
+            self.store.mark_report_rejected(command_id)
 
     def _write_publish_marker(self) -> None:
         marker = self.profile.state_dir / "publish.pending"
+        if marker.exists():
+            return
         partial = marker.with_suffix(".partial")
         partial.write_text(f"changed_at={_timestamp()}\n", encoding="utf-8")
         os.replace(partial, marker)
@@ -1011,6 +1468,36 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--remote", default="r2:redstm-archive")
     parser.add_argument("--runner-id", default="oracle-primary")
     parser.add_argument("--runner-version", default=os.environ.get("REDSTM_RUNNER_VERSION", "dev"))
+    parser.add_argument(
+        "--disk-low-bytes",
+        type=_nonnegative_integer,
+        default=os.environ.get("REDSTM_DISK_LOW_BYTES", str(_DEFAULT_DISK_LOW_BYTES)),
+    )
+    parser.add_argument(
+        "--control-rejection-warning-seconds",
+        type=_nonnegative_integer,
+        default=os.environ.get(
+            "REDSTM_CONTROL_REJECTION_WARNING_SECONDS",
+            str(_DEFAULT_CONTROL_REJECTION_WARNING_SECONDS),
+        ),
+    )
+    parser.add_argument(
+        "--token-expires-at",
+        type=_aware_datetime,
+        default=os.environ.get("REDSTM_ACCESS_TOKEN_EXPIRES_AT"),
+    )
+    parser.add_argument(
+        "--token-expiring-seconds",
+        type=_nonnegative_integer,
+        default=os.environ.get(
+            "REDSTM_TOKEN_EXPIRING_SECONDS", str(_DEFAULT_TOKEN_EXPIRING_SECONDS)
+        ),
+    )
+    parser.add_argument(
+        "--publish-stale-seconds",
+        type=_nonnegative_integer,
+        default=os.environ.get("REDSTM_PUBLISH_STALE_SECONDS", str(_DEFAULT_PUBLISH_STALE_SECONDS)),
+    )
     return parser.parse_args()
 
 
@@ -1027,6 +1514,11 @@ def main() -> int:
         remote=args.remote,
         runner_id=args.runner_id,
         runner_version=args.runner_version,
+        disk_low_bytes=args.disk_low_bytes,
+        control_rejection_warning_seconds=args.control_rejection_warning_seconds,
+        token_expires_at=args.token_expires_at,
+        token_expiring_seconds=args.token_expiring_seconds,
+        publish_stale_seconds=args.publish_stale_seconds,
     )
     runner = ControlRunner(
         profile,

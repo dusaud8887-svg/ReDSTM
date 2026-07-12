@@ -19,6 +19,7 @@ from crawler.session import (
     ensure_session_export,
     load_session_export,
     refresh_session_export,
+    validate_session_export,
 )
 from crawler.spiders.typemoon import TypeMoonSpider
 
@@ -177,9 +178,14 @@ def test_expired_export_is_validated_before_form_login(
             user_agent="ReDSTM-test/1.0",
             now=datetime(2026, 7, 11, 17, tzinfo=UTC),
         )
+        validated = validate_session_export(
+            path,
+            now=datetime(2026, 7, 11, 17, tzinfo=UTC),
+        )
 
     assert state["post_count"] == 1
     assert session.cookies[0].value == "secret"
+    assert validated == session
 
 
 def test_session_validation_stops_after_logout_marker_before_broken_eof(
@@ -258,7 +264,7 @@ def test_automatic_login_is_throttled_for_thirty_minutes_after_failure(
                 user_agent="ReDSTM-test/1.0",
                 now=first,
             )
-        with pytest.raises(AutomaticLoginThrottleError, match="once every 30 minutes"):
+        with pytest.raises(AutomaticLoginThrottleError, match="configured retry interval"):
             ensure_session_export(
                 path,
                 user_id="member",

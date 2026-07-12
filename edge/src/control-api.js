@@ -1,6 +1,19 @@
-import { envelope, failure, runView, validCounters } from "./control-common.js";
+import {
+  CLIENT_FUTURE_CLOCK_SKEW_MS,
+  NEXT_SCHEDULE_MAX_AHEAD_MS,
+  envelope,
+  failure,
+  runView,
+  validCounters,
+} from "./control-common.js";
 import { readControlResponse } from "./control-read.js";
 
+const CONTROL_BODY_MAX_BYTES = 16 * 1024;
+const TELEMETRY_BODY_MAX_BYTES = 64 * 1024;
+const COMMAND_TTL_MS = 15 * 60 * 1000;
+const COMMAND_CLAIM_LEASE_MS = 2 * 60 * 1000;
+const COMMAND_MAX_CLAIM_ATTEMPTS = 2;
+const RUN_EVENT_BATCH_MAX_ITEMS = 50;
 const protocol = "1";
 const actions = new Set([
   "sync-now",
@@ -26,12 +39,22 @@ const safeWarnings = new Set([
   "rate_limited",
   "site_unreachable",
   "disk_low",
+  "control_rejected",
   "token_expiring",
   "publish_stale",
-  "backup_stale",
 ]);
 const identifierPattern = /^[a-zA-Z0-9_.:-]{1,128}$/;
 const idempotencyPattern = /^[a-zA-Z0-9_.:-]{8,128}$/;
+
+function commandConflictGroup(action) {
+  return markerActions.has(action) ? "schedule-marker" : "process";
+}
+
+function commandConflictFilter(group) {
+  return group === "schedule-marker"
+    ? "action IN ('pause-after-current', 'resume-schedule')"
+    : "action NOT IN ('pause-after-current', 'resume-schedule')";
+}
 
 function validRequestId(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -97,6 +120,17 @@ function commandView(row) {
   };
 }
 
+function commandReplay(requestId, row, action) {
+  return row.action === action
+    ? envelope(requestId, commandView(row))
+    : failure(
+      requestId,
+      409,
+      "idempotency_conflict",
+      "Idempotency key belongs to a different command intent",
+    );
+}
+
 function browserMutation(request, url) {
   return request.headers.get("Origin") === url.origin &&
     request.headers.get("X-ReDSTM-Command") === "1";
@@ -113,6 +147,12 @@ function timestampValue(value) {
   return value == null ? null : new Date(value).toISOString();
 }
 
+function validClientTimestamp(value, now) {
+  return validTimestamp(value) && (
+    value == null || Date.parse(value) <= now.getTime() + CLIENT_FUTURE_CLOCK_SKEW_MS
+  );
+}
+
 async function createCommand(request, env, auth, requestId, url) {
   if (!browserMutation(request, url)) {
     return failure(requestId, 403, "origin_denied", "Command request was denied");
@@ -121,7 +161,7 @@ async function createCommand(request, env, auth, requestId, url) {
   if (!idempotencyPattern.test(idempotencyKey)) {
     return failure(requestId, 400, "invalid_idempotency_key", "Idempotency key is invalid");
   }
-  const body = await readJson(request, 16 * 1024);
+  const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
   if (!actions.has(body.action) || body.args == null ||
       typeof body.args !== "object" || Array.isArray(body.args) || Object.keys(body.args).length) {
     return failure(requestId, 400, "invalid_command", "Command action or arguments are invalid");
@@ -129,15 +169,19 @@ async function createCommand(request, env, auth, requestId, url) {
   const existing = await env.CONTROL_DB.prepare(
     "SELECT * FROM commands WHERE idempotency_key = ?",
   ).bind(idempotencyKey).first();
-  if (existing) return envelope(requestId, commandView(existing));
+  if (existing) return commandReplay(requestId, existing, body.action);
   const now = new Date();
-  const conflictFilter = markerActions.has(body.action)
-    ? "action IN ('pause-after-current', 'resume-schedule') AND "
-    : "";
+  const nowText = now.toISOString();
+  await env.CONTROL_DB.prepare(
+    `UPDATE commands SET state = 'expired', finished_at = ?, safe_message = 'expired'
+     WHERE state = 'queued' AND expires_at <= ?`,
+  ).bind(nowText, nowText).run();
+  const conflictGroup = commandConflictGroup(body.action);
+  const conflictFilter = commandConflictFilter(conflictGroup);
   const conflict = await env.CONTROL_DB.prepare(
-    `SELECT command_id FROM commands WHERE ${conflictFilter}` +
-    "(state = 'claimed' OR (state = 'queued' AND expires_at > ?)) LIMIT 1",
-  ).bind(now.toISOString()).first();
+    `SELECT command_id FROM commands WHERE ${conflictFilter}
+     AND state IN ('queued', 'claimed') LIMIT 1`,
+  ).first();
   if (conflict) {
     return failure(requestId, 409, "command_conflict", "Another command is active", true);
   }
@@ -145,8 +189,8 @@ async function createCommand(request, env, auth, requestId, url) {
     command_id: crypto.randomUUID(),
     action: body.action,
     state: "queued",
-    requested_at: now.toISOString(),
-    expires_at: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+    requested_at: nowText,
+    expires_at: new Date(now.getTime() + COMMAND_TTL_MS).toISOString(),
   };
   try {
     await env.CONTROL_DB.prepare(
@@ -162,12 +206,19 @@ async function createCommand(request, env, auth, requestId, url) {
       command.requested_at,
       command.expires_at,
     ).run();
-  } catch {
+  } catch (error) {
     const replay = await env.CONTROL_DB.prepare(
       "SELECT * FROM commands WHERE idempotency_key = ?",
     ).bind(idempotencyKey).first();
-    if (replay) return envelope(requestId, commandView(replay));
-    throw new Error("command insert failed");
+    if (replay) return commandReplay(requestId, replay, body.action);
+    const conflict = await env.CONTROL_DB.prepare(
+      `SELECT command_id FROM commands WHERE ${conflictFilter}
+       AND state IN ('queued', 'claimed') LIMIT 1`,
+    ).first();
+    if (conflict) {
+      return failure(requestId, 409, "command_conflict", "Another command is active", true);
+    }
+    throw error;
   }
   return envelope(requestId, commandView(command), 202);
 }
@@ -177,7 +228,7 @@ async function claimCommand(request, env, requestId) {
   if (!idempotencyPattern.test(idempotencyKey)) {
     return failure(requestId, 400, "invalid_idempotency_key", "Idempotency key is invalid");
   }
-  const body = await readJson(request, 16 * 1024);
+  const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
   if (!identifierPattern.test(body.runner_id || "") ||
       (body.command_kind !== undefined && body.command_kind !== "marker")) {
     return failure(requestId, 400, "invalid_runner", "Runner claim is invalid");
@@ -200,13 +251,13 @@ async function claimCommand(request, env, requestId) {
       `UPDATE commands SET state = 'queued', claimed_at = NULL, claim_expires_at = NULL,
          runner_id = NULL, claim_idempotency_key = NULL
        WHERE state = 'claimed' AND claim_expires_at <= ?
-         AND claim_attempts < 2 AND run_id IS NULL ${markerFilter}`,
-    ).bind(nowText),
+         AND claim_attempts < ? AND run_id IS NULL ${markerFilter}`,
+    ).bind(nowText, COMMAND_MAX_CLAIM_ATTEMPTS),
     env.CONTROL_DB.prepare(
       `UPDATE commands SET state = 'failed', finished_at = ?, safe_message = 'claim_lost'
        WHERE state = 'claimed' AND claim_expires_at <= ?
-         AND claim_attempts >= 2 AND run_id IS NULL ${markerFilter}`,
-    ).bind(nowText, nowText),
+         AND claim_attempts >= ? AND run_id IS NULL ${markerFilter}`,
+    ).bind(nowText, nowText, COMMAND_MAX_CLAIM_ATTEMPTS),
   ]);
   let claimed;
   try {
@@ -221,7 +272,7 @@ async function claimCommand(request, env, requestId) {
        RETURNING *`,
     ).bind(
       nowText,
-      new Date(now.getTime() + 2 * 60 * 1000).toISOString(),
+      new Date(now.getTime() + COMMAND_CLAIM_LEASE_MS).toISOString(),
       body.runner_id,
       idempotencyKey,
       nowText,
@@ -236,14 +287,18 @@ async function claimCommand(request, env, requestId) {
 }
 
 async function heartbeat(request, env, requestId) {
-  const body = await readJson(request, 64 * 1024);
+  const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   const commandLease = body.active_command_id != null || body.runner_id != null;
+  const receivedAt = new Date();
   if (!identifierPattern.test(body.runner_version || "") || !runnerStates.has(body.state) ||
       (body.safe_warning_code != null && !safeWarnings.has(body.safe_warning_code)) ||
       [body.active_run_id, body.active_step, body.active_board_id].some(
         (value) => value != null && !identifierPattern.test(value),
       ) ||
       !validTimestamp(body.next_scheduled_at) ||
+      (body.next_scheduled_at != null &&
+        Date.parse(body.next_scheduled_at) >
+          receivedAt.getTime() + NEXT_SCHEDULE_MAX_AHEAD_MS) ||
       (commandLease && (
         !/^[0-9a-f-]{36}$/i.test(body.active_command_id || "") ||
         !identifierPattern.test(body.runner_id || "")
@@ -252,7 +307,7 @@ async function heartbeat(request, env, requestId) {
         (!Number.isSafeInteger(body.disk_free_bytes) || body.disk_free_bytes < 0))) {
     return failure(requestId, 400, "invalid_heartbeat", "Heartbeat fields are invalid");
   }
-  const now = new Date().toISOString();
+  const now = receivedAt.toISOString();
   const statements = [env.CONTROL_DB.prepare(
     `INSERT INTO runner_status (
        id, schema_version, runner_version, state, heartbeat_at, next_scheduled_at,
@@ -283,7 +338,7 @@ async function heartbeat(request, env, requestId) {
         `UPDATE commands SET claim_expires_at = ?
          WHERE command_id = ? AND state = 'claimed' AND runner_id = ?`,
       ).bind(
-        new Date(Date.parse(now) + 2 * 60 * 1000).toISOString(),
+        new Date(Date.parse(now) + COMMAND_CLAIM_LEASE_MS).toISOString(),
         body.active_command_id,
         body.runner_id,
       ),
@@ -298,7 +353,7 @@ async function heartbeat(request, env, requestId) {
 }
 
 async function startRun(request, env, requestId) {
-  const body = await readJson(request, 64 * 1024);
+  const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   if (!identifierPattern.test(body.run_id || "") || !runKinds.has(body.kind) ||
       !runSources.has(body.source) || !validTimestamp(body.requested_at) ||
       !validTimestamp(body.started_at) ||
@@ -310,6 +365,12 @@ async function startRun(request, env, requestId) {
     "SELECT * FROM runs WHERE run_id = ?",
   ).bind(body.run_id).first();
   if (existing) return envelope(requestId, runView(existing));
+  const receivedAt = new Date();
+  if (!validClientTimestamp(body.requested_at, receivedAt) ||
+      !validClientTimestamp(body.started_at, receivedAt)) {
+    return failure(requestId, 400, "invalid_run", "Run timestamp is too far in the future");
+  }
+  let commandAction = null;
   if (body.command_id != null) {
     const command = await env.CONTROL_DB.prepare(
       "SELECT action, state, run_id FROM commands WHERE command_id = ?",
@@ -318,22 +379,63 @@ async function startRun(request, env, requestId) {
         commandRunKinds.get(command.action) !== body.kind) {
       return failure(requestId, 409, "command_not_startable", "Command cannot start this run");
     }
+    commandAction = command.action;
   }
-  const startedAt = timestampValue(body.started_at) ?? new Date().toISOString();
-  const statements = [
-    env.CONTROL_DB.prepare(
-      `INSERT INTO runs (run_id, kind, source, state, requested_at, started_at)
-       VALUES (?, ?, ?, 'running', ?, ?) ON CONFLICT(run_id) DO NOTHING`,
-    ).bind(body.run_id, body.kind, body.source, timestampValue(body.requested_at), startedAt),
-  ];
+  const startedAt = timestampValue(body.started_at) ?? receivedAt.toISOString();
   if (body.command_id != null) {
-    statements.push(
+    let results;
+    try {
+      results = await env.CONTROL_DB.batch([
+        env.CONTROL_DB.prepare(
+          `INSERT INTO runs (run_id, kind, source, state, requested_at, started_at)
+           SELECT ?, ?, ?, 'running', ?, ? FROM commands
+           WHERE command_id = ? AND action = ?
+             AND state = 'claimed' AND run_id IS NULL`,
+        ).bind(
+          body.run_id,
+          body.kind,
+          body.source,
+          timestampValue(body.requested_at),
+          startedAt,
+          body.command_id,
+          commandAction,
+        ),
+        env.CONTROL_DB.prepare(
+          `UPDATE commands SET run_id = ?
+           WHERE command_id = ? AND action = ?
+             AND state = 'claimed' AND run_id IS NULL`,
+        ).bind(body.run_id, body.command_id, commandAction),
+      ]);
+    } catch (error) {
+      const raced = await env.CONTROL_DB.prepare(
+        "SELECT * FROM runs WHERE run_id = ?",
+      ).bind(body.run_id).first();
+      if (raced) return envelope(requestId, runView(raced));
+      throw error;
+    }
+    if (results.length !== 2 ||
+        results.some((result) => Number(result?.meta?.changes ?? 0) !== 1)) {
+      const raced = await env.CONTROL_DB.prepare(
+        "SELECT * FROM runs WHERE run_id = ?",
+      ).bind(body.run_id).first();
+      return raced
+        ? envelope(requestId, runView(raced))
+        : failure(requestId, 409, "command_not_startable", "Command cannot start this run");
+    }
+  } else {
+    await env.CONTROL_DB.batch([
       env.CONTROL_DB.prepare(
-        "UPDATE commands SET run_id = ? WHERE command_id = ? AND state = 'claimed'",
-      ).bind(body.run_id, body.command_id),
-    );
+        `INSERT INTO runs (run_id, kind, source, state, requested_at, started_at)
+         VALUES (?, ?, ?, 'running', ?, ?) ON CONFLICT(run_id) DO NOTHING`,
+      ).bind(
+        body.run_id,
+        body.kind,
+        body.source,
+        timestampValue(body.requested_at),
+        startedAt,
+      ),
+    ]);
   }
-  await env.CONTROL_DB.batch(statements);
   return envelope(
     requestId,
     runView({ ...body, state: "running", started_at: startedAt }),
@@ -353,7 +455,8 @@ function validBoardCounters(value) {
 }
 
 async function recordBoardStatus(request, env, requestId) {
-  const body = await readJson(request, 16 * 1024);
+  const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
+  const receivedAt = new Date();
   if (!identifierPattern.test(body.board_id || "") || !boardOutcomes.has(body.last_outcome) ||
       (body.board_name != null &&
         (typeof body.board_name !== "string" || body.board_name.length > 128)) ||
@@ -364,6 +467,9 @@ async function recordBoardStatus(request, env, requestId) {
         (!Number.isSafeInteger(body.inventory_next_page) || body.inventory_next_page < 1)) ||
       !validTimestamp(body.last_inventory_at) ||
       !validTimestamp(body.inventory_pass_started_at) ||
+      !validClientTimestamp(body.last_scanned_at, receivedAt) ||
+      !validClientTimestamp(body.last_inventory_at, receivedAt) ||
+      !validClientTimestamp(body.inventory_pass_started_at, receivedAt) ||
       !validBoardCounters(body.counters) ||
       (body.warning_code != null && !safeWarnings.has(body.warning_code))) {
     return failure(requestId, 400, "invalid_board_status", "Board status is invalid");
@@ -392,6 +498,7 @@ async function recordBoardStatus(request, env, requestId) {
        ),
        warning_code = excluded.warning_code
      WHERE board_status.last_scanned_at IS NULL
+        OR board_status.last_scanned_at > ?
         OR excluded.last_scanned_at >= board_status.last_scanned_at`,
   ).bind(
     body.board_id,
@@ -410,12 +517,13 @@ async function recordBoardStatus(request, env, requestId) {
     timestampValue(body.last_inventory_at),
     timestampValue(body.inventory_pass_started_at),
     body.warning_code ?? null,
+    new Date(receivedAt.getTime() + CLIENT_FUTURE_CLOCK_SKEW_MS).toISOString(),
   ).run();
   return envelope(requestId, { accepted: true });
 }
 
 async function finishCommand(request, env, requestId, commandId) {
-  const body = await readJson(request, 16 * 1024);
+  const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
   if (!identifierPattern.test(body.runner_id || "") || !terminalStates.has(body.state) ||
       (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
     return failure(requestId, 400, "invalid_command_finish", "Command result is invalid");
@@ -453,9 +561,13 @@ function validEvent(event) {
 }
 
 async function recordEvents(request, env, requestId, runId) {
-  const body = await readJson(request, 64 * 1024);
-  if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > 50 ||
-      !body.events.every(validEvent)) {
+  const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
+  const receivedAt = new Date();
+  if (!Array.isArray(body.events) || body.events.length < 1 ||
+      body.events.length > RUN_EVENT_BATCH_MAX_ITEMS ||
+      !body.events.every(
+        (event) => validEvent(event) && validClientTimestamp(event.recorded_at, receivedAt),
+      )) {
     return failure(requestId, 400, "invalid_events", "Run events are invalid");
   }
   const run = await env.CONTROL_DB.prepare(
@@ -485,7 +597,7 @@ async function recordEvents(request, env, requestId, runId) {
 }
 
 async function finishRun(request, env, requestId, runId) {
-  const body = await readJson(request, 64 * 1024);
+  const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   if (!terminalStates.has(body.state) || !validCounters(body.counters ?? {}) ||
       (body.release_id != null && !identifierPattern.test(body.release_id)) ||
       (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
@@ -573,8 +685,12 @@ export async function controlApiResponse(request, env, auth) {
         "UPDATE commands SET state = 'cancelled', finished_at = ? " +
         "WHERE command_id = ? AND state = 'queued' RETURNING *",
       ).bind(new Date().toISOString(), commandMatch[1]).first();
-      return result
-        ? envelope(requestId, commandView(result))
+      if (result) return envelope(requestId, commandView(result));
+      const existing = await env.CONTROL_DB.prepare(
+        "SELECT * FROM commands WHERE command_id = ?",
+      ).bind(commandMatch[1]).first();
+      return existing?.state === "cancelled"
+        ? envelope(requestId, commandView(existing))
         : failure(requestId, 409, "command_not_cancellable", "Command cannot be cancelled");
     }
     if (request.method === "POST" && url.pathname === "/api/v1/runner/commands/claim") {

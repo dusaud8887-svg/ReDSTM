@@ -1,8 +1,9 @@
 # ReDSTM
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
-schema v3 Oracle canonical runner가 배포돼 있다. 남은 제품 작업은 bounded delta/failure canary,
-실제 Android acceptance와 24시간/7일 운영 관찰이다. 완료된 초기
+schema v3 Oracle canonical runner가 배포돼 있고 repository target은 additive schema v4다. 남은 제품 작업은 bounded delta/failure canary,
+그 전에 필요한 명시적 full export/publish baseline bootstrap, 실제 Android acceptance와 24시간/7일
+운영 관찰이다. 완료된 초기
 migration·타당성 증거는 `docs/done/`에 둔다.
 
 ## 먼저 읽기
@@ -11,14 +12,18 @@ migration·타당성 증거는 `docs/done/`에 둔다.
 2. [`docs/00_initial_product_architecture.md`](docs/00_initial_product_architecture.md)
 3. [`docs/04_implementation_plan.md`](docs/04_implementation_plan.md)
 4. [`docs/06_final_product_experience.md`](docs/06_final_product_experience.md)
-5. [`docs/done/2026-07-11/README.md`](docs/done/2026-07-11/README.md) — 완료 증거
+5. [`docs/11_configuration_and_policy.md`](docs/11_configuration_and_policy.md)
+6. [`docs/12_release_and_recovery.md`](docs/12_release_and_recovery.md)
+7. [`docs/done/2026-07-11/README.md`](docs/done/2026-07-11/README.md) — 완료 증거
 
 ## 개발 시작
 
 필수 도구:
 
 - Python 3.14
-- `uv`
+- uv 0.11.28
+- Node.js 22 이상과 npm
+- Google Chrome (Playwright E2E)
 - Git
 - Docker는 container 검증 시에만 필요
 
@@ -26,10 +31,12 @@ migration·타당성 증거는 `docs/done/`에 둔다.
 uv sync --frozen
 uv run pytest
 uv run ruff check .
-uv run mypy crawler scripts
+uv run ruff format --check .
+uv run mypy crawler scripts tests
 uv run python -m scripts.refresh_typemoon_session --help
 uv run python -m scripts.sync --help
 uv run python -m scripts.doctor --help
+uv run python -m scripts.migrate_archive --help
 uv run python -m scripts.recover_queue --help
 uv run python -m scripts.export_static --help
 uv run python -m scripts.publish_static --help
@@ -45,11 +52,31 @@ npm ci
 npm test
 npm run check
 npm run test:e2e
-npm run deploy
+npm run test:d1
 ```
 
-`npm run deploy`는 unit → syntax → Wrangler strict dry-run → live deploy 순서로 실패 시 즉시
-중단한다. R2 data는 별도 `scripts.publish_static`의 immutable upload/check/pointer-last gate를 쓴다.
+`npm run deploy`는 local 검증 명령이 아니라 production write다. repository root의 release
+orchestrator를 통해 clean/pushed Git identity,
+Python·Edge·E2E·local D1·Wrangler dry-run을 먼저 확인하고 Worker migration/deploy/smoke를 수행한다.
+smoke 실패 시 직전 Worker version으로 되돌린다. R2 data는 별도 `scripts.publish_static`의 immutable
+upload/check/pointer-last와 authenticated release smoke gate를 쓴다.
+R2 writer는 Oracle control runner 하나로 제한한다. 수동 full publish/activate는 runner service가
+inactive인 maintenance window에서만 실행하며 다른 host의 동시 writer는 지원하지 않는다.
+
+릴리스 운영 진입점:
+
+```powershell
+uv run python -m scripts.release status
+uv run python -m scripts.release preflight
+uv run python -m scripts.release deploy-cloudflare
+uv run python -m scripts.release deploy --host <oracle-host> --key <ssh-key-path>
+```
+
+`deploy-cloudflare` 뒤 생기는 일시적 Worker/Oracle SHA 차이와 안전한 pair 복구 절차는
+[`릴리스·복구 운영 기준`](docs/12_release_and_recovery.md)의 coordinated rollback 계약을 따른다.
+환경 변수, 실패별 자동 복구와 명시적 coordinated rollback은
+[`릴리스·복구 운영 기준`](docs/12_release_and_recovery.md)을 따른다. GitHub Actions는 production
+credential 없이 검증만 하며 자동 배포하지 않는다.
 
 TypeMoon ID/PW는 CLI 인자나 YAML에 쓰지 않고 `TYPEMOON_ID`, `TYPEMOON_PASSWORD` secret으로
 process에 주입한다. session 기본 경로는 `.data/private/typemoon-session.json`이다.
@@ -68,7 +95,8 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - 429 `Retry-After` frontier defer와 서로 다른 run 2회 확인 404 missing 판정
 - read-only DB/lease/WARC `doctor`와 verified SQLite snapshot command
 - archive된 loopback-only read-only Operations Console C0와 capability session/Origin/CSP 경계
-- deterministic zstd level 15 post/board/search/collection export, bounded 병렬·resume와 release rollback
+- deterministic zstd level 15 post object와 level 6 `-v2` board/search/collection aggregate export,
+  verified incremental state와 release rollback
 - 검증된 zstd full `release.json`과 `.partial` 0개 산출물
 - pointer-last `rclone` publish command
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
@@ -82,7 +110,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 아직 포함하지 않음:
 
-- 자동 schedule live activation과 bounded delta/failure canary
+- 명시적 full export/publish baseline bootstrap, 자동 schedule live activation과 bounded delta/failure canary
 - 24시간 반복 canary, 7일 shadow와 legacy service cutover
 - content-addressed direct asset/blob ledger
 - 실제 Android memory gate
@@ -90,14 +118,19 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
 
-현재 crawler는 concurrency 1과 10초 고정 delay를 유지한다. Oracle canonical은 schema v3이며 1건·
+현재 crawler는 concurrency 1과 10초 고정 delay를 유지한다. Oracle canonical live는 schema v3이고
+repository target은 listing 댓글 기대치를 보존하는 additive schema v4이며, 1건·
 small batch·bounded stop evidence가 있다. 자동 모드는 최신 page incremental을 6시간마다 실행하고,
 최초에는 board별 inventory cursor를 bounded window로 계속 재개해 전체 listing을 덮은 뒤 남은
 목차-only frontier를 bounded recovery로 비운다. 이후에는 주 1회 listing audit를 하고, 처리 시각이 된
 recovery와 변경 publish는 매 6시간 cycle에서 다시 시도한다.
-network 정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가 source of truth이며 별도
-YAML은 두지 않는다. control heartbeat timer는 release 설치 직후의 baseline이고, schedule timer는
-`crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke 성공 뒤 켠다.
+network·session·revisit 정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가 source
+of truth이며 별도 YAML은 두지 않는다. 전체 분류와 환경변수 계약은
+[`설정·운영 정책 기준`](docs/11_configuration_and_policy.md)을 따른다. automatic delta는 verified
+export state/publish ledger가 없거나 불일치하면 full scan으로 강등하지 않고 partial로 닫아 marker를
+유지한다. control heartbeat timer는 release 설치 직후의 baseline이고, schedule timer는 명시적 full
+export/publish baseline bootstrap과 `crawl → bounded export → publish/readback → rollback rehearsal`
+authenticated canary 성공 뒤 켠다. 그 전에는 disabled다.
 24시간 canary와 7일 shadow는 활성화 전 대기 gate가
 아니라 활성화된 자동 운전을 관찰하는 단계다.
 

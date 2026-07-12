@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import os
@@ -9,7 +10,7 @@ import sqlite3
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from compression import zstd
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -17,7 +18,13 @@ from itertools import groupby
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
-from crawler.archive import APPLICATION_ID, SCHEMA_VERSION, connect_archive, decompress_body
+from crawler.archive import (
+    APPLICATION_ID,
+    MIGRATIONS,
+    SCHEMA_VERSION,
+    connect_archive,
+    decompress_body,
+)
 from crawler.pipelines import NormalizedComment, NormalizedPost
 from crawler.static_archive import (
     StaticPostSummary,
@@ -37,6 +44,17 @@ _SEARCH_FIELDS = [
 ]
 _SEARCH_FIELDS_WITH_AA = [*_SEARCH_FIELDS, "is_aa"]
 _COMPRESSION_LEVEL = 15
+_AGGREGATE_COMPRESSION_LEVEL = 6
+_EXPORT_STATE_SCHEMA_VERSION = 1
+_DEFAULT_MAX_CHANGED_POSTS = 2_000
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_SOURCE_PROJECTION_VERSION = "source-projection-v1"
+
+
+class IncrementalExportError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _json_bytes(value: object) -> bytes:
@@ -71,6 +89,12 @@ def _atomic_replace(target: Path, body: bytes, *, durable: bool = False) -> None
                 stream.flush()
                 os.fsync(stream.fileno())
         os.replace(temporary, target)
+        if durable and os.name != "nt":
+            directory = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -105,10 +129,213 @@ class _PostTask:
 class _PreparedPost:
     post_id: int
     created_at_source: str
+    source_projection_sha256: str
     summary: StaticPostSummary
     payload: bytes
     body: bytes
     reused: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _BaseRelease:
+    key: str
+    manifest: dict[str, Any]
+    post_refs: dict[str, dict[int, _StoredPostRef]]
+
+
+@dataclass(slots=True)
+class _StoredPostRef:
+    summary: StaticPostSummary
+    object_sha256: str
+    object_bytes: int
+    source_projection_sha256: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            **summary_dict(self.summary),
+            "object_sha256": self.object_sha256,
+            "object_bytes": self.object_bytes,
+            "source_projection_sha256": self.source_projection_sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _StagedObject:
+    path: Path
+    key: str
+    payload_sha256: str
+    payload_bytes: int
+
+
+def _state_path(output: Path) -> Path:
+    return output / ".export-state.json"
+
+
+def _source_identity(source: Path, connection: sqlite3.Connection) -> dict[str, object]:
+    return {
+        "path": str(source),
+        "application_id": int(connection.execute("PRAGMA application_id").fetchone()[0]),
+        "schema_version": int(connection.execute("PRAGMA user_version").fetchone()[0]),
+    }
+
+
+def _projection_compatible_schema_versions() -> set[int]:
+    known = {migration.version: migration for migration in MIGRATIONS}
+    versions = {SCHEMA_VERSION}
+    version = SCHEMA_VERSION
+    while version > 1 and known[version].static_projection_compatible:
+        version -= 1
+        versions.add(version)
+    return versions
+
+
+def _database_projection_schema_versions(connection: sqlite3.Connection) -> set[int]:
+    current = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    known = {migration.version: migration for migration in MIGRATIONS}
+    applied = {
+        int(row["version"]): str(row["sha256"])
+        for row in connection.execute("SELECT version, sha256 FROM schema_migrations")
+    }
+    required = set(range(1, current + 1))
+    if (
+        current != SCHEMA_VERSION
+        or set(applied) != required
+        or any(
+            known.get(version) is None or known[version].sha256 != sha256
+            for version, sha256 in applied.items()
+        )
+    ):
+        raise ValueError("canonical migration ledger does not match this exporter")
+    return _projection_compatible_schema_versions()
+
+
+def _source_identity_matches(
+    stored: object,
+    current: dict[str, object],
+    compatible_schema_versions: set[int],
+) -> bool:
+    return (
+        isinstance(stored, dict)
+        and set(stored) == {"path", "application_id", "schema_version"}
+        and stored.get("path") == current["path"]
+        and stored.get("application_id") == current["application_id"]
+        and type(stored.get("schema_version")) is int
+        and stored["schema_version"] in compatible_schema_versions
+    )
+
+
+def _valid_snapshot(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    release_key = value.get("release_key")
+    fingerprint = value.get("fingerprint")
+    return (
+        isinstance(release_key, str)
+        and re.fullmatch(r"releases/[0-9a-f]{64}\.json", release_key) is not None
+        and type(value.get("capture_high_water")) is int
+        and value["capture_high_water"] >= 0
+        and isinstance(fingerprint, dict)
+        and set(fingerprint)
+        == {
+            "projection_sha256",
+            "topology_sha256",
+            "board_count",
+            "post_count",
+            "unavailable_post_count",
+            "unavailable_comment_count",
+            "collection_count",
+            "collection_entry_count",
+        }
+        and all(
+            isinstance(fingerprint.get(key), str)
+            and _SHA256_PATTERN.fullmatch(cast(str, fingerprint[key])) is not None
+            for key in ("projection_sha256", "topology_sha256")
+        )
+        and all(
+            type(fingerprint.get(key)) is int and fingerprint[key] >= 0
+            for key in (
+                "board_count",
+                "post_count",
+                "unavailable_post_count",
+                "unavailable_comment_count",
+                "collection_count",
+                "collection_entry_count",
+            )
+        )
+    )
+
+
+def _read_state(
+    path: Path,
+    identity: dict[str, object],
+    compatible_schema_versions: set[int] | None = None,
+) -> dict[str, Any] | None:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, UnicodeDecodeError, json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(state, dict)
+        or set(state) != {"schema_version", "source", "base", "pending"}
+        or state.get("schema_version") != _EXPORT_STATE_SCHEMA_VERSION
+        or not _source_identity_matches(
+            state.get("source"),
+            identity,
+            compatible_schema_versions or {cast(int, identity["schema_version"])},
+        )
+        or (state.get("base") is not None and not _valid_snapshot(state["base"]))
+        or (state.get("pending") is not None and not _valid_snapshot(state["pending"]))
+        or (state.get("base") is None and state.get("pending") is None)
+    ):
+        return None
+    return state
+
+
+def _write_state(path: Path, state: dict[str, Any]) -> None:
+    _atomic_replace(path, _json_bytes(state), durable=True)
+
+
+def _pointer_key(root: Path) -> str | None:
+    pointer = root / "release.json"
+    if not pointer.is_file():
+        return None
+    body = pointer.read_bytes()
+    key = f"releases/{_sha256(body)}.json"
+    versioned = root / key
+    if not versioned.is_file() or versioned.read_bytes() != body:
+        raise IncrementalExportError(
+            "incremental_base_invalid", "release pointer is not backed by a versioned release"
+        )
+    return key
+
+
+def _recover_state(
+    root: Path,
+    path: Path,
+    identity: dict[str, object],
+    compatible_schema_versions: set[int] | None = None,
+) -> dict[str, Any] | None:
+    state = _read_state(path, identity, compatible_schema_versions)
+    if state is None:
+        return None
+    pointer_key = _pointer_key(root)
+    base = state["base"]
+    pending = state["pending"]
+    if pending is not None:
+        if pointer_key == pending["release_key"]:
+            state = {**state, "base": pending, "pending": None}
+            _write_state(path, state)
+            base = pending
+        elif (base is None and pointer_key is None) or (
+            base is not None and pointer_key == base["release_key"]
+        ):
+            state = {**state, "pending": None}
+            _write_state(path, state)
+        else:
+            return None
+    if base is None or pointer_key != base["release_key"]:
+        return None
+    return state
 
 
 def _prepare_static_post(task: _PostTask) -> _PreparedPost:
@@ -126,10 +353,49 @@ def _prepare_static_post(task: _PostTask) -> _PreparedPost:
     return _PreparedPost(
         task.post_id,
         task.created_at_source,
+        _source_projection_sha256(
+            task.post.board_id,
+            task.post.external_post_id,
+            task.post.canonical_url,
+            task.post.title,
+            task.post.author,
+            task.post.category,
+            task.created_at_source,
+            task.post.created_at_raw,
+            task.post.is_aa,
+            len(task.post.comments),
+            task.post.content_sha256,
+            task.post.comments_sha256,
+            task.capture_origin,
+            task.post.warc_record_id,
+        ),
         payload.summary,
         payload.payload,
         body,
         reused,
+    )
+
+
+def _source_projection_sha256(*values: object) -> str:
+    return _sha256(_json_bytes((_SOURCE_PROJECTION_VERSION, *values)))
+
+
+def _row_source_projection_sha256(row: sqlite3.Row) -> str:
+    return _source_projection_sha256(
+        str(row["board_id"]),
+        int(row["external_post_id"]),
+        str(row["canonical_url"]),
+        str(row["title"]),
+        row["author"],
+        row["category"],
+        str(row["created_at_source"] or ""),
+        row["created_at_raw"],
+        bool(row["is_aa"]),
+        int(row["comment_count"]),
+        str(row["content_sha256"]),
+        str(row["comments_sha256"]),
+        str(row["capture_origin"]),
+        row["warc_record_id"],
     )
 
 
@@ -142,12 +408,152 @@ def _object_ref(key: str, payload: bytes, body: bytes) -> dict[str, object]:
     }
 
 
-def _write_zstd_object(writer: _ObjectWriter, prefix: str, payload: bytes) -> dict[str, object]:
+def _write_zstd_object(
+    writer: _ObjectWriter,
+    prefix: str,
+    payload: bytes,
+    *,
+    level: int = _COMPRESSION_LEVEL,
+) -> dict[str, object]:
     payload_sha256 = _sha256(payload)
     key = f"{prefix}-{payload_sha256}.json.zst"
-    body = zstd.compress(payload, level=_COMPRESSION_LEVEL)
+    body = zstd.compress(payload, level=level)
     writer.write(key, body)
     return _object_ref(key, payload, body)
+
+
+def _search_row_bytes(
+    connection: sqlite3.Connection,
+    post_refs: dict[str, dict[int, _StoredPostRef]],
+) -> Iterator[bytes]:
+    for row in connection.execute(
+        """
+        SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
+               p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
+               p.views, p.is_aa, p.comment_count, p.latest_version_id,
+               v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
+        FROM posts AS p
+        JOIN post_versions AS v ON v.id = p.latest_version_id
+        ORDER BY p.created_at_source DESC, p.external_post_id DESC, p.board_id DESC
+        """
+    ):
+        board_id = str(row["board_id"])
+        external_post_id = int(row["external_post_id"])
+        stored = _base_post_ref(post_refs, board_id, external_post_id)
+        if stored is None or not _post_row_matches_ref(row, stored):
+            raise ValueError(f"search projection is stale: {board_id}/{external_post_id}")
+        summary = stored.summary
+        yield _json_bytes(
+            (
+                summary.board_id,
+                summary.external_post_id,
+                summary.title,
+                summary.author,
+                summary.category,
+                summary.created_at_raw,
+                summary.payload_sha256,
+                summary.is_aa,
+            )
+        )[:-1]
+
+
+def _stage_zstd_object(
+    writer: _ObjectWriter,
+    prefix: str,
+    chunks: Iterable[bytes],
+) -> _StagedObject:
+    writer.root.mkdir(parents=True, exist_ok=True)
+    payload_descriptor, payload_name = tempfile.mkstemp(
+        dir=writer.root, prefix=".payload.", suffix=".partial"
+    )
+    payload_path = Path(payload_name)
+    payload_digest = hashlib.sha256()
+    payload_bytes = 0
+    try:
+        with os.fdopen(payload_descriptor, "wb") as payload_stream:
+            for chunk in chunks:
+                payload_stream.write(chunk)
+                payload_digest.update(chunk)
+                payload_bytes += len(chunk)
+    except Exception:
+        payload_path.unlink(missing_ok=True)
+        raise
+    payload_sha256 = payload_digest.hexdigest()
+    return _StagedObject(
+        payload_path,
+        f"{prefix}-{payload_sha256}.json.zst",
+        payload_sha256,
+        payload_bytes,
+    )
+
+
+def _write_staged_zstd_object(writer: _ObjectWriter, staged: _StagedObject) -> dict[str, object]:
+    target = writer.root / _safe_key(staged.key)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    object_descriptor, object_name = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".partial"
+    )
+    object_path = Path(object_name)
+    object_digest = hashlib.sha256()
+    object_bytes = 0
+    compressor = zstd.ZstdCompressor(level=_AGGREGATE_COMPRESSION_LEVEL)
+    compressor.set_pledged_input_size(staged.payload_bytes)
+    try:
+        with (
+            staged.path.open("rb") as payload_stream,
+            os.fdopen(object_descriptor, "wb") as object_stream,
+        ):
+            for chunk in iter(lambda: payload_stream.read(1024 * 1024), b""):
+                compressed = compressor.compress(chunk)
+                object_stream.write(compressed)
+                object_digest.update(compressed)
+                object_bytes += len(compressed)
+            compressed = compressor.flush()
+            object_stream.write(compressed)
+            object_digest.update(compressed)
+            object_bytes += len(compressed)
+        object_sha256 = object_digest.hexdigest()
+        if target.exists():
+            existing = hashlib.sha256()
+            with target.open("rb") as existing_stream:
+                for chunk in iter(lambda: existing_stream.read(1024 * 1024), b""):
+                    existing.update(chunk)
+            if target.stat().st_size != object_bytes or existing.hexdigest() != object_sha256:
+                raise RuntimeError(f"immutable object differs: {staged.key}")
+            writer.reused += 1
+        else:
+            os.replace(object_path, target)
+            writer.written += 1
+    finally:
+        object_path.unlink(missing_ok=True)
+        staged.path.unlink(missing_ok=True)
+    return {
+        "object_key": staged.key,
+        "payload_sha256": staged.payload_sha256,
+        "object_sha256": object_sha256,
+        "object_bytes": object_bytes,
+    }
+
+
+def _stage_search_object(
+    connection: sqlite3.Connection,
+    writer: _ObjectWriter,
+    post_refs: dict[str, dict[int, _StoredPostRef]],
+) -> tuple[_StagedObject, int]:
+    post_count = 0
+
+    def chunks() -> Iterator[bytes]:
+        nonlocal post_count
+        yield b'{"fields":' + _json_bytes(_SEARCH_FIELDS_WITH_AA)[:-1] + b',"posts":['
+        for row in _search_row_bytes(connection, post_refs):
+            if post_count:
+                yield b","
+            yield row
+            post_count += 1
+        yield b'],"schema_version":1}\n'
+
+    staged = _stage_zstd_object(writer, "search/title-author-v2", chunks())
+    return staged, post_count
 
 
 def _comment(row: sqlite3.Row) -> NormalizedComment:
@@ -241,6 +647,275 @@ def _read_ref(root: Path, ref: object) -> tuple[dict[str, Any], bytes]:
     if not isinstance(decoded, dict):
         raise ValueError(f"JSON object must be a mapping: {key}")
     return decoded, body
+
+
+def _verify_ref_object(root: Path, ref: object) -> None:
+    if not isinstance(ref, dict):
+        raise ValueError("object reference must be an object")
+    key = _safe_key(ref.get("object_key"))
+    expected_bytes = ref.get("object_bytes")
+    expected_sha256 = ref.get("object_sha256")
+    if (
+        type(expected_bytes) is not int
+        or expected_bytes < 0
+        or not isinstance(expected_sha256, str)
+        or _SHA256_PATTERN.fullmatch(expected_sha256) is None
+    ):
+        raise ValueError(f"invalid object reference: {key}")
+    target = root / key
+    try:
+        if target.stat().st_size != expected_bytes:
+            raise ValueError(f"object size mismatch: {key}")
+        digest = hashlib.sha256()
+        with target.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as error:
+        raise ValueError(f"referenced object is missing: {key}") from error
+    if digest.hexdigest() != expected_sha256:
+        raise ValueError(f"object hash mismatch: {key}")
+
+
+def _hash_query(digest: Any, connection: sqlite3.Connection, label: str, query: str) -> int:
+    digest.update(label.encode())
+    count = 0
+    for row in connection.execute(query):
+        digest.update(_json_bytes(tuple(row)))
+        count += 1
+    return count
+
+
+def _snapshot_fingerprint(connection: sqlite3.Connection) -> dict[str, int | str]:
+    projection = hashlib.sha256()
+    topology = hashlib.sha256()
+    post_count = _hash_query(
+        projection,
+        connection,
+        "posts-v1",
+        """
+        SELECT p.id, p.board_id, p.external_post_id, p.canonical_url, p.title, p.author,
+               p.category, p.created_at_source, p.created_at_raw, p.is_aa,
+               p.comment_count, p.latest_version_id, v.content_sha256, v.comments_sha256,
+               v.capture_origin, v.warc_record_id
+        FROM posts AS p
+        JOIN post_versions AS v ON v.id = p.latest_version_id
+        ORDER BY p.id
+        """,
+    )
+    board_count = _hash_query(
+        topology,
+        connection,
+        "boards-v1",
+        """
+        SELECT board_id, name, group_name, canonical_url
+        FROM boards ORDER BY board_id
+        """,
+    )
+    _hash_query(
+        topology,
+        connection,
+        "post-topology-v1",
+        """
+        SELECT id, board_id, external_post_id, availability, latest_version_id IS NOT NULL
+        FROM posts ORDER BY id
+        """,
+    )
+    collection_count = _hash_query(
+        topology,
+        connection,
+        "collections-v1",
+        """
+        SELECT id, board_id, kind, title
+        FROM collections ORDER BY id
+        """,
+    )
+    collection_entry_count = _hash_query(
+        topology,
+        connection,
+        "collection-entries-v1",
+        """
+        SELECT collection_id, position, post_id, source_external_post_id, title
+        FROM collection_entries ORDER BY collection_id, position
+        """,
+    )
+    unavailable = connection.execute(
+        """
+        SELECT COUNT(DISTINCT p.id), COUNT(c.position)
+        FROM posts AS p
+        LEFT JOIN comments AS c ON c.post_id = p.id
+        WHERE p.latest_version_id IS NULL
+        """
+    ).fetchone()
+    assert unavailable is not None
+    return {
+        "projection_sha256": projection.hexdigest(),
+        "topology_sha256": topology.hexdigest(),
+        "board_count": board_count,
+        "post_count": post_count,
+        "unavailable_post_count": int(unavailable[0]),
+        "unavailable_comment_count": int(unavailable[1]),
+        "collection_count": collection_count,
+        "collection_entry_count": collection_entry_count,
+    }
+
+
+def _snapshot(
+    release_key: str, capture_high_water: int, fingerprint: dict[str, int | str]
+) -> dict[str, object]:
+    return {
+        "release_key": release_key,
+        "capture_high_water": capture_high_water,
+        "fingerprint": fingerprint,
+    }
+
+
+def _summary_from_ref(ref: object) -> StaticPostSummary:
+    if not isinstance(ref, dict):
+        raise ValueError("post summary must be an object")
+    board_id = ref.get("board_id")
+    external_post_id = ref.get("external_post_id")
+    object_key = ref.get("object_key")
+    payload_sha256 = ref.get("payload_sha256")
+    if (
+        not isinstance(board_id, str)
+        or not board_id
+        or type(external_post_id) is not int
+        or external_post_id <= 0
+        or not isinstance(object_key, str)
+        or not isinstance(payload_sha256, str)
+        or _SHA256_PATTERN.fullmatch(payload_sha256) is None
+        or object_key != f"posts/{board_id}/{external_post_id}-{payload_sha256}.json.zst"
+        or not isinstance(ref.get("title"), str)
+        or (ref.get("author") is not None and not isinstance(ref.get("author"), str))
+        or (ref.get("category") is not None and not isinstance(ref.get("category"), str))
+        or (
+            ref.get("created_at_raw") is not None and not isinstance(ref.get("created_at_raw"), str)
+        )
+        or type(ref.get("views")) is not int
+        or ref["views"] < 0
+        or type(ref.get("is_aa")) is not bool
+        or type(ref.get("comment_count")) is not int
+        or ref["comment_count"] < 0
+        or type(ref.get("object_bytes")) is not int
+        or ref["object_bytes"] < 0
+        or not isinstance(ref.get("object_sha256"), str)
+        or _SHA256_PATTERN.fullmatch(cast(str, ref["object_sha256"])) is None
+    ):
+        raise ValueError("invalid post summary")
+    return StaticPostSummary(
+        board_id=board_id,
+        external_post_id=external_post_id,
+        object_key=object_key,
+        title=cast(str, ref["title"]),
+        author=cast(str | None, ref.get("author")),
+        category=cast(str | None, ref.get("category")),
+        created_at_raw=cast(str | None, ref.get("created_at_raw")),
+        views=cast(int, ref["views"]),
+        is_aa=cast(bool, ref["is_aa"]),
+        comment_count=cast(int, ref["comment_count"]),
+        payload_sha256=payload_sha256,
+    )
+
+
+def _stored_post_ref(ref: object) -> _StoredPostRef:
+    summary = _summary_from_ref(ref)
+    assert isinstance(ref, dict)
+    source_projection_sha256 = ref.get("source_projection_sha256")
+    if (
+        not isinstance(source_projection_sha256, str)
+        or _SHA256_PATTERN.fullmatch(source_projection_sha256) is None
+    ):
+        raise ValueError("post summary is missing its source projection")
+    return _StoredPostRef(
+        summary,
+        cast(str, ref["object_sha256"]),
+        cast(int, ref["object_bytes"]),
+        source_projection_sha256,
+    )
+
+
+def _base_post_ref(
+    refs: dict[str, dict[int, _StoredPostRef]], board_id: str, external_post_id: int
+) -> _StoredPostRef | None:
+    board = refs.get(board_id)
+    return board.get(external_post_id) if board is not None else None
+
+
+def _load_base_release(root: Path, release_key: str) -> _BaseRelease:
+    release_path = root / _release_key(release_key)
+    body = release_path.read_bytes()
+    if _sha256(body) != PurePosixPath(release_key).stem:
+        raise ValueError("base release hash mismatch")
+    try:
+        manifest = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid base release JSON") from error
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != 1
+        or manifest.get("canonical_schema_version") not in _projection_compatible_schema_versions()
+        or manifest.get("source") != "typemoon"
+    ):
+        raise ValueError("unsupported base release")
+    boards = manifest.get("boards")
+    if not isinstance(boards, list) or len(boards) != manifest.get("board_count"):
+        raise ValueError("base release board count mismatch")
+    post_refs: dict[str, dict[int, _StoredPostRef]] = {}
+    post_count = 0
+    comment_count = 0
+    for board_ref in boards:
+        board, _ = _read_ref(root, board_ref)
+        board_id = board.get("board_id")
+        posts = board.get("posts")
+        if (
+            not isinstance(board_id, str)
+            or not isinstance(posts, list)
+            or not isinstance(board_ref, dict)
+            or board_ref.get("board_id") != board_id
+            or board_ref.get("post_count") != len(posts)
+        ):
+            raise ValueError("invalid base board manifest")
+        board_posts = post_refs.setdefault(board_id, {})
+        for ref in posts:
+            stored = _stored_post_ref(ref)
+            summary = stored.summary
+            if summary.board_id != board_id or summary.external_post_id in board_posts:
+                raise ValueError("invalid base post identity")
+            target = root / summary.object_key
+            if not target.is_file() or target.stat().st_size != stored.object_bytes:
+                raise ValueError(f"base post object is unavailable: {summary.object_key}")
+            board_posts[summary.external_post_id] = stored
+            post_count += 1
+            comment_count += summary.comment_count
+
+    # The finalized state attests semantic validation. Re-materializing the global search and
+    # collection JSON here would exceed the runner memory limit, so retries verify their exact
+    # compressed bytes and release counts instead.
+    search_ref = manifest.get("search")
+    collection_ref = manifest.get("collections")
+    _verify_ref_object(root, search_ref)
+    _verify_ref_object(root, collection_ref)
+    if not isinstance(search_ref, dict) or search_ref.get("post_count") != post_count:
+        raise ValueError("base search count does not match boards")
+    collection_count = manifest.get("collection_count")
+    entry_count = manifest.get("collection_entry_count")
+    if (
+        not isinstance(collection_ref, dict)
+        or type(collection_count) is not int
+        or type(entry_count) is not int
+        or collection_ref.get("collection_count") != collection_count
+        or collection_ref.get("entry_count") != entry_count
+    ):
+        raise ValueError("base collection counts do not match release")
+    expected = {
+        "post_count": post_count,
+        "comment_count": comment_count,
+        "collection_count": collection_count,
+        "collection_entry_count": entry_count,
+    }
+    if any(manifest.get(key) != value for key, value in expected.items()):
+        raise ValueError("base release counts do not match aggregate objects")
+    return _BaseRelease(release_key, manifest, post_refs)
 
 
 def validate_release(root: Path, release: str) -> dict[str, int | str]:
@@ -366,6 +1041,68 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
     return {"release_key": release_key, **expected, **unavailable}
 
 
+def validate_incremental_release(root: Path, release: str) -> dict[str, int | str]:
+    """Validate the current exporter-owned release without opening unchanged post bodies."""
+    root = root.expanduser().resolve(strict=True)
+    release_key = _release_key(release)
+    try:
+        raw_state = json.loads(_state_path(root).read_text(encoding="utf-8"))
+        source_identity = raw_state.get("source") if isinstance(raw_state, dict) else None
+        if (
+            not isinstance(source_identity, dict)
+            or set(source_identity) != {"path", "application_id", "schema_version"}
+            or not isinstance(source_identity.get("path"), str)
+        ):
+            raise ValueError("invalid export state source")
+        source = Path(source_identity["path"]).expanduser().resolve(strict=True)
+        with connect_archive(source, read_only=True) as connection:
+            current_identity = _source_identity(source, connection)
+            compatible_schema_versions = _database_projection_schema_versions(connection)
+        state = _read_state(_state_path(root), current_identity, compatible_schema_versions)
+        if (
+            state is None
+            or state["pending"] is not None
+            or not isinstance(state["base"], dict)
+            or state["base"].get("release_key") != release_key
+            or _pointer_key(root) != release_key
+        ):
+            raise ValueError("release is not the finalized exporter state")
+        base = _load_base_release(root, release_key)
+        fingerprint = state["base"].get("fingerprint")
+        if not isinstance(fingerprint, dict):
+            raise ValueError("invalid export state fingerprint")
+        for key in (
+            "post_count",
+            "unavailable_post_count",
+            "unavailable_comment_count",
+            "board_count",
+            "collection_count",
+            "collection_entry_count",
+        ):
+            if base.manifest.get(key) != fingerprint.get(key):
+                raise ValueError(f"export state {key} does not match release")
+        return {
+            "release_key": release_key,
+            **{
+                key: cast(int, base.manifest[key])
+                for key in (
+                    "post_count",
+                    "comment_count",
+                    "board_count",
+                    "collection_count",
+                    "collection_entry_count",
+                    "unavailable_post_count",
+                    "unavailable_comment_count",
+                )
+            },
+        }
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError, ValueError) as error:
+        raise IncrementalExportError(
+            "incremental_publish_validation_failed",
+            "current release is not backed by a finalized verified export state",
+        ) from error
+
+
 def activate_release(root: Path, release: str) -> dict[str, Any]:
     root = root.expanduser().resolve(strict=True)
     validation = validate_release(root, release)
@@ -380,7 +1117,369 @@ def activate_release(root: Path, release: str) -> dict[str, Any]:
     return {**validation, "previous_release_key": previous_key}
 
 
-def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, Any]:
+def _post_row_matches_ref(row: sqlite3.Row, stored: _StoredPostRef) -> bool:
+    summary = stored.summary
+    return (
+        str(row["board_id"]) == summary.board_id
+        and int(row["external_post_id"]) == summary.external_post_id
+        and str(row["title"]) == summary.title
+        and row["author"] == summary.author
+        and row["category"] == summary.category
+        and row["created_at_raw"] == summary.created_at_raw
+        and bool(row["is_aa"]) == summary.is_aa
+        and int(row["comment_count"]) == summary.comment_count
+        and _row_source_projection_sha256(row) == stored.source_projection_sha256
+    )
+
+
+def _projection_rows(connection: sqlite3.Connection) -> Iterator[sqlite3.Row]:
+    return iter(
+        connection.execute(
+            """
+            SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
+                   p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
+                   p.views, p.is_aa, p.comment_count, p.latest_version_id,
+                   v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
+            FROM posts AS p
+            JOIN post_versions AS v ON v.id = p.latest_version_id
+            ORDER BY p.id
+            """
+        )
+    )
+
+
+def _changed_post_ids(
+    connection: sqlite3.Connection,
+    base: _BaseRelease,
+    capture_low_water: int,
+    capture_high_water: int,
+) -> list[int]:
+    changed = {
+        int(row[0])
+        for row in connection.execute(
+            """
+            SELECT DISTINCT post_id
+            FROM captures
+            WHERE id > ? AND id <= ? AND entity_type = 'post'
+              AND outcome = 'stored' AND post_id IS NOT NULL
+            """,
+            (capture_low_water, capture_high_water),
+        )
+    }
+    current_ids: set[int] = set()
+    for row in _projection_rows(connection):
+        post_id = int(row["post_id"])
+        current_ids.add(post_id)
+        stored = _base_post_ref(base.post_refs, str(row["board_id"]), int(row["external_post_id"]))
+        if stored is None or not _post_row_matches_ref(row, stored):
+            changed.add(post_id)
+    return sorted(changed & current_ids)
+
+
+def _chunks(values: list[int], size: int = 500) -> Iterator[list[int]]:
+    for offset in range(0, len(values), size):
+        yield values[offset : offset + size]
+
+
+def _changed_tasks(
+    connection: sqlite3.Connection, output: Path, post_ids: list[int]
+) -> list[_PostTask]:
+    comments: dict[int, list[NormalizedComment]] = defaultdict(list)
+    for chunk in _chunks(post_ids):
+        placeholders = ",".join("?" for _ in chunk)
+        for row in connection.execute(
+            f"""
+            SELECT post_id, position, source_comment_id, parent_position, depth,
+                   author, content_html, content_text, created_at_raw
+            FROM comments
+            WHERE post_id IN ({placeholders})
+            ORDER BY post_id, position
+            """,
+            chunk,
+        ):
+            comments[int(row["post_id"])].append(_comment(row))
+
+    tasks: list[_PostTask] = []
+    for chunk in _chunks(post_ids):
+        placeholders = ",".join("?" for _ in chunk)
+        for row in connection.execute(
+            f"""
+            SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
+                   p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
+                   p.views, p.is_aa, v.content_sha256, v.capture_origin,
+                   v.body_html_zstd, v.body_text_zstd, v.comments_sha256, v.warc_record_id
+            FROM posts AS p
+            JOIN post_versions AS v ON v.id = p.latest_version_id
+            WHERE p.id IN ({placeholders})
+            ORDER BY p.id
+            """,
+            chunk,
+        ):
+            origin = str(row["capture_origin"])
+            if origin not in {"live", "legacy_import", "reparse"}:
+                raise ValueError(f"unsupported capture origin: {origin}")
+            post_id = int(row["post_id"])
+            tasks.append(
+                _PostTask(
+                    output,
+                    post_id,
+                    str(row["created_at_source"] or ""),
+                    _post_from_row(row, tuple(comments.get(post_id, ()))),
+                    cast(Literal["live", "legacy_import", "reparse"], origin),
+                )
+            )
+    if len(tasks) != len(post_ids):
+        raise IncrementalExportError(
+            "incremental_snapshot_changed", "a changed post disappeared from the read snapshot"
+        )
+    return tasks
+
+
+def _stage_collections_object(
+    connection: sqlite3.Connection,
+    writer: _ObjectWriter,
+    post_refs: dict[str, dict[int, _StoredPostRef]],
+) -> tuple[_StagedObject, int, int]:
+    collection_count = 0
+    entry_count = 0
+
+    def chunks() -> Iterator[bytes]:
+        nonlocal collection_count, entry_count
+        yield b'{"collections":['
+        for collection in connection.execute(
+            "SELECT id, board_id, kind, title FROM collections ORDER BY id"
+        ):
+            if collection_count:
+                yield b","
+            yield b'{"board_id":' + _json_bytes(collection["board_id"])[:-1] + b',"entries":['
+            collection_entries = 0
+            for row in connection.execute(
+                """
+                SELECT ce.position, ce.source_external_post_id,
+                       ce.title AS entry_title, p.board_id, p.external_post_id,
+                       p.title AS post_title, p.availability, p.latest_version_id
+                FROM collection_entries AS ce
+                LEFT JOIN posts AS p ON p.id = ce.post_id
+                WHERE ce.collection_id = ?
+                ORDER BY ce.position
+                """,
+                (int(collection["id"]),),
+            ):
+                if collection_entries:
+                    yield b","
+                stored = (
+                    _base_post_ref(
+                        post_refs,
+                        str(row["board_id"]),
+                        int(row["external_post_id"]),
+                    )
+                    if row["latest_version_id"] is not None
+                    else None
+                )
+                yield _json_bytes(
+                    {
+                        "position": int(row["position"]),
+                        "board_id": row["board_id"],
+                        "external_post_id": row["external_post_id"]
+                        if row["external_post_id"] is not None
+                        else row["source_external_post_id"],
+                        "title": row["entry_title"] or row["post_title"],
+                        "availability": row["availability"],
+                        "object_key": stored.summary.object_key if stored is not None else None,
+                    }
+                )[:-1]
+                collection_entries += 1
+                entry_count += 1
+            yield (
+                b'],"id":'
+                + _json_bytes(int(collection["id"]))[:-1]
+                + b',"kind":'
+                + _json_bytes(str(collection["kind"]))[:-1]
+                + b',"title":'
+                + _json_bytes(str(collection["title"]))[:-1]
+                + b"}"
+            )
+            collection_count += 1
+        yield b'],"schema_version":1}\n'
+
+    staged = _stage_zstd_object(writer, "collections/all-v2", chunks())
+    return staged, collection_count, entry_count
+
+
+def _write_projection_release(
+    connection: sqlite3.Connection,
+    writer: _ObjectWriter,
+    post_refs: dict[str, dict[int, _StoredPostRef]],
+    fingerprint: dict[str, int | str],
+) -> tuple[bytes, dict[str, int]]:
+    boards = [dict(row) for row in connection.execute("SELECT * FROM boards ORDER BY board_id")]
+    staged_boards: list[tuple[dict[str, Any], int, _StagedObject]] = []
+    post_count = 0
+    for board in boards:
+        board_id = str(board["board_id"])
+        board_post_count = 0
+
+        def board_chunks() -> Iterator[bytes]:
+            nonlocal board_post_count
+            yield (
+                b'{"board_id":'
+                + _json_bytes(board_id)[:-1]
+                + b',"canonical_url":'
+                + _json_bytes(board["canonical_url"])[:-1]
+                + b',"group_name":'
+                + _json_bytes(board["group_name"])[:-1]
+                + b',"name":'
+                + _json_bytes(board["name"])[:-1]
+                + b',"posts":['
+            )
+            for row in connection.execute(
+                """
+                SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
+                       p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
+                       p.views, p.is_aa, p.comment_count, p.latest_version_id,
+                       v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
+                FROM posts AS p
+                JOIN post_versions AS v ON v.id = p.latest_version_id
+                WHERE p.board_id = ?
+                ORDER BY p.external_post_id DESC
+                """,
+                (board_id,),
+            ):
+                stored = _base_post_ref(post_refs, board_id, int(row["external_post_id"]))
+                if stored is None:
+                    raise ValueError(
+                        f"projection is missing a post object: {board_id}/{row['external_post_id']}"
+                    )
+                if not _post_row_matches_ref(row, stored):
+                    raise ValueError(f"post summary is stale: {board_id}/{row['external_post_id']}")
+                if board_post_count:
+                    yield b","
+                yield _json_bytes(stored.as_dict())[:-1]
+                board_post_count += 1
+            yield b'],"schema_version":1}\n'
+
+        staged_board = _stage_zstd_object(writer, f"boards/{board_id}/manifest-v2", board_chunks())
+        staged_boards.append((board, board_post_count, staged_board))
+        post_count += board_post_count
+
+    staged_search, search_post_count = _stage_search_object(connection, writer, post_refs)
+    staged_collections, collection_count, collection_entry_count = _stage_collections_object(
+        connection, writer, post_refs
+    )
+
+    counts = {
+        "post_count": post_count,
+        "comment_count": int(
+            connection.execute(
+                "SELECT COALESCE(SUM(comment_count), 0) FROM posts "
+                "WHERE latest_version_id IS NOT NULL"
+            ).fetchone()[0]
+        ),
+        "unavailable_post_count": cast(int, fingerprint["unavailable_post_count"]),
+        "unavailable_comment_count": cast(int, fingerprint["unavailable_comment_count"]),
+        "board_count": len(staged_boards),
+        "collection_count": collection_count,
+        "collection_entry_count": collection_entry_count,
+    }
+    for key in (
+        "post_count",
+        "unavailable_post_count",
+        "unavailable_comment_count",
+        "board_count",
+        "collection_count",
+        "collection_entry_count",
+    ):
+        if counts[key] != fingerprint[key]:
+            raise ValueError(f"snapshot {key} changed while building release")
+    if search_post_count != post_count:
+        raise ValueError("search post count changed while staging release")
+
+    staged_objects = [
+        *(staged for _board, _post_count, staged in staged_boards),
+        staged_search,
+        staged_collections,
+    ]
+    post_refs.clear()
+    gc.collect()
+    try:
+        board_refs: list[dict[str, object]] = []
+        for board, board_post_count, staged in staged_boards:
+            board_refs.append(
+                {
+                    "board_id": str(board["board_id"]),
+                    "name": board["name"],
+                    "group_name": board["group_name"],
+                    "post_count": board_post_count,
+                    **_write_staged_zstd_object(writer, staged),
+                }
+            )
+        search_ref = {
+            **_write_staged_zstd_object(writer, staged_search),
+            "post_count": search_post_count,
+        }
+        collection_ref = {
+            **_write_staged_zstd_object(writer, staged_collections),
+            "collection_count": collection_count,
+            "entry_count": collection_entry_count,
+        }
+    finally:
+        for staged in staged_objects:
+            staged.path.unlink(missing_ok=True)
+    release_body = _json_bytes(
+        {
+            "schema_version": 1,
+            "canonical_schema_version": SCHEMA_VERSION,
+            "source": "typemoon",
+            **counts,
+            "boards": board_refs,
+            "search": search_ref,
+            "collections": collection_ref,
+        }
+    )
+    return release_body, counts
+
+
+def _activate_built_release(root: Path, release_key: str) -> dict[str, Any]:
+    body = (root / _release_key(release_key)).read_bytes()
+    if _sha256(body) != PurePosixPath(release_key).stem:
+        raise ValueError("built release hash mismatch")
+    previous_key = _pointer_key(root)
+    _atomic_replace(root / "release.json", body, durable=True)
+    return {"release_key": release_key, "previous_release_key": previous_key}
+
+
+def _promote_release(
+    root: Path,
+    state_path: Path,
+    identity: dict[str, object],
+    base: dict[str, object] | None,
+    pending: dict[str, object],
+    *,
+    deep_validate: bool,
+) -> dict[str, Any]:
+    journal = {
+        "schema_version": _EXPORT_STATE_SCHEMA_VERSION,
+        "source": identity,
+        "base": base,
+        "pending": pending,
+    }
+    _write_state(state_path, journal)
+    activation = (
+        activate_release(root, cast(str, pending["release_key"]))
+        if deep_validate
+        else _activate_built_release(root, cast(str, pending["release_key"]))
+    )
+    _write_state(state_path, {**journal, "base": pending, "pending": None})
+    return activation
+
+
+def _full_export_static(
+    source: Path,
+    output: Path,
+    *,
+    workers: int,
+    base: dict[str, object] | None,
+) -> dict[str, Any]:
     if workers < 1:
         raise ValueError("workers must be positive")
     source = source.expanduser().resolve(strict=True)
@@ -388,7 +1487,6 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
         raise FileNotFoundError(f"not a file: {source}")
     output = output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    source_before = source.stat()
     writer = _ObjectWriter(output)
     board_posts: dict[str, list[dict[str, object]]] = defaultdict(list)
     search_rows: list[tuple[str, StaticPostSummary]] = []
@@ -401,6 +1499,10 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
         if int(connection.execute("PRAGMA user_version").fetchone()[0]) != SCHEMA_VERSION:
             raise ValueError(f"canonical schema v{SCHEMA_VERSION} is required")
         connection.execute("BEGIN")
+        identity = _source_identity(source, connection)
+        capture_high_water = int(
+            connection.execute("SELECT COALESCE(MAX(id), 0) FROM captures").fetchone()[0]
+        )
         boards = [dict(row) for row in connection.execute("SELECT * FROM boards ORDER BY board_id")]
         unavailable_counts = connection.execute(
             """
@@ -463,6 +1565,7 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
                 post_ref = {
                     **summary_dict(prepared.summary),
                     **_object_ref(prepared.summary.object_key, prepared.payload, prepared.body),
+                    "source_projection_sha256": prepared.source_projection_sha256,
                 }
                 board_posts[prepared.summary.board_id].append(post_ref)
                 search_rows.append((prepared.created_at_source, prepared.summary))
@@ -504,7 +1607,12 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
                     "posts": posts,
                 }
             )
-            ref = _write_zstd_object(writer, f"boards/{board_id}/manifest", payload)
+            ref = _write_zstd_object(
+                writer,
+                f"boards/{board_id}/manifest-v2",
+                payload,
+                level=_AGGREGATE_COMPRESSION_LEVEL,
+            )
             board_refs.append(
                 {
                     "board_id": board_id,
@@ -540,7 +1648,12 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
             }
         )
         search_ref = {
-            **_write_zstd_object(writer, "search/title-author", search_payload),
+            **_write_zstd_object(
+                writer,
+                "search/title-author-v2",
+                search_payload,
+                level=_AGGREGATE_COMPRESSION_LEVEL,
+            ),
             "post_count": len(ordered_search),
         }
 
@@ -591,17 +1704,16 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
             collection_entry_count += 1
         collection_payload = _json_bytes({"schema_version": 1, "collections": collections})
         collection_ref = {
-            **_write_zstd_object(writer, "collections/all", collection_payload),
+            **_write_zstd_object(
+                writer,
+                "collections/all-v2",
+                collection_payload,
+                level=_AGGREGATE_COMPRESSION_LEVEL,
+            ),
             "collection_count": len(collections),
             "entry_count": collection_entry_count,
         }
-
-    source_after = source.stat()
-    if (source_before.st_size, source_before.st_mtime_ns) != (
-        source_after.st_size,
-        source_after.st_mtime_ns,
-    ):
-        raise RuntimeError("source database changed during export")
+        fingerprint = _snapshot_fingerprint(connection)
 
     post_count = len(search_rows)
     release_body = _json_bytes(
@@ -623,13 +1735,214 @@ def export_static(source: Path, output: Path, *, workers: int = 1) -> dict[str, 
     )
     release_key = f"releases/{_sha256(release_body)}.json"
     writer.write(release_key, release_body)
-    activation = activate_release(output, release_key)
+    activation = _promote_release(
+        output,
+        _state_path(output),
+        identity,
+        base,
+        _snapshot(release_key, capture_high_water, fingerprint),
+        deep_validate=True,
+    )
     return {
         **activation,
         "objects_written": writer.written,
         "objects_reused": writer.reused,
+        "mode": "full",
+        "capture_high_water": capture_high_water,
+        "snapshot_consistent": True,
         "source_unchanged": True,
     }
+
+
+def _incremental_export_static(
+    source: Path,
+    output: Path,
+    state: dict[str, Any],
+    *,
+    workers: int,
+    max_changed_posts: int,
+) -> dict[str, Any]:
+    base_snapshot = cast(dict[str, object], state["base"])
+    try:
+        base = _load_base_release(output, cast(str, base_snapshot["release_key"]))
+    except (OSError, ValueError) as error:
+        raise IncrementalExportError(
+            "incremental_bootstrap_required",
+            "verified base release is missing or corrupt; run an explicit full export",
+        ) from error
+    base_fingerprint = cast(dict[str, int | str], base_snapshot["fingerprint"])
+    for key in (
+        "post_count",
+        "unavailable_post_count",
+        "unavailable_comment_count",
+        "board_count",
+        "collection_count",
+        "collection_entry_count",
+    ):
+        if base.manifest.get(key) != base_fingerprint[key]:
+            raise IncrementalExportError(
+                "incremental_state_invalid", f"base state {key} does not match its release"
+            )
+
+    writer = _ObjectWriter(output)
+    with connect_archive(source, read_only=True) as connection:
+        current_identity = _source_identity(source, connection)
+        compatible_schema_versions = _database_projection_schema_versions(connection)
+        if not _source_identity_matches(
+            state["source"], current_identity, compatible_schema_versions
+        ):
+            raise IncrementalExportError(
+                "incremental_source_changed", "canonical source identity changed"
+            )
+        connection.execute("BEGIN")
+        capture_high_water = int(
+            connection.execute("SELECT COALESCE(MAX(id), 0) FROM captures").fetchone()[0]
+        )
+        capture_low_water = cast(int, base_snapshot["capture_high_water"])
+        if capture_high_water < capture_low_water:
+            raise IncrementalExportError(
+                "incremental_source_rewound", "capture high-water moved backwards"
+            )
+        fingerprint = _snapshot_fingerprint(connection)
+        next_snapshot = _snapshot(base.key, capture_high_water, fingerprint)
+        if fingerprint == base_fingerprint:
+            _write_state(
+                _state_path(output),
+                {
+                    **state,
+                    "source": current_identity,
+                    "base": next_snapshot,
+                    "pending": None,
+                },
+            )
+            return {
+                "release_key": base.key,
+                "post_count": base.manifest["post_count"],
+                "comment_count": base.manifest["comment_count"],
+                "objects_written": 0,
+                "objects_reused": sum(len(posts) for posts in base.post_refs.values())
+                + cast(int, base.manifest["board_count"])
+                + 3,
+                "changed_posts": 0,
+                "mode": "incremental_noop",
+                "capture_high_water": capture_high_water,
+                "snapshot_consistent": True,
+                "source_unchanged": True,
+            }
+
+        changed_post_ids = _changed_post_ids(
+            connection, base, capture_low_water, capture_high_water
+        )
+        if (
+            fingerprint["projection_sha256"] != base_fingerprint["projection_sha256"]
+            and not changed_post_ids
+            and fingerprint["post_count"] == base_fingerprint["post_count"]
+        ):
+            raise IncrementalExportError(
+                "incremental_projection_untracked",
+                "post projection changed without a matching stored capture",
+            )
+        if len(changed_post_ids) > max_changed_posts:
+            raise IncrementalExportError(
+                "incremental_delta_too_large",
+                f"delta has {len(changed_post_ids)} changed posts; limit is {max_changed_posts}",
+            )
+
+        post_refs = base.post_refs
+        tasks = _changed_tasks(connection, output, changed_post_ids)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for prepared in executor.map(_prepare_static_post, tasks, buffersize=workers * 2):
+                if prepared.reused:
+                    writer.reused += 1
+                else:
+                    writer.write(prepared.summary.object_key, prepared.body)
+                ref: dict[str, object] = {
+                    **summary_dict(prepared.summary),
+                    **_object_ref(prepared.summary.object_key, prepared.payload, prepared.body),
+                    "source_projection_sha256": prepared.source_projection_sha256,
+                }
+                post_refs.setdefault(prepared.summary.board_id, {})[
+                    prepared.summary.external_post_id
+                ] = _stored_post_ref(ref)
+        release_body, counts = _write_projection_release(connection, writer, post_refs, fingerprint)
+
+    release_key = f"releases/{_sha256(release_body)}.json"
+    writer.write(release_key, release_body)
+    pending = _snapshot(release_key, capture_high_water, fingerprint)
+    activation = _promote_release(
+        output,
+        _state_path(output),
+        current_identity,
+        base_snapshot,
+        pending,
+        deep_validate=False,
+    )
+    return {
+        **activation,
+        **counts,
+        "objects_written": writer.written,
+        "objects_reused": writer.reused,
+        "changed_posts": len(changed_post_ids),
+        "mode": "incremental",
+        "capture_high_water": capture_high_water,
+        "snapshot_consistent": True,
+        "source_unchanged": True,
+    }
+
+
+def export_static(
+    source: Path,
+    output: Path,
+    *,
+    workers: int = 1,
+    incremental_only: bool = False,
+    force_full: bool = False,
+    max_changed_posts: int = _DEFAULT_MAX_CHANGED_POSTS,
+) -> dict[str, Any]:
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    if max_changed_posts < 1:
+        raise ValueError("max_changed_posts must be positive")
+    if incremental_only and force_full:
+        raise ValueError("incremental_only and force_full are mutually exclusive")
+    source = source.expanduser().resolve(strict=True)
+    if not source.is_file():
+        raise FileNotFoundError(f"not a file: {source}")
+    output = output.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    with connect_archive(source, read_only=True) as connection:
+        identity = _source_identity(source, connection)
+        compatible_schema_versions = _database_projection_schema_versions(connection)
+    if identity["application_id"] != APPLICATION_ID or identity["schema_version"] != SCHEMA_VERSION:
+        raise ValueError("source is not the required ReDSTM canonical archive")
+    if force_full:
+        try:
+            state = _recover_state(
+                output, _state_path(output), identity, compatible_schema_versions
+            )
+        except IncrementalExportError:
+            state = None
+        return _full_export_static(
+            source,
+            output,
+            workers=workers,
+            base=cast(dict[str, object], state["base"]) if state is not None else None,
+        )
+    state = _recover_state(output, _state_path(output), identity, compatible_schema_versions)
+    if state is not None:
+        return _incremental_export_static(
+            source,
+            output,
+            state,
+            workers=workers,
+            max_changed_posts=max_changed_posts,
+        )
+    if incremental_only:
+        raise IncrementalExportError(
+            "incremental_bootstrap_required",
+            "verified export state is missing or invalid; run an explicit full export",
+        )
+    return _full_export_static(source, output, workers=workers, base=None)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -639,6 +1952,10 @@ def _parse_args() -> argparse.Namespace:
     export.add_argument("source", type=Path)
     export.add_argument("--output", type=Path, required=True)
     export.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
+    mode = export.add_mutually_exclusive_group()
+    mode.add_argument("--incremental-only", action="store_true")
+    mode.add_argument("--full", action="store_true")
+    export.add_argument("--max-changed-posts", type=int, default=_DEFAULT_MAX_CHANGED_POSTS)
     activate = commands.add_parser("activate")
     activate.add_argument("output", type=Path)
     activate.add_argument("release")
@@ -647,11 +1964,45 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    if args.command == "export":
-        report = export_static(args.source, args.output, workers=args.workers)
-    else:
-        report = activate_release(args.output, args.release)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    try:
+        if args.command == "export":
+            report = export_static(
+                args.source,
+                args.output,
+                workers=args.workers,
+                incremental_only=args.incremental_only,
+                force_full=args.full,
+                max_changed_posts=args.max_changed_posts,
+            )
+        else:
+            report = activate_release(args.output, args.release)
+    except IncrementalExportError as error:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "partial",
+                    "safe_code": error.code,
+                    "message": str(error),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 2
+    except (OSError, RuntimeError, ValueError) as error:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "failed",
+                    "safe_code": "export_failed",
+                    "message": str(error),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1
+    print(json.dumps({"ok": True, **report}, ensure_ascii=False, indent=2))
     return 0
 
 

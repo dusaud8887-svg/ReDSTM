@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from crawler.archive import connect_archive, decompress_body, initialize_archive
-from crawler.frontier import MAX_NETWORK_ATTEMPTS, FrontierLease, FrontierStore
+from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
-from crawler.store import ArchiveStore
+from crawler.settings import REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS
+from crawler.store import PARSER_VERSION, ArchiveStore
 
 _NOW = datetime(2026, 7, 11, 2, tzinfo=UTC)
 
@@ -27,7 +29,7 @@ def _initialize(path: Path) -> None:
         )
 
 
-def _post(*, body: str = "body", comment: str = "comment") -> NormalizedPost:
+def _post(*, body: str = "body", comment: str | None = "comment") -> NormalizedPost:
     return normalize_captured_post(
         CapturedPostItem(
             board_id="ss_temp01",
@@ -39,17 +41,21 @@ def _post(*, body: str = "body", comment: str = "comment") -> NormalizedPost:
             created_at_raw="2026.07.11 10:00",
             views=10,
             body_html=f"<p>{body}</p>",
-            comments=[
-                CommentItem(
-                    position=1,
-                    source_comment_id="101",
-                    parent_position=None,
-                    depth=0,
-                    author="commenter",
-                    content_html=f"<p>{comment}</p>",
-                    created_at_raw="2026.07.11 10:01",
-                )
-            ],
+            comments=(
+                []
+                if comment is None
+                else [
+                    CommentItem(
+                        position=1,
+                        source_comment_id="101",
+                        parent_position=None,
+                        depth=0,
+                        author="commenter",
+                        content_html=f"<p>{comment}</p>",
+                        created_at_raw="2026.07.11 10:01",
+                    )
+                ]
+            ),
             warc_record_id="<urn:uuid:test>",
         )
     )
@@ -128,11 +134,12 @@ def test_store_deduplicates_versions_and_tracks_every_capture(tmp_path: Path) ->
         ).fetchone()
         assert tuple(comment_dates) == ("2026-07-11T01:01:00+00:00", "2026.07.11 10:01")
         version = connection.execute(
-            "SELECT body_html_zstd, body_text_zstd FROM post_versions"
+            "SELECT body_html_zstd, body_text_zstd, parser_version FROM post_versions"
         ).fetchone()
         assert version is not None
         assert decompress_body(version["body_html_zstd"]) == "<p>body</p>"
         assert decompress_body(version["body_text_zstd"]) == "body"
+        assert version["parser_version"] == PARSER_VERSION
 
 
 def test_changed_comments_create_version_and_replace_projection(tmp_path: Path) -> None:
@@ -162,6 +169,124 @@ def test_changed_comments_create_version_and_replace_projection(tmp_path: Path) 
         assert connection.execute("SELECT content_text FROM comments").fetchone()[0] == "updated"
         latest = connection.execute("SELECT latest_version_id FROM posts").fetchone()[0]
         assert latest == changed.version_id
+
+
+def test_metadata_only_change_is_reported_for_static_publish(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    first = store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+    )
+
+    updated = store.store_post(
+        run_id,
+        replace(_post(), title="Updated title", views=11, is_aa=True),
+        captured_at=_NOW + timedelta(minutes=1),
+        raw_sha256="b" * 64,
+        warc_file="two.warc.gz",
+    )
+    views_only = store.store_post(
+        run_id,
+        replace(_post(), title="Updated title", views=12, is_aa=True),
+        captured_at=_NOW + timedelta(minutes=2),
+        raw_sha256="c" * 64,
+        warc_file="three.warc.gz",
+    )
+
+    assert updated.changed is True
+    assert updated.version_id == first.version_id
+    assert views_only.changed is False
+    with connect_archive(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
+        row = connection.execute("SELECT title, views, is_aa FROM posts").fetchone()
+        assert tuple(row) == ("Updated title", 12, 1)
+        outcomes = [
+            row[0] for row in connection.execute("SELECT outcome FROM captures ORDER BY id")
+        ]
+        assert outcomes == ["stored", "stored", "unchanged"]
+
+
+def test_missing_optional_metadata_preserves_existing_projection(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    original = replace(_post(), category="series")
+    store.store_post(
+        run_id,
+        original,
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+    )
+
+    result = store.store_post(
+        run_id,
+        replace(original, author=None, category=None, created_at_raw=None),
+        captured_at=_NOW + timedelta(minutes=1),
+        raw_sha256="b" * 64,
+        warc_file="two.warc.gz",
+    )
+
+    assert result.changed is False
+    with connect_archive(path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT author, category, created_at_raw, created_at_source FROM posts"
+        ).fetchone()
+        assert tuple(row) == (
+            "author",
+            "series",
+            "2026.07.11 10:00",
+            "2026-07-11T01:00:00+00:00",
+        )
+        assert [
+            capture[0] for capture in connection.execute("SELECT outcome FROM captures ORDER BY id")
+        ] == ["stored", "unchanged"]
+
+
+def test_return_to_a_prior_version_reactivates_that_projection(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    first = store.store_post(
+        run_id,
+        _post(body="first"),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+    )
+    second = store.store_post(
+        run_id,
+        _post(body="second"),
+        captured_at=_NOW + timedelta(minutes=1),
+        raw_sha256="b" * 64,
+        warc_file="two.warc.gz",
+    )
+
+    returned = store.store_post(
+        run_id,
+        _post(body="first"),
+        captured_at=_NOW + timedelta(minutes=2),
+        raw_sha256="c" * 64,
+        warc_file="three.warc.gz",
+    )
+
+    assert first.version_id != second.version_id
+    assert returned.changed is True
+    assert returned.version_id == first.version_id
+    with connect_archive(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 2
+        assert (
+            connection.execute("SELECT latest_version_id FROM posts").fetchone()[0]
+            == first.version_id
+        )
 
 
 def test_outcome_updates_availability_and_finish_run_counters(tmp_path: Path) -> None:
@@ -224,7 +349,7 @@ def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
     _initialize(path)
     frontier = FrontierStore(path)
     url = "https://www.typemoon.net/ss_temp01/7"
-    frontier.seed("ss_temp01", 7, url)
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=6)
     lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
     assert lease is not None
     store = ArchiveStore(path)
@@ -251,6 +376,10 @@ def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
     with connect_archive(path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT expected_comment_count FROM crawl_frontier").fetchone()[0]
+            == 6
+        )
 
     store.store_post(
         run_id,
@@ -261,7 +390,78 @@ def test_store_and_frontier_completion_are_atomic(tmp_path: Path) -> None:
         lease=lease,
     )
     with connect_archive(path) as connection:
-        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"
+        row = connection.execute(
+            "SELECT state, expected_comment_count FROM crawl_frontier"
+        ).fetchone()
+        assert tuple(row) == ("done", 1)
+
+
+def test_successful_empty_comment_capture_refreshes_frontier_expectation(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=6)
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
+    assert lease.expected_comment_count == 6
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+
+    store.store_post(
+        run_id,
+        _post(comment=None),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="capture.warc.gz",
+        lease=lease,
+    )
+
+    with connect_archive(path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT state, expected_comment_count FROM crawl_frontier"
+        ).fetchone()
+    assert tuple(row) == ("done", 0)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "error_code", "frontier_state"),
+    [
+        ("restricted", "permission_denied", "dead"),
+        ("parse_failed", "parse_drift", "dead"),
+        ("fetch_failed", "network_error", "retry"),
+    ],
+)
+def test_non_stored_outcome_preserves_frontier_expectation(
+    tmp_path: Path, outcome: str, error_code: str, frontier_state: str
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=6)
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+
+    store.record_outcome(
+        run_id,
+        url=url,
+        outcome=outcome,
+        fetched_at=_NOW,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code=error_code,
+        lease=lease,
+        frontier_state=frontier_state,
+    )
+
+    with connect_archive(path, read_only=True) as connection:
+        assert (
+            connection.execute("SELECT expected_comment_count FROM crawl_frontier").fetchone()[0]
+            == 6
+        )
 
 
 def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
@@ -310,7 +510,7 @@ def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
             lease_expires_at=expires_at,
         )
 
-    held = _escalated(MAX_NETWORK_ATTEMPTS + 4, "auth-token")
+    held = _escalated(REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS + 4, "auth-token")
     store.record_outcome(
         run_id,
         url=held.url,
@@ -327,7 +527,7 @@ def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
         assert row["state"] == "retry"
         assert row["next_attempt_at"] == "2026-07-11T08:00:00+00:00"
 
-    capped = _escalated(MAX_NETWORK_ATTEMPTS, "network-token")
+    capped = _escalated(REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS, "network-token")
     store.record_outcome(
         run_id,
         url=capped.url,

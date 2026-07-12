@@ -18,7 +18,7 @@ from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.recover_queue import _parse_args as parse_recovery_args
-from scripts.recover_queue import run_recovery
+from scripts.recover_queue import _recovery_batch, run_recovery
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "typemoon" / "detail.html"
 _NOW = datetime(2026, 7, 11, tzinfo=UTC)
@@ -99,6 +99,140 @@ def test_recovery_priority_bound_and_idempotent_transition(tmp_path: Path) -> No
             == "done"
         )
     assert frontier.recovery_candidates(limit=1, now=_NOW) == [("write_free21", 62068)]
+
+
+def test_recovery_uses_free_slots_for_oldest_stale_details(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title,
+                first_seen_at, last_seen_at, last_collected_at
+            ) VALUES ('aa_a01', ?, ?, ?, 'now', 'now', ?)
+            """,
+            [
+                (2, "https://www.typemoon.net/aa_a01/2", "oldest", "2025-01-01T00:00:00Z"),
+                (3, "https://www.typemoon.net/aa_a01/3", "older", "2025-02-01T00:00:00Z"),
+                (4, "https://www.typemoon.net/aa_a01/4", "fresh", "2026-07-01T00:00:00Z"),
+            ],
+        )
+    frontier = FrontierStore(archive)
+    for external_post_id in range(1, 5):
+        frontier.seed(
+            "aa_a01",
+            external_post_id,
+            f"https://www.typemoon.net/aa_a01/{external_post_id}",
+        )
+    with connect_archive(archive) as connection:
+        connection.execute("UPDATE crawl_frontier SET state = 'done' WHERE external_post_id > 1")
+
+    candidates, revisited = _recovery_batch(frontier, limit=3, now=_NOW)
+
+    assert candidates == [("aa_a01", 1), ("aa_a01", 2), ("aa_a01", 3)]
+    assert revisited == 2
+    with connect_archive(archive, read_only=True) as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT external_post_id, state FROM crawl_frontier ORDER BY external_post_id"
+            )
+        ] == [(1, "pending"), (2, "pending"), (3, "pending"), (4, "done")]
+
+    with connect_archive(archive) as connection:
+        connection.execute(
+            "UPDATE crawl_frontier SET state = 'done' WHERE external_post_id IN (2, 3)"
+        )
+    for external_post_id in (5, 6):
+        frontier.seed(
+            "aa_a01",
+            external_post_id,
+            f"https://www.typemoon.net/aa_a01/{external_post_id}",
+        )
+
+    candidates, revisited = _recovery_batch(frontier, limit=3, now=_NOW)
+
+    assert candidates == [("aa_a01", 1), ("aa_a01", 5), ("aa_a01", 2)]
+    assert revisited == 1
+    with connect_archive(archive, read_only=True) as connection:
+        states = {
+            int(row["external_post_id"]): str(row["state"])
+            for row in connection.execute("SELECT external_post_id, state FROM crawl_frontier")
+        }
+    assert states[2] == "pending"
+    assert states[3] == "done"
+    assert states[6] == "pending"
+
+    with connect_archive(archive) as connection:
+        connection.execute(
+            "UPDATE crawl_frontier SET state = 'done', expected_comment_count = 2 "
+            "WHERE external_post_id = 2"
+        )
+        connection.execute("UPDATE posts SET comment_count = 1 WHERE external_post_id = 2")
+    assert frontier.requeue_stale_details(limit=1, stale_before=_NOW - timedelta(days=30)) == [
+        ("aa_a01", 2)
+    ]
+    spider = TypeMoonRecoverySpider(
+        candidates=[("aa_a01", 2)],
+        archive_path=archive,
+        run_id=ArchiveStore(archive).start_run("retry"),
+        session=_session(),
+        lease_seconds=60,
+    )
+    [request] = asyncio.run(_collect_start(spider))
+    assert request.url.endswith("/aa_a01/2")
+    assert request.meta["expected_comment_count"] == 2
+
+
+def test_stale_revisit_includes_restricted_done_without_a_post_row(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    frontier = FrontierStore(archive)
+    url = "https://www.typemoon.net/aa_a01/7"
+    frontier.seed("aa_a01", 7, url)
+    attempted_at = datetime(2025, 1, 1, tzinfo=UTC)
+    lease = frontier.claim_identity("aa_a01", 7, lease_seconds=60, now=attempted_at)
+    assert lease is not None
+    store = ArchiveStore(archive)
+    run_id = store.start_run("retry", now=attempted_at)
+    store.record_outcome(
+        run_id,
+        url=url,
+        outcome="restricted",
+        fetched_at=attempted_at,
+        board_id="aa_a01",
+        external_post_id=7,
+        error_code="permission_denied",
+        lease=lease,
+        frontier_state="done",
+    )
+
+    with connect_archive(archive, read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"
+
+    candidates, revisited = _recovery_batch(frontier, limit=1, now=_NOW)
+
+    assert candidates == [("aa_a01", 7)]
+    assert revisited == 1
+    with connect_archive(archive, read_only=True) as connection:
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "pending"
 
 
 async def _collect_start(spider: TypeMoonRecoverySpider) -> list[Request]:

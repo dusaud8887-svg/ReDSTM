@@ -583,7 +583,7 @@ profile에서만 pinned container로 사용한다.
 
 schema SQL은 `crawler/archive.py`의 hash 검증된 `MIGRATIONS`가 source of truth다. v1이 전체
 schema를 만들고 v2는 WARC 재사용을 위한 capture `(raw_sha256, url)` partial index를, v3는 board별
-bounded inventory 재개 cursor를 더한다. SQLite
+bounded inventory 재개 cursor를, v4는 nullable frontier `expected_comment_count`를 더한다. SQLite
 `STRICT` table, foreign key, latest-version 소유권 trigger, frontier lease CHECK를 사용하며 같은
 migration version의 SQL hash가 달라지면 DB open을 거부한다. 아래는 외부 계약이다.
 
@@ -648,7 +648,9 @@ UNIQUE(post_id, content_sha256, comments_sha256)
 첫 2,000 legacy posts/23,002 comments 실측에서 plain UTF-8 version body schema는 1,095,524,352
 bytes였다. 같은 UTF-8 payload는 gzip-6 21.41%/17.943초, Python 3.14 표준 zstd-3
 20.38%/3.730초였고 zstd schema DB는 231,505,920 bytes로 78.87% 작아졌다. local canonical
-DB는 zstd-3 BLOB을 쓰고, R2 static object는 2026-07-11 결정 이후 zstd level 15를 쓴다
+DB는 zstd-3 BLOB을 쓰고, R2 post object는 2026-07-11 결정 이후 zstd level 15를 쓴다.
+2026-07-12 repository target부터 board/search/collection aggregate는 700MiB automatic runner 상한을
+지키기 위해 deterministic zstd level 6과 `-v2` object prefix를 쓴다.
 ([`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md) §3의 브라우저 제약 참고). 근거는 `canonical-schema-spike-20260711.json`이다.
 
 #### `comments`
@@ -701,10 +703,11 @@ last_error_code
 last_attempt_at
 lease_token nullable
 lease_expires_at nullable
+expected_comment_count nullable  # latest listing observation, >= 0
 PRIMARY KEY(board_id, external_post_id)
 ```
 
-`running` row는 두 lease 필드가 모두 있어야 한다. batch claim은 `BEGIN IMMEDIATE` 안에서 만료된 row를 `retry`로 돌리고 새 token/만료시각을 기록한다. 완료 갱신은 key와 token이 모두 일치할 때만 허용해, 종료된 이전 process가 재임대된 작업을 늦게 완료 처리하지 못하게 한다.
+`running` row는 두 lease 필드가 모두 있어야 한다. batch claim은 `BEGIN IMMEDIATE` 안에서 만료된 row를 `retry`로 돌리고 새 token/만료시각을 기록한다. 완료 갱신은 key와 token이 모두 일치할 때만 허용해, 종료된 이전 process가 재임대된 작업을 늦게 완료 처리하지 못하게 한다. v4는 기존 frontier를 현재 post projection의 댓글 수로 backfill하고 목차-only row는 `NULL`을 유지한다. 이후 listing의 최신 댓글 수를 claim/retry/recovery lease까지 보존한다. detail에서 더 적은 댓글만 파싱되면 `incomplete_comments`로 저장하지 않으며, 성공 store만 실제 저장 댓글 수와 lease 완료를 같은 transaction에서 갱신한다. restricted/parse/fetch/storage 실패는 기대값을 지우지 않는다.
 
 #### `crawl_runs`
 
@@ -821,8 +824,9 @@ viewer에 직접 렌더링하지 않는다.
 
 ### 8.0 2026-07-12 구현 감사 판정
 
-현재 crawler core와 Oracle 수동 canary, schema v3 migration/doctor는 동작하고 P0 safety gap은 local
-code/test에서 닫혔다. **pass-epoch inventory/bootstrap bundle의 live canary, 자동 schedule과 7일 shadow
+현재 crawler core와 Oracle 수동 canary, live schema v3 migration/doctor는 동작하고 repository target은
+additive schema v4다. v4 code/migration test는 local에서 닫혔고 live migration은 아직 실행하지 않았다.
+**pass-epoch inventory/bootstrap bundle의 live canary, 자동 schedule과 7일 shadow
 전**이다. canonical 실측 queue는
 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의
 hard cap일 뿐 처리량이나
@@ -837,11 +841,11 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | frontier backoff/dead와 `network_error`·`parse_drift` bounded revive | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
-| listing | complete changed-row seed, overlap boundary, schema v3 durable inventory cursor | pass-epoch bundle과 실제 cursor progression |
+| listing | complete changed-row seed, overlap boundary, schema v3 inventory cursor와 v4 댓글 기대치 | pass-epoch bundle과 실제 cursor progression |
 | detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
 | monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage canary와 7일 shadow |
 
-schema v3 doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke
+repository schema v4 migration/doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke
 1회 뒤 schedule을 활성화한다. 24시간 반복과 7일
 shadow는 활성화된 자동 운전의 관찰 단계이며, 이 근거 전에는 “crawler 완성” 또는 legacy cutover로
 표시하지 않는다.
@@ -892,7 +896,8 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 
 현재 `scripts.sync`는 일반 run에서 board별 page 1부터 `max_pages` 상한 안에서 listing metadata
 변경을 비교하고 overlap boundary까지 읽는다. `--inventory`는 schema v3의 board별
-`inventory_next_page`부터 bounded page window를 읽고 미완료면 다음 run에서 이어 간다.
+`inventory_next_page`부터 bounded page window를 읽고 미완료면 다음 run에서 이어 간다. schema v4는
+listing의 댓글 기대치를 frontier/lease에 보존해 detail 댓글 누락을 fail-closed한다.
 
 현재 실제 순서는 다음이다.
 
@@ -900,10 +905,10 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 board listing page 1..N
   → row identity/title/category/comment_count parse + listing WARC
   → canonical metadata와 비교
-  → new/changed row를 SQLite crawl_frontier에 seed/reopen
-  → 이 run의 detail 후보를 1건씩 lease claim
-  → detail fetch/parse/sanitize
-  → post/version/comments/capture/frontier transition을 한 transaction으로 commit
+  → new/changed row와 latest listing comment_count를 SQLite crawl_frontier에 seed/reopen
+  → 이 run의 detail 후보를 expected_comment_count와 함께 1건씩 lease claim
+  → detail fetch/parse/sanitize + expected보다 적은 댓글 fail-closed
+  → post/version/comments/capture/frontier actual comment count를 한 transaction으로 commit
   → 실패는 retry/backoff, restricted·missing·parse drift는 분류된 terminal state
 ```
 
@@ -911,6 +916,11 @@ board listing page 1..N
 `captures.outcome`이 단일 완료 boolean보다 정확한 근거다. 받은 listing의 new/changed row는
 `max_posts` capacity와 무관하게 모두 durable seed하고, 이번 run의 detail scheduling만 제한한다.
 따라서 capacity 뒤쪽 변경분도 다음 bounded run의 queue에 남으며 원 사이트 요청을 추가하지 않는다.
+
+v4의 frontier column은 Reader static projection을 바꾸지 않는다. exporter는 canonical의 exact migration
+hash ledger와 `static_projection_compatible` metadata가 모두 맞을 때만 verified v3 state/base manifest를
+이어 쓰고 state source를 v4로 승격한다. 이 범위는 R2 projection 호환성일 뿐 schema v4 canonical을
+schema-v3-only application으로 여는 rollback 허가가 아니다.
 
 아래 중 1~4와 durable inventory cursor는 구현됐다. reported total/page-count snapshot과 전체 cursor
 완주를 입증하는 live 주간 실행은 아직 미완이다.
@@ -1020,6 +1030,12 @@ storage_error
 - listing/detail timeout은 120/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
   10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
   보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
+- `DOWNLOAD_FAIL_ON_DATALOSS=False`는 잘린 응답을 정상 parse하기 위한 fallback이 아니다. WARC가
+  raw response를 보존한 뒤 listing은 coverage 갱신 없이 중단하고 detail은 `network_error` retry로
+  닫는다. 설명되지 않은 빈 listing과 조회수/댓글수의 모호한 숫자도 정상 0으로 합성하지 않는다.
+- 최신 listing overlap은 공지 제외 unchanged 20건이며, body-only 변경 보완은 30일 이상 지난
+  `done` detail을 oldest-first로 다시 여는 bounded audit가 맡는다. recovery batch는 stale audit
+  1 slot을 예약하고 나머지를 due queue에 주므로 due가 계속 가득 차도 audit이 굶지 않는다.
 - site outage 조기 판정: cycle 시작 preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
   `site_unreachable`로 run을 조기 종료한다. 그 run의 network 실패는 frontier attempt로 세지
   않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 run당 1회, 최소
@@ -1030,7 +1046,8 @@ storage_error
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
 - `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
 - `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery와 일반 sync는 첫
-  auth/parse drift, 같은 class network/429 연속 3회에서 board 내 요청을 중단한다. cycle은 board
+  auth, 같은 class의 parse drift/network/429 연속 3회에서 board 내 요청을 중단한다. 고립된
+  parse failure는 해당 항목을 dead로 분류하고 다음 detail을 계속한다. cycle은 board
   경계 결과의 연속 network breaker도 유지한다.
 - session preflight 뒤 30분이 지난 board 경계에서 session을 재검증한다. 재로그인은 run당 1회·최소
   30분이라는 별도 throttle을 유지한다.
@@ -1225,8 +1242,8 @@ Local E: verified source + independent recovery copy
 - Worker Free: 100,000 request/day, 10ms CPU/request
 - R2 Standard: 10GB-month 무료, 이후 $0.015/GB-month, egress 무료
 - publisher는 현재 원격 사용량과 dry-run 신규 object를 합산하고 20,000,000,000 bytes 또는
-  800,000 objects를 넘으면 실제 upload 전에 실패한다. 현재 코드의 8GB free-only guard는 첫
-  baseline에는 유지하고, 증분 운영 전에 이 계약으로 갱신한다.
+  800,000 objects를 넘으면 실제 upload 전에 실패한다. full/delta 경로가 같은 projected hard stop과
+  boundary test를 사용한다.
 - app shell은 같은 Worker Static Assets에 두고 archive object만 R2에 저장
 - R2 object key는 content hash/revision을 포함하고 release manifest만 교체
 
@@ -1251,7 +1268,9 @@ canonical과 closed WARC는 기존 Oracle VM의 `/srv/redstm`에 두고, `E:\ReD
 
 ### 11.3 secret과 배포 선언
 
-- Git에 넣는 YAML에는 schedule, command, permission과 secret 이름만 둔다.
+- Git에는 systemd unit, `wrangler.jsonc`, CI workflow처럼 각 platform의 native 배포 선언만 둔다.
+  중복 generic YAML 설정 파일은 만들지 않으며 전체 분류는
+  [`11 설정·운영 정책`](11_configuration_and_policy.md)을 따른다.
 - TypeMoon ID/PW는 Oracle의 root-owned credential file에 두고 GitHub Actions에는 넣지 않는다.
 - R2 API token은 Cloudflare/local secret store에 둔다. Viewer는 `workers.dev` Cloudflare Access의
   본인 account + MFA policy로 제한하고 Worker도 `Cf-Access-Jwt-Assertion`의 signature, issuer,
@@ -1380,8 +1399,8 @@ Gate:
 
 ### 13.3 Phase 1: archive kernel
 
-상태: archive kernel core와 local P0 safety, schema v3 Oracle migration/doctor 완료. 새 automatic bundle의
-live gate 대기. schema/importer/parser/store/frontier, bounded
+상태: archive kernel core와 local P0 safety, live schema v3 Oracle migration/doctor 완료, repository schema
+v4 local test 완료. v4 live migration과 새 automatic bundle의 gate 대기. schema/importer/parser/store/frontier, bounded
 listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
 정책과 `doctor`는 구현했다. systemd source와 D1 heartbeat, marker/outbox/expired command canary는
 실연결했다. sync mid-board breaker, session mid-cycle revalidation, 모든 분류 가능한 detail exit의 lease
@@ -1575,7 +1594,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 | TypeMoon 갑작스러운 종료 | backfill 미완료 | 기존 DB 먼저 보존, 고가치 board 우선 |
 | HTML drift | 잘못된 빈 본문 저장 | raw-first, quality gate, parse_drift 중단 |
 | 계정/session 만료 | crawl 정지 | 저장 session reuse, form login 1회, 명시적 auth_required |
-| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 1, delay, cooldown, weekly audit |
+| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 1, delay, Retry-After/backoff, weekly audit |
 | raw HTML XSS | 개인 기기 compromise | WARC 직접 렌더 금지, sanitize/CSP |
 | R2 credential 탈취 | serving 삭제 | content-addressed canonical/backup에서 재배포, scoped token |
 | B2 credential 탈취 | backup 삭제 | 별도 account/token, Oracle canonical, offline recovery 사본 |
@@ -1667,13 +1686,17 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 
 - 결정: 승인 (2026-07-11, 초기 gzip-6 결정을 대체)
 - 근거: 첫 R2 publish 전(bucket 0 objects)이 content-addressed immutable key 구조에서 유일한
-  무비용 전환 시점이며, zstd level 15가 R2 무료 한도 headroom과 브라우저 해제 속도에서 유리함
+  무비용 전환 시점이며, post object의 zstd level 15가 R2 무료 한도 headroom과 브라우저 해제
+  속도에서 유리함. aggregate는 2026-07-12 실제 282,239-post projection에서 level 15가 automatic
+  runner memory 상한을 위협해 level 6의 별도 `-v2` key contract로 분리했다.
 - 제약: `Content-Encoding: zstd`는 Chromium 123+, Firefox 126+, Safari 26.3+가 지원한다.
   그보다 오래된 Safari/iOS/WebView는 지원 대상이 아니며 단일 사용자 Windows/Android Chrome을
   production gate로 둔다. [Safari 26.3 zstd](https://webkit.org/blog/17798/webkit-features-for-safari-26-3/)
-- 계약: object key 확장자(`.json.zst`)는 exporter와 browser가 공유하며, user-state는 이전
+- 계약: object key 확장자(`.json.zst`)는 exporter와 browser가 공유한다. post는 level 15를 유지하고
+  board/search/collection aggregate는 level 6과 `-v2` prefix를 사용하며, user-state는 이전
   gz 확장자 export 파일을 계속 import함. 세부는 [`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md) §3
-- 재검토 조건: WebKit 계열 사용 요구가 생기거나 level 15 재export 시간이 release 일정을 반복 위협함
+- 재검토 조건: WebKit 계열 사용 요구가 생기거나 post level 15 재export 시간이 release 일정을 반복
+  위협하거나 aggregate peak memory가 service hard limit의 안전 여유를 침범함
 
 ### ADR-013: 별도 loopback read-only Operations Console C0
 
@@ -1787,6 +1810,8 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] canonical schema v2 적용과 data count 보존
 [x] schema v3 inventory cursor migration 코드와 회귀 test
 [x] Oracle canonical schema v3 migration과 doctor
+[x] schema v4 durable listing 댓글 기대치 migration 코드와 회귀 test
+[ ] schema-v4-compatible application 2회 배포 뒤 canonical v4 migration/doctor
 [ ] pass-epoch inventory/bootstrap bundle live canary와 automatic schedule 관찰
 [x] full exporter/collection reader/Access JWT/rclone publish 구현
 ```

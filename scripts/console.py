@@ -279,7 +279,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--doctor-report",
         type=Path,
-        default=Path(".data/migration/schema-v2-doctor.json"),
+        default=Path(".data/migration/schema-v4-doctor.json"),
     )
     parser.add_argument("--backup-root", type=Path)
     parser.add_argument("--port", type=int, default=0)

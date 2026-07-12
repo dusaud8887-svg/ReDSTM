@@ -1,8 +1,10 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { controlApiResponse } from "./control-api.js";
+import { runControlMaintenance } from "./control-read.js";
 
 const encoder = new TextEncoder();
 const keyPattern = /^[a-zA-Z0-9_./-]+$/;
+const IMMUTABLE_CACHE_SECONDS = 365 * 24 * 60 * 60;
 const accessJwks = new Map();
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -11,10 +13,11 @@ const contentSecurityPolicy = [
   "font-src 'self'",
   "form-action 'none'",
   "frame-ancestors 'none'",
-  "img-src 'self' https: data:",
+  "img-src 'self' https:",
   "object-src 'none'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
+  "upgrade-insecure-requests",
 ].join("; ");
 
 async function digest(value) {
@@ -101,7 +104,12 @@ function objectHeaders(object, key) {
   if (key === "release.json" && object.uploaded instanceof Date) {
     headers.set("Last-Modified", object.uploaded.toUTCString());
   }
-  headers.set("Cache-Control", key === "release.json" ? "no-cache" : "private, immutable");
+  headers.set(
+    "Cache-Control",
+    key === "release.json"
+      ? "no-cache"
+      : `private, max-age=${IMMUTABLE_CACHE_SECONDS}, immutable`,
+  );
   return headers;
 }
 
@@ -185,5 +193,8 @@ export default {
       return response("Invalid archive key", 400);
     }
     return archiveResponse(request, env, key, ctx);
+  },
+  async scheduled(controller, env) {
+    await runControlMaintenance(env, new Date(controller.scheduledTime));
   },
 };

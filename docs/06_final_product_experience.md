@@ -123,7 +123,7 @@ Reader와 Operations는 같은 로그인과 visual system을 쓰지만 route, da
     ├─ pause after current
     └─ resume schedule
 
-### 4.1 Mobile destination과 URL
+### 4.3 Mobile destination과 URL
 
 Home과 전체 catalog를 한 plane에 겹치지 않는다. 전역 destination은 반복 사용 목적별로 나눈다.
 
@@ -311,12 +311,14 @@ Operations의 첫 질문은 “지금 내가 해야 할 일이 있는가?”다.
 - 첫 문장은 `개입 불필요`, `확인 필요`, `Runner 응답 없음`, `초기 연결 대기` 중 하나의 action
   verdict이며 이유와 권장 행동을 한 문장으로 붙인다.
 - overall state는 idle/running/degraded/failed/stale/paused/not_enrolled을 구분한다.
+- automation은 overall Runner state와 별도로 enabled/disabled/paused/unverified/delayed를 구분한다.
+  enabled지만 automatic run 이력이 없으면 `자동 실행 확인 전`이다.
 - Reader/R2 continuity는 runner 상태와 독립이다. runner가 stale이어도 active release가 readable이면
   `Reader 사용 가능`을 함께 표시한다.
 - fresh일 때만 current step/board/next schedule을 현재형으로 쓴다. stale이면 모든 runner fact를
   `마지막 보고`로 바꾸고 age를 표시한다.
-- last successful crawl/publish/local recovery와 warning list는 각각 source, as-of, reason, next action을
-  가진다.
+- latest automatic run, current release validation, publish smoke, local recovery와 warning은 각각
+  가능한 범위의 source, as-of, reason을 가진다. 생산되지 않은 evidence는 이력 없음으로 표시한다.
 - D1 telemetry가 없거나 field가 unknown이면 `—`다. 값을 0으로 합성하지 않는다.
 
 overall percentage는 만들지 않는다. 각 count는 denominator와 기준 시각을 가진다.
@@ -351,7 +353,8 @@ Browser가 요청할 수 있는 action은 고정된다.
 | resume-schedule | paused marker만 해제 | next schedule summary |
 
 restore, DB cleanup, arbitrary rollback target, shell, path, concurrency, delay, timeout은 웹 action이 아니다.
-각 action은 effect, eligibility, disabled reason, due count, last outcome, cooldown을 함께 표시한다.
+각 action은 effect, eligibility, disabled reason과 API가 제공하는 due queue 근거를 함께 표시한다.
+시간 기반 cooldown이나 action별 last outcome을 합성하지 않고 실제 실행 결과는 Runs/Releases에서 본다.
 pause/resume은 상호 배타적이다. runner stale/not_enrolled이면 claim이 필요한 sync/retry/publish와 marker
 명령을 이유와 함께 disable하고 refresh/진단만 남긴다.
 
@@ -366,7 +369,8 @@ pause/resume은 상호 배타적이다. runner stale/not_enrolled이면 claim이
 7. step events
 8. terminal report
 
-double click/reload/retry가 같은 idempotency key로 중복 run을 만들지 않아야 한다. claim 전 command는
+double click과 같은 탭의 응답 유실·reload·retry는 같은 intent의 idempotency key를 `sessionStorage`에서
+재사용해 중복 run을 만들지 않아야 한다. 다른 action에 같은 key를 쓰면 409로 거부한다. claim 전 command는
 cancel할 수 있고 claim 뒤에는 pause-after-current만 요청할 수 있다. paused 상태는
 resume-schedule로만 해제한다.
 
@@ -408,7 +412,7 @@ command ID, expiry, 다시 확인 link를 남긴다.
 | wide ≥1180 | 72px rail | catalog + reader |
 | medium 760–1179 | top app navigation | catalog + reader |
 | narrow <760 | 4-item bottom navigation | one plane |
-| Reader narrow | no global nav | full-screen article + 4 actions |
+| Reader narrow | no global nav | full-screen article + 5 actions |
 | Operations narrow | verdict + Reader continuity first | vertical disclosure ledger; horizontal table 금지 |
 
 - 100dvh, viewport-fit=cover, safe-area
@@ -471,6 +475,7 @@ Operations:
 - stale runner와 readable R2 release를 동시에 정확히 설명
 - empty run/board telemetry를 false zero로 표시하지 않음
 - fixed command 중복 요청이 한 run만 생성
+- enabled이지만 automatic run 이력이 없는 schedule을 healthy로 합성하지 않음
 - 각 command의 효과/eligibility/disabled reason을 확인 전에 예측 가능
 - D1/Worker outage 중 systemd schedule 지속
 - secret/path/raw body가 API/DOM/log에 없음

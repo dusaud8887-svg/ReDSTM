@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,16 +17,31 @@ from filelock import FileLock, Timeout
 
 from crawler.archive import connect_archive
 from crawler.frontier import FrontierStore
-from crawler.session import SessionNetworkError, SessionRefreshError, ensure_session_export
-from crawler.settings import REDSTM_FRONTIER_LEASE_SECONDS, USER_AGENT
+from crawler.session import (
+    AutomaticLoginThrottleError,
+    SessionNetworkError,
+    SessionRefreshError,
+    ensure_session_export,
+    validate_session_export,
+)
+from crawler.settings import (
+    REDSTM_CIRCUIT_BREAKER_FAILURES,
+    REDSTM_CYCLE_MAX_PAGES,
+    REDSTM_CYCLE_MAX_POSTS,
+    REDSTM_CYCLE_TIME_BUDGET_SECONDS,
+    REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_SESSION_PREFLIGHT_ATTEMPTS,
+    REDSTM_SESSION_PREFLIGHT_RETRY_DELAY_SECONDS,
+    REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
+    REDSTM_SESSION_REVALIDATE_SECONDS,
+    REDSTM_WORKER_GRACE_SECONDS,
+    USER_AGENT,
+)
 from scripts.healthcheck import notify_dead_man
 from scripts.sync import _write_report
 
 _NETWORK_FAILURES = {"listing_fetch_failed", "network_error"}
 _OUTCOMES = {"stored", "unchanged", "restricted", "missing", "parse_failed", "fetch_failed"}
-_CYCLE_TIME_BUDGET_SECONDS = 4 * 60 * 60
-_SESSION_REVALIDATE_SECONDS = 30 * 60
-_SUBPROCESS_GRACE_SECONDS = 60
 
 
 def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
@@ -72,25 +88,44 @@ def _boards(
         ]
 
 
-def _preflight(session: Path) -> str | None:
-    for attempt in range(2):
+def _session_status(validate: Callable[[], object]) -> str | None:
+    network_failed = False
+    for attempt in range(REDSTM_SESSION_PREFLIGHT_ATTEMPTS):
         try:
-            ensure_session_export(
-                session,
-                user_id=os.environ.get("TYPEMOON_ID", ""),
-                password=os.environ.get("TYPEMOON_PASSWORD", ""),
-                user_agent=USER_AGENT,
-                timeout=60,
-            )
+            validate()
             return None
         except SessionNetworkError:
-            if attempt == 0:
-                time.sleep(30)
+            network_failed = True
+            if attempt + 1 < REDSTM_SESSION_PREFLIGHT_ATTEMPTS:
+                time.sleep(REDSTM_SESSION_PREFLIGHT_RETRY_DELAY_SECONDS)
                 continue
             return "site_unreachable"
-        except SessionRefreshError:
+        except AutomaticLoginThrottleError:
+            return "site_unreachable" if network_failed else "auth_failed"
+        except OSError, SessionRefreshError, ValueError:
             return "auth_failed"
     raise AssertionError("unreachable")
+
+
+def _preflight(session: Path) -> str | None:
+    return _session_status(
+        lambda: ensure_session_export(
+            session,
+            user_id=os.environ.get("TYPEMOON_ID", ""),
+            password=os.environ.get("TYPEMOON_PASSWORD", ""),
+            user_agent=USER_AGENT,
+            timeout=REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+    )
+
+
+def _revalidate(session: Path) -> str | None:
+    return _session_status(
+        lambda: validate_session_export(
+            session,
+            timeout=REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+    )
 
 
 def _worker_command(
@@ -188,8 +223,8 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 status = "partial"
                 stop_reason = "time_budget"
                 break
-            if now - session_validated_at >= _SESSION_REVALIDATE_SECONDS:
-                preflight = _preflight(args.session)
+            if now - session_validated_at >= REDSTM_SESSION_REVALIDATE_SECONDS:
+                preflight = _revalidate(args.session)
                 if preflight is not None:
                     status = preflight
                     stop_reason = "session_revalidation"
@@ -201,7 +236,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 completed = subprocess.run(
                     _worker_command(args, board_id, report_path, worker_seconds),
                     check=False,
-                    timeout=worker_seconds + _SUBPROCESS_GRACE_SECONDS,
+                    timeout=worker_seconds + REDSTM_WORKER_GRACE_SECONDS,
                 )
             except subprocess.TimeoutExpired:
                 status = "partial"
@@ -254,7 +289,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             consecutive_network_failures = (
                 consecutive_network_failures + 1 if network_failure else 0
             )
-            if consecutive_network_failures >= 3:
+            if consecutive_network_failures >= REDSTM_CIRCUIT_BREAKER_FAILURES:
                 status = "site_unreachable"
                 preserved_attempts = FrontierStore(args.archive).preserve_network_attempts(
                     network_run_ids
@@ -263,7 +298,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             consecutive_rate_limits = (
                 consecutive_rate_limits + 1 if "rate_limited" in failures else 0
             )
-            if consecutive_rate_limits >= 3:
+            if consecutive_rate_limits >= REDSTM_CIRCUIT_BREAKER_FAILURES:
                 status = "rate_limited"
                 break
             if completed.returncode != 0 or board_status != "succeeded":
@@ -302,9 +337,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
     parser.add_argument("--report-dir", type=Path, default=Path(".data/operations/cycles"))
-    parser.add_argument("--max-pages", type=int, default=3)
-    parser.add_argument("--max-posts", type=int, default=20)
-    parser.add_argument("--max-seconds", type=int, default=_CYCLE_TIME_BUDGET_SECONDS)
+    parser.add_argument("--max-pages", type=int, default=REDSTM_CYCLE_MAX_PAGES)
+    parser.add_argument("--max-posts", type=int, default=REDSTM_CYCLE_MAX_POSTS)
+    parser.add_argument("--max-seconds", type=int, default=REDSTM_CYCLE_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
     parser.add_argument("--inventory-since", help=argparse.SUPPRESS)

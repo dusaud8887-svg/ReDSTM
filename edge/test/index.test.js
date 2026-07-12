@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
@@ -14,6 +15,11 @@ globalThis.FixedLengthStream ??= class extends TransformStream {
 const username = "reader";
 const password = "test-secret";
 const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+const workerVersionMetadata = {
+  id: "12345678-1234-1234-1234-123456789abc",
+  tag: `git-${"a".repeat(40)}`,
+  timestamp: "2026-07-12T00:00:00.000Z",
+};
 
 function archiveObject(body = "payload", range = null) {
   return {
@@ -39,6 +45,7 @@ function environment(overrides = {}) {
   return {
     VIEWER_USERNAME: username,
     VIEWER_PASSWORD: password,
+    CF_VERSION_METADATA: workerVersionMetadata,
     ARCHIVE: {
       async get() {
         return archiveObject();
@@ -77,6 +84,7 @@ test("rejects missing or invalid credentials", async () => {
 test("validates Cloudflare Access JWTs and rejects the wrong audience", async () => {
   const issuer = "https://redstm-test.cloudflareaccess.com";
   const audience = "redstm-audience";
+  const runnerAudience = "redstm-runner-audience";
   const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
   const publicJwk = await exportJWK(publicKey);
   publicJwk.alg = "RS256";
@@ -93,11 +101,19 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(privateKey);
+  const runnerToken = await new SignJWT({ common_name: "oracle-runner" })
+    .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+    .setIssuer(issuer)
+    .setAudience(runnerAudience)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(privateKey);
   const accessEnvironment = environment({
     VIEWER_USERNAME: "",
     VIEWER_PASSWORD: "",
     TEAM_DOMAIN: issuer,
     POLICY_AUD: audience,
+    RUNNER_POLICY_AUD: runnerAudience,
   });
   try {
     const valid = await workerFetch(
@@ -107,6 +123,28 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
       accessEnvironment,
     );
     assert.equal(valid.status, 200);
+
+    const runnerHeaders = {
+      "X-Request-Id": "018f47a8-7a2d-7c11-8f44-89d95775c6ea",
+      "X-ReDSTM-Protocol": "1",
+    };
+    const readerDenied = await workerFetch(
+      new Request(
+        "https://archive.example/api/v1/runner/release-smoke?expected_release_sha256=invalid",
+        { headers: { ...runnerHeaders, "Cf-Access-Jwt-Assertion": token } },
+      ),
+      accessEnvironment,
+    );
+    assert.equal(readerDenied.status, 403);
+    const runnerAccepted = await workerFetch(
+      new Request(
+        "https://archive.example/api/v1/runner/release-smoke?expected_release_sha256=invalid",
+        { headers: { ...runnerHeaders, "Cf-Access-Jwt-Assertion": runnerToken } },
+      ),
+      accessEnvironment,
+    );
+    assert.equal(runnerAccepted.status, 400);
+    assert.equal((await runnerAccepted.json()).error.code, "invalid_expected_release_sha256");
 
     const invalid = await workerFetch(
       new Request("https://archive.example/health", {
@@ -145,7 +183,7 @@ test("streams private objects with safe Zstandard and range headers", async () =
   assert.equal(result.status, 206);
   assert.equal(result.headers.get("Content-Range"), "bytes 2-5/10");
   assert.equal(result.headers.get("Content-Length"), "4");
-  assert.equal(result.headers.get("Cache-Control"), "private, immutable");
+  assert.equal(result.headers.get("Cache-Control"), "private, max-age=31536000, immutable");
   assert.equal(options.range.get("Range"), "bytes=2-5");
 
   const json = await workerFetch(request("/archive/posts/board/1-hash.json.zst"), env);
@@ -213,6 +251,8 @@ test("serves authenticated static assets with security headers", async () => {
   assert.equal(result.status, 200);
   assert.equal(new URL(received.url).pathname, "/");
   assert.match(result.headers.get("Content-Security-Policy"), /default-src 'self'/);
+  assert.match(result.headers.get("Content-Security-Policy"), /upgrade-insecure-requests/);
+  assert.doesNotMatch(result.headers.get("Content-Security-Policy"), /img-src[^;]*data:/);
   assert.equal(result.headers.get("X-Content-Type-Options"), "nosniff");
   assert.match(await result.text(), /ReDSTM/);
 
@@ -220,4 +260,69 @@ test("serves authenticated static assets with security headers", async () => {
   assert.equal(operations.status, 200);
   assert.equal(new URL(received.url).pathname, "/ops");
   assert.match(operations.headers.get("Content-Security-Policy"), /connect-src 'self'/);
+});
+
+test("scheduled maintenance reconciles stale runs and retains terminal evidence by outcome", async () => {
+  const statements = [];
+  const env = {
+    CONTROL_DB: {
+      prepare(sql) {
+        const statement = {
+          sql,
+          bind(...parameters) {
+            statement.parameters = parameters;
+            return statement;
+          },
+        };
+        return statement;
+      },
+      batch(received) {
+        statements.push(...received);
+        return [];
+      },
+    },
+  };
+  const scheduledTime = Date.parse("2026-07-12T03:00:00Z");
+  await worker.scheduled({ scheduledTime, cron: "0 3 * * *" }, env, {});
+
+  assert.equal(statements.length, 4);
+  assert.match(statements[0].sql, /UPDATE commands SET state = 'failed'/);
+  assert.match(statements[1].sql, /UPDATE runs SET state = 'failed'/);
+  assert.match(statements[1].sql, /started_at < \?/);
+  assert.match(statements[1].sql, /started_at > \?/);
+  assert.equal(statements[1].parameters[2], "2026-07-11T19:00:00.000Z");
+  assert.equal(statements[1].parameters[3], "2026-07-12T03:05:00.000Z");
+  assert.match(statements[2].sql, /'succeeded', 'cancelled', 'expired'/);
+  assert.match(statements[2].sql, /'partial', 'failed'/);
+  assert.match(statements[2].sql, /finished_at IS NOT NULL/);
+  assert.doesNotMatch(statements[2].sql, /'queued'|'claimed'/);
+  assert.deepEqual(statements[2].parameters, [
+    "2026-06-12T03:00:00.000Z",
+    "2026-04-13T03:00:00.000Z",
+  ]);
+  assert.match(statements[3].sql, /DELETE FROM runs/);
+  assert.match(statements[3].sql, /state = 'succeeded'/);
+  assert.match(statements[3].sql, /state IN \('partial', 'failed'\)/);
+  assert.doesNotMatch(statements[3].sql, /state = 'running'/);
+  assert.equal(statements.some((statement) => /DELETE FROM run_events/.test(statement.sql)), false);
+  const config = await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+  assert.match(config, /"crons": \["0 3 \* \* \*"\]/);
+  const retention = await readFile(
+    new URL("../migrations/0004_retention_indexes.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(retention, /commands_retention_idx\s+ON commands\(state, finished_at\)/s);
+  assert.match(retention, /runs_retention_idx\s+ON runs\(state, finished_at\)/s);
+  assert.equal((retention.match(/WHERE finished_at IS NOT NULL/g) || []).length, 2);
+  const integrity = await readFile(
+    new URL("../migrations/0005_control_integrity.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(integrity, /CREATE UNIQUE INDEX commands_active_conflict_group_idx/);
+  assert.match(integrity, /WHEN action IN \('pause-after-current', 'resume-schedule'\)/);
+  assert.match(integrity, /THEN 'schedule-marker'/);
+  assert.match(integrity, /ELSE 'process'/);
+  assert.match(integrity, /state IN \('queued', 'claimed'\)/);
+  assert.match(integrity, /CREATE INDEX run_events_snapshot_recorded_idx/);
+  assert.match(integrity, /WHERE step = 'archive_snapshot'/);
 });
