@@ -210,7 +210,7 @@ DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy comm
 넣지 않는다.
 
 상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 application
-release `b83efb018087f4c02cc7f057922ed8e540d87671`을 배포했다. resumable transfer는 remote offset 재개,
+release `4edc1c9868045454c961cd3f038eb0a66a4cb010`을 배포했다. resumable transfer는 remote offset 재개,
 unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
 full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결과는 `ok=true`, schema v2,
@@ -353,7 +353,7 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - timer 없이 manual canary만 실행한다.
 
 상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit,
-application `b83efb018087f4c02cc7f057922ed8e540d87671`, resumable canonical transfer와 atomic activation,
+application `4edc1c9868045454c961cd3f038eb0a66a4cb010`, resumable canonical transfer와 atomic activation,
 위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 82GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
 Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bounded partial은 WARC partial 0,

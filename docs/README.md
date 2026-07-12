@@ -68,7 +68,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - local loopback read-only Operations C0
 - Oracle read-only audit, target runbook, ADR-014/015
 - Oracle에서 12,407,148,544-byte canonical 활성화/full doctor와 application
-  `b83efb018087f4c02cc7f057922ed8e540d87671` 배포 통과
+  `4edc1c9868045454c961cd3f038eb0a66a4cb010` 배포 통과
 - journald 1GiB/14일 보존 정책 적용과 과거 민감 가능 journal 폐기(4GiB → 24MiB)
 - Signal Archive 디자인·제품·API의 최종 문서 계약
 
@@ -88,9 +88,9 @@ timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 b
 partial과 15분 38초 recovery 종료 진단을 수행했다. 마지막 진단은 selected 100 중 scheduled 4/
 stored 2였고, CPU가 아니라 원본 서버의 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니라 하루 후보 선택 상한이다. 상세 수치와 로그 판정은
-[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다. application `b83efb0`에는
-하루 1회·2시간 graceful recovery와 network/429/auth/parser breaker, offline control client를
-배포했다. module smoke는 통과했으며 긴 canary는 이번 배포에서 재실행하지 않았다.
+[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다. application `4edc1c9`에는
+하루 1회·2시간 graceful recovery, 4시간 cycle budget, network/429/auth/parser breaker와 offline
+control client를 배포했다. module smoke는 통과했으며 긴 canary는 이번 배포에서 재실행하지 않았다.
 Oracle static root도 verified baseline과 같은 282,289 objects/5,148,165,450 bytes 및 pointer SHA로
 seed했다. 증거는 `/srv/redstm/reports/oracle-static-seed-20260712.json`이다. Access service
 credential, 새 bounded recovery·delta canary가 남았다.

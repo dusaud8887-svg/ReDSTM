@@ -22,7 +22,7 @@
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
-| Oracle | application `b83efb0...`, canonical/R2/static/TypeMoon 완료; Access·timer 전 | IN PROGRESS |
+| Oracle | application `4edc1c9...`, canonical/R2/static/TypeMoon 완료; Access·timer 전 | IN PROGRESS |
 | remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
@@ -347,7 +347,7 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 
 상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
 pinned uv/Python 3.14, versioned deploy/rollback과 application release
-`b83efb018087f4c02cc7f057922ed8e540d87671` 배포를 마쳤다.
+`4edc1c9868045454c961cd3f038eb0a66a4cb010` 배포를 마쳤다.
 canonical 12,407,148,544 bytes를 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했고
 doctor는 `ok=true`, schema v2, application ID 1380209492, `quick_check=ok`, foreign key 0,
 expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 별도 원격 hash는 약
