@@ -22,7 +22,7 @@
 | current UI | Signal Archive live 배포 완료, authenticated·Android acceptance 대기 | IN PROGRESS |
 | crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
-| Oracle | application `7a62dcc0...`, canonical/R2/static/TypeMoon 완료; latest deploy·Access·timer 전 | IN PROGRESS |
+| Oracle | application `b83efb0...`, canonical/R2/static/TypeMoon 완료; Access·timer 전 | IN PROGRESS |
 | remote operations | Access/D1 API와 responsive `/ops` live 배포·rollback 통과; authenticated smoke 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
@@ -346,17 +346,18 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 
 상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
 pinned uv/Python 3.14, versioned deploy/rollback과 application release
-`7a62dcc0c906a56ae057b4f32266d54aff697718` 배포를 마쳤다.
+`b83efb018087f4c02cc7f057922ed8e540d87671` 배포를 마쳤다.
 canonical 12,407,148,544 bytes를 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했고
 doctor는 `ok=true`, schema v2, application ID 1380209492, `quick_check=ok`, foreign key 0,
 expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 별도 원격 hash는 약
 8분이 걸렸으며 transfer/staging partial은 남지 않았다. canonical 재개·unaligned chunk 복구와
-interrupted staging retry도 같은 release까지 구현·배포됐고 현재 root free는 약 85GB다.
+interrupted staging retry도 구현·배포됐고 현재 root free는 약 82GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입했고 owner/mode를 검증했다.
 Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. 1건·20건 partial, lease reclaim과 bounded
 stop의 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 분리했다.
-**남음** — latest Git application 배포, Access service credential,
-bounded full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
+latest deploy 뒤 recovery/cycle/control module smoke, timer disabled/inactive와 partial 0을 확인했으며
+DB scan이나 긴 canary는 재실행하지 않았다. **남음** — Access service credential, bounded
+full-window·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
 18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.
 journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에서 24MiB로 줄였다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.

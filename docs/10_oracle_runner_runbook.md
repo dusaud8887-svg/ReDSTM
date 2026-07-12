@@ -1,6 +1,6 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: Application/canonical/static installed; latest deploy, Access, shadow and cutover pending
+- 상태: Latest application/canonical/static installed; Access, shadow and cutover pending
 - 기준일: 2026-07-12
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
@@ -208,17 +208,19 @@ DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy comm
 넣지 않는다.
 
 상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 application
-release `7a62dcc0c906a56ae057b4f32266d54aff697718`을 배포했다. resumable transfer는 remote offset 재개,
+release `b83efb018087f4c02cc7f057922ed8e540d87671`을 배포했다. resumable transfer는 remote offset 재개,
 unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
 full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결과는 `ok=true`, schema v2,
 application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
-missing/invalid/orphan WARC 0이다. root free는 약 85GB다. R2/TypeMoon credential은 주입·권한과
+missing/invalid/orphan WARC 0이다. root free는 약 82GB다. R2/TypeMoon credential은 주입·권한과
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
 **남음** — Access service credential과 새 bounded recovery·delta canary다.
 control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
+최신 배포 뒤 recovery/cycle/control module `--help` smoke와 canonical/WARC partial 0을 확인했고,
+DB scan이나 긴 canary는 실행하지 않았다.
 
 ### G5. Operations client
 
@@ -349,15 +351,15 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - timer 없이 manual canary만 실행한다.
 
 상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit,
-application `7a62dcc0c906a56ae057b4f32266d54aff697718`, resumable canonical transfer와 atomic activation,
-위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 85GB다.
+application `b83efb018087f4c02cc7f057922ed8e540d87671`, resumable canonical transfer와 atomic activation,
+위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 82GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
 Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bounded partial은 WARC partial 0,
 frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 selected 100 중 scheduled 4/
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
-**남음** — latest Git application deploy, Access service-token route-role/D1 smoke와
-bounded full-window·delta canary다. control/schedule timer는
+최신 application module smoke와 timer disabled/inactive는 재확인했다. **남음** — Access
+service-token route-role/D1 smoke와 bounded full-window·delta canary다. control/schedule timer는
 disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow
