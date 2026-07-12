@@ -208,14 +208,14 @@ DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy comm
 넣지 않는다.
 
 상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 application
-release `d23ce2050fab21bd1ef211bea6861baf6480ee86`을 배포했다. resumable transfer는 remote offset 재개,
+release `7a62dcc0c906a56ae057b4f32266d54aff697718`을 배포했다. resumable transfer는 remote offset 재개,
 unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
 full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결과는 `ok=true`, schema v2,
 application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
 missing/invalid/orphan WARC 0이다. root free는 약 85GB다. R2/TypeMoon credential은 주입·권한과
-bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. **남음** — Access service
-credential과 100건 recovery·delta canary다.
+bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
+민감 가능 journal 폐기도 완료했다. **남음** — Access service credential과 새 bounded recovery·delta canary다.
 control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
 
 ### G5. Operations client
@@ -342,14 +342,16 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - timer 없이 manual canary만 실행한다.
 
 상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit,
-application `d23ce2050fab21bd1ef211bea6861baf6480ee86`, resumable canonical transfer와 atomic activation,
+application `7a62dcc0c906a56ae057b4f32266d54aff697718`, resumable canonical transfer와 atomic activation,
 위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 85GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
 Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. `write_free21` 1건 canary는 269.8초,
 stored 1/failure 0/frontier done, 최대 메모리 약 92MB와 WARC partial 0으로 통과했다. 20건 상한은
 48분 28초 동안 scheduled 13/stored 12/network retry 1/dead 0과 WARC partial 0으로 bounded partial을
-통과했고 expired `aa_19` lease도 정상 reclaim했다. **남음** — Access service-token route-role/D1
-smoke와 100건 recovery·delta canary다. control/schedule timer는 disabled/inactive 상태를 유지한다.
+통과했고 expired `aa_19` lease도 정상 reclaim했다. 첫 100건 상한 run은 18분에 3건을 저장한 뒤
+5시간 초과 예측으로 중단했으며 gzip-valid WARC는 보존했다. **남음** — Access service-token
+route-role/D1 smoke와 새 2시간 bounded recovery·delta canary다. control/schedule timer는
+disabled/inactive 상태를 유지한다.
 
 ### Phase O2 — canary와 shadow
 
@@ -363,7 +365,7 @@ smoke와 100건 recovery·delta canary다. control/schedule timer는 disabled/in
 
 - standing approval와 아래 gate를 근거로 PM2 legacy viewer, Nginx와 BookToki helper를
   중지/disable한다. 실행 직전 unit/listener와 rollback command를 report에 기록한다.
-- 80/443/3000/1080/9222 listener가 사라졌는지 확인하고 SSH 22만 유지한다.
+- 80/443/3000/1080/9222와 host-interface 111/631 listener가 사라졌는지 확인하고 SSH 22만 유지한다.
 - ReDSTM timer와 D1 heartbeat/stale reporting을 enable한다.
 - Operations heartbeat와 fixed command poll을 enable한다.
 - 이전 application directory는 즉시 삭제하지 않고 7일 rollback window 동안 보존한다.

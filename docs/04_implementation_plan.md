@@ -319,7 +319,7 @@ Oracle에는 application base와 disabled control/schedule timer가 설치됐다
 
 상태(2026-07-12): **application/canonical 완료** — E legacy source 재해시, 전용 user/path,
 pinned uv/Python 3.14, versioned deploy/rollback과 application release
-`d23ce2050fab21bd1ef211bea6861baf6480ee86` 배포를 마쳤다.
+`7a62dcc0c906a56ae057b4f32266d54aff697718` 배포를 마쳤다.
 canonical 12,407,148,544 bytes를 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했고
 doctor는 `ok=true`, schema v2, application ID 1380209492, `quick_check=ok`, foreign key 0,
 expired lease 0, missing/invalid/orphan WARC 0이다. full doctor는 약 95분, 별도 원격 hash는 약
@@ -330,7 +330,9 @@ Oracle의 `r2:redstm-archive` 직접 목록 조회는 성공했다. `write_free2
 failure 0, frontier done, WARC partial 0으로 통과했다. 20건 상한은 48분 28초 동안 scheduled 13,
 stored 12, network retry 1, dead 0과 WARC partial 0으로 전체 중단 없이 끝났고, 이전 결함 run의
 expired `aa_19` lease도 정상 reclaim 후 stored/done으로 복구했다. **남음** — Access service credential,
-100건 recovery·delta publish, D1 outage/duplicate command 검증이다.
+새 bounded recovery·delta publish, D1 outage/duplicate command 검증이다. 첫 100건 상한 run은
+18분에 3건을 저장한 뒤 5시간 초과 예측으로 중단했고, gzip 검증된 WARC를 최종명으로 보존했다.
+journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에서 24MiB로 줄였다.
 control/schedule timer는 계속 disabled/inactive이고 기존 public listener도 건드리지 않았다.
 
 완료 기준:

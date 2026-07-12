@@ -66,8 +66,9 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - stable post identity와 Signal Archive frontend의 1440/768/390/320px local fixture 검증
 - local loopback read-only Operations C0
 - Oracle read-only audit, target runbook, ADR-014/015
-- Oracle release `c52647f82ce8a48bd9239bb1fa83db0aa3edf278`와 12,407,148,544-byte
-  canonical을 `/srv/redstm/canonical/archive.sqlite`에 활성화하고 full doctor 통과
+- Oracle에서 12,407,148,544-byte canonical 활성화/full doctor와 application
+  `7a62dcc0c906a56ae057b4f32266d54aff697718` 배포 통과
+- journald 1GiB/14일 보존 정책 적용과 과거 민감 가능 journal 폐기(4GiB → 24MiB)
 - Signal Archive 디자인·제품·API의 최종 문서 계약
 
 세부 증거와 당시 조건은 [`archive/2026-07-11`](archive/2026-07-11/README.md)에 보존한다.
@@ -84,7 +85,9 @@ timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 b
 통과했다. application `d23ce2050fab21bd1ef211bea6861baf6480ee86`에서 `write_free21` 1건
 stored canary, frontier `done`, WARC partial 0과 본문 비노출도 통과했다. 20건 background canary는
 scheduled 13/stored 12/network retry 1/dead 0, WARC partial 0으로 bounded partial을
-통과했다. Access service credential, 100건 recovery·delta canary가 남았다.
+통과했다. 첫 100건 상한 run은 18분/stored 3 실측에서 5시간 초과가 예상돼 중단했고, gzip 검증 후
+WARC를 보존했다. application `7a62dcc0`에는 하루 1회·2시간 graceful recovery가 배포됐다.
+Access service credential, 새 bounded recovery·delta canary가 남았다.
 
 ### 구현 필요
 
@@ -92,7 +95,7 @@ scheduled 13/stored 12/network retry 1/dead 0, WARC partial 0으로 bounded part
 
 1. R2 authenticated live data smoke
 2. Signal Archive authenticated smoke와 실제 Android/frontend acceptance
-3. Oracle Access secret 주입과 100건 recovery·실제 delta publish canary
+3. Oracle Access secret 주입과 최대 100건/2시간 recovery·실제 delta publish canary
 4. Access user/service role smoke와 live `/ops` acceptance
 5. 24시간 canary, 7일 shadow, cutover와 실제 Android acceptance
 
