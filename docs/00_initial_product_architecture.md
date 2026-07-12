@@ -838,9 +838,9 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
-| 부하 제한 | detail concurrency 2, 병렬 시작 간 고정 10초 delay, robots 준수 | canary에서 요청 간격·429 여부 확인 |
+| 부하 제한 | detail concurrency 1, 요청 시작 간 고정 10초 delay, robots 준수 | canary에서 요청 간격·429 여부 확인 |
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
-| durable retry | frontier backoff/dead와 `network_error`·`parse_drift` bounded revive | 실제 backlog에서 revive report 확인 |
+| durable retry | frontier backoff/dead와 network/parse/storage bounded revive | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
 | listing | complete changed-row seed, overlap boundary, schema v3 inventory cursor와 v4 댓글 기대치·증분 anchor | 실제 cursor progression |
 | detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
@@ -896,7 +896,9 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 ### 8.3 incremental sync 목표와 현재 차이
 
 현재 `scripts.sync`는 일반 run에서 board별 page 1부터 `max_pages` 상한 안에서 listing metadata
-변경을 비교하고 overlap boundary까지 읽는다. `--inventory`는 schema v3의 board별
+변경을 비교한다. schema v4의 exact `incremental_anchor_post_id`를 찾은 뒤 설정된 2개 overlap page까지
+읽으며, anchor가 아직 없는 bootstrap에서만 공지 제외 unchanged 20건을 fallback boundary로 쓴다.
+`--inventory`는 schema v3의 board별
 `inventory_next_page`부터 bounded page window를 읽고 미완료면 다음 run에서 이어 간다. schema v4는
 listing의 댓글 기대치를 frontier/lease에 보존해 detail 댓글 누락을 fail-closed한다.
 
@@ -928,7 +930,7 @@ schema-v3-only application으로 여는 rollback 허가가 아니다.
 
 1. 공지/pinned row를 일반 row와 구분한다.
 2. 신규 key 또는 list metadata 변경을 frontier에 넣는다.
-3. 이미 알고 있고 metadata도 같은 일반 row가 연속으로 일정 수 나오면 overlap boundary로 판단한다.
+3. exact anchor를 우선 경계로 사용하고, anchor가 없는 bootstrap에서만 unchanged streak를 fallback으로 쓴다.
 4. boundary 이전에 page 구조 이상이나 parser warning이 있으면 조기 종료하지 않는다.
 5. board의 reported total/page count와 inventory cursor를 snapshot으로 남긴다.
 
@@ -939,7 +941,8 @@ page cursor를 사용한다. 주간 inventory는 cursor가 끝까지 완주한 r
 ### 8.4 backfill
 
 현재 구현된 것은 legacy frontier의 due pending/retry를 AA -> 창작 -> 팬픽 -> 나머지 순서로
-선택하고 detail을 한 건씩 claim하는 bounded `scripts.recover_queue`다. 100건·2시간 budget은
+선택하고 detail을 한 건씩 claim하는 bounded `scripts.recover_queue`다. normal 20건/full-content
+100건의 설정 기반 chunk와 invocation당 2시간 budget은
 구현됐으며 아래 board cursor 기반 장기 backfill은 아직 없다.
 
 - board별 cursor를 DB에 저장
@@ -984,8 +987,9 @@ fetch
 transaction이 실패하면 version과 frontier가 반쪽으로 남지 않아야 한다. WARC record가 먼저 생기고 DB commit이 실패한 orphan은 다음 `doctor`가 찾아 재처리한다.
 
 현재 모든 분류 가능한 detail exit는 capture와 token이 일치하는 terminal lease transition을 남긴다.
-non-HTML detail과 invalid URL은 `parse_failed`/`parse_drift`로 `dead`, normalize/store exception은
-`parse_failed`/`storage_error`로 `retry` 처리한다. DB write 자체가 실패해 capture도 기록할 수 없는
+non-HTML detail과 invalid URL은 `parse_failed`/`parse_drift`로 `retry`, normalize/store exception은
+`parse_failed`/`storage_error`로 `retry` 처리한다. 세 capped 오류는 공통 5회 상한 뒤 `dead`가 된다.
+DB write 자체가 실패해 capture도 기록할 수 없는
 경우에만 900초 lease expiry가 최후 복구선이다.
 
 ### 8.6 상태 분류
@@ -1013,11 +1017,11 @@ storage_error
 - `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
 - `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
-  6시간에서 멈춘다. `network_error`는 5회 시도 후 `dead`로 전이하며, `auth_required`는
+  6시간에서 멈춘다. `network_error`·`parse_drift`·`storage_error`는 5회 시도 후 `dead`로 전이하며, `auth_required`는
   session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
-- `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `network_error` 또는
-  `parse_drift`를 오류별·건수 제한으로 선택해 다시 pending에 넣으며, 그 실행 수를 report한다.
+- `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `network_error`·`parse_drift`·
+  `storage_error`를 오류별·건수 제한으로 선택해 다시 pending에 넣으며, 그 실행 수를 report한다.
 - 429는 같은 request 안에서 재시도하지 않는다. `rate_limited`로 기록하고 frontier 기본 backoff와
   `Retry-After` 중 더 긴 시각까지 미룬다. `Retry-After`는 최대 24시간으로 제한한다.
 
@@ -1025,7 +1029,7 @@ storage_error
 
 - network policy의 단일 source of truth는 `crawler/settings.py`다. YAML을 추가하지 않는다.
   board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
-- 구현값은 `CONCURRENT_REQUESTS=2`, `CONCURRENT_REQUESTS_PER_DOMAIN=2`,
+- 구현값은 `CONCURRENT_REQUESTS=1`, `CONCURRENT_REQUESTS_PER_DOMAIN=1`, detail concurrency 1,
   `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, `RETRY_TIMES=2`,
   `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=True`다.
 - listing/detail timeout은 120/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
@@ -1034,7 +1038,8 @@ storage_error
 - `DOWNLOAD_FAIL_ON_DATALOSS=False`는 잘린 응답을 정상 parse하기 위한 fallback이 아니다. WARC가
   raw response를 보존한 뒤 listing은 coverage 갱신 없이 중단하고 detail은 `network_error` retry로
   닫는다. 설명되지 않은 빈 listing과 조회수/댓글수의 모호한 숫자도 정상 0으로 합성하지 않는다.
-- 최신 listing overlap은 공지 제외 unchanged 20건이며, body-only 변경 보완은 30일 이상 지난
+- 최신 listing 경계는 persisted exact anchor와 그 뒤 2 page가 우선이고, anchor가 없는 bootstrap의
+  fallback만 공지 제외 unchanged 20건이다. body-only 변경 보완은 30일 이상 지난
   `done` detail을 oldest-first로 다시 여는 bounded audit가 맡는다. recovery batch는 stale audit
   1 slot을 예약하고 나머지를 due queue에 주므로 due가 계속 가득 차도 audit이 굶지 않는다.
 - site outage 조기 판정: cycle 시작 preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
@@ -1596,7 +1601,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 | TypeMoon 갑작스러운 종료 | backfill 미완료 | 기존 DB 먼저 보존, 고가치 board 우선 |
 | HTML drift | 잘못된 빈 본문 저장 | raw-first, quality gate, parse_drift 중단 |
 | 계정/session 만료 | crawl 정지 | 저장 session reuse, form login 1회, 명시적 auth_required |
-| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 2, staggered delay, Retry-After/backoff |
+| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 1, fixed delay, Retry-After/backoff |
 | raw HTML XSS | 개인 기기 compromise | WARC 직접 렌더 금지, sanitize/CSP |
 | R2 credential 탈취 | serving 삭제 | content-addressed canonical/backup에서 재배포, scoped token |
 | B2 credential 탈취 | backup 삭제 | 별도 account/token, Oracle canonical, offline recovery 사본 |
@@ -1729,7 +1734,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - 결정: **승인 (2026-07-11, 사용자 방향 확정)**
 - 범위: instance, 194GiB boot volume, SSH와 network는 유지하고 legacy application/data만 검증된
   manifest 단위로 퇴역한다. Oracle에는 public viewer/API를 두지 않는다.
-- 근거: 추가 비용 0, 97GiB free와 4GiB swap을 이미 확보했고 concurrency 2 crawler에 충분하다.
+- 근거: 추가 비용 0, 97GiB free와 4GiB swap을 이미 확보했고 concurrency 1 crawler에 충분하다.
   Cloudflare Free CPU/ephemeral container disk는 Python/Scrapy + 12GB SQLite/WARC host에 맞지 않고,
   새 Oracle A1을 위해 현 instance를 삭제하면 capacity와 200GB volume을 잃을 위험이 있다.
 - runtime: native pinned `uv` + Python 3.14 + systemd oneshot/timer. Docker는 smoke/fallback이며

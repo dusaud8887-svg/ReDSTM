@@ -132,7 +132,7 @@ inbound firewall port를 열지 않는다.
 | content | request/response 모두 `application/json; charset=utf-8` |
 | request trace | caller가 `X-Request-Id` UUID를 보내고 응답이 그대로 반환 |
 | protocol | `X-ReDSTM-Protocol: 1`; 불일치 시 409 |
-| mutation replay | 모든 POST/DELETE에 `Idempotency-Key`; command create는 same action/empty args만 replay, run/event는 각 natural key, cancel은 terminal state replay |
+| mutation replay | 모든 POST/DELETE에 `Idempotency-Key`; command create는 same action + normalized args intent만 replay, run/event는 각 natural key, cancel은 terminal state replay |
 | response | `api_version`, `request_id`, `server_time`, `data` 또는 `error` |
 | page | opaque `cursor`, `limit` 최대 50; offset pagination 금지 |
 | clock | 입력 시간은 UTC RFC 3339, 저장 전 millisecond ISO UTC로 정규화; server 기준 미래 5분 초과는 거부 |
@@ -182,7 +182,7 @@ authorization test는 URL prefix 전체와 unknown method를 포함한다.
 - D1은 prepared statement와 transactional `batch()`로 claim+audit, event upsert를 묶는다.
 - Oracle HTTP timeout은 connect 5초/total 15초다. retryable 429/5xx/network만 jitter backoff
   2초/5초/15초로 최대 3회 재시도하고 `Retry-After`를 우선한다.
-- mutation은 endpoint별 identity로 재전송한다. command create는 같은 key의 same action/empty args만
+- mutation은 endpoint별 identity로 재전송한다. command create는 같은 key의 same action + normalized args만
   기존 command를 반환하고 다른 intent는 409다. run/event/report는 문서화된 run ID·sequence·dedupe
   identity를 재사용하며 payload가 다른데 key만 같은 요청을 일반적으로 동일하다고 가정하지 않는다.
 - 3회 실패하면 local cycle은 계속하고 10MiB 또는 10,000 event 중 먼저 도달한 bounded outbox에
@@ -394,9 +394,10 @@ pause-after-current marker로 다음 automatic start를 보류하고 resume-sche
 
 각 6시간 cycle은 최신 page incremental과 변경분 게시만 수행한다. 직전 기준 게시글이 발견된 page 뒤
 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와 전체 본문은 자동 cycle에 섞지 않는다.
-수동 전체 목차는 `inventory_next_page`를 1로 되돌리고 모든 row를 다시 읽으며, 수동 전체 본문은
-frontier 전체를 재큐잉해 이미 성공한 글도 다시 받는다. 두 작업 모두 총량·총시간 상한이 없고 단일 writer
-lock을 잡는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않고 `busy`로 끝난다.
+수동 전체 목차는 `inventory_next_page`와 scope marker로 모든 row를 다시 읽으며, 수동 전체 본문은
+시작 시각과 frontier 최대 rowid를 checkpoint로 고정해 이미 성공한 글도 양수 chunk로 다시 받는다.
+두 작업 모두 전체 pass 총량·총시간 상한은 없지만 각 child invocation은 설정된 page/post/time 상한을
+지키며 단일 writer lock을 잡는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않고 `busy`로 끝난다.
 
 `redstm-control.timer`는 application release 설치 뒤 heartbeat와 fixed-command poll을 유지하는 baseline으로
 enable한다. `redstm-schedule.timer`는 authenticated route, repository schema v4 doctor, 명시적 full

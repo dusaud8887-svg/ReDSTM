@@ -125,18 +125,19 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | response | warning/max | 8MiB / 64MiB | `crawler/settings.py` |
 | WARC | rotation | 1GiB | `crawler/settings.py` |
 | frontier | lease | 900초 | `crawler/settings.py` |
-| frontier | network attempts/backoff | 5회, 120초부터 최대 6시간 | `crawler/settings.py` |
+| frontier | capped 오류 attempts/backoff | network/parse/storage 5회, 120초부터 최대 6시간 | `crawler/settings.py` |
 | source protection | `Retry-After`/breaker | 최대 24시간 / 같은 parse·network·429 class 연속 3회 | `crawler/settings.py` |
-| incremental | unchanged overlap | 공지 제외 20건 | `crawler/settings.py` |
+| incremental | persisted boundary | exact board anchor 뒤 2 page | schema v4 + `crawler/settings.py` |
+| incremental | bootstrap fallback | anchor가 없을 때만 공지 제외 unchanged 20건 | `crawler/settings.py` |
 | session | local lifetime/login throttle/revalidate | 4시간 / 30분 / 30분 | `crawler/settings.py` |
 | detail audit | stale detail revisit | 30일 eligibility, batch당 oldest-first 예약 1건 | `crawler/settings.py` |
-| cycle | graceful budget | 4시간 | `scripts.crawl_cycle` CLI |
+| cycle | graceful budget | invocation당 4시간 | `crawler/settings.py` + CLI override |
 | recovery | 내부 chunk | normal 20건 / full-content 100건 | 같은 command가 남은 항목 0까지 자동 반복; 총량·총시간 상한 아님 |
 | export | automatic workers / changed-post cap | 1 / 2,000건 | `scripts.control_runner`, `scripts.export_static` |
 | export | deterministic compression | post object level 15 / board·search·collection aggregate `-v2` level 6 | `scripts.export_static` |
 | publish | R2 hard stop | 20GB / 800,000 objects | `scripts.publish_static` |
 | publish | rclone checkers/transfers | 16 / 16 | `scripts.publish_static` |
-| systemd | control/schedule hard stop | 5시간 / 7시간 | service unit |
+| systemd | wall-clock policy | `TimeoutStartSec=infinity`; 수동 full command는 내부 양수 chunk/checkpoint로 지속 | service unit + runner |
 | systemd | service memory/tasks hard stop | 700MiB / 64 | service unit |
 | runner warning | disk/control/token/publish | 40GiB / rejection 24시간 / 만료 24시간 전 / pending 24시간 | `scripts.control_runner` CLI/env |
 | control client | response body max | 128KiB | `scripts.control_client` |

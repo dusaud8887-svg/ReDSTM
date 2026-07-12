@@ -374,6 +374,10 @@ double click과 같은 탭의 응답 유실·reload·retry는 같은 intent의 i
 cancel할 수 있고 claim 뒤에는 pause-after-current만 요청할 수 있다. paused 상태는
 resume-schedule로만 해제한다.
 
+이 key 재사용 범위는 같은 탭의 같은 command-create intent다. 임의 client 전체의 전역 exactly-once를
+뜻하지 않으며 cancel/run/event/finish는 각각 D1 state guard, natural key와 Oracle local ledger로 replay를
+별도 억제한다.
+
 client는 create 응답 전 action을 잠그고 같은 intent의 재시도에 같은 idempotency key를 재사용한다.
 browser polling 시간이 끝나도 command를 실패로 단정하지 않고 `백그라운드에서 계속 실행 중`과
 command ID, expiry, 다시 확인 link를 남긴다.

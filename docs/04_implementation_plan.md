@@ -64,7 +64,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 ## 3. 실행 원칙
 
 - canonical SQLite는 single writer다. crawler, recovery, backup/export를 동시에 쓰지 않는다.
-- TypeMoon detail concurrency 2와 request 시작 간 fixed 10초 delay를 기본으로 한다.
+- TypeMoon detail concurrency 1과 request 시작 간 fixed 10초 delay를 기본으로 한다.
 - 자동 schedule은 Oracle systemd, remote command는 D1이다. 둘을 서로의 단일 장애점으로 만들지 않는다.
 - immutable object upload/readback 뒤 pointer-last activate한다.
 - 앱·DB·service를 한 deploy command에서 몰래 삭제/중지/enable하지 않는다.
@@ -225,7 +225,8 @@ Should — acceptance 직후:
 
 1. listing identity/title/category/comment count 변화를 frontier seed로 사용한다.
 2. views 변화는 detail trigger에서 제외한다.
-3. 공지 제외 연속 known+unchanged를 overlap boundary로 사용한다.
+3. persisted exact anchor를 우선 경계로 사용하고 anchor가 없는 bootstrap에서만 공지 제외
+   known+unchanged 20건을 fallback으로 사용한다.
 4. listing/parser warning이 있으면 boundary 조기 종료를 금지한다.
 5. 자동 cycle은 최신 listing만 확인하며 직전 anchor page 뒤 2 page까지 검증한다.
 6. 전체 listing과 전체 body는 수동 장기 작업으로만 실행하고 내부 chunk가 끝나면 같은 command가
@@ -235,7 +236,8 @@ Should — acceptance 직후:
 test를 통과했다. sync/recovery는 schema mismatch를 fail-closed하고 별도 `scripts.migrate_archive`만
 lock 아래 migration한다. current/previous의 서로 다른 compatible SHA pair guard가 release flow에
 연결될 때까지 CLI는 `canonical_schema_upgrade_pending`으로 full deploy를 차단한다.
-`b3e83e1`에서 views를 제외한 listing metadata 비교, 공지 제외 연속 20건 경계와
+`b3e83e1`에서 views를 제외한 listing metadata 비교를 구현했고, 현재는 exact anchor 우선·
+공지 제외 연속 20건 bootstrap fallback과
 warning/`--inventory` 우회를 구현했다. Oracle canary에서
 원 사이트 listing이 60초 뒤 timeout되고 약 109초 뒤 비정상 TLS EOF로 끝나는 것을 실측해 listing
 timeout을 120초로 바꾸고 `DOWNLOAD_FAIL_ON_DATALOSS=false`를 명시했다. `python -m` 실행이
@@ -254,12 +256,12 @@ listing의 최신 댓글 기대치를 claim/retry/recovery lease까지 보존한
 `incomplete_comments`로 저장을 거부하고, 성공 store만 실제 저장 댓글 수로 frontier 완료와 같은
 transaction에서 갱신한다. 실패는 기대값을 보존한다. 완료 때만 cursor/`last_inventory_at`을 확정한다.
 v4 migration/flow 회귀는 local 통과했지만 live migration/doctor는 아직 실행하지 않았다. dead는
-`network_error` 또는 `parse_drift`만 오류별·건수 제한으로 명시 재개할 수 있다. inventory는 listing
+`network_error`·`parse_drift`·`storage_error`를 오류별·건수 제한으로 명시 재개할 수 있다. inventory는 listing
 coverage이며 기존 detail 전체를 다시 요청하는 작업이 아니다.
 
 #### A2.2 46-board cycle
 
-- enabled board는 순차 실행하고, 한 board의 느린 detail 요청만 최대 2개 엇갈려 처리
+- enabled board는 순차 실행하고 detail 요청도 한 번에 1개만 처리
 - run 시작 preflight가 세션과 사이트 도달성을 확인하고, 실패하면 board를 순회하지 않고
   `site_unreachable`로 끝낸다
 - network/listing failure는 board failure로 기록하고 다음 board 진행
@@ -296,8 +298,8 @@ timeout으로 종료되며 `partial/worker_timeout`을 보고한다. Celery/Redi
 상태(2026-07-12): local core 구현 완료, 24시간·대형 AA canary 전이다. Oracle 실측 queue는
 pending 29,379/retry 4,328/running 1이어서 100건 count만으로는 5시간 service 상한을 보장하지 못했다.
 `849fdb34`는 Scrapy native `CLOSESPIDER_TIMEOUT` 2시간을 추가해 WARC/report를 정상 닫았다. 당시
-`recovery.completed` 24시간 marker는 2026-07-12 resilience 재검토에서 제거했고, 현재는 cycle당
-100건과 frontier due time으로 요청을 제한한다. 기존 priority/due
+`recovery.completed` 24시간 marker는 2026-07-12 resilience 재검토에서 제거했고, 현재 normal
+20건/full-content 100건의 설정 기반 내부 chunk와 frontier due time으로 요청을 제한한다. 기존 priority/due
 claim, 404 2-run, bounded backoff/5-attempt cap에 더해 `462b2e2`에서 outage network attempt
 복원과 429 3회 breaker를, `72d6e26`에서 recovery failure class report를 연결했다. `9413f0b`는
 dead-man 서비스 장애가 완료된 crawl 결과를 실패로 뒤집지 않게 한다. `8fc310f3`은 recovery 자체에도
@@ -573,7 +575,8 @@ Edge 변경:
 
 Cloudflare/Oracle 변경:
 
-- local/remote migration version 일치
+- local fixture는 empty와 production-shaped `0003` upgrade를 검증하고, remote는 deploy 전 active
+  process/marker 충돌 preflight와 deploy 후 대표 schema smoke를 별도로 확인
 - Access user/service role negative test
 - R2 object check, data smoke, pointer rollback
 - systemd unit verify, manual canary, timer state

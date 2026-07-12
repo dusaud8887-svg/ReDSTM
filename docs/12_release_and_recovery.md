@@ -33,7 +33,7 @@ release preflight는 numbered migration 전체를 빈 local D1에 적용하기 �
 
 | 계층 | versioned unit | 성공 증명 | 실패 시 복구 |
 |---|---|---|---|
-| D1 | numbered SQL migration | remote pending migration 없음, runner smoke SELECT | additive 유지; 이전 Worker와 호환 |
+| D1 | numbered SQL migration | empty + production-shaped `0003` local upgrade fixture, deploy 후 대표 runner smoke SELECT | additive 유지; 이전 Worker와 호환 |
 | Worker | Cloudflare immutable version | version tag `git-<40-character-sha>`, message `git:<sha>`, runtime metadata UUID/SHA smoke | 배포 전 exact version ID로 rollback |
 | R2 Reader data | immutable objects + hashed release manifest | object count/hash/readback smoke | 검증된 이전 manifest를 `release.json`에 재활성화 후 재-smoke |
 | Oracle | `/opt/redstm/releases/<sha>` | guarded installer status의 `current_release` | 명시 target SHA로 schema-aware guarded rollback |
@@ -203,6 +203,35 @@ uv run python -m scripts.release deploy --host <oracle-host> --key <ssh-key-path
 ```
 
 `--user` 기본값은 `ubuntu`다. 환경 변수를 사용하면 target argument를 생략할 수 있다.
+
+### Canonical schema v3 → v4 전환
+
+live canonical은 현재 v3이므로 일반 `deploy`가 자동 migration하지 않는다. v4를 이해하고 runtime에서
+명시 migration만 허용하는 서로 다른 두 commit A/B를 차례로 준비한다.
+
+```powershell
+# commit A checkout에서
+uv run python -m scripts.release deploy-oracle-bridge --host <oracle-host> --key <ssh-key-path>
+
+# commit B checkout에서 같은 명령을 다시 실행
+uv run python -m scripts.release deploy-oracle-bridge --host <oracle-host> --key <ssh-key-path>
+
+# B가 current, A가 previous인지 status로 확인한 뒤 B checkout에서
+uv run python -m scripts.release migrate-canonical `
+  --expected-current <B-40-char-sha> `
+  --expected-previous <A-40-char-sha> `
+  --host <oracle-host> `
+  --key <ssh-key-path>
+
+# exact v4 status/doctor 확인 뒤에만 정상 application 배포
+uv run python -m scripts.release deploy --host <oracle-host> --key <ssh-key-path>
+```
+
+bridge install은 current symlink를 바꾸기 전에 schedule disabled, control/cycle/sync lock, application ID,
+연속 migration ledger/hash와 `explicit-v1` runtime policy를 검사한다. migration은 canonical 크기 + 5GiB
+여유 공간, fsync된 verified snapshot/manifest와 후속 doctor를 요구한다. SSH 응답이 유실되면 같은 guarded
+명령을 한 번 재시도하고 exact status로 결과를 reconcile한다. v4 적용 뒤 v3-only application rollback은
+static projection 호환 여부와 무관하게 거부한다.
 
 ### 명시적 coordinated rollback
 

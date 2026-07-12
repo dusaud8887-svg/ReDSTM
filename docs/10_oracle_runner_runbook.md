@@ -30,7 +30,7 @@ endpoint를 제공하지 않는다.
 | 항목 | 실측 | 판정 |
 |---|---:|---|
 | OS/architecture | Ubuntu 22.04.5, x86_64 | 현재 OS 유지 |
-| CPU/RAM | 2 logical CPU, 956MiB RAM | staggered concurrency 2 수집 가능 |
+| CPU/RAM | 2 logical CPU, 956MiB RAM | concurrency 1 수집과 bounded export 가능 |
 | swap | 4GiB, 약 410MiB 사용 | 저속 crawler 안전망, RAM 대체재는 아님 |
 | root volume | 194GiB, 약 103GiB free | 현재 application/canonical 추가 가능 |
 | uptime | 58일 | 현재 VM 자체는 안정적으로 동작 중 |
@@ -74,7 +74,7 @@ backup을 포함한다. 동시에 7일 동안 CPU·network 사용률이 낮은 i
 
 ```text
 TypeMoon
-  <- detail concurrency 2, staggered fixed 10s start delay
+  <- detail concurrency 1, fixed 10s start delay
   <- Oracle / ReDSTM systemd oneshot
        -> /srv/redstm/canonical/archive.sqlite
        -> /srv/redstm/warc/*.warc.gz
@@ -144,7 +144,7 @@ R2 writer key와 Access service token은 별도 credential file로만
 - control/scheduled runner와 installer의 application·canonical 전환은
   `/srv/redstm/state/control.lock`을 공유한다. installer는 active run을 중단하지 않고 mutation 전에
   `redstm_install_not_started`로 끝난다.
-- crawler는 `CONCURRENT_REQUESTS=2`, domain concurrency 2, fixed start delay 10초를 유지한다.
+- crawler는 `CONCURRENT_REQUESTS=1`, domain/detail concurrency 1, fixed start delay 10초를 유지한다.
 - systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 timer와
   durable frontier가 복구한다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
@@ -175,7 +175,8 @@ listing 댓글 기대치를 보존하는 additive schema v4다. 다음 계약으
 1. listing metadata에서 새 identity 또는 title/category/comment count 변경만 frontier에 넣는다.
 2. views처럼 자연히 계속 변하는 값은 detail 재수집이나 단독 publish trigger로 쓰지 않는다. canonical
    값은 갱신하되 다른 보존 내용 변경이 생긴 다음 release에 함께 반영한다.
-3. 공지를 제외한 연속 known+unchanged row를 overlap boundary로 판정한다.
+3. persisted exact anchor를 우선 경계로 사용하고 anchor가 없는 bootstrap에서만 공지 제외
+   known+unchanged 20건을 fallback으로 판정한다.
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
 5. 자동 cycle은 anchor page 뒤 2 page까지만 확인하고 전체 listing은 수동 `full-catalog`가 담당한다.
 6. 전체 body 재검증은 수동 `full-content`, due 재시도는 수동 `retry-batch`가 남은 항목 0까지 이어간다.
@@ -187,8 +188,8 @@ scheduling만 cap한다. schema v3의 board별 `inventory_next_page`는 bounded 
 `incomplete_comments`로 저장하지 않고, 성공 store만 실제 저장 댓글 수와 lease 완료를 같은 transaction에서
 갱신한다. restricted/parse/fetch/storage 실패는 기대값을 보존한다. 전 board 최초 inventory가 끝나면
 목차-only pending/retry backlog는 수동 전체 본문 작업으로 비운다.
-inventory는 listing coverage이며 기존 detail 전체 재요청은 별도 수동 작업이다. dead는 `network_error` 또는
-`parse_drift`만 오류별·건수 제한으로 명시 재개한다.
+inventory는 listing coverage이며 기존 detail 전체 재요청은 별도 수동 작업이다. dead는
+`network_error`·`parse_drift`·`storage_error`를 오류별·건수 제한으로 명시 재개한다.
 
 ### G2. board cycle command
 
@@ -417,7 +418,7 @@ schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 24시
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
-| incremental board cycle | 6시간마다 | overlap boundary, detail concurrency 2, 10초 stagger |
+| incremental board cycle | 6시간마다 | exact anchor + overlap 2 page, detail concurrency 1, 10초 delay |
 | full catalog | 수동 요청 | 첫 page부터 전부, 완료까지 같은 command가 지속 |
 | full content / retry | 수동 요청 | 내부 chunk를 남은 항목 0까지 지속; sync와 직렬 |
 | R2 delta publish | marker 유무와 무관하게 매 cycle reconcile | validated object first, pointer last; 성공 뒤 기존 pending 제거 |
