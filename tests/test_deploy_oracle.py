@@ -829,7 +829,9 @@ def test_canonical_activation_rejects_invalid_staging(tmp_path: Path, staged: by
 
 def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     root = Path(__file__).resolve().parents[1]
-    installer = (root / "deploy" / "oracle" / "install_release.sh").read_text(encoding="utf-8")
+    installer_path = root / "deploy" / "oracle" / "install_release.sh"
+    assert b"\r\n" not in installer_path.read_bytes()
+    installer = installer_path.read_text(encoding="utf-8")
     service = (root / "deploy" / "oracle" / "redstm-control.service").read_text(encoding="utf-8")
     timer = (root / "deploy" / "oracle" / "redstm-control.timer").read_text(encoding="utf-8")
     schedule_service = (root / "deploy" / "oracle" / "redstm-schedule.service").read_text(
