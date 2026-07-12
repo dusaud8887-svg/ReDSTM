@@ -88,7 +88,9 @@ test("plans v2 import with counts without applying it", () => {
 
   const plan = planImport(exportUserState(state), defaults);
   assert.deepEqual(plan.state, state);
-  assert.deepEqual(plan.summary, { history: 1, bookmarks: 1, scroll: 1, viewModes: 1 });
+  assert.deepEqual(plan.summary, {
+    history: 1, bookmarks: 1, scroll: 1, viewModes: 1, defaultedSettings: [],
+  });
 });
 
 test("keeps setting ranges and rejects unknown schemas", () => {
@@ -104,6 +106,7 @@ test("keeps setting ranges and rejects unknown schemas", () => {
     ...defaults, proseFont: "sans", aaZoom: 3, aaCanvasWidth: 800,
     aaBackground: "#abcdef", aaPreserveStyles: false,
   });
+  assert.deepEqual(plan.summary.defaultedSettings, ["aaSize"]);
   assert.throws(() => planImport(JSON.stringify({ schema_version: 3 }), defaults),
     /지원하지 않는 상태 파일 형식/);
 });

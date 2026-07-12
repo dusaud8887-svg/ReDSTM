@@ -153,6 +153,9 @@ export function exportUserState(state) {
 
 export function planImport(text, defaultSettings = {}) {
   const payload = JSON.parse(text);
+  const suppliedSettings = sanitizeSettings(payload?.settings);
+  const defaultedSettings = Object.keys(sanitizeSettings(defaultSettings))
+    .filter((key) => !(key in suppliedSettings));
   let state;
   if (payload?.schema_version === 1) {
     state = migrateLegacyState(payload, defaultSettings);
@@ -168,6 +171,7 @@ export function planImport(text, defaultSettings = {}) {
       bookmarks: Object.keys(state.bookmarks).length,
       scroll: Object.keys(state.scroll).length,
       viewModes: Object.keys(state.viewModes).length,
+      defaultedSettings,
     },
   };
 }

@@ -34,7 +34,7 @@ const elements = Object.fromEntries(
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings",
     "post-settings-actions", "settings-bookmark", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
-    "catalog-toggle", "home-action",
+    "catalog-toggle", "home-action", "import-review", "import-review-summary", "import-apply", "import-cancel",
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
@@ -62,6 +62,7 @@ let pinchDistance = 0;
 let zoomFeedbackTimer;
 let zoomPersistTimer;
 let aaHintShown = false;
+let pendingImportPlan = null;
 let lastReaderScroll = 0;
 let latestPosts = [];
 let publishedAt = null;
@@ -877,6 +878,7 @@ elements["catalog-back"].addEventListener("click", () => {
 });
 window.addEventListener("popstate", () => { void handleRoute(); });
 elements["settings-dialog"].addEventListener("close", () => {
+  resetImportReview();
   if (location.pathname !== "/settings") return;
   if (history.state?.redstmSettings) history.back();
   else {
@@ -1056,28 +1058,59 @@ elements["export-state"].addEventListener("click", () => {
   link.click();
   URL.revokeObjectURL(url);
 });
-elements["import-state"].addEventListener("click", () => elements["import-state-file"].click());
+function resetImportReview() {
+  pendingImportPlan = null;
+  elements["import-review"].hidden = true;
+  elements["import-review"].removeAttribute("data-state");
+  elements["import-apply"].disabled = false;
+  elements["import-state-file"].value = "";
+}
+
+elements["import-state"].addEventListener("click", () => {
+  resetImportReview();
+  elements["import-state-file"].click();
+});
 elements["import-state-file"].addEventListener("change", async () => {
   const [file] = elements["import-state-file"].files;
   if (!file) return;
   try {
     if (file.size > 1_048_576) throw new Error("상태 파일은 1MB 이하여야 합니다");
-    const planned = planImport(await file.text(), defaultSettings);
-    const summary = planned.summary;
-    const approved = confirm(
-      `읽기 기록 ${summary.history}건, 북마크 ${summary.bookmarks}건, 위치 ${summary.scroll}건, 보기 설정 ${summary.viewModes}건을 가져올까요?`,
-    );
-    if (!approved) return;
-    applyUserState(planned.state);
+    pendingImportPlan = planImport(await file.text(), defaultSettings);
+    const summary = pendingImportPlan.summary;
+    const defaulted = summary.defaultedSettings.length
+      ? ` · 기본값 보정 ${summary.defaultedSettings.join(", ")}` : "";
+    elements["import-review-summary"].textContent =
+      `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}${defaulted}`;
+    elements["import-review"].dataset.state = "ready";
+    elements["import-review"].hidden = false;
+    elements["import-apply"].focus();
+  } catch (error) {
+    pendingImportPlan = null;
+    elements["import-review-summary"].textContent = error.message;
+    elements["import-review"].dataset.state = "error";
+    elements["import-review"].hidden = false;
+    elements["import-apply"].disabled = true;
+  } finally {
+    elements["import-state-file"].value = "";
+  }
+});
+elements["import-cancel"].addEventListener("click", resetImportReview);
+elements["import-apply"].addEventListener("click", async () => {
+  if (!pendingImportPlan) return;
+  elements["import-apply"].disabled = true;
+  try {
+    applyUserState(pendingImportPlan.state);
     persistUserState();
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
     elements["result-status"].textContent = "사용자 상태를 가져왔습니다";
+    resetImportReview();
   } catch (error) {
-    elements["result-status"].textContent = error.message;
-  } finally {
-    elements["import-state-file"].value = "";
+    pendingImportPlan = null;
+    elements["import-review-summary"].textContent = error.message;
+    elements["import-review"].dataset.state = "error";
+    elements["import-apply"].disabled = true;
   }
 });
 

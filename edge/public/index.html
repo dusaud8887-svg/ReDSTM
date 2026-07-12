@@ -194,6 +194,10 @@
         </fieldset>
         <div class="settings-actions"><button class="text-command reset-settings" id="reset-settings" type="button">기본값</button><button class="text-command" id="export-state" type="button">상태 내보내기</button><button class="text-command" id="import-state" type="button">상태 가져오기</button></div>
         <input id="import-state-file" type="file" accept="application/json" hidden>
+        <section class="import-review" id="import-review" aria-live="polite" hidden>
+          <p id="import-review-summary"></p>
+          <div><button id="import-cancel" type="button">취소</button><button id="import-apply" type="button">가져오기 적용</button></div>
+        </section>
       </form>
     </dialog>
   </body>
