@@ -418,12 +418,14 @@ fork는 upstream의 핵심 data model과 workflow가 ReDSTM에 맞고 정기 mer
 
 ### 5.1 화면 정보 구조
 
-P0는 별도 landing/admin 화면 없이 실제 데이터가 채워진 Home/장서를 첫 화면으로 연다.
+P0는 별도 landing/admin 화면 없이 실제 데이터가 채워진 Home을 첫 화면으로 연다. 전체 catalog는
+탐색에서 열어 Home의 latest/recent와 중복하지 않는다.
 
 ```text
-Home                 검색, 이어읽기, 최신 갱신, 최근 읽은 글
-왼쪽/상단 catalog  title/author/category 검색, board filter, 전체/history/bookmark
-오른쪽/하단 reader prose/AA, 댓글, 이전/다음, 원문, 설정
+Home                 검색, 이어읽기, 최신 갱신, 최근 읽은 글, Operations 진입
+탐색 catalog         title/author/category 검색, board와 소설/AA filter, 정렬
+보관함 catalog       저장한 글, 최근 읽은 글
+reader               prose/AA, 댓글, 이전/저장/다음, 원문, 설정
 local state          theme, typography, bookmark, history, scroll position
 ```
 
@@ -455,7 +457,7 @@ source of truth는 Oracle systemd timer이고, D1이나 Worker 장애가 자동 
 
 ```text
 Sync now       신규/변경 discovery + collect
-Retry batch     하루 후보 최대 100건; 2시간/장애 breaker 우선
+Retry batch     cycle당 due 후보 최대 100건; 2시간/장애 breaker 우선
 Publish if changed
 Pause after current
 Resume schedule
@@ -529,7 +531,7 @@ shadow는 아직 없다.
 스케줄 기본값:
 
 - incremental sync: 6시간마다
-- delta publish: 변경 시 하루 최대 1회
+- delta publish: 변경 marker가 있으면 매 6시간 cycle에서 성공할 때까지 재시도
 - full board inventory audit: 주 1회
 
 각 run은 D1 heartbeat와 next_expected_by를 갱신하고 `/ops`가 stale scheduler/host를 표시한다.
@@ -819,8 +821,9 @@ viewer에 직접 렌더링하지 않는다.
 
 ### 8.0 2026-07-12 구현 감사 판정
 
-현재 crawler core와 Oracle 수동 canary는 동작하고 P0 safety gap은 local code/test에서 닫혔지만
-**schema v3 Oracle migration, 새 canary, 자동 timer와 7일 shadow 전**이다. canonical 실측 queue는
+현재 crawler core와 Oracle 수동 canary, schema v3 migration/doctor는 동작하고 P0 safety gap은 local
+code/test에서 닫혔다. **pass-epoch inventory/bootstrap bundle의 live canary, 자동 schedule과 7일 shadow
+전**이다. canonical 실측 queue는
 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의
 hard cap일 뿐 처리량이나
 완료 gate가 아니다. 15분 38초 종료 진단에서도 CPU는 약 16초였고 원본 서버 network 대기가 시간을
@@ -834,12 +837,14 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | frontier backoff/dead와 `network_error`·`parse_drift` bounded revive | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
-| listing | complete changed-row seed, overlap boundary, schema v3 durable inventory cursor | Oracle migration과 실제 cursor progression |
+| listing | complete changed-row seed, overlap boundary, schema v3 durable inventory cursor | pass-epoch bundle과 실제 cursor progression |
 | detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
 | monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage canary와 7일 shadow |
 
-따라서 현재 command는 수동 bounded canary에만 사용한다. 24시간 반복과 7일 shadow가 통과하기 전
-“crawler 완성” 또는 timer cutover로 표시하지 않는다.
+schema v3 doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke
+1회 뒤 schedule을 활성화한다. 24시간 반복과 7일
+shadow는 활성화된 자동 운전의 관찰 단계이며, 이 근거 전에는 “crawler 완성” 또는 legacy cutover로
+표시하지 않는다.
 
 ### 8.1 명령 표면
 
@@ -1375,12 +1380,13 @@ Gate:
 
 ### 13.3 Phase 1: archive kernel
 
-상태: archive kernel core와 local P0 safety 완료, schema v3 Oracle migration과 live gate 대기. schema/importer/parser/store/frontier, bounded
+상태: archive kernel core와 local P0 safety, schema v3 Oracle migration/doctor 완료. 새 automatic bundle의
+live gate 대기. schema/importer/parser/store/frontier, bounded
 listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
 정책과 `doctor`는 구현했다. systemd source와 D1 heartbeat, marker/outbox/expired command canary는
 실연결했다. sync mid-board breaker, session mid-cycle revalidation, 모든 분류 가능한 detail exit의 lease
 transition, complete listing seed, dead bounded revive, cycle-wide writer exclusion과 worker hard bound는
-local 회귀를 통과했다. schema v3 migration 뒤 bounded delta, duplicate/full-outage, 24시간·7일 shadow를
+local 회귀를 통과했다. 새 bundle 배포 뒤 bounded delta, duplicate/full-outage, 24시간·7일 shadow를
 진행한다.
 
 - 최소 schema/migration 작성
@@ -1492,12 +1498,12 @@ Gate:
 
 ### 13.7 Phase 5: shadow와 cutover
 
-- 기존 crawler와 v2를 7일 shadow 실행
+- crawl→bounded export→publish/readback/rollback smoke 뒤 v2 scheduler 활성화
+- 기존 crawler와 활성 v2를 24시간 canary, 이어서 7일 shadow 실행
 - 신규 발견/성공/실패 비교
 - v2가 누락하면 cutover 중단
 - v2 viewer를 read-only로 먼저 사용
 - 마지막 legacy crawl 후 final import
-- v2 scheduler 활성화
 - old scheduler 비활성화
 
 rollback:
@@ -1781,7 +1787,8 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] verified canonical snapshot과 격리 restore rehearsal `ok=true`
 [x] canonical schema v2 적용과 data count 보존
 [x] schema v3 inventory cursor migration 코드와 회귀 test
-[ ] Oracle canonical schema v3 migration과 doctor
+[x] Oracle canonical schema v3 migration과 doctor
+[ ] pass-epoch inventory/bootstrap bundle live canary와 automatic schedule 관찰
 [x] full exporter/collection reader/Access JWT/rclone publish 구현
 ```
 

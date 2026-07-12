@@ -57,7 +57,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 
 ### 완료
 
-- verified legacy source와 schema v2 canonical/independent local restore
+- verified legacy source와 schema v3 canonical/independent local restore
 - bounded crawler core, session/parser/WARC/frontier와 recovery retry/failure regression
 - deterministic gzip/zstd level 15 full export와 count 검증
 - Worker Static Assets, private R2, Access email/MFA와 authenticated shell
@@ -67,55 +67,59 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - stable post identity와 Signal Archive frontend의 1440/768/390/320px local fixture 검증
 - local loopback read-only Operations C0
 - Oracle read-only audit, target runbook, ADR-014/015
-- Oracle에서 12,407,148,544-byte canonical 활성화/full doctor와 application
-  `4edc1c9868045454c961cd3f038eb0a66a4cb010` 배포 통과
+- Oracle에서 12,407,148,544-byte canonical 활성화, schema v3 migration/full doctor와 application
+  `9aa6206...` 배포 통과
 - Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token
 - Oracle control oneshot → Access → Worker → D1 heartbeat와 user/service route 분리 smoke
 - authenticated production Reader 282,239건, 일반/AA 본문·댓글과 `/ops` idle heartbeat smoke
-- `/search` query/board/sort URL·History 복원과 mobile 설정의 Operations 진입점
+- `/search` query/board/mode/sort와 `/saved?view=recent` URL·History 복원, 모든 폭의 Operations 진입점
 - pause/resume marker, heartbeat outbox replay와 expired command live canary
 - journald 1GiB/14일 보존 정책 적용과 과거 민감 가능 journal 폐기(4GiB → 24MiB)
 - Signal Archive/Porcelain light 전역 token과 Reader·검색·설정, Operations 핵심 상태의 local
   4-viewport 구현
 - complete listing seed, sync mid-board breaker, 30분 session 재검증, cycle-wide writer lock,
   subprocess hard bound와 bounded dead revive의 local crawler 구현
-- schema v3 inventory cursor migration 코드와 full local Python/Edge/E2E 검증
+- schema v3 inventory cursor와 automatic bootstrap/recovery, Operations telemetry의 local 검증
+- 홈/탐색/보관함 IA, current-release 미완독 이어읽기, catalog scroll, 모바일 직접 저장/집중 종료,
+  AA 댓글 설정 연동의 4-viewport local 검증
 
 세부 증거와 당시 조건은 [`done/2026-07-11`](done/2026-07-11/README.md)에 보존한다.
 
 ### 현재 gate
 
-현재 Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`에서 authenticated Reader/Operations,
-`/search` URL·History 복원과 mobile Operations 진입점을 확인했다. 그 live 검토에서 거절된
-Operations light palette, stale/empty 표현과 Reader continuity는 로컬 코드와 fixture에서 교정했다.
-field별 source/as-of, active/latest run 분리와 command별 due/last/cooldown eligibility를 마친 뒤 새
-버전의 live 배포·실제 Android·사용자 시각 acceptance가 남았다. Oracle은 application `4edc1c9`, canonical full doctor, static seed,
+현재 live Worker `c1d1d3f3-4642-437a-afdc-941ff42e756f`에서 authenticated Reader/Operations,
+기존 `/search` URL·History 복원과 mobile Operations 진입점을 확인했다. 그 live 검토에서 거절된
+Operations light palette, 자동 schedule/Runner/Reader/canonical 구분, recent failure와 board inventory
+진척은 로컬 코드와 fixture에서 교정했다. 새 D1 `0003`/Worker/Oracle bundle의 live 배포·실제 Android·
+사용자 시각 acceptance가 남았다. Oracle은 application `9aa6206`, schema v3 canonical doctor, static seed,
 R2/TypeMoon/Access credential과 D1 heartbeat까지 통과했다. 원본 요청 없는 pause/resume marker,
 heartbeat outbox replay와 expired command도 live 검증했다. control/schedule timer는 계속
 disabled/inactive다. crawler는 listing → durable frontier → serial detail lease → capture/outcome과
 done/retry/dead 전이 구조를 갖고, 앞서 확인한 safety gap은 로컬 코드와 회귀 테스트에서 닫혔다.
-다만 live canonical은 schema v2이므로 schema v3 migration, 새 Oracle application 배포와 실제
-inventory/recovery/delta canary 전에는 production 완료가 아니다. crawler 실측과 남은 근거는
-[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 두며, bounded recovery·delta,
-duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
+다만 새 pass-epoch inventory/recovery와 Operations telemetry bundle은 아직 live가 아니므로 production
+완료가 아니다. 2026-07-12 bounded live crawl은 `write_free21` 한 글을 canonical에 정상 적재했고
+WARC/outcome/frontier까지 검증했다. 이어진 export는 600초 동안 282,240건 중 6,000건을 재검사한 뒤
+시간 상한으로 중단됐다. R2 pointer는 이전 release 그대로이고 `publish.pending`도 보존했으므로 delta
+publish/readback/rollback을 통과했다고 보지 않는다. 이는 한 글 변경에도 전체 canonical을 다시 읽는
+exporter가 남은 P0 병목이라는 증거다. crawler 실측과 남은 근거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에
+두며, bounded recovery·delta, duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 
 ### 구현 필요
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
-1. schema v3을 Oracle canonical에 명시적으로 migration하고 새 application을 배포
-2. Operations의 남은 의미·command eligibility를 구현하고 Reader/Operations 새 palette의
-   authenticated live smoke와 실제 Android/frontend acceptance
+1. D1 `0003` → 새 Worker → 새 Oracle application 순으로 Operations/bootstrap bundle 배포
+2. authenticated Reader/Operations live smoke와 실제 Android/frontend acceptance
 3. time/failure-bounded inventory·recovery·실제 delta publish canary
 4. duplicate command와 실제 crawl 중 D1/Worker outage canary
-5. 24시간 canary, 7일 shadow와 cutover
+5. schedule 활성 상태의 24시간 canary, 7일 shadow와 cutover
 
 ## 확정된 UX·기술 결정
 
 - visual: white canvas + near-white grouped chrome + ReDSTM red signal; old purple glass/moon과 gray card field 금지
 - font: SUIT UI/title, MaruBuri prose, Saitamaar AA
-- mobile navigation: 장서/검색/저장/설정; reader에서는 목록/이전/다음/설정
-- route: 장서 `/`, 검색 `/search`, 저장 `/saved`, 설정 `/settings`, Reader `/read/{board}/{id}`
+- mobile navigation: 홈/탐색/보관함/설정; reader에서는 목록/이전/저장/다음/설정
+- route: 홈 `/`, 탐색 `/search`, 보관함 `/saved`·`?view=recent`, 설정 `/settings`, Reader `/read/{board}/{id}`
 - desktop: 72px rail + 360px catalog + reader
 - browser identity: `board_id:external_post_id`; object key 저장 금지
 - deep link: SPA `not_found_handling`으로 shell 반환; 이전 hash link는 stable URL로 replace

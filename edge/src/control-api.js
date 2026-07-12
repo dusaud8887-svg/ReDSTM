@@ -342,17 +342,28 @@ async function startRun(request, env, requestId) {
 }
 
 function validBoardCounters(value) {
-  const names = ["discovered", "changed", "pending", "retry", "dead"];
+  const required = ["discovered", "changed", "pending", "retry", "dead"];
+  const allowed = new Set([...required, "running", "done"]);
   return value && typeof value === "object" && !Array.isArray(value) &&
-    Object.keys(value).length === names.length && names.every(
+    Object.keys(value).every((name) => allowed.has(name)) && required.every(
       (name) => Number.isSafeInteger(value[name]) && value[name] >= 0,
+    ) && ["running", "done"].every(
+      (name) => value[name] == null || (Number.isSafeInteger(value[name]) && value[name] >= 0),
     );
 }
 
 async function recordBoardStatus(request, env, requestId) {
   const body = await readJson(request, 16 * 1024);
   if (!identifierPattern.test(body.board_id || "") || !boardOutcomes.has(body.last_outcome) ||
+      (body.board_name != null &&
+        (typeof body.board_name !== "string" || body.board_name.length > 128)) ||
+      (body.group_name != null &&
+        (typeof body.group_name !== "string" || body.group_name.length > 128)) ||
       typeof body.last_scanned_at !== "string" || !validTimestamp(body.last_scanned_at) ||
+      (body.inventory_next_page != null &&
+        (!Number.isSafeInteger(body.inventory_next_page) || body.inventory_next_page < 1)) ||
+      !validTimestamp(body.last_inventory_at) ||
+      !validTimestamp(body.inventory_pass_started_at) ||
       !validBoardCounters(body.counters) ||
       (body.warning_code != null && !safeWarnings.has(body.warning_code))) {
     return failure(requestId, 400, "invalid_board_status", "Board status is invalid");
@@ -361,23 +372,43 @@ async function recordBoardStatus(request, env, requestId) {
   const scannedAt = timestampValue(body.last_scanned_at);
   await env.CONTROL_DB.prepare(
     `INSERT INTO board_status (
-       board_id, last_scanned_at, last_outcome, discovered, changed, pending, retry, dead, warning_code
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       board_id, board_name, group_name, last_scanned_at, last_outcome,
+       discovered, changed, pending, running, retry, done, dead,
+       inventory_next_page, last_inventory_at, inventory_pass_started_at, warning_code
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(board_id) DO UPDATE SET
+       board_name = COALESCE(excluded.board_name, board_status.board_name),
+       group_name = COALESCE(excluded.group_name, board_status.group_name),
        last_scanned_at = excluded.last_scanned_at, last_outcome = excluded.last_outcome,
        discovered = excluded.discovered, changed = excluded.changed, pending = excluded.pending,
-       retry = excluded.retry, dead = excluded.dead, warning_code = excluded.warning_code
+       running = excluded.running, retry = excluded.retry, done = excluded.done,
+       dead = excluded.dead,
+       inventory_next_page = COALESCE(
+         excluded.inventory_next_page, board_status.inventory_next_page
+       ),
+       last_inventory_at = COALESCE(excluded.last_inventory_at, board_status.last_inventory_at),
+       inventory_pass_started_at = COALESCE(
+         excluded.inventory_pass_started_at, board_status.inventory_pass_started_at
+       ),
+       warning_code = excluded.warning_code
      WHERE board_status.last_scanned_at IS NULL
         OR excluded.last_scanned_at >= board_status.last_scanned_at`,
   ).bind(
     body.board_id,
+    body.board_name ?? null,
+    body.group_name ?? null,
     scannedAt,
     body.last_outcome,
     counters.discovered,
     counters.changed,
     counters.pending,
+    counters.running ?? 0,
     counters.retry,
+    counters.done ?? 0,
     counters.dead,
+    body.inventory_next_page ?? null,
+    timestampValue(body.last_inventory_at),
+    timestampValue(body.inventory_pass_started_at),
     body.warning_code ?? null,
   ).run();
   return envelope(requestId, { accepted: true });

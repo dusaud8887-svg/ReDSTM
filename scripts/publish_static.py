@@ -34,7 +34,7 @@ def _current_release(root: Path) -> str:
 
 
 def _ledger_path(root: Path) -> Path:
-    return root.parent / f".{root.name}.publish-ledger.json"
+    return root / ".publish-ledger.json"
 
 
 def _object_key(ref: object) -> str:
@@ -87,6 +87,25 @@ def _release_object_keys(root: Path, body: bytes) -> set[str]:
     return keys
 
 
+def _read_ledger(root: Path, target: str, release_key: str) -> dict[str, Any] | None:
+    try:
+        ledger = json.loads(_ledger_path(root).read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(ledger, dict)
+        or ledger.get("schema_version") != 1
+        or ledger.get("remote") != target
+        or ledger.get("release_key") != release_key
+        or type(ledger.get("remote_bytes")) is not int
+        or type(ledger.get("remote_objects")) is not int
+        or ledger["remote_bytes"] < 0
+        or ledger["remote_objects"] < 0
+    ):
+        return None
+    return ledger
+
+
 def _delta_plan(
     root: Path,
     target: str,
@@ -98,17 +117,8 @@ def _delta_plan(
     if not previous_path.is_file() or previous_path.read_bytes() != previous_body:
         return None
     try:
-        ledger = json.loads(_ledger_path(root).read_text(encoding="utf-8"))
-        if (
-            not isinstance(ledger, dict)
-            or ledger.get("schema_version") != 1
-            or ledger.get("remote") != target
-            or ledger.get("release_key") != previous_key
-            or type(ledger.get("remote_bytes")) is not int
-            or type(ledger.get("remote_objects")) is not int
-            or ledger["remote_bytes"] < 0
-            or ledger["remote_objects"] < 0
-        ):
+        ledger = _read_ledger(root, target, previous_key)
+        if ledger is None:
             return None
         keys = sorted(
             _release_object_keys(root, release_body) - _release_object_keys(root, previous_body)
@@ -159,13 +169,7 @@ def _write_ledger(root: Path, target: str, release_key: str, budget: dict[str, i
         partial.unlink(missing_ok=True)
 
 
-def _r2_budget_preflight(
-    root: Path,
-    target: str,
-    *,
-    pointer_bytes: int,
-    runner: Any,
-) -> dict[str, int]:
+def _remote_size(target: str, runner: Any) -> tuple[int, int]:
     remote_raw = runner(
         ["rclone", "size", target, "--json"],
         check=True,
@@ -183,6 +187,17 @@ def _r2_budget_preflight(
         raise RuntimeError("invalid remote byte count")
     if type(remote_objects) is not int or remote_objects < 0:
         raise RuntimeError("invalid remote object count")
+    return remote_bytes, remote_objects
+
+
+def _r2_budget_preflight(
+    root: Path,
+    target: str,
+    *,
+    pointer_bytes: int,
+    runner: Any,
+) -> dict[str, int]:
+    remote_bytes, remote_objects = _remote_size(target, runner)
 
     new_bytes = 0
     new_objects = 0
@@ -196,6 +211,8 @@ def _r2_budget_preflight(
                 target,
                 "--exclude",
                 "/release.json",
+                "--exclude",
+                "/.publish-ledger.json",
                 "--immutable",
                 "--dry-run",
                 "--missing-on-dst",
@@ -263,6 +280,22 @@ def publish_static(
     except subprocess.CalledProcessError:
         remote_pointer = None
     if remote_pointer == release_body:
+        ledger_written = _read_ledger(root, target, release_key) is not None
+        if not ledger_written:
+            try:
+                remote_bytes, remote_objects = _remote_size(target, runner)
+                _write_ledger(
+                    root,
+                    target,
+                    release_key,
+                    {
+                        "projected_remote_bytes": remote_bytes,
+                        "projected_remote_objects": remote_objects,
+                    },
+                )
+                ledger_written = True
+            except (OSError, RuntimeError, subprocess.CalledProcessError):
+                ledger_written = False
         return {
             **validation,
             "remote": target,
@@ -270,6 +303,7 @@ def publish_static(
             "mode": "noop",
             "new_bytes": 0,
             "new_objects": 0,
+            "ledger_written": ledger_written,
         }
 
     common = {"check": True}
@@ -294,6 +328,8 @@ def publish_static(
                 target,
                 "--exclude",
                 "/release.json",
+                "--exclude",
+                "/.publish-ledger.json",
                 "--immutable",
                 "--checkers",
                 "16",
@@ -304,7 +340,17 @@ def publish_static(
             **common,
         )
         runner(
-            ["rclone", "check", str(root), target, "--exclude", "/release.json", "--one-way"],
+            [
+                "rclone",
+                "check",
+                str(root),
+                target,
+                "--exclude",
+                "/release.json",
+                "--exclude",
+                "/.publish-ledger.json",
+                "--one-way",
+            ],
             **common,
         )
     else:

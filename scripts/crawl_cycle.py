@@ -42,17 +42,32 @@ def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def _boards(archive: Path, *, inventory: bool = False) -> list[str]:
+def _boards(
+    archive: Path,
+    *,
+    inventory: bool = False,
+    inventory_since: str | None = None,
+) -> list[str]:
     with connect_archive(archive, read_only=True) as connection:
         order = (
-            "(last_inventory_at IS NOT NULL), inventory_next_page, board_id"
+            "(inventory_next_page = 1), COALESCE(last_inventory_at, ''), "
+            "inventory_next_page, board_id"
             if inventory
             else "board_id"
         )
+        coverage = (
+            " AND (last_inventory_at IS NULL "
+            "OR julianday(last_inventory_at) IS NULL "
+            "OR julianday(last_inventory_at) < julianday(?) OR inventory_next_page <> 1)"
+            if inventory and inventory_since is not None
+            else ""
+        )
+        parameters = (inventory_since,) if coverage else ()
         return [
             str(row[0])
             for row in connection.execute(
-                f"SELECT board_id FROM boards WHERE is_enabled = 1 ORDER BY {order}"
+                f"SELECT board_id FROM boards WHERE is_enabled = 1{coverage} ORDER BY {order}",
+                parameters,
             )
         ]
 
@@ -121,7 +136,11 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     args.report_dir = args.report_dir.expanduser().resolve()
     pause_file = getattr(args, "pause_file", None)
     args.pause_file = pause_file.expanduser().resolve() if pause_file is not None else None
-    boards = _boards(args.archive, inventory=args.inventory)
+    boards = _boards(
+        args.archive,
+        inventory=args.inventory,
+        inventory_since=getattr(args, "inventory_since", None),
+    )
     if not boards:
         raise ValueError("canonical archive has no enabled boards")
 
@@ -288,11 +307,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seconds", type=int, default=_CYCLE_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
+    parser.add_argument("--inventory-since", help=argparse.SUPPRESS)
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:
         parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
+    if args.inventory_since is not None:
+        if not args.inventory:
+            parser.error("inventory-since requires inventory mode")
+        try:
+            parsed = datetime.fromisoformat(args.inventory_since.replace("Z", "+00:00"))
+        except ValueError:
+            parser.error("inventory-since must be an ISO timestamp")
+        if parsed.tzinfo is None:
+            parser.error("inventory-since must include a timezone")
     return args
 
 

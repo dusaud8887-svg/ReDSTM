@@ -33,10 +33,21 @@ function aaPostPayload(id, title) {
   const payload = postPayload(id, title);
   payload.post.is_aa = true;
   payload.post.body_html = `<div class="AA_Text"><p><font color="#b4232f">${title}</font></p><p>（　´∀｀）</p><p>　|　　|</p></div>`;
+  payload.comments = [
+    {
+      position: 1, author: "일반", created_at_raw: "2026-07-11",
+      content_html: "<p>일반 댓글</p>", content_text: "일반 댓글", depth: 0,
+    },
+    {
+      position: 2, author: "AA", created_at_raw: "2026-07-11",
+      content_html: "<pre style=\"font-family: 'ＭＳ Ｐゴシック'\">（　´∀｀）\n /　 つ</pre>",
+      content_text: "（　´∀｀）\n /　 つ", depth: 1,
+    },
+  ];
   return payload;
 }
 
-async function useCollectionFixture(page, { largeStandalone = false, releaseGate } = {}) {
+async function useCollectionFixture(page, { largeStandalone = false, legacyIndex = false, releaseGate } = {}) {
   const standalone = postPayload(3, "비소속");
   if (largeStandalone) standalone.transfer_padding = "x".repeat(1_100_000);
   const payloads = new Map([
@@ -47,12 +58,12 @@ async function useCollectionFixture(page, { largeStandalone = false, releaseGate
     }],
     ["search/e2e.json.zst", {
       schema_version: 1,
-      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
+      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", ...(legacyIndex ? [] : ["is_aa"])],
       posts: [
         ["board_a", 3, "비소속", "작성자", null, "2026-07-11", standaloneHash, false],
         ["board_a", 2, "둘째", "작성자", null, "2026-07-11", secondHash, false],
         ["board_a", 1, "첫째", "작성자", null, "2026-07-11", firstHash, true],
-      ],
+      ].map((row) => legacyIndex ? row.slice(0, -1) : row),
     }],
     ["collections/e2e.json.zst", {
       schema_version: 1,
@@ -120,34 +131,71 @@ test("keeps the settings route symmetric", async ({ page }) => {
   await page.locator('button[data-destination="settings"]:visible').first().click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(page.locator("#settings-dialog")).toBeVisible();
-  if (page.viewportSize().width < 760) {
-    await expect(page.locator("#settings-ops")).toBeVisible();
-    await expect(page.locator("#settings-ops")).toHaveAttribute("href", "/ops");
-  }
+  await expect(page.locator("#settings-ops")).toBeVisible();
+  await expect(page.locator("#settings-ops")).toHaveAttribute("href", "/ops");
+  await page.locator("#settings-dialog form").evaluate((form) => { form.scrollTop = form.scrollHeight; });
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await expect(page).toHaveURL(/\/$/);
+  await page.locator('button[data-destination="settings"]:visible').first().click();
+  await expect.poll(() => page.locator("#settings-dialog form").evaluate((form) => form.scrollTop)).toBe(0);
+  await page.locator("#settings-dialog button[aria-label='닫기']").click();
 });
 
 test("restores search controls from the URL and browser history", async ({ page }) => {
   await useCollectionFixture(page);
-  await page.goto("/search?q=둘째&board=board_a&sort=oldest");
+  await page.goto("/search?q=둘째&board=board_a&mode=prose&sort=oldest");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#search-input")).toHaveValue("둘째");
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await expect(page.locator("#mode-filter")).toHaveValue("prose");
   await expect(page.locator("#sort-filter")).toHaveValue("oldest");
   await expect(page.locator(".result-item", { hasText: "둘째" })).toBeVisible();
 
   await page.locator("#sort-filter").selectOption("latest");
+  await page.locator("#mode-filter").selectOption("aa");
   await page.locator("#search-input").fill("첫째");
   await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("첫째");
   await expect.poll(() => page.evaluate(() => history.state?.redstmSearch)).toEqual({
-    query: "첫째", boardId: "board_a", sort: "latest",
+    query: "첫째", boardId: "board_a", mode: "aa", sort: "latest",
   });
   await page.locator(".result-item", { hasText: "첫째" }).click();
   await page.goBack();
   await expect(page.locator("#search-input")).toHaveValue("첫째");
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await expect(page.locator("#mode-filter")).toHaveValue("aa");
   await expect(page.locator("#sort-filter")).toHaveValue("latest");
+});
+
+test("restores catalog scroll and focused row after Reader Back", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/search");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const list = page.locator("#result-list");
+  await list.evaluate((element) => {
+    element.style.height = "100px";
+    element.style.maxHeight = "100px";
+  });
+  const target = page.locator(".result-item").last();
+  await target.focus();
+  const expectedScroll = await list.evaluate((element) => element.scrollTop);
+  expect(expectedScroll).toBeGreaterThan(0);
+  const title = await target.locator(".result-title").innerText();
+  await target.click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/search$/);
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBe(expectedScroll);
+  await expect(page.locator(".result-item:focus .result-title")).toHaveText(title);
+});
+
+test("normalizes AA mode on a legacy search index", async ({ page }) => {
+  await useCollectionFixture(page, { legacyIndex: true });
+  await page.goto("/search?mode=aa");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#mode-filter")).toBeDisabled();
+  await expect(page.locator("#mode-filter")).toHaveValue("all");
+  await expect(page).toHaveURL(/\/search$/);
+  await expect(page.locator(".result-item")).toHaveCount(3);
 });
 
 test("reviews a state import before applying it", async ({ page }, testInfo) => {
@@ -182,6 +230,29 @@ test("reviews a state import before applying it", async ({ page }, testInfo) => 
   await expect(page.locator("#import-review")).toBeHidden();
 });
 
+test("keeps saved and recent-reading routes distinct", async ({ page }, testInfo) => {
+  await useCollectionFixture(page);
+  await page.goto("/saved");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator(".saved-tabs")).toBeVisible();
+  await expect(page.locator('[data-view="bookmarks"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".sort-field")).toBeHidden();
+  await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-saved.png` });
+
+  await page.locator('[data-view="history"]').click();
+  await expect(page).toHaveURL(/\/saved\?view=recent$/);
+  await page.reload();
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator('[data-view="history"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#catalog-subtitle")).toHaveText("최근 읽은 글");
+
+  await page.locator('[data-view="bookmarks"]').click();
+  await expect(page).toHaveURL(/\/saved$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/saved\?view=recent$/);
+  await expect(page.locator('[data-view="history"]')).toHaveAttribute("aria-pressed", "true");
+});
+
 test("shows the archive cover and uses a single-plane mobile reader", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await page.goto("/");
@@ -192,36 +263,49 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   if (testInfo.project.name === "desktop") {
     await expect(page.locator('.rail a[href="/ops"]')).toBeVisible();
     await expect(page.locator("#empty-reader")).toBeVisible();
-    await expect(page.locator("#empty-reader")).toContainText("다시 읽고 싶은 기록");
+    await expect(page.locator("#empty-reader")).toContainText("내 장서");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover.png" });
     await page.locator("#theme-toggle").click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#0b0d12");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
+  } else {
+    await expect(page.locator('.app-bar a[href="/ops"]')).toBeVisible();
   }
+  await expect(page.locator('.home-operations[href="/ops"]')).toBeVisible();
 
   if (page.viewportSize().width < 760) {
     await expect(page.locator("#empty-reader")).toBeVisible();
     await expect(page.locator(".bottom-nav")).toBeVisible();
     await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-home.png` });
-    await page.locator("#home-search").click();
-    await expect(page.locator("#search-input")).toBeFocused();
   }
+  await page.locator("#home-search").click();
+  await expect(page.locator("#search-input")).toBeFocused();
+  await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-explore.png` });
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page).toHaveURL(/\/read\/board_a\/3$/);
+  await expect(page).toHaveTitle(/비소속/);
+  await expect(page.locator("#reader-title")).toBeFocused();
   if (testInfo.project.name === "medium") {
     await expect(page.locator("body")).toHaveClass(/catalog-collapsed/);
     await expect(page.locator(".catalog")).toBeHidden();
     await page.locator("#catalog-toggle").click();
     await expect(page.locator(".catalog")).toBeVisible();
   }
+  if (page.viewportSize().width >= 760) {
+    await page.locator('button[data-destination="settings"]:visible').first().click();
+    await expect(page).toHaveURL(/\/settings$/);
+    await page.locator("#settings-dialog button[aria-label='닫기']").click();
+    await expect(page).toHaveURL(/\/read\/board_a\/3$/);
+    await expect(page).toHaveTitle(/비소속/);
+  }
   if (page.viewportSize().width <= 760) {
     await expect(page.locator(".catalog")).toBeHidden();
     await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-reader.png` });
     await page.locator("#catalog-back").click();
     await expect(page.locator(".catalog")).toBeVisible();
-    await expect(page.locator("#search-input")).toBeFocused();
+    await expect(page.locator(".result-item:focus")).toBeVisible();
   }
 });
 
@@ -229,6 +313,11 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);
   await expect(page.locator("#aa-controls")).toBeVisible();
+  await expect(page.locator("#comment-count")).toHaveText("2");
+  await expect(page.locator(".comment")).toHaveCount(2);
+  await expect(page.locator(".comment-body.aa-comment")).toHaveCount(1);
+  await expect(page.locator(".comment-body").first()).not.toHaveClass(/aa-comment/);
+  await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("white-space", "pre");
   await expect(page.locator(".aa-canvas p").first()).toHaveCSS("margin-bottom", "0px");
   await expect(page.locator(".aa-canvas p").first()).toHaveCSS("line-height", "18px");
   const aaResult = page.locator(".result-item", { hasText: "첫째" });
@@ -239,6 +328,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await page.locator('[data-aa-preset="11:800"]').click();
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
   await expect(page.locator("#aa-inline-size")).toHaveText("11px");
+  await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("font-size", "11px");
   await page.locator('[data-aa-background="#ffffff"]').click();
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await page.locator("#aa-source-styles").click();
@@ -280,7 +370,7 @@ test("shows progress while receiving a large post", async ({ page }) => {
     const target = document.getElementById("archive-state");
     new MutationObserver(() => window.__redstmArchiveStates.push(target.textContent)).observe(target, { childList: true });
   });
-  if (page.viewportSize().width < 760) await page.locator("#home-search").click();
+  await page.locator("#home-search").click();
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page.locator("#archive-state")).toHaveText("보존본");
@@ -314,8 +404,19 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   }
   await page.keyboard.press("f");
   await expect(page.locator("body")).toHaveClass(/immersive/);
-  await page.keyboard.press("Escape");
+  await expect(page.locator("#immersive-exit")).toBeFocused();
+  if (page.viewportSize().width < 760) await page.locator("#immersive-exit").click();
+  else await page.keyboard.press("Escape");
   await expect(page.locator("body")).not.toHaveClass(/immersive/);
+  await expect(page.locator("#reader-title")).toBeFocused();
+  const settingsButton = page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings");
+  await settingsButton.click();
+  await page.locator("#settings-immersive").click();
+  await expect(page.locator("#settings-dialog")).toBeHidden();
+  await expect(page.locator("#immersive-exit")).toBeFocused();
+  await page.locator("#immersive-exit").click();
+  await expect(settingsButton).toBeFocused();
+  await page.locator("#reader-title").focus();
   await page.keyboard.press("b");
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".result-item", { hasText: "비소속" }).locator(".result-badges")).toContainText("저장");
@@ -325,6 +426,23 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await expect(page.locator(".result-item").first()).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("#reader")).toBeVisible();
+});
+
+test("leaves immersive mode when browser Back returns to the catalog", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator("#home-search").click();
+  await page.locator(".result-item").first().click();
+  await page.keyboard.press("f");
+  await expect(page.locator("body")).toHaveClass(/immersive/);
+  await expect(page.locator("#immersive-exit")).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/search$/);
+  await expect(page.locator("body")).not.toHaveClass(/immersive/);
+  if (page.viewportSize().width < 760) await expect(page.locator(".bottom-nav")).toBeVisible();
+  else if (page.viewportSize().width < 1200) await expect(page.locator(".app-bar")).toBeVisible();
+  else await expect(page.locator(".rail")).toBeVisible();
 });
 
 test("searches and renders a representative AA post", async ({ page }, testInfo) => {
@@ -352,9 +470,7 @@ test("searches and renders a representative AA post", async ({ page }, testInfo)
   await expect(page.locator("#import-state")).toBeVisible();
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   if (mobile) {
-    await page.locator("#reader-bottom-settings").click();
-    await page.locator("#settings-bookmark").click();
-    await page.locator("#settings-dialog button[aria-label='닫기']").click();
+    await page.locator("#reader-bottom-bookmark").click();
   } else {
     await page.locator("#bookmark-post").click();
   }

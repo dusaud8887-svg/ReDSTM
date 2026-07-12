@@ -59,6 +59,9 @@ function timestampMap(value, timestampKey) {
     if (!validStablePostId(identity) || !isRecord(entry) ||
         Number.isNaN(Date.parse(entry[timestampKey]))) continue;
     result[identity] = { [timestampKey]: entry[timestampKey] };
+    if (timestampKey === "readAt" && Number.isFinite(entry.progress) && entry.progress >= 0 && entry.progress <= 1) {
+      result[identity].progress = entry.progress;
+    }
   }
   return result;
 }

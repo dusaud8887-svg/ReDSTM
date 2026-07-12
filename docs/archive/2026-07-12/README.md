@@ -63,10 +63,29 @@ WARC/report를 닫은 시간이다.
   claim 0회·runner 미지정 `expired`로 끝났다. Oracle marker는 전후 모두 없었고 `/ops`에도 만료로
   표시됐다.
 
+## schema v3 후속 1건 적재·publish 진단
+
+- application `9aa6206…`, canonical schema v3에서 `write_free21` 1페이지/1글/600초 상한으로 실행했다.
+- run `sync-95fc675e1a6e4c2ca39b2a3eeeac118e`는 discovered/fetched/changed/stored 각 1,
+  failure 0으로 끝났다. body-backed post는 8,335→8,336, retry frontier는 164→163이었다.
+- external post 62060의 canonical row와 capture 2건을 확인했고 WARC 61,782 bytes는 gzip valid,
+  `.partial`은 0건이었다.
+- direct sync 뒤 `publish.pending`을 원자적으로 생성했다.
+- 기존 application의 export를 worker 1/600초 상한으로 실행했으나 전체 282,240건 중 6,000건을
+  재검사한 시점에서 시간 상한에 도달했다. 새 release는 생성하지 못했다.
+- local/remote R2 pointer는 모두 기존
+  `d55b7551ddee744ebdae29254b4ba807f7bba54d3bd7e7e4df7ae0011248db9a` 그대로이며
+  `.partial` 0, `publish.pending`은 유지했다. 따라서 적재 smoke만 통과했고 delta
+  publish/readback/rollback은 미통과다.
+- 한 글 변경에도 전체 canonical/object payload를 비교하는 exporter 경로가 병목이다. 장시간 재시도는
+  이 기록으로 대체하며 incremental candidate selection 또는 동등하게 bounded한 export 근거가 생기기
+  전에는 delta gate를 통과 처리하지 않는다.
+
 ## 남은 live gate
 
-1. bounded full-window/breaker canary
+1. bounded inventory/recovery와 exporter delta 경로 교정
 2. duplicate command와 실제 crawl 중 D1/Worker outage failure injection
-3. 실제 delta publish, Worker readback, 실패 시 pointer rollback
-4. 24시간 반복 canary와 7일 shadow
-5. gate 통과 뒤 schedule/control timer enable과 legacy service cutover
+3. crawl → bounded export → 실제 delta publish → Worker readback → 실패 시 pointer rollback smoke
+4. control heartbeat timer는 release install baseline으로 enable하고, 위 smoke 통과 뒤 schedule timer enable
+5. 활성 자동 운전의 24시간 반복 canary와 7일 shadow
+6. 관찰 gate 통과 뒤 legacy service cutover

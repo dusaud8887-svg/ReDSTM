@@ -10,7 +10,7 @@ import pytest
 
 from crawler.archive import connect_archive, initialize_archive
 from crawler.session import SessionNetworkError, SessionRefreshError
-from scripts.crawl_cycle import run_cycle
+from scripts.crawl_cycle import _boards, run_cycle
 
 
 def _args(tmp_path: Path) -> argparse.Namespace:
@@ -39,6 +39,34 @@ def _args(tmp_path: Path) -> argparse.Namespace:
 
 def _output_path(command: list[str]) -> Path:
     return Path(command[command.index("--output") + 1])
+
+
+def test_inventory_prioritizes_in_progress_and_skips_boards_completed_in_this_pass(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    started_at = "2026-07-12T00:00:00Z"
+    with connect_archive(args.archive) as connection:
+        connection.execute(
+            "UPDATE boards SET inventory_next_page = 4, last_inventory_at = ? WHERE board_id = 'a'",
+            (started_at,),
+        )
+        connection.execute("UPDATE boards SET last_inventory_at = NULL WHERE board_id = 'b'")
+        connection.execute(
+            "UPDATE boards SET last_inventory_at = '2026-07-11T00:00:00Z' WHERE board_id = 'c'"
+        )
+        connection.execute(
+            "UPDATE boards SET last_inventory_at = '2026-07-12T01:00:00Z' WHERE board_id = 'd'"
+        )
+
+    assert _boards(args.archive, inventory=True, inventory_since=started_at) == ["a", "b", "c"]
+
+    with connect_archive(args.archive) as connection:
+        connection.execute(
+            "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ? WHERE board_id = 'a'",
+            (started_at,),
+        )
+    assert _boards(args.archive, inventory=True, inventory_since=started_at) == ["b", "c"]
 
 
 def test_cycle_runs_enabled_boards_sequentially(

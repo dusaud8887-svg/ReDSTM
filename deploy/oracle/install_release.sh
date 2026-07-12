@@ -101,6 +101,7 @@ install_release() {
   systemctl daemon-reload
   sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" -c \
     'import scripts.control_runner'
+  systemctl enable --now redstm-control.timer
   rm -f -- "$archive"
   find /tmp -maxdepth 1 -type f -regextype posix-extended \
     -regex '/tmp/redstm-release-[0-9a-f]{40}\.tar\.gz\.partial' -delete

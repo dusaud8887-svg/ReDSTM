@@ -26,7 +26,7 @@ const settingLabels = {
 };
 const elements = Object.fromEntries(
   [
-    "archive-count", "archive-state", "search-input", "board-filter", "sort-filter", "result-status", "result-list",
+    "archive-count", "archive-state", "search-input", "board-filter", "mode-filter", "sort-filter", "result-status", "result-list",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "archive-body", "comment-count", "comment-list", "previous-post", "next-post", "bookmark-post", "source-link",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "aa-size",
@@ -37,9 +37,9 @@ const elements = Object.fromEntries(
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-select",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
-    "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings",
+    "reader-bottom-list", "reader-bottom-previous", "reader-bottom-bookmark", "reader-bottom-next", "reader-bottom-settings",
     "post-settings-actions", "settings-bookmark", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
-    "catalog-toggle", "home-action", "import-review", "import-review-summary", "import-apply", "import-cancel",
+    "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
@@ -72,7 +72,11 @@ let lastReaderScroll = 0;
 let readerScrollDelta = 0;
 let latestPosts = [];
 let publishedAt = null;
+let pendingCatalogRestore = userState.lastCatalogState;
+let searchSupportsAa = true;
+let immersiveOpener = null;
 const workerRequests = new Map();
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
 const searchWorker = new Worker("/search-worker.js", { type: "module" });
 searchWorker.addEventListener("message", handleWorkerMessage);
@@ -107,7 +111,7 @@ function entriesFromState(map, timestampKey) {
       return {
         summary: { board_id: boardId, external_post_id: Number(externalId) },
         [timestampKey]: value[timestampKey],
-        ...(timestampKey === "readAt" ? { scroll: userState.scroll[identity] ?? 0 } : {}),
+        ...(timestampKey === "readAt" ? { scroll: userState.scroll[identity] ?? 0, progress: value.progress ?? 0 } : {}),
       };
     })
     .sort((left, right) => Date.parse(right[timestampKey]) - Date.parse(left[timestampKey]));
@@ -130,7 +134,7 @@ function persistUserState() {
     schema_version: 2,
     settings: savedSettings,
     history: Object.fromEntries(historyEntries.map((entry) => [
-      postIdentity(entry.summary), { readAt: entry.readAt },
+      postIdentity(entry.summary), { readAt: entry.readAt, progress: entry.progress ?? 0 },
     ]).filter(([identity]) => identity)),
     bookmarks: Object.fromEntries(bookmarks.map((entry) => [
       postIdentity(entry.summary), { savedAt: entry.savedAt },
@@ -141,8 +145,13 @@ function persistUserState() {
     viewModes,
     lastCatalogState: userState.lastCatalogState,
   };
-  localStorage.setItem(STATE_KEY, exportUserState(userState));
-  for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
+  try {
+    localStorage.setItem(STATE_KEY, exportUserState(userState));
+    for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
+  } catch (error) {
+    elements["archive-state"].textContent = "로컬 저장 실패";
+    console.warn("Reader state could not be saved", error);
+  }
 }
 
 function saveSettings() {
@@ -179,6 +188,9 @@ function applySettings() {
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
+  const fitWidth = isNarrowScreen();
+  elements["prose-width"].disabled = fitWidth;
+  elements["prose-width-output"].value = fitWidth ? "화면 맞춤" : `${settings.proseWidth}px`;
   elements["prose-font"].value = settings.proseFont;
   elements["aa-inline-size"].value = `${settings.aaSize}px`;
   elements["aa-zoom-output"].value = `${Math.round(settings.aaZoom * 100)}%`;
@@ -265,8 +277,8 @@ function renderHomeList(element, posts, emptyText) {
 }
 
 function renderCover(
-  title = "다시 읽고 싶은 기록을 한곳에서 찾으세요.",
-  description = "사라질 수 있는 이야기와 AA를 원형에 가깝게 보존합니다.",
+  title = "내 장서",
+  description = "새로 보존된 글과 최근 기록을 확인하세요.",
   showContinue = true,
   actionLabel = "",
 ) {
@@ -283,11 +295,13 @@ function renderCover(
     : "마지막 갱신 확인 중";
   elements["home-action"].hidden = !actionLabel;
   elements["home-action"].textContent = actionLabel;
-  const latest = historyEntries[0]?.summary;
+  const latestEntry = historyEntries.find((entry) => entry.summary?.object_key && (entry.progress ?? 0) < 0.95);
+  const latest = latestEntry?.summary;
   elements["continue-reading"].hidden = !latest || !showContinue;
   if (latest) {
+    const progress = latestEntry.progress > 0 ? `${Math.round(latestEntry.progress * 100)}% 읽음` : "처음부터";
     elements["continue-title"].textContent = latest.title || "제목 없음";
-    elements["continue-meta"].textContent = [latest.board_id, latest.author].filter(Boolean).join(" · ");
+    elements["continue-meta"].textContent = [latest.board_id, latest.author, progress].filter(Boolean).join(" · ");
   }
   renderHomeList(elements["latest-list"], latestPosts, "새로 보존된 글이 없습니다.");
   renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.");
@@ -357,6 +371,7 @@ function currentSearchState() {
   return {
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
   };
 }
@@ -365,44 +380,117 @@ function searchUrl(state = currentSearchState()) {
   const params = new URLSearchParams();
   if (state.query) params.set("q", state.query);
   if (state.boardId) params.set("board", state.boardId);
+  if (state.mode !== "all") params.set("mode", state.mode);
   if (state.sort !== "latest") params.set("sort", state.sort);
   const query = params.toString();
   return query ? `/search?${query}` : "/search";
 }
 
-function applySearchRoute() {
+function savedUrl(state = currentSearchState(), view = currentView) {
+  const params = new URLSearchParams();
+  if (view === "history") params.set("view", "recent");
+  if (state.query) params.set("q", state.query);
+  if (state.boardId) params.set("board", state.boardId);
+  if (state.mode !== "all") params.set("mode", state.mode);
+  const query = params.toString();
+  return query ? `/saved?${query}` : "/saved";
+}
+
+function applyCatalogRoute(destination) {
   const params = new URLSearchParams(location.search);
   elements["search-input"].value = params.get("q") ?? "";
   elements["board-filter"].value = params.get("board") ?? "";
+  const mode = params.get("mode");
+  elements["mode-filter"].value = searchSupportsAa && (mode === "aa" || mode === "prose") ? mode : "all";
   const sort = params.get("sort");
-  elements["sort-filter"].value = sort === "oldest" ? sort : "latest";
+  elements["sort-filter"].value = destination === "search" && sort === "oldest" ? sort : "latest";
+  currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
+    destination === "bookmarks" ? "bookmarks" : "all";
 }
 
 function syncSearchRoute() {
-  if (location.pathname !== "/search") return;
   const state = currentSearchState();
-  history.replaceState({ redstmSearch: state }, "", searchUrl(state));
+  if (location.pathname === "/search") {
+    history.replaceState({ redstmSearch: state }, "", searchUrl(state));
+  } else if (location.pathname === "/saved") {
+    history.replaceState({ redstmSaved: { ...state, view: currentView } }, "", savedUrl(state));
+  }
 }
 
-function showDestination(destination, navigate = true) {
+function updateDestinationLayout() {
+  const home = currentDestination === "library";
+  const saved = currentDestination === "bookmarks";
+  document.body.classList.toggle("home-open", home);
+  document.body.classList.toggle("saved-open", saved);
+  document.querySelector(".saved-tabs").hidden = !saved;
+  document.querySelector(".sort-field").hidden = saved;
+  elements["catalog-title"].textContent = saved ? "내 보관함" : "글 탐색";
+  elements["catalog-subtitle"].textContent = saved
+    ? (currentView === "history" ? "최근 읽은 글" : "저장한 글")
+    : "전체 보존본";
+}
+
+function openSettings() {
+  if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+  elements["settings-dialog"].querySelector("form").scrollTop = 0;
+}
+
+function persistCatalogState() {
+  const search = currentSearchState();
+  if (currentDestination === "bookmarks") search.sort = "latest";
+  const focused = document.activeElement?.closest?.(".result-item");
+  userState.lastCatalogState = {
+    destination: currentDestination,
+    view: currentView,
+    ...search,
+    scrollTop: elements["result-list"].scrollTop,
+    focusedPost: focused ? postIdentity(renderedResults[Number(focused.dataset.index)]) : "",
+  };
+  pendingCatalogRestore = userState.lastCatalogState;
+  persistUserState();
+}
+
+function restoreCatalogPosition() {
+  const state = pendingCatalogRestore;
+  if (currentSummary || !state || state.destination !== currentDestination || state.view !== currentView) return;
+  const current = currentSearchState();
+  if (state.query !== current.query || state.boardId !== current.boardId ||
+      (state.mode ?? "all") !== current.mode ||
+      (currentDestination !== "bookmarks" && state.sort !== current.sort)) return;
+  pendingCatalogRestore = null;
+  requestAnimationFrame(() => {
+    elements["result-list"].scrollTop = Math.max(0, state.scrollTop ?? 0);
+    const index = renderedResults.findIndex((post) => postIdentity(post) === state.focusedPost);
+    if (index >= 0) elements["result-list"].querySelector(`[data-index="${index}"]`)?.focus({ preventScroll: true });
+  });
+}
+
+function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all") {
   if (destination === "settings") {
-    if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+    openSettings();
+    document.title = "읽기 설정 — ReDSTM";
     if (navigate && location.pathname !== "/settings") {
       history.pushState({ redstmSettings: true }, "", "/settings");
     }
     return;
   }
   if (currentSummary) persistReadingPosition();
+  else if (currentDestination !== "library") persistCatalogState();
+  setImmersive(false, false);
   currentDestination = destination;
+  currentView = view;
+  document.title = `${destination === "library" ? "홈" : destination === "search" ? "글 탐색" : "내 보관함"} — ReDSTM`;
   currentSummary = null;
   currentPayload = null;
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
   elements["catalog-toggle"].setAttribute("aria-expanded", "true");
   elements["post-settings-actions"].hidden = true;
-  renderCover();
+  updateDestinationLayout();
+  if (destination === "library") renderCover();
+  else if (destination === "search") renderCover("탐색에서 글을 선택하세요", "검색하거나 목록에서 읽을 글을 고르세요.", false);
+  else renderCover("보관함에서 글을 선택하세요", "저장한 글이나 최근 읽은 글을 고르세요.", false);
   closeMobileReader(destination === "search");
   if (destination === "bookmarks") {
-    currentView = "bookmarks";
     updateTabs();
     renderCurrentView();
   } else {
@@ -411,17 +499,28 @@ function showDestination(destination, navigate = true) {
     requestSearch();
   }
   updateDestinationButtons();
-  const path = destination === "library" ? "/" : destination === "bookmarks" ? "/saved" : searchUrl();
-  if (navigate && location.pathname !== new URL(path, location.origin).pathname) {
-    history.pushState(destination === "search" ? { redstmSearch: currentSearchState() } : null, "", path);
+  const path = destination === "library" ? "/" : destination === "bookmarks" ? savedUrl() : searchUrl();
+  if (navigate && `${location.pathname}${location.search}` !== path) {
+    const state = destination === "search" ? { redstmSearch: currentSearchState() } :
+      destination === "bookmarks" ? { redstmSaved: { ...currentSearchState(), view: currentView } } : null;
+    history.pushState(state, "", path);
   }
 }
 
-function setImmersive(active) {
+function setImmersive(active, restoreFocus = true) {
+  const wasActive = document.body.classList.contains("immersive");
+  if (active && !wasActive) immersiveOpener = document.activeElement;
   document.body.classList.toggle("immersive", active);
+  elements["immersive-exit"].hidden = !active;
   elements["immersive-toggle"].setAttribute("aria-pressed", active);
   elements["immersive-toggle"].textContent = active ? "집중 종료" : "집중";
   elements["settings-immersive"].textContent = active ? "집중 종료" : "집중";
+  if (active) requestAnimationFrame(() => elements["immersive-exit"].focus());
+  else if (wasActive) {
+    const opener = immersiveOpener;
+    immersiveOpener = null;
+    if (restoreFocus) requestAnimationFrame(() => opener?.isConnected && opener.focus({ preventScroll: true }));
+  }
 }
 
 function resolvePosts(summaries) {
@@ -462,15 +561,19 @@ async function handleRoute() {
   if (!summary) {
     const settingsRoute = location.pathname === "/settings";
     const destination = location.pathname === "/saved" ? "bookmarks" : location.pathname === "/search" ? "search" : "library";
-    if (destination === "search") applySearchRoute();
-    showDestination(destination, false);
-    if (destination === "search") syncSearchRoute();
-    if (settingsRoute && !elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+    if (destination !== "library") applyCatalogRoute(destination);
+    showDestination(destination, false, currentView);
+    if (destination !== "library") syncSearchRoute();
+    if (settingsRoute) {
+      openSettings();
+      document.title = "읽기 설정 — ReDSTM";
+    }
     else if (!settingsRoute && elements["settings-dialog"].open) elements["settings-dialog"].close();
     return;
   }
   if (elements["settings-dialog"].open) elements["settings-dialog"].close();
   if (!samePost(summary, currentSummary)) await loadPost(summary, false);
+  else document.title = `${currentSummary.title || "제목 없음"} — ReDSTM`;
 }
 
 function handleWorkerMessage({ data }) {
@@ -495,8 +598,12 @@ function handleWorkerMessage({ data }) {
     elements["archive-state"].textContent = "보존본";
     latestPosts = data.recentPosts;
     publishedAt = data.publishedAt;
+    searchSupportsAa = data.hasIsAa;
+    elements["mode-filter"].disabled = !searchSupportsAa;
+    if (!searchSupportsAa) elements["mode-filter"].value = "all";
     for (const board of data.boardMetadata) {
-      const label = board.name === board.board_id ? board.name : `${board.name} · ${board.board_id}`;
+      const name = board.name === board.board_id ? board.name : `${board.name} · ${board.board_id}`;
+      const label = [board.group_name, name].filter(Boolean).join(" · ");
       elements["board-filter"].add(new Option(label, board.board_id));
     }
     renderCover();
@@ -523,6 +630,7 @@ function requestSearch() {
     id,
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
     limit: 100,
   });
@@ -531,9 +639,11 @@ function requestSearch() {
 function localResults(entries) {
   const query = normalized(elements["search-input"].value).trim();
   const board = elements["board-filter"].value;
+  const mode = elements["mode-filter"].value;
   return entries
     .map((entry) => entry.summary)
     .filter((post) => !board || post.board_id === board)
+    .filter((post) => mode === "all" || (mode === "aa") === Boolean(post.is_aa))
     .filter((post) => !query || normalized([post.title, post.author, post.category, post.board_id].join(" ")).includes(query));
 }
 
@@ -541,7 +651,8 @@ function renderCurrentView() {
   if (currentView === "all") return requestSearch();
   const entries = currentView === "history" ? historyEntries : bookmarks;
   const posts = localResults(entries);
-  renderResults(posts, `${posts.length}건 · 이 브라우저`);
+  const label = currentView === "history" ? "최근 읽은 글" : "저장한 글";
+  renderResults(posts, `${label} ${posts.length}건 · 이 브라우저`);
 }
 
 function renderResults(posts, status) {
@@ -592,6 +703,7 @@ function renderResults(posts, status) {
     fragment.append(item);
   });
   elements["result-list"].append(fragment);
+  restoreCatalogPosition();
 }
 
 async function loadCollections() {
@@ -720,6 +832,7 @@ function showPost(payload, suppliedSummary, navigate) {
   elements.reader.hidden = false;
   elements["reader-kicker"].textContent = [post.board_id, post.category].filter(Boolean).join(" · ");
   elements["reader-title"].textContent = post.title || "제목 없음";
+  document.title = `${post.title || "제목 없음"} — ReDSTM`;
   elements["reader-meta"].textContent = [post.author || "작성자 없음", post.created_at_raw, `조회 ${post.views ?? 0}`].filter(Boolean).join(" · ");
   elements["source-link"].href = post.canonical_url;
   elements["settings-source"].href = post.canonical_url;
@@ -734,7 +847,10 @@ function showPost(payload, suppliedSummary, navigate) {
   if (navigate) history.pushState({ redstmReader: true }, "", nextUrl);
   else history.replaceState({ redstmReader: false }, "", nextUrl);
   openMobileReader();
-  requestAnimationFrame(() => restoreReadingPosition(currentSummary));
+  requestAnimationFrame(() => {
+    elements["reader-title"].focus({ preventScroll: true });
+    restoreReadingPosition(currentSummary);
+  });
 }
 
 function renderPostBody() {
@@ -744,6 +860,7 @@ function renderPostBody() {
   currentMode = override ?? (post.is_aa ? "aa" : "prose");
   const isAa = currentMode === "aa";
   elements["archive-body"].classList.toggle("aa", isAa);
+  elements["archive-body"].ariaLabel = isAa ? "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다" : "글 본문";
   elements["aa-controls"].hidden = !isAa;
   elements["mode-toggle"].textContent = isAa ? "소설로 보기" : "AA로 보기";
   elements["settings-mode"].textContent = elements["mode-toggle"].textContent;
@@ -794,7 +911,11 @@ function renderComments(comments) {
     const body = document.createElement("div");
     body.className = "comment-body";
     body.innerHTML = comment.content_html;
-    body.classList.toggle("aa-comment", /AA_Text|saitamaar/i.test(comment.content_html));
+    body.classList.toggle(
+      "aa-comment",
+      /AA_Text|saitamaar|Stmr|MS P(?:Gothic|ゴシック)|ＭＳ Ｐゴシック|IPAMona|(?:font-family|face)\s*[:=]\s*["']?Mona\b/i.test(comment.content_html),
+    );
+    decorateImages(body);
     header.append(author, date);
     item.append(header, body);
     fragment.append(item);
@@ -805,7 +926,7 @@ function renderComments(comments) {
 function rememberHistory(summary) {
   const previous = historyEntries.find((entry) => samePost(entry.summary, summary));
   historyEntries = historyEntries.filter((entry) => !samePost(entry.summary, summary));
-  historyEntries.unshift({ summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0 });
+  historyEntries.unshift({ summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0, progress: previous?.progress ?? 0 });
   historyEntries = historyEntries.slice(0, 500);
   persistUserState();
 }
@@ -828,7 +949,11 @@ function restoreReadingPosition(summary) {
 function persistReadingPosition() {
   clearTimeout(scrollTimer);
   const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
-  if (entry) entry.scroll = readingPosition();
+  if (entry) {
+    entry.scroll = readingPosition();
+    const maximum = elements["reader-pane"].scrollHeight - elements["reader-pane"].clientHeight;
+    entry.progress = maximum > 0 ? Math.min(1, entry.scroll / maximum) : 0;
+  }
   persistUserState();
 }
 
@@ -841,15 +966,18 @@ function updateReadingProgress() {
   const maximum = elements["reader-pane"].scrollHeight - elements["reader-pane"].clientHeight;
   const progress = maximum > 0 ? Math.min(1, elements["reader-pane"].scrollTop / maximum) : 0;
   elements["reading-progress"].style.width = `${progress * 100}%`;
+  elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
 function updateBookmarkButton() {
   const active = bookmarks.some((entry) => samePost(entry.summary, currentSummary));
   elements["bookmark-post"].setAttribute("aria-pressed", active);
+  elements["reader-bottom-bookmark"].setAttribute("aria-pressed", active);
   elements["settings-bookmark"].setAttribute("aria-pressed", active);
   elements["settings-bookmark"].textContent = active ? "저장 취소" : "저장";
   elements["bookmark-post"].ariaLabel = active ? "저장 취소" : "저장";
   elements["bookmark-post"].title = elements["bookmark-post"].ariaLabel;
+  elements["reader-bottom-bookmark"].ariaLabel = elements["bookmark-post"].ariaLabel;
 }
 
 function updateNavigation() {
@@ -906,10 +1034,13 @@ function focusResult(offset) {
 
 elements["result-list"].addEventListener("click", (event) => {
   const button = event.target.closest(".result-item");
-  if (button) loadPost(renderedResults[Number(button.dataset.index)]);
+  if (button) {
+    persistCatalogState();
+    loadPost(renderedResults[Number(button.dataset.index)]);
+  }
 });
 elements["continue-reading"].addEventListener("click", () => {
-  const latest = historyEntries[0]?.summary;
+  const latest = historyEntries.find((entry) => entry.summary?.object_key && (entry.progress ?? 0) < 0.95)?.summary;
   if (latest) loadPost(latest);
 });
 elements["browse-all"].addEventListener("click", () => showDestination("search"));
@@ -944,9 +1075,9 @@ elements["search-input"].addEventListener("input", () => {
   }, 250);
 });
 elements["search-input"].addEventListener("focus", () => {
-  if (currentDestination !== "search") showDestination("search");
+  if (currentDestination === "library") showDestination("search");
 });
-for (const filter of [elements["board-filter"], elements["sort-filter"]]) {
+for (const filter of [elements["board-filter"], elements["mode-filter"], elements["sort-filter"]]) {
   filter.addEventListener("change", () => {
     syncSearchRoute();
     renderCurrentView();
@@ -955,11 +1086,15 @@ for (const filter of [elements["board-filter"], elements["sort-filter"]]) {
 for (const tab of document.querySelectorAll("[data-view]")) {
   tab.addEventListener("click", () => {
     currentView = tab.dataset.view;
-    currentDestination = currentView === "bookmarks" ? "bookmarks" : "search";
-    document.body.classList.remove("home-open");
+    currentDestination = "bookmarks";
+    updateDestinationLayout();
     updateDestinationButtons();
     updateTabs();
     renderCurrentView();
+    const path = savedUrl();
+    if (`${location.pathname}${location.search}` !== path) {
+      history.pushState({ redstmSaved: { ...currentSearchState(), view: currentView } }, "", path);
+    }
   });
 }
 for (const button of document.querySelectorAll("[data-destination]")) {
@@ -995,7 +1130,7 @@ elements["reader-pane"].addEventListener("scroll", () => {
   updateReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   const delta = current - lastReaderScroll;
-  if (delta && isNarrowScreen() && document.body.classList.contains("reader-open")) {
+  if (delta && !reducedMotion.matches && isNarrowScreen() && document.body.classList.contains("reader-open")) {
     readerScrollDelta = Math.sign(readerScrollDelta) === Math.sign(delta)
       ? readerScrollDelta + delta
       : delta;
@@ -1024,15 +1159,23 @@ elements["theme-select"].addEventListener("change", () => {
   settings.theme = elements["theme-select"].value;
   saveSettings();
 });
-elements["reader-settings"].addEventListener("click", () => elements["settings-dialog"].showModal());
+elements["reader-settings"].addEventListener("click", openSettings);
 elements["reader-bottom-list"].addEventListener("click", () => elements["catalog-back"].click());
 elements["reader-bottom-previous"].addEventListener("click", () => elements["previous-post"].click());
+elements["reader-bottom-bookmark"].addEventListener("click", () => elements["bookmark-post"].click());
 elements["reader-bottom-next"].addEventListener("click", () => elements["next-post"].click());
-elements["reader-bottom-settings"].addEventListener("click", () => elements["settings-dialog"].showModal());
+elements["reader-bottom-settings"].addEventListener("click", openSettings);
+elements["immersive-exit"].addEventListener("click", () => setImmersive(false));
 elements["settings-bookmark"].addEventListener("click", () => elements["bookmark-post"].click());
 elements["settings-mode"].addEventListener("click", () => elements["mode-toggle"].click());
 elements["settings-mode-reset"].addEventListener("click", () => elements["mode-reset"].click());
-elements["settings-immersive"].addEventListener("click", () => elements["immersive-toggle"].click());
+elements["settings-immersive"].addEventListener("click", () => {
+  elements["immersive-toggle"].click();
+  if (document.body.classList.contains("immersive") && elements["settings-dialog"].open) {
+    immersiveOpener = isNarrowScreen() ? elements["reader-bottom-settings"] : elements["reader-settings"];
+    elements["settings-dialog"].close();
+  }
+});
 elements["immersive-toggle"].addEventListener("click", () => setImmersive(!document.body.classList.contains("immersive")));
 elements["mode-toggle"].addEventListener("click", () => {
   if (!currentPayload) return;
@@ -1196,6 +1339,10 @@ document.addEventListener("keydown", (event) => {
     focusResult(event.key === "ArrowDown" ? 1 : -1);
     return;
   }
+  if (event.key === "Escape" && document.body.classList.contains("immersive")) {
+    setImmersive(false);
+    return;
+  }
   if (event.target.closest("input, select, textarea, button, [contenteditable]")) return;
   if (event.key === "/") {
     event.preventDefault();
@@ -1209,8 +1356,6 @@ document.addEventListener("keydown", (event) => {
     elements["bookmark-post"].click();
   } else if (event.key.toLowerCase() === "f") {
     setImmersive(!document.body.classList.contains("immersive"));
-  } else if (event.key === "Escape" && document.body.classList.contains("immersive")) {
-    setImmersive(false);
   }
 });
 document.addEventListener("focusin", () => document.body.classList.remove("reader-controls-hidden"));
@@ -1218,15 +1363,23 @@ document.addEventListener("focusin", () => document.body.classList.remove("reade
 history.scrollRestoration = "manual";
 window.addEventListener("offline", () => renderArchiveError({ code: "offline" }));
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") persistReadingPosition();
+  if (document.visibilityState === "hidden") {
+    if (currentSummary) persistReadingPosition();
+    else persistCatalogState();
+  }
 });
-window.addEventListener("pagehide", persistReadingPosition);
+window.addEventListener("pagehide", () => {
+  if (currentSummary) persistReadingPosition();
+  else persistCatalogState();
+});
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (settings.theme === "system") applySettings();
 });
 window.visualViewport?.addEventListener("resize", () => {
   document.body.classList.toggle("keyboard-open", window.visualViewport.height < innerHeight * 0.75);
 });
+matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
+reducedMotion.addEventListener("change", () => document.body.classList.remove("reader-controls-hidden"));
 document.fonts.ready.then(() => {
   if (currentSummary) restoreReadingPosition(currentSummary);
 });

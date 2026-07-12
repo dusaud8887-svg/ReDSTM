@@ -1,6 +1,6 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: Application/canonical/static와 Access/control canary live; delta, shadow and cutover pending
+- 상태: schema v3 application/canonical/static와 Access/control canary live; automatic delta, shadow and cutover pending
 - 기준일: 2026-07-12
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
@@ -35,7 +35,7 @@ endpoint를 제공하지 않는다.
 | root volume | 194GiB, 약 103GiB free | 현재 application/canonical 추가 가능 |
 | uptime | 58일 | 현재 VM 자체는 안정적으로 동작 중 |
 | active viewer | PM2 `typemoon-viewer`, Nginx | Cloudflare data smoke 전 fallback으로 유지 |
-| active crawler schedule | 사용자 cron 없음, ReDSTM timers disabled | canary 뒤 enable |
+| active crawler schedule | 사용자 cron 없음, 당시 ReDSTM timers disabled | control은 install baseline, schedule은 bounded smoke 뒤 enable |
 | legacy project | 약 50GiB | application/data를 선별 퇴역 |
 | 큰 DB | 28.8GB main + 28.8GB online backup + 19.6GB backup | 검증 뒤 삭제 후보 |
 | container runtime | Docker 설치·active | production baseline에는 불필요 |
@@ -147,26 +147,30 @@ R2 writer key와 Access service token은 별도 credential file로만
   일상 상태 확인과 제한 명령은 Access 보호 `/ops`를 사용한다.
 - D1 poll/event 실패는 automatic cycle을 중단하지 않고 local outbox에 bounded 저장한다.
 
-## 6. 무인 운영 전에 필요한 코드 gate
+## 6. 자동 운영 활성화 계약
 
-현재 bounded crawler는 canary에 쓸 수 있지만 아래 없이 장기 timer를 등록하지 않는다.
+control heartbeat는 release 설치의 baseline으로 유지하고, 아래 흐름의
+`crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke 1회가 성공하면
+automatic schedule을 활성화한다. 이후 canary와 shadow에서 실측하며 조정한다.
 
 ### G1. 실제 incremental discovery
 
-상태(2026-07-12): local 기본 흐름과 coverage safety를 구현했고 Oracle 적용 전이다. 다음 계약으로 이미
+상태(2026-07-12): schema v3 흐름과 coverage safety를 Oracle에 적용했다. 다음 계약으로 이미
 아는 최신 20건을 6시간마다 전부 재요청하지 않는다.
 
 1. listing metadata에서 새 identity 또는 title/category/comment count 변경만 frontier에 넣는다.
 2. views처럼 자연히 계속 변하는 값은 detail 재수집 trigger로 쓰지 않는다.
 3. 공지를 제외한 연속 known+unchanged row를 overlap boundary로 판정한다.
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
-5. 주 1회 bounded inventory audit가 boundary 오류를 보완한다.
+5. 최초에는 bounded inventory window가 board cursor를 매 cycle 재개하고, 전 board 완료 뒤 주 1회
+   listing audit가 boundary 오류를 보완한다.
 
 받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
 scheduling만 cap한다. schema v3의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서
-재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. dead는 `network_error` 또는
-`parse_drift`만 오류별·건수 제한으로 명시 재개한다. 코드/migration 회귀는 통과했지만 live canonical은
-schema v2이므로 Oracle migration과 실제 cursor 진행 증거가 남았다.
+재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. 전 board 최초 inventory가 끝나면
+목차-only pending/retry backlog를 bounded bootstrap recovery로 비운 뒤 cycle당 due recovery로 전환한다.
+inventory는 listing coverage이며 기존 detail 전체를 다시 요청하지 않는다. dead는 `network_error` 또는
+`parse_drift`만 오류별·건수 제한으로 명시 재개한다.
 
 ### G2. board cycle command
 
@@ -174,9 +178,10 @@ schema v2이므로 Oracle migration과 실제 cursor 진행 증거가 남았다.
 결과를 분리 기록하고 network/listing failure는 다음 board로 넘기되, session/auth failure는 전체
 cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Celery/Redis를 추가하지 않는다.
 
-상태(2026-07-12): `scripts.crawl_cycle` local core와 P0 failure test 완료, 새 코드의 Oracle canary 및
-systemd 연결 전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
-구현됐다. recovery는 2시간 graceful budget과 24시간 completion marker로 하루 한 번만 실행한다.
+상태(2026-07-12): `scripts.crawl_cycle` local core와 P0 failure test, Oracle application/systemd unit 설치를
+완료했고 schedule 활성화·automatic bootstrap smoke 전이다. 6시간 `redstm-schedule.timer`와
+crawl→recovery→변경 publish orchestration source는 구현됐다. recovery는 2시간 graceful budget과
+cycle당 최대 100건으로 제한하며 frontier due time이 재시도 간격을 결정한다.
 cycle은 4시간 남은 budget을 각 순차 worker의 Scrapy graceful timeout으로 전달하고 그보다 60초 긴
 subprocess hard timeout을 둔다. timeout은 `partial/worker_timeout`으로 보고한다.
 세션/도달성 preflight 뒤 30분 board 경계에서 session을 재검증하고 worker는 순차 실행한다.
@@ -186,25 +191,29 @@ board 경계 breaker와 더불어 sync 내부도 첫 auth/parse drift 또는 같
 
 cycle은 `.cycle.lock`과 `.sync.lock`을 끝까지 함께 소유해 standalone writer가 board 사이에 끼어들지
 못한다. non-HTML/invalid URL/pipeline exception의 terminal lease transition도 local 회귀로 고정했다.
-장기 timer gate에는 이 코드의 실제 느린 서버 canary, schema v3 migration과 systemd hard-timeout
-상호작용 증거가 남았다. 해결은 board 병렬화가 아니라 잘못된 요청을 더 일찍 멈추는 것이다.
+schedule 활성화 뒤 실제 느린 서버에서 systemd hard-timeout 상호작용을 canary로 관찰한다. 해결은 board
+병렬화가 아니라 잘못된 요청을 더 일찍 멈추는 것이다.
 
 ### G3. delta release/publish
 
 상태(2026-07-12): `c66aa3b`로 local delta upload/readback과 ledger mismatch full-verify 강등을
-구현했다. authenticated Worker smoke rollback과 Oracle canary 전이며, GC는 7일 window 뒤 A5다.
+구현했다. 다만 한 글 변경 export가 600초에 6,000/282,240건만 재검사하고 중단돼 bounded exporter와
+end-to-end delta는 미완료다. authenticated Worker smoke rollback과 Oracle canary 전이며, GC는 7일
+window 뒤 A5다.
 첫 baseline publish 이후에는 이전 verified release와 새 release의 참조 차이를 계산해 새 post
 object, 변경된 board/search/collection object와 release manifest만 올린다.
 
 - remote delete 없이 append + pointer-last가 기본이다.
 - 새 object는 size/hash readback을 통과한 뒤에만 `release.json`을 바꾼다.
 - local/remote release ledger가 없거나 불일치하면 증분을 추정하지 않고 full verify로 강등한다.
+- writable ledger는 static root의 `/srv/redstm/static/.publish-ledger.json`에 두되 R2 copy/check에서는
+  제외한다. 이전처럼 `/srv/redstm` 바로 아래에 두면 `redstm` user가 atomic 갱신할 수 없다.
 - 오래된 search/board manifest GC는 최근 2개 release와 7일 rollback window 뒤 별도 bounded
   maintenance job으로만 수행한다.
-- publish는 매 crawl 직후가 아니라 변경이 있을 때 하루 최대 1회로 합친다.
+- publish는 `publish.pending`이 있을 때만 실행하며 실패하면 다음 6시간 cycle에서 다시 시도한다.
 
-상태 marker는 `/srv/redstm/state/publish.pending`과 `publish.completed`의 atomic create/mtime만
-사용한다. 하루 window가 아직 열리지 않았으면 pending marker를 보존해 다음 cycle에서 처리한다.
+상태 marker는 `/srv/redstm/state/publish.pending` 하나만 atomic create/remove한다. export, upload,
+pointer readback 중 하나라도 실패하면 marker를 보존하고 성공한 뒤에만 제거한다.
 
 ### G4. 배포·복구 도구
 
@@ -214,12 +223,12 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 2. versioned application release upload
 3. remote dependency sync와 smoke
 4. canonical은 `.partial` 전송 -> bytes/hash 확인 -> atomic rename
-5. systemd unit 검증과 daemon reload
-6. canary만 수동 시작; timer enable은 별도 gate
+5. systemd unit 검증과 daemon reload, control heartbeat timer baseline enable
+6. crawl→bounded export→publish/readback→rollback rehearsal smoke 성공 뒤 schedule timer enable
 7. 실패 시 이전 `/opt/redstm/current` symlink로 application rollback
 
-DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy command의 암묵적 부작용으로
-넣지 않는다.
+DB migration, remote DB 삭제, schedule timer enable, legacy service stop은 deploy command의 암묵적
+부작용으로 넣지 않는다. control heartbeat timer enable만 release install baseline이다.
 
 schema version을 올릴 때는 새 schema를 이해하는 application release를 canonical이 이전 version일 때
 먼저 두 번 순차 배포해 `current`와 `previous`를 모두 호환 release로 만든 뒤 migration한다. rollback은
@@ -227,20 +236,19 @@ symlink를 바꾸기 전에 previous release의 `MIGRATIONS`와 canonical의 `sc
 `user_version`을 읽기 전용 비교하고, 모르는 version이면 거부한다. 따라서 schema v3 migration 뒤
 v2-only application으로 돌아가는 rollback은 허용하지 않는다.
 
-상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 application
-release `4edc1c9868045454c961cd3f038eb0a66a4cb010`을 배포했다. resumable transfer는 remote offset 재개,
+상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 schema-v3-compatible
+application을 배포했다. resumable transfer는 remote offset 재개,
 unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
-full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 현재 live doctor 결과는 `ok=true`, schema v2,
-application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
+full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 현재 live doctor 결과는 `ok=true`, schema v3,
+`quick_check=ok`, foreign key 0, expired lease 0,
 missing/invalid/orphan WARC 0이다. root free는 약 82GB다. R2/TypeMoon credential은 주입·권한과
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
-Access service credential, route-role과 D1 idle heartbeat smoke는 완료됐다. local source는 inventory
-cursor용 schema v3으로 올라갔으므로 새 application 배포 때 migration을 별도 명시 실행하고 doctor로
-version 3을 확인해야 한다. **남음** — schema v3 migration과 새 bounded recovery·delta canary다.
-control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
+Access service credential, route-role과 D1 idle heartbeat smoke, schema v3 명시 migration과 doctor는
+완료됐다. **남음** — control heartbeat baseline enable과 authenticated bounded smoke 뒤 schedule
+activation, 새 bounded recovery·delta canary다.
 최신 배포 뒤 recovery/cycle/control module `--help` smoke와 canonical/WARC partial 0을 확인했고,
 DB scan이나 긴 canary는 실행하지 않았다.
 
@@ -259,14 +267,15 @@ Oracle은 [08](08_operations_control_plane.md)의 runner endpoint만 사용한�
 별도 SQLite command ledger와
 10MiB/10,000-event outbox, 5초 connect/15초 total retry transport, 60초 circuit breaker, fixed 5-action
 dispatcher, 30초 heartbeat/lease, atomic pause/publish marker, crash terminal replay와 board summary를
-구현했다. `04765c12`에서 control credential 3개가 모두 없는 scheduled run도 offline transport와
-local outbox로 계속되며, 일부만 설정된 경우는 오설정으로 실패하도록 고정했다. subprocess
+구현했다. control credential이 누락되거나 일부만 설정된 scheduled run도 offline transport와
+local outbox로 crawl을 계속한다. Access 401/403도 일시적인 control 단절로 분류해 credential 복구 뒤
+replay하고, interactive control poll은 완전한 credential이 없으면 실패한다. subprocess
 stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
 실행 명령에 들어가지 않는다. service token 주입, runner 200/service→ops 302/anonymous→runner 403,
 D1 idle heartbeat와 authenticated `/ops`는 통과했다. duplicate command와 D1 outage/replay 전이므로
 G5 전체를 live 완료로 표시하지 않는다. 원본 요청 없는 pause/resume marker canary는 각 명령을 한
-번 claim해 succeeded로 끝냈고 marker 생성·해제와 `/ops` paused→idle 복귀를 확인했다. control/schedule
-timer는 계속 disabled/inactive다. 제어 URL failure injection은 paused scheduled heartbeat 1건을
+번 claim해 succeeded로 끝냈고 marker 생성·해제와 `/ops` paused→idle 복귀를 확인했다. 제어 URL
+failure injection은 paused scheduled heartbeat 1건을
 outbox에 보존했고 정상 oneshot이 이를 비운 뒤 D1 idle로 복귀했다. 실제 crawl 중 outage와
 duplicate command는 아직 live 미검증이다. expired pause command는 claim 0회, runner 미지정 상태로
 expired 처리되어 marker를 만들지 않았다.
@@ -275,8 +284,12 @@ expired 처리되어 marker를 만들지 않았다.
 
     scheduled or bounded manual command
       → preflight
-      → crawling
-      → recovery
+      → latest-page incremental
+      → any enabled board inventory incomplete?
+          yes → bounded inventory from each board cursor
+          no  → bootstrap outline-only backlog remains?
+                  yes → bounded bootstrap recovery
+                  no  → normal bounded recovery for due items
       → verifying
       → changed?
           no → report + heartbeat
@@ -293,19 +306,20 @@ pointer 교체 뒤 실패하면 이전 pointer로 복귀한다.
 
 ## 8. 기본 schedule
 
-small batch, bounded full-window와 24시간 반복 canary가 통과한 뒤 다음에서 시작하고 실측으로만 조정한다.
+schema v3 doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` smoke 1회가 통과하면 다음 값으로 schedule을
+시작한다. 24시간 canary와 7일 shadow는 활성화된 자동 운전의 관찰 구간이며 시작 전 대기 gate가 아니다.
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
 | incremental board cycle | 6시간마다 | overlap boundary, concurrency 1, 10초 delay |
-| legacy retry recovery | 하루 최대 100건·2시간 | AA -> 창작 -> 팬픽 -> 나머지, sync와 직렬; 24시간 marker |
-| doctor | 각 cycle 뒤 lightweight + 하루 1회 full | full DB scan은 crawl과 겹치지 않음 |
-| canonical snapshot | 성공 변경 뒤 하루 최대 1회 | local staging 2개만 유지 |
-| R2 delta publish | 변경 시 하루 최대 1회 | validated object first, pointer last |
-| bounded board inventory | 주 1회 | detail 전수 재검증 아님; durable page cursor로 다음 window 재개 |
+| bootstrap recovery | 최초 inventory 완료 뒤 매 cycle bounded drain | 목차-only pending/retry, sync와 직렬 |
+| normal retry recovery | cycle당 최대 100건·2시간 | AA -> 창작 -> 팬픽 -> 나머지, sync와 직렬; frontier due time |
+| R2 delta publish | 변경 시 매 cycle 재시도 | validated object first, pointer last; 성공 뒤 pending 제거 |
+| bounded board inventory | 최초 완료까지 매 cycle, 이후 주 1회 | listing coverage; detail 전수 재검증 아님; durable page cursor 재개 |
 
 systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전원이 오래 꺼졌다고 누락 횟수만큼
 연속 실행하지 않는다. 서비스가 아직 active면 같은 unit의 중복 실행을 만들지 않는다.
+full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아니라 별도 운영 명령이다.
 
 ### 8.1 운영 파라미터 시작값
 
@@ -379,26 +393,27 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - local canonical을 resumable transfer하고 bytes/hash/SQLite doctor를 검증한다.
 - secret file은 값 노출 없이 존재·권한만 검사한다.
 - Access service token route-role과 D1 status/event smoke를 검증한다.
-- timer 없이 manual canary만 실행한다.
+- `redstm-control.timer`를 heartbeat/fixed-command poll baseline으로 enable한다.
+- `redstm-schedule.timer`는 crawl→bounded export→publish/readback→rollback rehearsal smoke 성공 뒤 enable한다.
 
-상태(2026-07-12): **application/canonical 완료** — application/user/path/runtime와 schedule unit,
-application `4edc1c9868045454c961cd3f038eb0a66a4cb010`, resumable canonical transfer와 atomic activation,
+상태(2026-07-12): **application/canonical/schema v3 완료** — application/user/path/runtime와 schedule unit,
+resumable canonical transfer와 atomic activation,
 위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 82GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
 Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bounded partial은 WARC partial 0,
 frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 selected 100 중 scheduled 4/
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
-최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 timer
-disabled/inactive를 재확인했다. pause/resume marker command 왕복도 통과했다. **남음** — 새 application과
-schema v3 명시 migration, bounded full-window·delta canary와 duplicate command, 실제 crawl 중 outage
+최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 schema v3 doctor를
+확인했다. pause/resume marker command 왕복도 통과했다. **남음** — control heartbeat baseline enable,
+crawl→bounded export→publish/readback→rollback rehearsal smoke 뒤 schedule 활성화, duplicate command와 실제 crawl 중 outage
 failure injection이다. expired
 command는 live 통과했다.
-control/schedule timer는 disabled/inactive 상태를 유지한다.
 
-### Phase O2 — canary와 shadow
+### Phase O2 — 자동 schedule과 관찰
 
-- small batch -> bounded full-window -> 24시간 반복 canary를 통과한다.
+- crawl→bounded export→publish/readback→rollback rehearsal smoke가 성공하면 schedule을 enable한다.
+- 활성화 상태에서 24시간 반복 canary와 7일 shadow를 차례로 관찰한다.
 - 요청 간격, p95 latency, 429/timeout, auth, parse drift, WARC partial, memory/disk를 기록한다.
 - 7일 동안 legacy data와 새 capture 결과를 비교한다.
 - Cloudflare viewer와 R2 delta release를 실제로 읽는다.
@@ -409,8 +424,8 @@ control/schedule timer는 disabled/inactive 상태를 유지한다.
 - standing approval와 아래 gate를 근거로 PM2 legacy viewer, Nginx와 BookToki helper를
   중지/disable한다. 실행 직전 unit/listener와 rollback command를 report에 기록한다.
 - 80/443/3000/1080/9222와 host-interface 111/631 listener가 사라졌는지 확인하고 SSH 22만 유지한다.
-- ReDSTM timer와 D1 heartbeat/stale reporting을 enable한다.
-- Operations heartbeat와 fixed command poll을 enable한다.
+- 이미 활성화된 ReDSTM schedule, Operations heartbeat와 fixed command poll이 cutover 중에도 유지되는지
+  확인한다.
 - 이전 application directory는 즉시 삭제하지 않고 7일 rollback window 동안 보존한다.
 
 ### Phase O4 — data cleanup

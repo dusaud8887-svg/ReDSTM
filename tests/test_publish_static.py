@@ -97,7 +97,11 @@ def test_publish_is_noop_when_remote_pointer_matches(
 
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         commands.append(command)
-        return SimpleNamespace(stdout=body)
+        return SimpleNamespace(
+            stdout=json.dumps({"bytes": 1000, "count": 10}).encode()
+            if command[1] == "size"
+            else body
+        )
 
     monkeypatch.setattr(
         "scripts.publish_static.validate_release",
@@ -105,10 +109,48 @@ def test_publish_is_noop_when_remote_pointer_matches(
     )
     report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
 
-    assert [command[1] for command in commands] == ["cat"]
+    assert [command[1] for command in commands] == ["cat", "size"]
     assert report["mode"] == "noop"
     assert report["pointer_verified"] is True
+    assert report["ledger_written"] is True
     assert report["new_bytes"] == report["new_objects"] == 0
+    assert json.loads((tmp_path / ".publish-ledger.json").read_text(encoding="utf-8"))[
+        "release_key"
+    ] == release_key
+
+
+def test_publish_noop_reuses_matching_ledger_without_remote_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_key, body = _release(tmp_path)
+    (tmp_path / ".publish-ledger.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "remote": "r2:redstm-archive",
+                "release_key": release_key,
+                "remote_bytes": 1000,
+                "remote_objects": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(stdout=body)
+
+    monkeypatch.setattr(
+        "scripts.publish_static.validate_release",
+        lambda root, release: {"release_key": release_key, "post_count": 2},
+    )
+
+    report = publish_static(tmp_path, "r2:redstm-archive", runner=run)
+
+    assert [command[1] for command in commands] == ["cat"]
+    assert report["mode"] == "noop"
+    assert report["ledger_written"] is True
 
 
 def test_publish_uses_verified_local_delta_ledger(
@@ -116,7 +158,7 @@ def test_publish_uses_verified_local_delta_ledger(
 ) -> None:
     previous_key, previous_body, previous_keys = _graph_release(tmp_path, "a")
     release_key, release_body, release_keys = _graph_release(tmp_path, "b")
-    ledger = tmp_path.parent / f".{tmp_path.name}.publish-ledger.json"
+    ledger = tmp_path / ".publish-ledger.json"
     ledger.write_text(
         json.dumps(
             {

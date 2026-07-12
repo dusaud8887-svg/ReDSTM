@@ -2,16 +2,13 @@
 Description=ReDSTM scheduled crawl, recovery, and delta publish
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=/etc/redstm/access.env
-ConditionPathExists=/srv/redstm/canonical/archive.sqlite
-ConditionPathExists=/srv/redstm/private/session.json
 
 [Service]
 Type=oneshot
 User=redstm
 Group=redstm
 WorkingDirectory=/opt/redstm/current
-EnvironmentFile=/etc/redstm/access.env
+EnvironmentFile=-/etc/redstm/access.env
 EnvironmentFile=-/etc/redstm/runtime.env
 Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf
 ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner --scheduled

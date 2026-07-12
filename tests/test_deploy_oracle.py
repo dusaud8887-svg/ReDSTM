@@ -135,7 +135,7 @@ def test_canonical_activation_ssh_does_not_inherit_parent_stdin(tmp_path: Path) 
     assert activated is True
 
 
-def test_install_assets_never_enable_or_touch_legacy() -> None:
+def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     root = Path(__file__).resolve().parents[1]
     installer = (root / "deploy" / "oracle" / "install_release.sh").read_text(encoding="utf-8")
     service = (root / "deploy" / "oracle" / "redstm-control.service").read_text(encoding="utf-8")
@@ -147,7 +147,8 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
         encoding="utf-8"
     )
 
-    assert "systemctl enable" not in installer
+    assert "systemctl enable --now redstm-control.timer" in installer
+    assert "enable --now redstm-schedule.timer" not in installer
     assert '"uv ${UV_VERSION}" ||' in installer
     assert installer.count("UV_NO_CONFIG=1") == 2
     assert installer.count('PYTHONPATH="$CURRENT"') == 3
@@ -156,7 +157,7 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "/home/ubuntu" not in installer
     assert "pm2" not in installer
     assert "nginx" not in installer
-    assert "EnvironmentFile=/etc/redstm/access.env" in service
+    assert "EnvironmentFile=-/etc/redstm/access.env" in service
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in service
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in schedule_service
     assert "ProtectSystem=strict" in service
@@ -165,7 +166,7 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "RuntimeMaxSec" not in service
     assert "Persistent=true" in timer
     assert "--scheduled" in schedule_service
-    assert "ConditionPathExists=/srv/redstm/canonical/archive.sqlite" in schedule_service
+    assert "ConditionPathExists" not in schedule_service
     assert "00,06,12,18:17:00 UTC" in schedule_timer
     assert "Persistent=true" in schedule_timer
     assert "redstm-schedule.timer" in installer

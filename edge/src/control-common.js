@@ -7,6 +7,15 @@ const counterNames = new Set([
   "pending",
   "retry",
   "dead",
+  "outline_only",
+  "frontier_pending",
+  "frontier_running",
+  "frontier_retry",
+  "frontier_done",
+  "frontier_dead",
+  "inventory_total_boards",
+  "inventory_completed_boards",
+  "inventory_in_progress_boards",
 ]);
 
 export function envelope(requestId, data, status = 200) {
@@ -49,6 +58,12 @@ export function runView(row) {
     boards_failed: Number(row.boards_failed ?? 0),
     release_id: row.release_id ?? null,
   };
+  try {
+    const summary = JSON.parse(row.safe_summary_json || "{}");
+    run.safe_summary_code = typeof summary?.code === "string" ? summary.code : null;
+  } catch {
+    run.safe_summary_code = null;
+  }
   if (row.event_sequence != null) {
     let counters = {};
     try {

@@ -1,17 +1,27 @@
-import { envelope, failure, runView } from "./control-common.js";
+import { envelope, failure, runView, validCounters } from "./control-common.js";
 
+const ACTIVE_RUN_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const identifierPattern = /^[a-zA-Z0-9_.:-]{1,128}$/;
 
 function boardView(row) {
   return {
     board_id: row.board_id,
+    board_name: row.board_name ?? null,
+    group_name: row.group_name ?? null,
     last_scanned_at: row.last_scanned_at ?? null,
     last_outcome: row.last_outcome ?? null,
     discovered: Number(row.discovered ?? 0),
     changed: Number(row.changed ?? 0),
     pending: Number(row.pending ?? 0),
+    running: Number(row.running ?? 0),
     retry: Number(row.retry ?? 0),
+    done: Number(row.done ?? 0),
     dead: Number(row.dead ?? 0),
+    inventory_next_page: row.inventory_next_page == null
+      ? null
+      : Number(row.inventory_next_page),
+    last_inventory_at: row.last_inventory_at ?? null,
+    inventory_pass_started_at: row.inventory_pass_started_at ?? null,
     warning_code: row.warning_code ?? null,
   };
 }
@@ -64,7 +74,8 @@ async function runsPage(env, requestId, url) {
        e.counters_json AS event_counters_json, e.safe_message AS event_safe_message
      FROM runs AS r
      LEFT JOIN run_events AS e ON e.run_id = r.run_id AND e.sequence = (
-       SELECT MAX(latest.sequence) FROM run_events AS latest WHERE latest.run_id = r.run_id
+       SELECT MAX(latest.sequence) FROM run_events AS latest
+       WHERE latest.run_id = r.run_id AND latest.step <> 'archive_snapshot'
      )
      ${cursorWhere}
      ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?`,
@@ -163,16 +174,65 @@ async function releases(env, requestId) {
 }
 
 async function overview(env, requestId) {
-  const [runner, run, queued] = await Promise.all([
+  const issueSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const [runner, activeRow, latest, automatic, issue, queued, snapshot] = await Promise.all([
     env.CONTROL_DB.prepare("SELECT * FROM runner_status WHERE id = 1").first(),
-    env.CONTROL_DB.prepare("SELECT * FROM runs ORDER BY started_at DESC, run_id DESC LIMIT 1").first(),
+    env.CONTROL_DB.prepare(
+      "SELECT * FROM runs WHERE state = 'running' ORDER BY started_at DESC, run_id DESC LIMIT 1",
+    ).first(),
+    env.CONTROL_DB.prepare(
+      "SELECT * FROM runs WHERE state <> 'running' ORDER BY started_at DESC, run_id DESC LIMIT 1",
+    ).first(),
+    env.CONTROL_DB.prepare(
+      "SELECT * FROM runs WHERE kind = 'scheduled' ORDER BY started_at DESC, run_id DESC LIMIT 1",
+    ).first(),
+    env.CONTROL_DB.prepare(
+      `SELECT issue.*,
+          (
+            SELECT MIN(recovery.started_at) FROM runs AS recovery
+            WHERE recovery.kind = 'scheduled' AND recovery.state = 'succeeded'
+              AND recovery.started_at > issue.started_at
+          ) AS recovered_at
+       FROM runs AS issue
+       WHERE issue.state IN ('partial', 'failed') AND issue.started_at >= ?
+         AND COALESCE(json_extract(issue.safe_summary_json, '$.code'), '') <> 'schedule_paused'
+       ORDER BY issue.started_at DESC, issue.run_id DESC LIMIT 1`,
+    ).bind(issueSince).first(),
     env.CONTROL_DB.prepare(
       "SELECT COUNT(*) AS count FROM commands WHERE state IN ('queued', 'claimed')",
     ).first(),
+    env.CONTROL_DB.prepare(
+      `SELECT counters_json, recorded_at FROM run_events
+       WHERE step = 'archive_snapshot'
+       ORDER BY recorded_at DESC, run_id DESC, sequence DESC LIMIT 1`,
+    ).first(),
   ]);
+  const activeStartedAt = Date.parse(activeRow?.started_at ?? "");
+  const active = Number.isFinite(activeStartedAt) && activeStartedAt >= Date.now() - ACTIVE_RUN_MAX_AGE_MS
+    ? activeRow : null;
+  let archiveSnapshot = null;
+  try {
+    const counters = JSON.parse(snapshot?.counters_json || "{}");
+    if (snapshot && typeof snapshot.counters_json === "string" && validCounters(counters)) {
+      archiveSnapshot = { recorded_at: snapshot.recorded_at, counters };
+    }
+  } catch {
+    // Invalid historical telemetry is omitted rather than exposed.
+  }
+  const recentIssue = issue ? runView(issue) : null;
+  if (recentIssue) {
+    recentIssue.recovered_at = issue.recovered_at ?? null;
+    recentIssue.recovered = Boolean(issue.recovered_at);
+  }
   return envelope(requestId, {
     runner: runner ?? null,
-    latest_run: run ?? null,
+    schedule_enabled: Boolean(runner?.next_scheduled_at),
+    schedule_paused: runner?.state === "paused",
+    active_run: active ? runView(active) : null,
+    latest_run: latest ? runView(latest) : null,
+    latest_automatic_run: automatic ? runView(automatic) : null,
+    recent_issue: recentIssue,
+    archive_snapshot: archiveSnapshot,
     active_commands: Number(queued?.count ?? 0),
   });
 }

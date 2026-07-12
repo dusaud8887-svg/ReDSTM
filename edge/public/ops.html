@@ -12,9 +12,9 @@
     <aside class="ops-rail" aria-label="Operations navigation">
       <a class="ops-wordmark" href="/" aria-label="ReDSTM Reader">Re</a>
       <nav>
-        <a href="#overview"><b>개요</b></a>
+        <a href="#overview"><b>상태</b></a>
+        <a href="#collection"><b>수집</b></a>
         <a href="#runs"><b>실행</b></a>
-        <a href="#boards"><b>보드</b></a>
         <a href="#controls"><b>제어</b></a>
       </nav>
       <a class="reader-link" href="/">Reader</a>
@@ -36,7 +36,7 @@
 
       <section id="overview" class="overview" aria-labelledby="overview-title">
         <div class="overview-copy">
-          <p id="overview-kicker" class="eyebrow">운영 상태</p>
+          <p id="overview-kicker" class="eyebrow">자동 수집</p>
           <h2 id="overview-title">상태 확인 중</h2>
           <p id="overview-reason" class="overview-reason">운영 상태를 불러오고 있습니다.</p>
         </div>
@@ -46,10 +46,11 @@
           <div><strong id="reader-state">Reader 확인 중</strong><small id="reader-release">활성 보존본을 확인하고 있습니다.</small></div>
         </div>
         <dl class="overview-facts">
-          <div><dt>마지막 신호</dt><dd id="last-heartbeat">—</dd></div>
-          <div><dt id="active-step-label">현재 단계</dt><dd id="active-step">—</dd></div>
-          <div><dt id="next-schedule-label">다음 실행</dt><dd id="next-schedule">—</dd></div>
-          <div><dt id="disk-free-label">남은 디스크</dt><dd id="disk-free">—</dd></div>
+          <div><dt>자동 예약</dt><dd id="automation-mode">—</dd></div>
+          <div><dt>수집기 신호</dt><dd id="last-heartbeat">—</dd></div>
+          <div><dt>마지막 자동 실행</dt><dd id="last-automatic">—</dd></div>
+          <div><dt id="next-schedule-label">다음 자동 실행</dt><dd id="next-schedule">—</dd></div>
+          <div><dt id="active-step-label">현재 작업</dt><dd id="active-step">—</dd></div>
         </dl>
         <div class="warning-line" id="warning-line" hidden>
           <span aria-hidden="true"></span><strong id="warning-label"></strong>
@@ -58,9 +59,9 @@
 
       <section class="active-strip" aria-labelledby="active-title">
         <div>
-          <p class="eyebrow">활성 또는 최근 실행</p>
+          <p id="active-kicker" class="eyebrow">현재 작업</p>
           <h2 id="active-title">실행 기록 확인 중</h2>
-          <p id="active-reason">D1 실행 telemetry를 확인하고 있습니다.</p>
+          <p id="active-reason">수집기 실행 기록을 확인하고 있습니다.</p>
         </div>
         <dl>
           <div><dt>시작</dt><dd id="latest-start">—</dd></div>
@@ -70,9 +71,50 @@
         </dl>
       </section>
 
+      <section id="collection" class="release-section" aria-labelledby="collection-title">
+        <header class="section-heading">
+          <div><span>02</span><h2 id="collection-title">수집 현황</h2></div>
+          <p id="collection-source">읽을 수 있는 글과 남은 수집 작업을 함께 봅니다.</p>
+        </header>
+        <dl class="collection-kpis">
+          <div><dt>Reader 글</dt><dd id="reader-posts">—</dd><small>현재 Reader에서 바로 읽을 수 있는 글</small></div>
+          <div><dt>목차만 있는 글</dt><dd id="outline-only">—</dd><small>글 번호와 제목은 있으나 본문이 아직 없는 글</small></div>
+          <div><dt>수집된 댓글</dt><dd id="collected-comments">—</dd><small>AA 댓글도 원문 형태로 Reader에 표시</small></div>
+          <div><dt>최초 전체수집</dt><dd id="inventory-progress">—</dd><small id="inventory-detail">게시판별 전체 목록 확인 이력 집계</small></div>
+        </dl>
+        <dl class="queue-progress">
+          <div><dt>다음 자동 처리</dt><dd id="frontier-waiting">—</dd><small>본문 대기·처리 중·재시도 항목</small></div>
+          <div><dt>사람 확인 필요</dt><dd id="frontier-dead">—</dd><small>자동 재시도를 마친 항목</small></div>
+        </dl>
+        <details class="release-evidence">
+          <summary>데이터 기준 보기</summary>
+          <div class="release-ledger">
+            <div><span>현재 Reader 보존본</span><strong id="release-current">확인 중</strong><small id="release-current-time">—</small></div>
+            <div><span>이전 보존본 정보</span><strong id="release-previous">—</strong><small id="release-previous-time">—</small></div>
+            <dl id="release-counts"></dl>
+          </div>
+          <p id="archive-as-of" class="source-note">Oracle 원본 DB 집계가 아직 보고되지 않았습니다.</p>
+        </details>
+      </section>
+
+      <section class="issue-strip" aria-labelledby="issue-title" data-state="loading">
+        <div>
+          <p class="eyebrow">최근 7일 문제</p>
+          <h2 id="issue-title">실패 기록 확인 중</h2>
+          <p id="issue-reason">최근 일부 완료 또는 실패 실행을 확인하고 있습니다.</p>
+          <a id="issue-link" class="issue-link" href="#runs" hidden>실행 기록에서 확인</a>
+        </div>
+        <dl id="issue-metrics">
+          <div><dt>발생</dt><dd id="issue-time">—</dd></div>
+          <div><dt>실행</dt><dd id="issue-kind">—</dd></div>
+          <div><dt>게시글 실패</dt><dd id="issue-posts">—</dd></div>
+          <div><dt>게시판 영향</dt><dd id="issue-boards">—</dd></div>
+        </dl>
+      </section>
+
       <section id="runs" class="data-section" aria-labelledby="runs-title">
         <header class="section-heading">
-          <div><span>02</span><h2 id="runs-title">실행 기록</h2></div>
+          <div><span>03</span><h2 id="runs-title">실행 기록</h2></div>
           <p>실패와 일부 완료는 펼쳐서 이유를 확인합니다.</p>
         </header>
         <div id="runs-list" class="run-list" aria-live="polite"></div>
@@ -81,44 +123,32 @@
 
       <section id="boards" class="data-section" aria-labelledby="boards-title">
         <header class="section-heading">
-          <div><span>03</span><h2 id="boards-title">게시판과 대기열</h2></div>
-          <p>최근 실행 결과와 현재 frontier 상태입니다.</p>
+          <div><span>04</span><h2 id="boards-title">게시판별 진척</h2></div>
+          <p>문제와 최초 전체수집 진행 중인 게시판을 먼저 봅니다.</p>
         </header>
         <div id="boards-list" class="board-list" aria-live="polite"></div>
         <button id="boards-more" class="more-button" type="button" hidden>다음 게시판 보기</button>
       </section>
 
-      <section class="release-section" aria-labelledby="release-title">
-        <header class="section-heading">
-          <div><span>04</span><h2 id="release-title">활성 릴리스</h2></div>
-          <p>R2 활성 포인터가 가리키는 읽기 전용 보존본</p>
-        </header>
-        <div class="release-ledger">
-          <div><span>현재 Reader 보존본</span><strong id="release-current">확인 중</strong><small id="release-current-time">—</small></div>
-          <div><span>이전 릴리스 metadata</span><strong id="release-previous">—</strong><small id="release-previous-time">—</small></div>
-          <dl id="release-counts"></dl>
-        </div>
-      </section>
-
       <section id="controls" class="control-section" aria-labelledby="controls-title">
         <header class="section-heading">
-          <div><span>05</span><h2 id="controls-title">제한된 제어</h2></div>
-          <p id="control-summary">자동 실행이 기본입니다. 필요한 경우에만 고정된 작업을 요청합니다.</p>
+          <div><span>05</span><h2 id="controls-title">수동 작업</h2></div>
+          <p id="control-summary">상태를 확인한 뒤 필요한 작업만 요청합니다.</p>
         </header>
         <div class="control-list">
-          <button type="button" data-action="sync-now" disabled><span>지금 동기화</span><small>1회 정상 증분 수집</small></button>
-          <button type="button" data-action="retry-batch" disabled><span>재시도 처리</span><small>처리 시각이 된 항목 최대 100건</small></button>
-          <button type="button" data-action="publish-if-changed" disabled><span>변경분 게시</span><small>변경 없거나 하루 게시 간격 전이면 실행 없음</small></button>
+          <button type="button" data-action="sync-now" disabled><span>증분 수집 지금 실행</span><small>46개 게시판의 최신 페이지를 한 번 확인</small></button>
+          <button type="button" data-action="retry-batch" disabled><span>본문 대기 재시도</span><small>처리 시각이 된 항목 최대 100건</small></button>
+          <button type="button" data-action="publish-if-changed" disabled><span>변경분 Reader 반영</span><small>새 변경이 있을 때만 검증 후 반영</small></button>
           <button type="button" data-action="pause-after-current" disabled><span>현재 작업 뒤 일시정지</span><small>진행 중 요청과 저장 작업은 완료</small></button>
-          <button type="button" data-action="resume-schedule" disabled><span>예약 재개</span><small>일시정지 표시만 해제</small></button>
+          <button type="button" data-action="resume-schedule" disabled><span>일시정지 해제</span><small>일시정지 상태에서 다음 자동 실행을 허용</small></button>
         </div>
         <div id="command-result" class="command-result" aria-live="polite" hidden></div>
       </section>
     </main>
 
-    <dialog id="command-dialog">
+    <dialog id="command-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-impact">
       <form method="dialog">
-        <p class="eyebrow">BOUNDED COMMAND</p>
+        <p class="eyebrow">안전한 단일 작업</p>
         <h2 id="dialog-title">작업 확인</h2>
         <p id="dialog-impact"></p>
         <div class="dialog-actions">

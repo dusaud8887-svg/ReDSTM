@@ -267,6 +267,7 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
     requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
 
     assert [request.url for request in requests] == [f"{url}?page=2"]
+    assert "listing_parse_failed" in spider.failure_codes
 
     inventory = TypeMoonSpider(
         board_id="write_free21",

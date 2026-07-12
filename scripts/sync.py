@@ -160,7 +160,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                     """
                     UPDATE boards SET inventory_next_page = ?,
                         last_inventory_at = CASE
-                            WHEN ? THEN CURRENT_TIMESTAMP ELSE last_inventory_at
+                            WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                            ELSE last_inventory_at
                         END
                     WHERE board_id = ?
                     """,

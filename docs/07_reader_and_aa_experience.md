@@ -27,14 +27,15 @@ Reader shell
 감싸지 않는다. 설정 source는 versioned state 하나이며 AA compact controls와 상세 dialog가 같은
 값을 조작한다.
 
-현재 Signal Archive Reader는 stable identity/deep link, Home/이어읽기, mobile single-plane,
+현재 local Signal Archive Reader는 stable identity/deep link, search-first Home/이어읽기, mobile single-plane,
 prose typography, AA 9–24px·10–300% zoom·세 preset·680/800 canvas·source style/background,
 progress·immersive·keyboard·comments/end navigation과 per-post mode를 구현했다. self-hosted font,
 compact toolbar, loading/offline/Access-expired와 collection missing 상태도 포함하며 Playwright fixture는
-1440/768/390/320px에서 통과했다. 큰 본문 수신 진행률, AA 배경 휘도별 단색 잉크, 가로 overflow
-fade/1회 힌트, 목록 상태 badge, `/settings` route, 상태 가져오기 검토와 검색 URL 복원은 Worker
-`58a70799`에 배포됐다. authenticated production data는 통과했고 실제 Android와 사용자 시각
-acceptance가 남았다.
+1440/768/390/320px에서 통과했다. 홈/탐색/보관함 IA, `/saved?view=recent`, AA/소설 filter,
+current-release 미완독 후보, catalog scroll state, 직접 저장, 접근 가능한 progress/AA stage, AA 댓글
+크기와 4단계 thread cap, 모든 폭의 Operations link는 local bundle에 반영됐다. live Worker는 이전
+bundle이므로 새 Reader/Operations authenticated smoke, 실제 Android full-index memory/Back/background/
+pinch/font와 사용자 시각 acceptance가 남았다.
 
 ## 2. 공통 reader 상태
 
@@ -80,15 +81,15 @@ release가 바뀐 뒤에도 이어읽기는 최신 version을 열어야 한다.
 | theme | system / light / dark | system | 전역 setting |
 
 - control을 움직이는 동안 현재 본문에 즉시 preview한다.
-- 모바일에서 본문 폭 control은 disabled가 아니라 `화면에 맞춤`으로 설명한다.
+- 모바일에서 본문 폭 range는 비활성화하고 `화면에 맞춤`으로 이유를 설명한다.
 - font 선택은 실제 self-hosted MaruBuri/SUIT asset과 license notice가 포함된 뒤만 노출한다.
 - 글자 크기와 browser zoom을 방해하지 않는다.
 
 ### 3.3 읽기 위치
 
 - scroll 저장은 stable post identity별로 throttle한다.
-- `scrollTop`, document height 또는 안정된 progress ratio, `updatedAt`을 저장한다. 구현 schema는 한
-  방식으로 고정하고 중복 source of truth를 만들지 않는다.
+- exact 복원은 `scrollTop`을 authoritative state로 저장한다. `progress`는 이어읽기 후보 판정을 위해
+  저장 시 같은 layout에서 파생한 0~1 값이며 위치 복원 source로 사용하지 않는다.
 - 재진입 시 위치 복원 전 layout에 필요한 font가 준비되어야 한다. font 준비와 image layout 뒤 최대
   한 차례만 보정하며 자동 복원은 smooth scroll하지 않는다.
 - 95% 이후는 `완독` badge를 만들지 않고 다음 진입 시 끝 부근으로 복원한다.
@@ -281,9 +282,9 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 다음처럼 단순화한다.
 
 - desktop: 상단 compact toolbar + 글 끝의 큰 previous/next.
-- mobile: 하단 bar에 목록, 이전, 다음, 설정을 둔다. 진입 시 표시하고 아래로 스크롤하면 숨기며
-  위로 스크롤 또는 중앙 tap으로 복귀한다. bookmark는 title action 또는 more cluster로 이동해
-  6개 icon row를 피한다.
+- mobile: 하단 bar에 목록, 이전, 저장, 다음, 설정을 둔다. 진입 시 표시하고 아래로 스크롤하면 숨기며
+  위로 스크롤 또는 중앙 tap으로 복귀한다. 320px에서도 다섯 action의 44px target과 한 줄 label을
+  유지한다.
 - 매 scroll event의 8px 방향 변화가 아니라 누적 이동량 기반 hysteresis로 숨김/복귀를 결정한다.
   시작값은 아래 50px/위 30px이며 실제 Android fixture로만 조정한다.
 - 3초 timer로 무조건 숨기지 않는다. focus, pointer, screen reader 사용 중에는 유지한다.
@@ -305,12 +306,17 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 - header에 `현재 12 / 48`과 collection title을 표시한다.
 - 이전/다음 card에는 방향, 제목, unavailable 여부를 함께 쓴다.
 - collection이 아닌 글은 board 기준 이전/다음임을 label로 구분한다.
-- unavailable entry를 만났을 때 자동 loop하지 않는다. skip된 항목 수와 reason을 보여준다.
+- unavailable entry는 이전/다음에서 건너뛰되 collection context에 `보존 불가` 수를 표시한다. source가
+  더 구체적인 reason을 제공하기 전에는 이유를 추측하지 않는다.
 - 마지막 글의 primary action은 `컬렉션으로 돌아가기`, secondary는 `처음부터`, `전체 목록`이다.
 - infinite scroll로 다음 글 본문을 자동 연결하지 않는다. URL, history, scroll identity가 흐려지기 때문이다.
 
 ## 8. Comments
 
+- authenticated detail HTML에 포함된 댓글을 본문 수집과 함께 parse하고 canonical에 source order/depth로
+  저장한다. sanitizer를 거쳐 post object에 export되며 Reader 공개 댓글 수는 active R2 release 기준이다.
+- 댓글 안 `AA_Text`/AA font hint는 댓글 block에서만 AA로 렌더링한다. Saitamaar fallback, 원문 줄 폭,
+  `white-space: pre`와 block 내부 횡스크롤을 사용해 일반 댓글 layout을 바꾸지 않는다.
 - comments heading에 count를 표시하고 기본 펼침 여부는 데이터 길이와 무관하게 일관되게 유지한다.
 - 긴 thread nesting을 새 토론 UI로 재해석하지 않고 source 순서를 보존한다.
 - depth 들여쓰기는 단계당 12~16px로 하되 시각 들여쓰기는 4단계에서 cap하고 데이터 depth는
@@ -318,6 +324,9 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 - comment 내부 image/link/AA에도 body와 같은 sanitizer·lazy-load·failure 규칙을 적용한다.
 - comment collapse state는 session 편의로만 두며 영구 user-state schema에 추가하지 않는다.
 - 빈 comments와 fetch 실패를 같은 `댓글 없음`으로 표시하지 않는다.
+- 별도 comment pagination endpoint는 호출하지 않는다. detail HTML 밖에 추가 page가 있는 댓글은 현재
+  수집 범위가 아니며, listing의 expected comment count와 실제 parsed count 대조도 알려진 gap이다.
+  이 검증 전에는 Operations/Reader가 댓글 수집 완전성을 추정해 표시하지 않는다.
 
 ## 9. DSOTM 채택 판단
 

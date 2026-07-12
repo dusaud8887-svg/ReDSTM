@@ -289,7 +289,47 @@ test("heartbeat and overview expose only bounded status", async () => {
         return parameters.map((_, index) => ({ meta: { changes: index === 1 ? 1 : 0 } }));
       }
       if (sql.includes("runner_status WHERE")) {
-        return { state: "idle", heartbeat_at: "2026-07-12T00:00:00.000Z" };
+        return {
+          state: "idle",
+          heartbeat_at: "2026-07-12T00:00:00.000Z",
+          next_scheduled_at: "2026-07-12T06:17:00.000Z",
+        };
+      }
+      if (sql.includes("FROM run_events")) {
+        return {
+          counters_json: JSON.stringify({
+            outline_only: 3,
+            frontier_pending: 2,
+            inventory_total_boards: 46,
+            inventory_completed_boards: 40,
+          }),
+          recorded_at: "2026-07-12T04:00:00.000Z",
+        };
+      }
+      if (sql.includes("state IN ('partial', 'failed')")) {
+        return {
+          run_id: "run-partial", kind: "scheduled", source: "systemd", state: "partial",
+          started_at: "2026-07-12T03:00:00.000Z", safe_summary_json: '{"code":"parse_drift"}',
+          recovered_at: "2026-07-12T04:00:00.000Z",
+        };
+      }
+      if (sql.includes("kind = 'scheduled'")) {
+        return {
+          run_id: "run-automatic", kind: "scheduled", source: "systemd", state: "succeeded",
+          started_at: "2026-07-12T04:00:00.000Z", safe_summary_json: '{"code":"scheduled_succeeded"}',
+        };
+      }
+      if (sql.includes("state <> 'running'")) {
+        return {
+          run_id: "run-latest", kind: "scheduled", source: "systemd", state: "succeeded",
+          started_at: "2026-07-12T04:00:00.000Z", safe_summary_json: '{"code":"scheduled_succeeded"}',
+        };
+      }
+      if (sql.includes("state = 'running'")) {
+        return {
+          run_id: "run-abandoned", kind: "scheduled", source: "systemd", state: "running",
+          started_at: "2000-01-01T00:00:00.000Z", safe_summary_json: null,
+        };
       }
       if (sql.includes("FROM runs")) return null;
       if (sql.includes("COUNT(*)")) return { count: 0 };
@@ -344,7 +384,16 @@ test("heartbeat and overview expose only bounded status", async () => {
     { role: "user", subject: "reader" },
   );
   assert.equal(overview.status, 200);
-  assert.equal((await overview.json()).data.active_commands, 0);
+  const overviewData = (await overview.json()).data;
+  assert.equal(overviewData.active_commands, 0);
+  assert.equal(overviewData.active_run, null);
+  assert.equal(overviewData.schedule_enabled, true);
+  assert.equal(overviewData.latest_run.safe_summary_code, "scheduled_succeeded");
+  assert.equal(overviewData.latest_automatic_run.run_id, "run-automatic");
+  assert.equal(overviewData.recent_issue.safe_summary_code, "parse_drift");
+  assert.equal(overviewData.recent_issue.recovered, true);
+  assert.equal(overviewData.recent_issue.recovered_at, "2026-07-12T04:00:00.000Z");
+  assert.equal(overviewData.archive_snapshot.counters.outline_only, 3);
 });
 
 test("pages runs with an opaque keyset cursor and latest event", async () => {
@@ -355,6 +404,7 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
       source: "systemd",
       state: "succeeded",
       started_at: "2026-07-12T03:00:00Z",
+      safe_summary_json: '{"code":"scheduled_succeeded"}',
       event_sequence: 2,
       event_step: "publishing",
       event_state: "succeeded",
@@ -374,6 +424,7 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
     CONTROL_DB: database((method, sql, values) => {
       assert.equal(method, "all");
       assert.match(sql, /LEFT JOIN run_events/);
+      assert.match(sql, /latest\.step <> 'archive_snapshot'/);
       parameters = values;
       return { results: rows };
     }),
@@ -387,6 +438,7 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
   const page = (await first.json()).data;
   assert.equal(page.items.length, 1);
   assert.deepEqual(page.items[0].latest_event.counters, { changed_posts: 1 });
+  assert.equal(page.items[0].safe_summary_code, "scheduled_succeeded");
   assert.match(page.next_cursor, /^[a-zA-Z0-9_-]+$/);
   assert.deepEqual(parameters, [2]);
 
@@ -561,9 +613,16 @@ test("upserts monotonic bounded board status", async () => {
       method: "POST",
       body: {
         board_id: "aa",
+        board_name: "AA 게시판",
+        group_name: "aa",
         last_scanned_at: "2026-07-12T04:00:00Z",
         last_outcome: "partial",
-        counters: { discovered: 10, changed: 2, pending: 3, retry: 1, dead: 0 },
+        counters: {
+          discovered: 10, changed: 2, pending: 3, running: 1, retry: 1, done: 20, dead: 0,
+        },
+        inventory_next_page: 37,
+        last_inventory_at: null,
+        inventory_pass_started_at: "2026-07-12T00:00:00Z",
         warning_code: "parse_drift",
       },
       headers: { "Idempotency-Key": "board-status-0001" },
@@ -573,7 +632,13 @@ test("upserts monotonic bounded board status", async () => {
   );
   assert.equal(response.status, 200);
   assert.match(sql, /excluded\.last_scanned_at >= board_status\.last_scanned_at/);
-  assert.deepEqual(parameters.slice(0, 3), ["aa", "2026-07-12T04:00:00.000Z", "partial"]);
+  assert.deepEqual(parameters.slice(0, 5), [
+    "aa", "AA 게시판", "aa", "2026-07-12T04:00:00.000Z", "partial",
+  ]);
+  assert.equal(parameters[8], 1);
+  assert.equal(parameters[10], 20);
+  assert.equal(parameters[12], 37);
+  assert.equal(parameters[14], "2026-07-12T00:00:00.000Z");
 });
 
 test("finishes marker commands idempotently for the claiming runner", async () => {

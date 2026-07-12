@@ -125,19 +125,20 @@ Reader와 Operations는 같은 로그인과 visual system을 쓰지만 route, da
 
 ### 4.1 Mobile destination과 URL
 
-장서 tab은 Home과 Library를 한 plane으로 합친다. 다섯 번째 Home tab을 만들지 않는다.
+Home과 전체 catalog를 한 plane에 겹치지 않는다. 전역 destination은 반복 사용 목적별로 나눈다.
 
 | destination | URL | behavior |
 |---|---|---|
-| 장서 | `/` | continue/recent/latest 다음 catalog와 board filter |
-| 검색 | `/search` | query/filter/sort가 History API state와 URL(`?q=&board=&sort=`)에 보존 |
-| 저장 | `/saved` | bookmark/history, local user-state |
+| 홈 | `/` | search, continue, latest/recent와 publish freshness |
+| 탐색 | `/search` | query/board/mode/sort가 History API state와 URL에 보존 |
+| 보관함 | `/saved`, `/saved?view=recent` | 저장한 글/최근 읽은 글, local user-state |
 | 설정 | `/settings` | Reader/AA/theme/import-export |
 | Reader | `/read/{board_id}/{external_post_id}` | full-screen, global nav hidden |
 
 Reader와 Operations의 상호 접근은 다음으로 고정한다. desktop rail의 운영 link와 `/ops` 상단의
-Reader 복귀 link가 기본 경로이고, mobile에서는 설정 sheet 하단의 운영 콘솔 link가 상시
-진입점이다. bottom navigation은 4개를 유지하며, Home의 갱신 지연 label은 보조 진입점이다.
+Reader 복귀 link가 기본 경로다. 760–1199px와 mobile에서는 app bar의 보존 상태 전체를 `/ops`
+진입점으로 쓰고, 설정 sheet 첫 구역과 Home freshness row에서도 같은 경로를 제공한다. Reader global
+bottom navigation은 홈/탐색/보관함/설정 4개를 유지한다.
 
 ## 5. Stable identity와 URL
 
@@ -168,17 +169,16 @@ replace한다.
 
 1. search input
 2. continue reading 한 건
-3. newly archived 최대 6건
-4. recently read 최대 6건
-5. latest published timestamp
+3. 장서 count와 latest published timestamp/Operations link
+4. newly archived 최대 6건
+5. recently read 최대 6건
 
 history가 없으면 continue 영역을 숨긴다. recent 데이터가 없어도 빈 card를 남기지 않는다.
 runner queue/disk/auth warning은 Home에 표시하지 않는다. publish가 예상 시각을 넘겼을 때만
 최신 갱신이 지연됐다는 quiet label을 보이고 Operations link를 제공한다.
 
-이 순서는 acceptance 기준이다. 슬로건·브랜드 문구·hero heading이 검색 input보다 위에 오거나,
-Home plane에서 검색 진입점이 사라지면 실패다. 소개 문구가 필요하면 freshness label 수준의
-한 줄 보조 텍스트로만 둔다.
+이 순서는 acceptance 기준이다. 슬로건·hero heading이 검색 input보다 위에 오거나, Home plane에서
+검색 진입점이 사라지면 실패다. `내 장서` heading과 소개 문구는 compact status 수준으로만 둔다.
 
 Home 데이터 소스는 다음으로 고정한다. capture 시각은 export하지 않으므로 시각을 지어내지 않는다.
 
@@ -192,7 +192,7 @@ Home 데이터 소스는 다음으로 고정한다. capture 시각은 export하�
 
 - title/author/category/board substring search
 - query 250ms debounce, stale response discard
-- board/category/content mode filter
+- board와 AA/소설 content mode filter; category는 동일 query의 검색 대상
 - latest/oldest 정렬; views 정렬은 실제 요구 전 제외
 - row: title 2줄, board/author/date, AA/bookmark/history 상태
 - row의 AA 상태는 search index에 `is_aa` 필드가 있는 release에서만 표시하고 없는 release에서는
@@ -227,14 +227,15 @@ memory를 측정한 뒤 board-sharded static index를 별도 gate로 연다.
 
 Reader 진입 시 global bottom navigation을 숨긴다.
 
-하단 primary action은 최대 네 개다.
+하단 primary action은 다섯 개다. 320px에서 각각 44px 이상을 유지한다.
 
 1. 목록
 2. 이전
-3. 다음
-4. 설정
+3. 저장
+4. 다음
+5. 설정
 
-bookmark, source, prose/AA mode, immersive는 More/Settings sheet에 둔다. action label은 nowrap이며
+source, prose/AA mode, immersive는 Settings sheet에 둔다. action label은 nowrap이며
 320px에서 세로 글자나 두 줄 toolbar가 생기면 실패다. browser Back은 query/filter/list scroll과
 focus를 복원한다.
 

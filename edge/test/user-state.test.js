@@ -64,7 +64,7 @@ test("migrates validated v1 gz and zst entries and drops object keys", () => {
 test("exports only normalized v2 state", () => {
   const state = defaultUserState(defaults);
   state.history["write_free21:62068"] = {
-    readAt: "2026-07-11T00:00:00Z", object_key: summary().object_key,
+    readAt: "2026-07-11T00:00:00Z", progress: 0.42, object_key: summary().object_key,
   };
   state.bookmarks["write_free21:62068"] = { savedAt: "2026-07-11T01:00:00Z" };
   state.scroll["write_free21:62068"] = 81;
@@ -74,7 +74,7 @@ test("exports only normalized v2 state", () => {
   const exported = exportUserState(state);
   const payload = JSON.parse(exported);
   assert.equal(payload.schema_version, 2);
-  assert.deepEqual(payload.history["write_free21:62068"], { readAt: "2026-07-11T00:00:00Z" });
+  assert.deepEqual(payload.history["write_free21:62068"], { readAt: "2026-07-11T00:00:00Z", progress: 0.42 });
   assert.deepEqual(payload.lastCatalogState, { query: "달빛", scrollTop: 120, nested: {} });
   assert.equal(exported.includes("object_key"), false);
 });

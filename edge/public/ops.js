@@ -3,29 +3,56 @@ const labels = {
   stale: "응답 없음", not_enrolled: "연결 대기", paused: "일시정지", succeeded: "성공", partial: "일부 완료",
   queued: "대기", claimed: "수락됨", expired: "만료", cancelled: "취소됨",
   scheduled: "예약 실행", "manual-sync": "수동 동기화", retry: "재시도", publish: "게시",
+  "bootstrap-recovery": "최초 본문 채우기",
+};
+const stepLabels = {
+  idle: "대기", scheduled: "예약 준비", "sync-now": "최신 목록 확인",
+  crawling: "상세 수집", inventory: "전체 목록 확인", recovery: "본문 대기 재시도",
+  "retry-batch": "본문 대기 재시도", "bootstrap-recovery": "최초 본문 채우기",
+  exporting: "Reader 내보내기", publishing: "Reader 반영", verifying: "게시 검증",
+};
+const safeCodeLabels = {
+  cycle_succeeded: "증분 수집 완료", inventory_succeeded: "목록 전수 확인 완료",
+  bootstrap_recovery_succeeded: "최초 본문 채우기 완료",
+  recovery_succeeded: "본문 재시도 완료", publish_succeeded: "Reader 반영 완료",
+  scheduled_succeeded: "예약 실행 완료", scheduled_partial: "예약 실행 일부 완료",
+  scheduled_failed: "예약 실행 실패", run_partial: "일부 항목 미완료",
+  run_failed: "실행 실패", runner_failed: "수집기 내부 실패",
+  auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",
+  site_unreachable: "원본 연결 실패", rate_limited: "원본 속도 제한",
+  export_failed: "Reader 내보내기 실패", publish_failed: "Reader 반영 실패",
+  schedule_paused: "요청에 따라 일시정지",
 };
 const warningLabels = {
   auth_failed: "원본 인증을 확인해야 합니다.", parse_drift: "원본 구조 변경이 감지됐습니다.",
   rate_limited: "원본 서버의 속도 제한으로 감속했습니다.", site_unreachable: "원본 서버에 도달하지 못했습니다.",
-  disk_low: "Oracle 저장 공간이 부족합니다.", token_expiring: "runner 인증 갱신이 필요합니다.",
+  disk_low: "Oracle 저장 공간이 부족합니다.", token_expiring: "수집기 인증 갱신이 필요합니다.",
   publish_stale: "새 보존본 게시가 지연되고 있습니다.", backup_stale: "복구 증거가 오래됐습니다.",
+  schedule_overdue: "자동 실행 예정 시각이 지났거나 마지막 자동 실행이 7시간보다 오래됐습니다.",
 };
+const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청" };
 const commandCopy = {
-  "sync-now": ["지금 동기화", "46개 게시판을 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "retry-batch": ["재시도 처리", "처리 시각이 된 실패 항목을 우선순위대로 최대 100건 다시 확인합니다."],
-  "publish-if-changed": ["변경분 게시", "변경 marker가 있고 하루 게시 window가 열렸을 때만 검증 후 pointer를 바꿉니다."],
+  "sync-now": ["증분 수집 지금 실행", "46개 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
+  "retry-batch": ["본문 대기 재시도", "처리 시각이 된 대기 또는 실패 항목을 우선순위대로 최대 100건 다시 확인합니다."],
+  "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
   "pause-after-current": ["현재 작업 뒤 일시정지", "진행 중 요청과 저장은 끝낸 뒤 다음 예약 실행을 멈춥니다."],
-  "resume-schedule": ["예약 재개", "일시정지 marker만 해제합니다. 새 작업을 즉시 시작하지는 않습니다."],
+  "resume-schedule": ["일시정지 해제", "다음 자동 실행을 허용합니다. 새 작업을 즉시 시작하거나 꺼진 Oracle timer를 켜지는 않습니다."],
 };
 
 const byId = (id) => document.getElementById(id);
 const terminal = new Set(["succeeded", "partial", "failed", "expired", "cancelled"]);
+const sevenHours = 7 * 60 * 60 * 1000;
+const sevenDays = 7 * 24 * 60 * 60 * 1000;
+const scheduleGrace = 20 * 60 * 1000;
 let runsCursor = null;
 let boardsCursor = null;
+let boardItems = [];
 let selectedAction = null;
 let lastRunner = null;
 let lastState = "not_enrolled";
 let lastActiveCommands = 0;
+let lastSnapshot = null;
+let lastScheduleEnabled = false;
 const pendingActions = new Set();
 const commandKeys = new Map();
 
@@ -46,7 +73,8 @@ function age(value) {
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 1000));
   if (seconds < 60) return `${seconds}초 전`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
-  return `${Math.floor(seconds / 3600)}시간 전`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}시간 전`;
+  return `${Math.floor(seconds / 86_400)}일 전`;
 }
 
 function shortId(value) {
@@ -65,21 +93,20 @@ async function api(path, options = {}) {
   return payload.data;
 }
 
-function overallState(runner, latestRun) {
-  if (!runner?.heartbeat_at) return ["not_enrolled", "Runner가 아직 상태를 보고하지 않았습니다. 초기 연결을 확인하세요."];
+function runnerState(runner) {
+  if (!runner?.heartbeat_at) return "not_enrolled";
   const heartbeatAge = Date.now() - Date.parse(runner.heartbeat_at);
-  if (!Number.isFinite(heartbeatAge) || heartbeatAge > 180_000) return ["stale", "마지막 신호가 3분보다 오래됐습니다. Reader는 활성 보존본으로 계속 사용할 수 있습니다."];
-  if (runner.state === "paused") return ["paused", "예약 실행이 일시정지되어 있습니다."];
-  if (runner.safe_warning_code) return ["degraded", warningLabels[runner.safe_warning_code] || "운영 경고가 있습니다."];
-  if (latestRun?.state === "partial") return ["degraded", "최근 실행이 일부 완료됐습니다. 실행 기록을 확인하세요."];
-  if (latestRun?.state === "failed") return ["failed", "최근 실행이 실패했습니다. 실행 기록을 확인하세요."];
-  return [runner.state || "idle", runner.state === "running" ? "Oracle이 보존 작업을 수행하고 있습니다." : "지금 사용자가 처리할 긴급 작업은 없습니다."];
+  if (!Number.isFinite(heartbeatAge) || heartbeatAge > 180_000) return "stale";
+  return runner.state || "idle";
 }
 
-function updateControls(runner, state, activeCommands) {
+function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot) {
   const unavailable = state === "stale" || state === "not_enrolled";
   const paused = runner?.state === "paused";
   const running = runner?.state === "running";
+  const retryWaiting = snapshot
+    ? (snapshot.frontier_pending ?? 0) + (snapshot.frontier_retry ?? 0)
+    : null;
   for (const button of document.querySelectorAll("[data-action]")) {
     const action = button.dataset.action;
     const copy = button.querySelector("small");
@@ -87,53 +114,176 @@ function updateControls(runner, state, activeCommands) {
     let reason = copy.dataset.default;
     let disabled = pendingActions.has(action);
     if (pendingActions.has(action)) reason = "요청을 보내는 중입니다.";
-    else if (unavailable) { disabled = true; reason = "Runner가 다시 연결된 뒤 요청할 수 있습니다."; }
+    else if (unavailable) { disabled = true; reason = "수집기가 다시 연결된 뒤 요청할 수 있습니다."; }
     else if (running && action !== "pause-after-current") { disabled = true; reason = "현재 작업 중에는 이후 예약만 일시정지할 수 있습니다."; }
     else if (paused && action !== "resume-schedule") { disabled = true; reason = "예약이 일시정지되어 있습니다."; }
     else if (!paused && action === "resume-schedule") { disabled = true; reason = "일시정지 상태에서만 사용할 수 있습니다."; }
+    else if (!scheduleEnabled && !running && action === "pause-after-current") { disabled = true; reason = "자동 예약이 이미 꺼져 있습니다."; }
+    else if (action === "retry-batch" && retryWaiting === 0) { disabled = true; reason = "현재 처리할 본문 대기 또는 재시도 항목이 없습니다."; }
     button.disabled = disabled;
     copy.textContent = reason;
   }
   byId("control-summary").textContent = activeCommands
     ? `활성 명령 ${activeCommands}개 · 완료될 때까지 같은 작업을 다시 요청하지 마세요.`
-    : "자동 실행이 기본입니다. 필요한 경우에만 고정된 작업을 요청합니다.";
+    : unavailable
+    ? "수집기 신호가 돌아오면 수동 작업을 요청할 수 있습니다."
+    : scheduleEnabled
+    ? "자동 수집이 켜져 있습니다. 예외가 있을 때만 고정된 작업을 요청합니다."
+    : "Oracle 자동 예약이 꺼져 있습니다. redstm-schedule.timer를 활성화하기 전까지 1회 작업만 수동으로 요청할 수 있습니다.";
+}
+
+function number(value) {
+  return Number.isFinite(value) ? Number(value).toLocaleString("ko-KR") : "—";
+}
+
+function renderArchiveSnapshot(snapshot) {
+  const counters = snapshot?.counters || null;
+  lastSnapshot = counters;
+  if (!counters) {
+    byId("outline-only").textContent = "—";
+    byId("frontier-waiting").textContent = "—";
+    byId("inventory-progress").textContent = "—";
+    byId("frontier-dead").textContent = "—";
+    byId("inventory-detail").textContent = "게시판별 전체 목록 확인 이력 집계";
+    byId("archive-as-of").textContent = "Oracle 원본 DB 집계가 아직 보고되지 않았습니다.";
+    return;
+  }
+  const waiting = (counters.frontier_pending ?? 0) +
+    (counters.frontier_running ?? 0) + (counters.frontier_retry ?? 0);
+  const completed = counters.inventory_completed_boards ?? 0;
+  const total = counters.inventory_total_boards ?? 0;
+  const inProgress = counters.inventory_in_progress_boards ?? 0;
+  byId("outline-only").textContent = number(counters.outline_only);
+  byId("frontier-waiting").textContent = number(waiting);
+  byId("inventory-progress").textContent = total
+    ? `${completed === total ? "완료" : "진행 중"} · ${number(completed)}/${number(total)}`
+    : "—";
+  byId("inventory-detail").textContent = inProgress
+    ? `${number(inProgress)}개 게시판은 다음 자동 실행에서 이어서 확인`
+    : completed === total && total
+    ? "전체 목록 확인 완료 · 이후 최신 페이지만 주기적으로 확인"
+    : "전체 분량을 알 수 없어 완료 게시판 수로 표시";
+  byId("frontier-dead").textContent = number(counters.frontier_dead);
+  byId("archive-as-of").textContent = `Oracle 원본 DB · 실행 종료 집계 ${time(snapshot.recorded_at)}`;
+}
+
+function renderIssue(issue) {
+  const issueAt = Date.parse(issue?.finished_at || issue?.started_at);
+  const recent = Number.isFinite(issueAt) && Date.now() - issueAt <= sevenDays ? issue : null;
+  const section = document.querySelector(".issue-strip");
+  const metrics = byId("issue-metrics");
+  if (!recent) {
+    section.dataset.state = "clear";
+    metrics.hidden = true;
+    byId("issue-title").textContent = "최근 7일 실패 없음";
+    byId("issue-reason").textContent = "최근 운영 기록에서 일부 완료 또는 실패가 보고되지 않았습니다.";
+    byId("issue-time").textContent = "—";
+    byId("issue-kind").textContent = "—";
+    byId("issue-posts").textContent = "—";
+    byId("issue-boards").textContent = "—";
+    byId("issue-link").hidden = true;
+    return;
+  }
+  const recovered = Boolean(recent.recovered || recent.recovered_at);
+  const reason = safeCodeLabels[recent.safe_summary_code] || "원인 미보고";
+  section.dataset.state = recovered ? "recovered" : "active";
+  metrics.hidden = false;
+  byId("issue-title").textContent = `${recovered ? "정상화됨" : labels[recent.state] || recent.state} · ${reason}`;
+  byId("issue-reason").textContent = recovered
+    ? `이후 자동 실행이 성공했습니다${recent.recovered_at ? ` · 정상화 ${time(recent.recovered_at)}` : ""}.`
+    : "남은 항목은 다음 자동 실행에서 재시도하며, 반복 실패는 사람 확인 필요로 분리됩니다.";
+  byId("issue-time").textContent = `${age(recent.finished_at || recent.started_at)} · ${time(recent.finished_at || recent.started_at)}`;
+  byId("issue-kind").textContent = labels[recent.kind] || recent.kind;
+  byId("issue-posts").textContent = number(recent.failed_posts ?? 0);
+  byId("issue-boards").textContent = number(recent.boards_failed ?? 0);
+  byId("issue-link").hidden = false;
 }
 
 function renderOverview(data) {
   const runner = data.runner;
   const latest = data.latest_run;
-  const [state, reason] = overallState(runner, latest);
-  const verdicts = {
-    idle: "개입할 일 없음", running: "자동 보존 중", degraded: "확인 필요", failed: "실행 확인 필요",
-    stale: "Runner 응답 없음", paused: "자동 실행 일시정지", not_enrolled: "Runner 연결 대기",
-  };
-  byId("overview-title").textContent = verdicts[state] || labels[state] || state;
-  byId("overview-reason").textContent = reason;
-  byId("overview-kicker").textContent = `${labels[state] || state} · Oracle runner`;
-  byId("status-signal").dataset.state = state;
+  const active = data.active_run;
+  const latestAutomatic = data.latest_automatic_run || (latest?.kind === "scheduled" ? latest : null);
+  const state = runnerState(runner);
   const stale = state === "stale";
-  byId("last-heartbeat").textContent = runner?.heartbeat_at ? `${age(runner.heartbeat_at)} · ${time(runner.heartbeat_at)}` : "— · 아직 보고되지 않음";
-  byId("active-step-label").textContent = stale ? "마지막 보고 단계" : "현재 단계";
-  byId("next-schedule-label").textContent = stale ? "마지막 보고 다음 실행" : "다음 실행";
-  byId("disk-free-label").textContent = stale ? "마지막 보고 디스크" : "남은 디스크";
-  byId("active-step").textContent = runner?.active_step || runner?.state || "—";
-  byId("next-schedule").textContent = time(runner?.next_scheduled_at);
-  byId("disk-free").textContent = Number.isFinite(runner?.disk_free_bytes) ? `${(runner.disk_free_bytes / 2 ** 30).toFixed(1)} GiB` : "—";
-  const warning = runner?.safe_warning_code;
+  const scheduleEnabled = Boolean(data.schedule_enabled);
+  const baseAutomation = state === "not_enrolled" || stale
+    ? "unknown"
+    : runner?.state === "paused"
+    ? "paused"
+    : scheduleEnabled
+    ? "on"
+    : "off";
+  const automaticRunning = active?.kind === "scheduled" && active.state === "running";
+  const automaticAt = Date.parse(latestAutomatic?.finished_at || latestAutomatic?.started_at);
+  const nextAt = Date.parse(runner?.next_scheduled_at);
+  const nextOverdue = scheduleEnabled && Number.isFinite(nextAt) &&
+    nextAt < Date.now() - scheduleGrace && !automaticRunning;
+  const automaticOverdue = scheduleEnabled && Number.isFinite(automaticAt) && Date.now() - automaticAt > sevenHours;
+  const automation = baseAutomation === "on" && (nextOverdue || automaticOverdue) ? "delayed" : baseAutomation;
+  const verdicts = {
+    on: "자동 수집 켜짐", off: "자동 수집 꺼짐", paused: "자동 수집 일시정지",
+    delayed: "자동 수집 지연", unknown: state === "stale" ? "수집기 응답 없음" : "자동 수집 상태 미보고",
+  };
+  const reasons = {
+    on: runner?.state === "running"
+      ? "예약된 보존 작업을 수행하고 있습니다. Reader는 현재 활성 보존본으로 계속 사용할 수 있습니다."
+      : "6시간마다 최신 페이지를 확인하고, 최초 전체수집과 본문 대기열을 자동으로 이어갑니다.",
+    delayed: nextOverdue
+      ? "다음 자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다. 수집기와 Oracle timer를 확인하세요."
+      : "마지막 자동 실행이 7시간보다 오래됐습니다. 다음 실행 시각과 수집기 기록을 확인하세요.",
+    off: "Oracle 자동 예약이 꺼져 있습니다. redstm-schedule.timer를 활성화하기 전까지 정기 수집은 시작되지 않습니다.",
+    paused: "현재 요청과 저장은 마친 뒤 다음 예약 실행을 건너뜁니다.",
+    unknown: state === "stale"
+      ? "마지막 수집기 신호가 3분보다 오래됐습니다. Reader는 활성 보존본으로 계속 사용할 수 있습니다."
+      : "수집기가 아직 상태를 보고하지 않았습니다. Oracle control timer와 Access 연결을 확인하세요.",
+  };
+  byId("overview-title").textContent = verdicts[automation];
+  byId("overview-reason").textContent = reasons[automation];
+  const automationLabel = { on: "켜짐", delayed: "켜짐 · 지연", off: "꺼짐", paused: "일시정지", unknown: "확인 불가" }[automation];
+  byId("overview-kicker").textContent = `${automationLabel} · 자동 예약`;
+  byId("status-signal").dataset.state = automation === "on" ? state : automation === "delayed" ? "degraded" : automation;
+  byId("automation-mode").textContent = automationLabel;
+  byId("last-heartbeat").textContent = runner?.heartbeat_at
+    ? `${stale ? "응답 없음" : labels[runner.state] || runner.state} · ${age(runner.heartbeat_at)}`
+    : "— · 아직 보고되지 않음";
+  byId("last-automatic").textContent = automaticRunning
+    ? `실행 중 · ${age(active.started_at)}`
+    : latestAutomatic
+    ? `${labels[latestAutomatic.state] || latestAutomatic.state} · ${age(latestAutomatic.finished_at || latestAutomatic.started_at)}`
+    : "이력 없음";
+  byId("active-step-label").textContent = stale ? "마지막 보고 작업" : "현재 작업";
+  byId("next-schedule-label").textContent = stale ? "마지막 보고 다음 실행" : "다음 자동 실행";
+  const step = stepLabels[runner?.active_step] || runner?.active_step || labels[runner?.state] || "—";
+  byId("active-step").textContent = runner?.active_board_id ? `${step} · ${runner.active_board_id}` : step;
+  byId("next-schedule").textContent = !scheduleEnabled
+    ? "예약 없음"
+    : nextOverdue
+    ? `지연 · ${time(runner?.next_scheduled_at)}`
+    : time(runner?.next_scheduled_at);
+  const warning = automation === "delayed" ? "schedule_overdue" : runner?.safe_warning_code;
   byId("warning-line").hidden = !warning;
   byId("warning-label").textContent = warningLabels[warning] || warning || "";
-  byId("active-title").textContent = latest ? `${labels[latest.kind] || latest.kind} · ${labels[latest.state] || latest.state}` : "아직 보고된 실행 없음";
-  byId("active-reason").textContent = latest
-    ? `${latest.source || "source 미보고"} · ${latest.finished_at ? `완료 ${time(latest.finished_at)}` : `시작 ${time(latest.started_at)}`}`
-    : "자동 수집 전이거나 runner telemetry가 D1에 아직 연결되지 않았습니다.";
-  byId("latest-start").textContent = time(latest?.started_at);
-  byId("latest-changed").textContent = latest ? String(latest.changed_posts ?? 0) : "—";
-  byId("latest-failed").textContent = latest ? String(latest.failed_posts ?? 0) : "—";
-  byId("latest-boards").textContent = latest ? `${latest.boards_ok ?? 0}/${(latest.boards_ok ?? 0) + (latest.boards_failed ?? 0)}` : "—";
+  const shown = active || latest;
+  byId("active-kicker").textContent = active ? "현재 작업" : "최근 완료";
+  byId("active-title").textContent = shown ? `${labels[shown.kind] || shown.kind} · ${labels[shown.state] || shown.state}` : "아직 보고된 실행 없음";
+  byId("active-reason").textContent = shown
+    ? `${sourceLabels[shown.source] || shown.source || "출처 미보고"} · ${active ? `시작 ${time(shown.started_at)} · 수치는 종료 후 집계` : `완료 ${time(shown.finished_at)}`}`
+    : "수집기 실행 기록이 아직 보고되지 않았습니다.";
+  byId("latest-start").textContent = time(shown?.started_at);
+  byId("latest-changed").textContent = shown && !active ? number(shown.changed_posts) : "—";
+  byId("latest-failed").textContent = shown && !active ? number(shown.failed_posts) : "—";
+  const boardsReported = Number.isFinite(shown?.boards_ok) && Number.isFinite(shown?.boards_failed);
+  byId("latest-boards").textContent = boardsReported && !active
+    ? `${shown.boards_ok}/${shown.boards_ok + shown.boards_failed}`
+    : "—";
+  renderIssue(data.recent_issue);
+  renderArchiveSnapshot(data.archive_snapshot);
   lastRunner = runner;
   lastState = state;
   lastActiveCommands = Number(data.active_commands ?? 0);
-  updateControls(lastRunner, lastState, lastActiveCommands);
+  lastScheduleEnabled = scheduleEnabled;
+  updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
 }
 
 function runRow(run) {
@@ -154,9 +304,10 @@ function runRow(run) {
   summary.append(state, identity, changed, failed, boards, started);
   const detail = node("div", "run-detail");
   detail.append(
-    node("span", "", `출처 ${run.source || "—"}`),
-    node("span", "", `최근 단계 ${run.latest_event?.step || "—"}`),
-    node("span", "", run.latest_event?.safe_message || "추가 경고 없음"),
+    node("span", "", `출처 ${sourceLabels[run.source] || run.source || "—"}`),
+    node("span", "", `최근 단계 ${stepLabels[run.latest_event?.step] || run.latest_event?.step || "—"}`),
+    node("span", "", safeCodeLabels[run.latest_event?.safe_message] ||
+      safeCodeLabels[run.safe_summary_code] || (run.state === "succeeded" ? "경고 미보고" : "원인 미보고")),
     node("span", "", `보고서 ${shortId(run.run_id)}`),
   );
   row.append(summary, detail);
@@ -173,14 +324,47 @@ async function loadRuns(append = false) {
   byId("runs-more").hidden = !runsCursor;
 }
 
+function inventoryComplete(board) {
+  return Number.isFinite(Date.parse(board.last_inventory_at)) &&
+    Number.isFinite(Date.parse(board.inventory_pass_started_at)) &&
+    Date.parse(board.last_inventory_at) >= Date.parse(board.inventory_pass_started_at) &&
+    Number(board.inventory_next_page) === 1;
+}
+
+function boardNeedsAttention(board) {
+  return Boolean(board.warning_code) || ["partial", "failed"].includes(board.last_outcome) ||
+    [board.pending, board.running, board.retry, board.dead].some((value) => Number(value) > 0) ||
+    !inventoryComplete(board);
+}
+
 function boardRow(board) {
   const row = node("article", "board-row");
   const identity = node("div", "board-identity");
   const outcome = node("small", "state-text", `${labels[board.last_outcome] || board.last_outcome || "결과 미보고"} · ${time(board.last_scanned_at)}`);
   outcome.dataset.state = board.last_outcome || "unknown";
-  identity.append(node("strong", "", board.board_id), outcome);
+  const boardLabel = board.board_name || board.board_id;
+  const identityLine = board.board_name
+    ? `${board.board_id}${board.group_name ? ` · ${board.group_name}` : ""}`
+    : board.group_name || "이름 미보고";
+  const inventoryDone = inventoryComplete(board);
+  const inventory = !board.inventory_pass_started_at
+    ? "최초 전체수집 대기"
+    : inventoryDone
+    ? `최초 전체수집 완료 · ${time(board.last_inventory_at)}`
+    : board.inventory_next_page > 1
+    ? `최초 전체수집 중 · ${number(board.inventory_next_page - 1)}쪽까지 확인`
+    : "최초 전체수집 대기";
+  identity.append(
+    node("strong", "", boardLabel),
+    node("small", "", identityLine),
+    outcome,
+    node("small", "inventory-text", inventory),
+  );
   const metrics = node("dl", "board-metrics");
-  const values = [["최근 발견", board.discovered], ["최근 변경", board.changed], ["현재 대기", board.pending], ["재시도 예정", board.retry], ["수동 확인", board.dead]];
+  const values = [
+    ["이번 발견", board.discovered], ["이번 변경", board.changed], ["본문 대기", board.pending],
+    ["처리 중", board.running], ["재시도", board.retry], ["수동 확인", board.dead],
+  ];
   for (const [label, value] of values) {
     const item = document.createElement("div");
     item.append(node("dt", "", label), node("dd", "", value ?? "—"));
@@ -191,57 +375,104 @@ function boardRow(board) {
   return row;
 }
 
+function renderBoards() {
+  const list = byId("boards-list");
+  list.replaceChildren();
+  if (!boardItems.length) {
+    list.append(node("p", "empty-row", "게시판 운영 기록이 아직 보고되지 않았습니다. Reader 게시판 수와는 별도 상태입니다."));
+    return;
+  }
+  const severity = (board) => Number(Boolean(board.warning_code)) * 1_000_000 +
+    (board.dead ?? 0) * 10_000 + (board.retry ?? 0) * 100 + (board.pending ?? 0);
+  const ordered = [...boardItems].sort((left, right) =>
+    severity(right) - severity(left) || left.board_id.localeCompare(right.board_id));
+  const attention = ordered.filter(boardNeedsAttention);
+  const healthy = ordered.filter((board) => !boardNeedsAttention(board));
+  for (const board of attention) list.append(boardRow(board));
+  if (healthy.length) {
+    const details = node("details", "healthy-boards");
+    const summary = node("summary", "", `정상 게시판 ${number(healthy.length)}개`);
+    const body = node("div", "healthy-board-list");
+    for (const board of healthy) body.append(boardRow(board));
+    details.append(summary, body);
+    list.append(details);
+  }
+}
+
 async function loadBoards(append = false) {
   const data = await api(`/api/v1/ops/boards?limit=50${append && boardsCursor ? `&cursor=${encodeURIComponent(boardsCursor)}` : ""}`);
-  const list = byId("boards-list");
-  if (!append) list.replaceChildren();
-  if (!data.items.length && !append) {
-    list.append(node("p", "empty-row", "board 운영 telemetry가 아직 보고되지 않았습니다. 활성 릴리스의 게시판 수와는 별도 상태입니다."));
-  }
-  for (const board of data.items) list.append(boardRow(board));
+  boardItems = append ? [...boardItems, ...data.items] : data.items;
+  renderBoards();
   boardsCursor = data.next_cursor;
   byId("boards-more").hidden = !boardsCursor;
 }
 
 function renderReleases(data) {
   const available = Boolean(data.current?.release_id);
+  const releaseCounts = data.current?.counts || {};
+  const commentParts = [releaseCounts.comment_count, releaseCounts.unavailable_comment_count]
+    .filter(Number.isFinite);
+  const collectedComments = commentParts.length
+    ? commentParts.reduce((total, value) => total + value, 0)
+    : null;
   byId("reader-continuity").dataset.state = available ? "available" : "unavailable";
   byId("reader-state").textContent = available ? "Reader 사용 가능" : "Reader 보존본 없음";
-  byId("reader-release").textContent = available ? `활성 보존본 ${shortId(data.current.release_id)} · ${time(data.current.activated_at)}` : "활성 R2 보존본을 확인할 수 없습니다.";
+  byId("reader-release").textContent = available ? `현재 보존본 활성 · ${time(data.current.activated_at)}` : "활성 Reader 보존본을 확인할 수 없습니다.";
+  byId("reader-posts").textContent = number(releaseCounts.post_count);
+  byId("collected-comments").textContent = number(collectedComments);
   byId("release-current").textContent = available ? `사용 가능 · ${shortId(data.current.release_id)}` : "사용 불가";
   byId("release-current-time").textContent = time(data.current?.activated_at);
-  byId("release-previous").textContent = data.previous ? shortId(data.previous.release_id) : "D1 metadata 없음";
+  byId("release-previous").textContent = data.previous ? shortId(data.previous.release_id) : "이전 보존본 정보 없음";
   byId("release-previous-time").textContent = time(data.previous?.activated_at);
   const counts = byId("release-counts");
   counts.replaceChildren();
-  const names = { post_count: "글", comment_count: "댓글", board_count: "게시판", collection_count: "모음" };
+  const names = {
+    post_count: "Reader 글",
+    unavailable_post_count: "본문 미확보 기록",
+    comment_count: "Reader 글 댓글",
+    unavailable_comment_count: "본문 미확보 글 댓글",
+    board_count: "게시판",
+    collection_count: "모음",
+  };
   for (const [key, label] of Object.entries(names)) {
     const item = document.createElement("div");
     const value = data.current?.counts?.[key];
-    item.append(node("dt", "", label), node("dd", "", value == null ? "—" : value.toLocaleString("ko-KR")));
+    item.append(node("dt", "", label), node("dd", "", number(value)));
     counts.append(item);
   }
 }
 
-function showError(error) {
+function showError(error, scopes = "운영 정보") {
   const banner = byId("error-banner");
+  const impact = Array.isArray(scopes) ? scopes.join(" · ") : scopes;
+  const code = error instanceof Error ? error.message : "unknown";
   banner.hidden = false;
-  banner.textContent = `Operations 일부를 불러오지 못했습니다 · ${error instanceof Error ? error.message : "unknown"}`;
+  banner.textContent = `일부 갱신 실패 · 영향: ${impact} · ${code} · 새로고침으로 다시 시도하세요.`;
 }
 
 async function loadAll() {
   byId("refresh").disabled = true;
   byId("error-banner").hidden = true;
-  const results = await Promise.allSettled([
-    api("/api/v1/ops/overview").then(renderOverview),
-    loadRuns(),
-    loadBoards(),
-    api("/api/v1/ops/releases").then(renderReleases),
-  ]);
-  if (results[3].status === "rejected") renderReleases({ current: null, previous: null });
-  const failure = results.find((result) => result.status === "rejected");
-  if (failure) showError(failure.reason);
-  byId("updated-at").textContent = `화면 갱신 ${new Intl.DateTimeFormat("ko-KR", { timeStyle: "medium" }).format(new Date())}`;
+  const tasks = [
+    ["자동 수집 상태", api("/api/v1/ops/overview").then(renderOverview)],
+    ["실행 기록", loadRuns()],
+    ["게시판별 진척", loadBoards()],
+    ["Reader 글·댓글", api("/api/v1/ops/releases").then(renderReleases)],
+  ];
+  const results = await Promise.allSettled(tasks.map(([, task]) => task));
+  const failures = results.flatMap((result, index) =>
+    result.status === "rejected" ? [{ scope: tasks[index][0], error: result.reason }] : []);
+  if (failures.length) showError(failures[0].error, failures.map(({ scope }) => scope));
+  const updated = new Intl.DateTimeFormat("ko-KR", { timeStyle: "medium" }).format(new Date());
+  if (failures.length === tasks.length) {
+    const code = failures[0].error instanceof Error ? failures[0].error.message : "unknown";
+    byId("error-banner").textContent = `전체 갱신 실패 · 이전 화면 값을 유지합니다 · ${code}`;
+  }
+  byId("updated-at").textContent = failures.length === tasks.length
+    ? "화면 갱신 실패 · 이전 값 유지"
+    : failures.length
+    ? `일부 갱신 실패 · 성공 항목 ${updated}`
+    : `화면 갱신 ${updated}`;
   byId("refresh").disabled = false;
 }
 
@@ -253,7 +484,7 @@ function renderCommand(command, background = false) {
   if (command.state === "queued") {
     const cancel = node("button", "", "대기 명령 취소");
     cancel.type = "button";
-    cancel.addEventListener("click", () => { void cancelCommand(command).catch(showError); });
+    cancel.addEventListener("click", () => { void cancelCommand(command).catch((error) => showError(error, "수동 작업")); });
     result.append(cancel);
   }
 }
@@ -284,7 +515,7 @@ async function createCommand(action) {
   const key = commandKeys.get(action) || `web-${crypto.randomUUID()}`;
   commandKeys.set(action, key);
   pendingActions.add(action);
-  updateControls(lastRunner, lastState, lastActiveCommands);
+  updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
   let command;
   try {
     command = await api("/api/v1/ops/commands", {
@@ -295,7 +526,7 @@ async function createCommand(action) {
     commandKeys.delete(action);
   } finally {
     pendingActions.delete(action);
-    updateControls(lastRunner, lastState, lastActiveCommands);
+    updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
   }
   await watchCommand(command);
 }
@@ -311,12 +542,18 @@ document.querySelectorAll("[data-action]").forEach((button) => {
 });
 byId("command-dialog").addEventListener("close", () => {
   if (byId("command-dialog").returnValue === "confirm" && selectedAction) {
-    createCommand(selectedAction).catch(showError);
+    createCommand(selectedAction).catch((error) => showError(error, "수동 작업"));
   }
   selectedAction = null;
 });
 byId("refresh").addEventListener("click", () => { void loadAll(); });
-byId("runs-more").addEventListener("click", () => { void loadRuns(true).catch(showError); });
-byId("boards-more").addEventListener("click", () => { void loadBoards(true).catch(showError); });
+byId("runs-more").addEventListener("click", () => { void loadRuns(true).catch((error) => showError(error, "실행 기록")); });
+byId("boards-more").addEventListener("click", () => { void loadBoards(true).catch((error) => showError(error, "게시판별 진척")); });
 void loadAll();
-setInterval(() => { if (!document.hidden) void loadAll(); }, 60_000);
+async function refreshLoop() {
+  const delay = lastRunner?.state === "running" ? 15_000 : 60_000;
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  if (!document.hidden) await loadAll().catch(showError);
+  void refreshLoop();
+}
+void refreshLoop();

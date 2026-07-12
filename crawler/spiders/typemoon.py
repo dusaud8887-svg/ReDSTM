@@ -480,6 +480,8 @@ class TypeMoonSpider(scrapy.Spider):
             discovered.append(item)
 
         self._listing_warning = self._listing_warning or page_warning
+        if page_warning:
+            self.failure_codes.add("listing_parse_failed")
         for item in discovered:
             yield item
             board_id = str(item["board_id"])

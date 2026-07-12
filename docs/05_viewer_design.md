@@ -2,7 +2,7 @@
 
 - 상태: Reader와 Operations visual/core state local 구현; 세부 의미·live/Android acceptance pending
 - 기준일: 2026-07-12
-- live: Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`; authenticated Reader/Ops 통과
+- live checkpoint: current Worker `c1d1d3f3-4642-437a-afdc-941ff42e756f`; `58a70799`는 과거 시각 검토본
 - 범위: Edge Reader와 Operations의 시각 방향, mobile shell, typography, interaction quality
 - normative token: [DESIGN.md](../DESIGN.md)
 - 상위 제품 계약: [06 final product](06_final_product_experience.md)
@@ -177,7 +177,7 @@ Wide에서는 72px rail + 360px catalog + reader다.
 Rail:
 
 - ReDSTM wordmark
-- 장서, 검색, 저장, 운영
+- 홈, 탐색, 보관함, 설정, 운영
 - theme/account는 하단
 
 Catalog:
@@ -196,26 +196,28 @@ Reader:
 
 ### 6.2 Mobile
 
-Home과 Library는 하나의 `장서` plane으로 합친다. 장서/검색/저장/설정 네 destination이
-single-plane으로 전환된다. Reader 진입 시 global nav를 숨기고 다음 네 행동만 하단에 둔다.
+Home과 전체 metadata catalog를 같은 화면에 반복하지 않는다. 홈/탐색/보관함/설정 네 destination이
+single-plane으로 전환된다. Reader 진입 시 global nav를 숨기고 다음 다섯 행동을 하단에 둔다.
 
 1. 목록
 2. 이전
-3. 다음
-4. 설정
+3. 저장
+4. 다음
+5. 설정
 
-bookmark, source, prose/AA mode, immersive는 More/Settings sheet에 둔다. label은 줄바꿈하지 않는다.
+bookmark는 반복 사용 action이므로 직접 노출하고 source, prose/AA mode, immersive는 Settings sheet에
+둔다. label은 줄바꿈하지 않는다.
 AA compact controls는 A−, 값, A+, zoom, settings만 남긴다.
 
 ### 6.3 Home
 
-큰 cover를 다음 실제 정보로 대체한다.
+큰 cover를 없애고 다음 실제 정보를 반복 사용 순서로 둔다.
 
 - search
 - continue reading
 - newly archived 6
 - recently read 6
-- latest published at
+- latest published at와 Operations 진입점
 
 운영 경고는 Operations에만 둔다. Home freshness는 정상/지연을 조용한 text로만 표시한다.
 
@@ -233,7 +235,7 @@ Reader와 같은 brand/token이지만 더 조밀한 **운영 브리프 + 원장*
 stale 사실은 모두 `마지막 보고` 문법을 사용하고 unknown count는 `—`다. status mark는 8px 수준으로
 축소하고 28~34px verdict를 넘지 않는다. mobile은 가로 표나 card stack이 아니라 native disclosure
 row를 쓴다. `sync-now`는 놓친 schedule 보완, `retry-batch`는 due 최대 100건,
-`publish-if-changed`는 변경과 daily window가 있을 때만, pause는 현재 요청을 끝낸 뒤 다음 schedule을
+`publish-if-changed`는 `publish.pending` 변경이 있을 때만, pause는 현재 요청을 끝낸 뒤 다음 schedule을
 막고 resume은 marker만 해제한다.
 
 KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 시각과 정확한 denominator를 둔다.

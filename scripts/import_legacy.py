@@ -88,7 +88,7 @@ def _upsert_board(target: sqlite3.Connection, row: sqlite3.Row, imported_at: str
             imported_at,
             last_seen_at,
             int(row["post_count"] or 0),
-            last_seen_at,
+            None,
         ),
     )
 

@@ -1,6 +1,6 @@
 # Frontend 구현 전략·채택 판단
 
-- 상태: Reader와 Operations visual/core state local 구현; 세부 의미·live/Android acceptance pending
+- 상태: Reader/Operations mobile-first local bundle 구현; live/actual Android acceptance pending
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
@@ -36,17 +36,21 @@
 - Access/D1 control API와 responsive `/ops`, fixed command/queued cancel
 - search-first Home, medium settings entry, large-post progress, AA dark-ink/overflow cue,
   catalog state badge, row skeleton, 상태 가져오기 검토, 검색 URL 복원과 mobile Ops 진입점
-  (`58a70799` live)
+  (`58a70799` historical live checkpoint)
+- 홈/탐색/보관함 IA 분리, `/saved?view=recent`, AA/소설 filter, 미완독 이어읽기, catalog scroll 복원,
+  모바일 직접 저장/집중 종료, 모든 폭의 Operations 진입점, AA 댓글 설정 연동(local)
 - white canvas/near-white chrome 전역 palette, compact Operations verdict, stale/unknown core state,
   disclosure ledger와 기본 state disable/idempotent command retry (`local`, 4 viewport fixture)
 
 ### 남은 acceptance
 
 - 실제 Android Back/background/pinch/font와 사용자 시각 acceptance
+- 실제 Android에서 282,239건 full search index memory/tab reclaim 측정
 - 새 Reader/Operations bundle의 authenticated live visual smoke
 - duplicate command와 실제 crawl outage의 Operations 상태 증거
 - Operations field별 source/as-of, active/latest 분리와 due/last/cooldown eligibility
 - 7일 shadow의 idle/running/degraded/stale/failed 상태 증거
+- cross-tab user-state 충돌 처리, collection 목차 sheet와 100건 초과 탐색은 실사용 증거 뒤 P1
 
 문서의 완료 상태는 behavior baseline과 live visual acceptance를 분리한다.
 
@@ -89,7 +93,7 @@ Font asset과 배포 gate:
 
 | route | 역할 | method |
 |---|---|---|
-| / | 장서(Home+Library) shell | GET |
+| / | Home shell | GET |
 | /search | Search shell/deep link | GET |
 | /saved | Saved shell/deep link | GET |
 | /settings | Settings shell/deep link | GET |
@@ -106,9 +110,9 @@ Font asset과 배포 gate:
 
 모든 route는 Access 뒤에 있고 Worker도 JWT issuer/audience/signature를 검증한다. Browser user request와
 Oracle service-token request를 claim으로 구분한다. CORS는 열지 않고 same-origin만 사용한다.
-`/`는 Home module과 Library catalog를 합치며 Reader 외 네 destination만 global navigation에 둔다.
-desktop rail에는 `/ops` 운영 link를 추가하고 mobile bottom navigation은 장서/검색/저장/설정 네
-destination만 유지한다.
+`/` Home과 `/search` catalog를 화면 의미상 분리하되 같은 Reader shell과 search Worker를 재사용한다.
+desktop rail에는 `/ops` 운영 link를 추가하고 mobile bottom navigation은 홈/탐색/보관함/설정 네
+destination만 유지한다. 760px 미만 Reader 하단은 목록/이전/저장/다음/설정 다섯 action이다.
 
 Deep link 제공 규칙:
 
@@ -290,10 +294,10 @@ Operations는 D1을 canonical replica로 쓰지 않는다.
 ### F2 — mobile/reader completion
 
 - 4-destination navigation
-- Reader 4-action toolbar
+- Reader 5-action toolbar(목록/이전/저장/다음/설정)
 - settings preview/import confirmation
 - keyboard result navigation
-- category/content-mode filter, latest/oldest sort와 exact total count
+- category query/content-mode filter, latest/oldest sort와 exact total count
 - collection end flow
 - actual Android AA/Back/tab restore
 
@@ -301,7 +305,7 @@ Operations는 D1을 canonical replica로 쓰지 않는다.
 
 - overlap discovery and board cycle
 - systemd/D1 heartbeat
-- daily bounded delta publish
+- pending 변경을 매 6시간 cycle에서 재평가하는 bounded delta publish
 - 7-day shadow
 
 ### F4 — remote Operations

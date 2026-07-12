@@ -1,10 +1,9 @@
 # ReDSTM
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
-Oracle canonical runner가 배포돼 있다. 남은 제품 gate는 bounded delta·failure canary, 24시간/7일
-shadow와 실제 Android acceptance다. 그 전에 schema v3/새 application·bundle 배포, Operations의
-남은 세부 의미와 authenticated live smoke를 확인한다. 완료된 초기 migration·타당성 증거는
-`docs/done/`에 둔다.
+schema v3 Oracle canonical runner가 배포돼 있다. 남은 제품 작업은 새 Operations 자동 수집·진행률
+bundle의 live 적용, bounded delta/failure canary, 실제 Android acceptance와 24시간/7일 운영 관찰이다. 완료된 초기
+migration·타당성 증거는 `docs/done/`에 둔다.
 
 ## 먼저 읽기
 
@@ -75,13 +74,15 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
 - R2 baseline upload/check/pointer와 authenticated data smoke/rollback
 - Access user/service role을 분리한 remote `/ops`, D1 heartbeat와 fixed command marker/outbox/expiry canary
+- 6시간 incremental, resumable bounded inventory와 due bounded recovery를 결합한 자동 수집 구조
 - AA -> 창작 -> 팬픽 우선 bounded legacy queue recovery
 - stable post identity user-state export/import와 vendored Saitamaar font
+- 홈/탐색/보관함 mobile-first Reader, 소설/AA filter, direct save와 Operations 상호 진입
 - Browsertrix emergency WACZ와 ReplayWeb.page offline replay evidence
 
 아직 포함하지 않음:
 
-- Oracle schema v3 migration, schedule/control timer enable과 bounded full-window/delta/failure canary
+- control heartbeat baseline enable, 자동 schedule live activation과 bounded delta/failure canary
 - 24시간 반복 canary, 7일 shadow와 legacy service cutover
 - content-addressed direct asset/blob ledger
 - 실제 Android memory gate
@@ -89,10 +90,16 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
 
-현재 crawler는 concurrency 1과 10초 고정 delay의 bounded canary 단계다. Oracle canonical의 1건·
-small batch·bounded stop evidence는 있지만 schema v3 migration, bounded full-window/delta와 장기 무인
-운전 증거는 없다. network 정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가
-source of truth이며 별도 YAML은 두지 않는다.
+현재 crawler는 concurrency 1과 10초 고정 delay를 유지한다. Oracle canonical은 schema v3이며 1건·
+small batch·bounded stop evidence가 있다. 자동 모드는 최신 page incremental을 6시간마다 실행하고,
+최초에는 board별 inventory cursor를 bounded window로 계속 재개해 전체 listing을 덮은 뒤 남은
+목차-only frontier를 bounded recovery로 비운다. 이후에는 주 1회 listing audit를 하고, 처리 시각이 된
+recovery와 변경 publish는 매 6시간 cycle에서 다시 시도한다.
+network 정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가 source of truth이며 별도
+YAML은 두지 않는다. control heartbeat timer는 release 설치 직후의 baseline이고, schedule timer는
+`crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke 성공 뒤 켠다.
+24시간 canary와 7일 shadow는 활성화 전 대기 gate가
+아니라 활성화된 자동 운전을 관찰하는 단계다.
 
 현재 상태를 로컬 화면으로 확인하려면 `uv run python -m scripts.console`을 실행하고 출력된
 `http://127.0.0.1:<port>/#token=...` URL을 같은 machine의 browser에서 연다. C0는 canonical을

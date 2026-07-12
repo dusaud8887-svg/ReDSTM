@@ -137,6 +137,43 @@ def test_failed_delivery_enters_bounded_outbox_and_flushes(tmp_path: Path) -> No
     assert store.stats()["rows"] == 0
 
 
+@pytest.mark.parametrize("status", [401, 403])
+def test_access_rejection_enters_the_outbox_and_replays(tmp_path: Path, status: int) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    rejected = ControlClient(
+        "https://archive.example",
+        "client-id",
+        "expired-secret",
+        sender=lambda *_args: (status, {}, b"Access denied"),
+        sleep=lambda _delay: None,
+    )
+
+    assert (
+        rejected.send_or_enqueue(
+            store,
+            "heartbeat",
+            "/api/v1/runner/heartbeat",
+            {"runner_version": "git-1", "state": "idle"},
+            "heartbeat-access-0001",
+        )
+        is False
+    )
+    assert store.stats()["rows"] == 1
+
+    recovered = ControlClient(
+        "https://archive.example",
+        "client-id",
+        "new-secret",
+        sender=lambda _path, _body, headers: (
+            200,
+            {},
+            _response(headers, {"accepted": True}),
+        ),
+    )
+    assert recovered.flush(store) == 1
+    assert store.stats()["rows"] == 0
+
+
 def test_claim_rejects_unknown_actions() -> None:
     def sender(
         _path: str, _body: bytes, headers: dict[str, str]
@@ -259,9 +296,6 @@ def test_missing_control_credentials_can_be_explicitly_offline(
     with pytest.raises(ValueError):
         ControlClient.from_environment()
     monkeypatch.setenv("REDSTM_CONTROL_URL", "https://archive.example")
-    with pytest.raises(ValueError, match="credentials"):
-        ControlClient.from_environment(allow_offline=True)
-    monkeypatch.delenv("REDSTM_CONTROL_URL")
 
     store = ControlStore(tmp_path / "control.sqlite")
     client = ControlClient.from_environment(allow_offline=True)

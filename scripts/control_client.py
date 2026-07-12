@@ -92,7 +92,7 @@ class ControlClient:
             os.environ.get("REDSTM_ACCESS_CLIENT_ID", ""),
             os.environ.get("REDSTM_ACCESS_CLIENT_SECRET", ""),
         )
-        if allow_offline and not any(values):
+        if allow_offline and not all(values):
             return cls(
                 "https://control.invalid",
                 "offline",
@@ -253,7 +253,7 @@ class ControlClient:
         request_id: str,
     ) -> dict[str, Any]:
         normalized_headers = {key.lower(): value for key, value in headers.items()}
-        if status == 429 or status >= 500:
+        if status in {401, 403, 429} or status >= 500:
             raise ControlUnavailableError(
                 retry_after=_retry_after(normalized_headers.get("retry-after"))
             )

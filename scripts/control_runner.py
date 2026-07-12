@@ -46,6 +46,7 @@ _STATUS_CODES = {
 _SUCCESS_CODES = {
     "sync-now": "cycle_succeeded",
     "inventory": "inventory_succeeded",
+    "bootstrap-recovery": "bootstrap_recovery_succeeded",
     "retry-batch": "recovery_succeeded",
     "publish-if-changed": "publish_succeeded",
 }
@@ -59,11 +60,26 @@ _WARNING_CODES = {
 }
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
+_SNAPSHOT_TIME_BUDGET_SECONDS = 30
 _SCHEDULE_HOURS = (0, 6, 12, 18, 24)
+_INVENTORY_STARTED = "inventory.started"
+_INVENTORY_COMPLETED = "inventory.completed"
 
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _normalized_timestamp(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _next_scheduled_at(now: datetime | None = None) -> str:
@@ -147,8 +163,15 @@ class ControlRunner:
         crawl_status = "failed"
         paused = False
         intentional_pause = False
+        terminal_safe_code: str | None = None
         sequence = 1
-        follow_up = "inventory" if self._inventory_due() else "retry-batch"
+        follow_up = (
+            "inventory"
+            if self._inventory_due()
+            else "bootstrap-recovery"
+            if self._bootstrap_pending()
+            else "retry-batch"
+        )
         for action in ("sync-now", follow_up, "publish-if-changed"):
             self._claim_marker()
             if (self.profile.state_dir / "schedule.paused").exists():
@@ -157,7 +180,7 @@ class ControlRunner:
                     state = "partial"
                     intentional_pause = True
                 break
-            if action in {"inventory", "retry-batch"} and crawl_status in {
+            if action in {"inventory", "bootstrap-recovery", "retry-batch"} and crawl_status in {
                 "site_unreachable",
                 "rate_limited",
                 "auth_failed",
@@ -167,10 +190,11 @@ class ControlRunner:
                 continue
             try:
                 report = self._execute_action(action, run_id, run_id)
-                action_state, _safe_code, payload = self._result(action, report)
+                action_state, safe_code, payload = self._result(action, report)
             except OSError, RuntimeError, ValueError:
                 report = {}
                 action_state = "failed"
+                safe_code = "runner_failed"
                 payload = self._finish_payload("failed", "runner_failed")
             if action == "sync-now":
                 crawl_status = str(report.get("status", "failed"))
@@ -179,7 +203,7 @@ class ControlRunner:
             if action in {"sync-now", "inventory"}:
                 self._board_summaries(report)
             if (
-                action in {"sync-now", "inventory", "retry-batch"}
+                action in {"sync-now", "inventory", "bootstrap-recovery", "retry-batch"}
                 and payload["counters"]["changed_posts"]
             ):
                 self._write_publish_marker()
@@ -193,9 +217,22 @@ class ControlRunner:
                 state = "failed"
             elif action_state == "partial":
                 state = "partial"
-            self._event(run_id, sequence, action, action_state, payload["counters"])
+            if action_state in {"partial", "failed"} and terminal_safe_code is None:
+                terminal_safe_code = safe_code
+            self._event(
+                run_id,
+                sequence,
+                action,
+                action_state,
+                payload["counters"],
+                safe_message=safe_code,
+            )
             sequence += 1
-        finish = self._finish_payload(state, f"scheduled_{state}", counters, release_id)
+        self._archive_snapshot_event(run_id, sequence)
+        finish_code = (
+            "schedule_paused" if intentional_pause else terminal_safe_code or f"scheduled_{state}"
+        )
+        finish = self._finish_payload(state, finish_code, counters, release_id)
         self._send(
             "run_finish",
             f"/api/v1/runner/runs/{run_id}/finish",
@@ -311,7 +348,16 @@ class ControlRunner:
             self._write_publish_marker()
         if action == "sync-now" and report:
             self._board_summaries(report)
-        self._event(run_id, 1, action, state, finish_payload["counters"])
+        self._event(
+            run_id,
+            1,
+            action,
+            state,
+            finish_payload["counters"],
+            safe_message=safe_code,
+        )
+        if action in {"sync-now", "retry-batch"}:
+            self._archive_snapshot_event(run_id, 2)
         if self._send(
             "run_finish",
             f"/api/v1/runner/runs/{run_id}/finish",
@@ -340,6 +386,17 @@ class ControlRunner:
         command_reports.mkdir(parents=True, exist_ok=True)
         report_path = command_reports / f"{report_id}.json"
         if action in {"sync-now", "inventory"}:
+            inventory_started_at = (
+                self._ensure_inventory_pass_started() if action == "inventory" else None
+            )
+            if action == "inventory" and self._inventory_pass_complete(str(inventory_started_at)):
+                self._complete_inventory_pass(str(inventory_started_at))
+                return {
+                    "ok": True,
+                    "status": "succeeded",
+                    "safe_code": "inventory_already_complete",
+                    "boards": [],
+                }
             command = [
                 sys.executable,
                 "-m",
@@ -358,7 +415,15 @@ class ControlRunner:
                 str(report_path),
             ]
             if action == "inventory":
-                command.extend(("--inventory", "--max-seconds", str(2 * 60 * 60)))
+                command.extend(
+                    (
+                        "--inventory",
+                        "--inventory-since",
+                        str(inventory_started_at),
+                        "--max-seconds",
+                        str(2 * 60 * 60),
+                    )
+                )
             report = self._execute_report(
                 command, report_path, run_id, "crawling", command_id=command_id
             )
@@ -366,20 +431,11 @@ class ControlRunner:
                 action == "inventory"
                 and report.get("status") in {"succeeded", "partial"}
                 and report.get("stop_reason") != "schedule_paused"
+                and self._inventory_pass_complete(str(inventory_started_at))
             ):
-                (self.profile.state_dir / "inventory.completed").touch()
+                self._complete_inventory_pass(str(inventory_started_at))
             return report
-        if action == "retry-batch":
-            completed = self.profile.state_dir / "recovery.completed"
-            if (
-                completed.exists()
-                and time.time() - completed.stat().st_mtime < _DAILY_INTERVAL_SECONDS
-            ):
-                return {
-                    "ok": True,
-                    "status": "succeeded",
-                    "safe_code": "recovery_not_due",
-                }
+        if action in {"bootstrap-recovery", "retry-batch"}:
             command = [
                 sys.executable,
                 "-m",
@@ -391,7 +447,7 @@ class ControlRunner:
                 "--warc-dir",
                 str(self.profile.warc_dir),
                 "--max-posts",
-                "100",
+                "600" if action == "bootstrap-recovery" else "100",
                 "--pause-file",
                 str(self.profile.state_dir / "schedule.paused"),
                 "--output",
@@ -400,18 +456,10 @@ class ControlRunner:
             report = self._execute_report(
                 command, report_path, run_id, "recovery", command_id=command_id
             )
-            if (
-                report.get("status") in {"succeeded", "partial"}
-                and report.get("stop_reason") != "schedule_paused"
-            ):
-                completed.touch()
             return report
         marker = self.profile.state_dir / "publish.pending"
         if not marker.exists():
             return {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"}
-        completed = self.profile.state_dir / "publish.completed"
-        if completed.exists() and time.time() - completed.stat().st_mtime < _DAILY_INTERVAL_SECONDS:
-            return {"ok": True, "status": "succeeded", "safe_code": "publish_not_due"}
         export_report = report_path.with_suffix(".export.json")
         export = [
             sys.executable,
@@ -445,14 +493,105 @@ class ControlRunner:
         report = self._read_report(report_path)
         if report.get("ok") is True:
             marker.unlink(missing_ok=True)
-            completed.touch()
         return report
 
     def _inventory_due(self) -> bool:
-        completed = self.profile.state_dir / "inventory.completed"
-        return not completed.exists() or time.time() - completed.stat().st_mtime >= (
-            _WEEKLY_INTERVAL_SECONDS
+        started = self.profile.state_dir / _INVENTORY_STARTED
+        if started.exists():
+            return True
+        completed_at = self._inventory_marker_time(
+            self.profile.state_dir / _INVENTORY_COMPLETED,
+            "completed_at",
         )
+        return completed_at is None or datetime.now(UTC) - completed_at >= timedelta(
+            seconds=_WEEKLY_INTERVAL_SECONDS
+        )
+
+    def _inventory_pass_complete(self, started_at: str) -> bool:
+        if not self.profile.archive.is_file():
+            return False
+        with connect_archive(self.profile.archive, read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                    SUM(
+                        last_inventory_at IS NULL
+                        OR julianday(last_inventory_at) IS NULL
+                        OR julianday(last_inventory_at) < julianday(?)
+                        OR inventory_next_page <> 1
+                    ) AS incomplete
+                FROM boards WHERE is_enabled = 1
+                """,
+                (started_at,),
+            ).fetchone()
+        return bool(row and int(row["total"]) > 0 and int(row["incomplete"] or 0) == 0)
+
+    def _ensure_inventory_pass_started(self) -> str:
+        marker = self.profile.state_dir / _INVENTORY_STARTED
+        existing = self._inventory_marker_time(marker, "started_at")
+        if existing is not None:
+            return existing.isoformat(timespec="seconds").replace("+00:00", "Z")
+        started_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        self._write_inventory_marker(marker, {"started_at": started_at})
+        return started_at
+
+    def _complete_inventory_pass(self, started_at: str) -> None:
+        self._write_inventory_marker(
+            self.profile.state_dir / _INVENTORY_COMPLETED,
+            {"started_at": started_at, "completed_at": _timestamp()},
+        )
+        (self.profile.state_dir / _INVENTORY_STARTED).unlink(missing_ok=True)
+
+    def _latest_inventory_pass_started_at(self) -> str | None:
+        for name in (_INVENTORY_STARTED, _INVENTORY_COMPLETED):
+            value = self._inventory_marker_time(self.profile.state_dir / name, "started_at")
+            if value is not None:
+                return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+        return None
+
+    @staticmethod
+    def _inventory_marker_time(path: Path, field: str) -> datetime | None:
+        try:
+            if not path.is_file() or path.stat().st_size > 1024:
+                return None
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("schema_version") != 1 or not isinstance(payload.get(field), str):
+                return None
+            value = datetime.fromisoformat(payload[field].replace("Z", "+00:00"))
+        except OSError, ValueError:
+            return None
+        return value.astimezone(UTC) if value.tzinfo is not None else None
+
+    @staticmethod
+    def _write_inventory_marker(path: Path, fields: dict[str, str]) -> None:
+        partial = path.with_name(f"{path.name}.partial")
+        try:
+            partial.write_text(
+                json.dumps({"schema_version": 1, **fields}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(partial, path)
+        finally:
+            partial.unlink(missing_ok=True)
+
+    def _bootstrap_pending(self) -> bool:
+        if not self.profile.archive.is_file():
+            return False
+        with connect_archive(self.profile.archive, read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM crawl_frontier AS frontier
+                    LEFT JOIN posts AS post
+                      ON post.board_id = frontier.board_id
+                     AND post.external_post_id = frontier.external_post_id
+                    WHERE frontier.state IN ('pending', 'running', 'retry')
+                      AND post.latest_version_id IS NULL
+                    LIMIT 1
+                )
+                """
+            ).fetchone()
+        return bool(row and int(row[0]))
 
     def _execute_report(
         self,
@@ -539,10 +678,24 @@ class ControlRunner:
             state = "partial"
         else:
             state = "failed"
+        failure_codes: list[str] = []
+        raw_failures = report.get("failures")
+        if isinstance(raw_failures, list):
+            failure_codes.extend(code for code in raw_failures if isinstance(code, str))
+        raw_boards = report.get("boards")
+        if isinstance(raw_boards, list):
+            for board in raw_boards:
+                board_failures = board.get("failures") if isinstance(board, dict) else None
+                if isinstance(board_failures, list):
+                    failure_codes.extend(code for code in board_failures if isinstance(code, str))
+        warning_code = next(
+            (_WARNING_CODES[code] for code in failure_codes if code in _WARNING_CODES),
+            None,
+        )
         default_code = (
             _SUCCESS_CODES[action]
             if state == "succeeded"
-            else _STATUS_CODES.get(raw_status, "run_failed")
+            else warning_code or _STATUS_CODES.get(raw_status, "run_failed")
         )
         safe_code = str(report.get("safe_code") or default_code)
         if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", safe_code) is None:
@@ -613,6 +766,8 @@ class ControlRunner:
         step: str,
         state: str,
         counters: dict[str, int] | None = None,
+        *,
+        safe_message: str | None = None,
     ) -> None:
         payload = {
             "events": [
@@ -622,6 +777,7 @@ class ControlRunner:
                     "state": state,
                     "recorded_at": _timestamp(),
                     "counters": counters or {},
+                    "safe_message": safe_message,
                 }
             ]
         }
@@ -636,6 +792,7 @@ class ControlRunner:
         boards = report.get("boards")
         if not isinstance(boards, list) or not self.profile.archive.is_file():
             return
+        inventory_pass_started_at = self._latest_inventory_pass_started_at()
         with connect_archive(self.profile.archive, read_only=True) as connection:
             for item in boards:
                 if not isinstance(item, dict) or not isinstance(item.get("board_id"), str):
@@ -650,6 +807,15 @@ class ControlRunner:
                         (board_id,),
                     )
                 }
+                board = connection.execute(
+                    """
+                    SELECT name, group_name, inventory_next_page, last_inventory_at
+                    FROM boards WHERE board_id = ?
+                    """,
+                    (board_id,),
+                ).fetchone()
+                if board is None:
+                    continue
                 raw_failures = item_data.get("failures")
                 failures: list[Any] = raw_failures if isinstance(raw_failures, list) else []
                 warning = next(
@@ -665,6 +831,8 @@ class ControlRunner:
                 status = str(item_data.get("status"))
                 payload = {
                     "board_id": board_id,
+                    "board_name": str(board["name"]),
+                    "group_name": board["group_name"],
                     "last_scanned_at": _timestamp(),
                     "last_outcome": "succeeded"
                     if status == "succeeded"
@@ -675,9 +843,14 @@ class ControlRunner:
                         "discovered": _integer(item_data.get("scheduled_posts")),
                         "changed": _integer(outcomes.get("stored")),
                         "pending": queue.get("pending", 0),
+                        "running": queue.get("running", 0),
                         "retry": queue.get("retry", 0),
+                        "done": queue.get("done", 0),
                         "dead": queue.get("dead", 0),
                     },
+                    "inventory_next_page": int(board["inventory_next_page"]),
+                    "last_inventory_at": _normalized_timestamp(board["last_inventory_at"]),
+                    "inventory_pass_started_at": inventory_pass_started_at,
                     "warning_code": warning,
                 }
                 self._send(
@@ -686,6 +859,85 @@ class ControlRunner:
                     payload,
                     f"board-{uuid4().hex}",
                 )
+
+    def _archive_snapshot_event(self, run_id: str, sequence: int) -> None:
+        if not self.profile.archive.is_file():
+            return
+        inventory_started_at = self._latest_inventory_pass_started_at()
+        try:
+            with connect_archive(self.profile.archive, read_only=True) as connection:
+                deadline = time.monotonic() + _SNAPSHOT_TIME_BUDGET_SECONDS
+                connection.set_progress_handler(
+                    lambda: int(time.monotonic() >= deadline),
+                    10_000,
+                )
+                frontier = {
+                    str(row["state"]): int(row["count"])
+                    for row in connection.execute(
+                        "SELECT state, COUNT(*) AS count FROM crawl_frontier GROUP BY state"
+                    )
+                }
+                outline_only = int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*) FROM crawl_frontier AS frontier
+                        LEFT JOIN posts AS post
+                          ON post.board_id = frontier.board_id
+                         AND post.external_post_id = frontier.external_post_id
+                        WHERE post.latest_version_id IS NULL
+                        """
+                    ).fetchone()[0]
+                )
+                inventory = connection.execute(
+                    """
+                    SELECT COUNT(*) AS total,
+                        SUM(
+                            ? IS NOT NULL
+                            AND last_inventory_at IS NOT NULL
+                            AND julianday(last_inventory_at) >= julianday(?)
+                        ) AS completed,
+                        SUM(inventory_next_page > 1) AS in_progress
+                    FROM boards WHERE is_enabled = 1
+                    """,
+                    (inventory_started_at, inventory_started_at),
+                ).fetchone()
+        except sqlite3.Error:
+            return
+        counters = {
+            "outline_only": outline_only,
+            "frontier_pending": frontier.get("pending", 0),
+            "frontier_running": frontier.get("running", 0),
+            "frontier_retry": frontier.get("retry", 0),
+            "frontier_done": frontier.get("done", 0),
+            "frontier_dead": frontier.get("dead", 0),
+            "inventory_total_boards": int(inventory["total"]),
+            "inventory_completed_boards": int(inventory["completed"] or 0),
+            "inventory_in_progress_boards": int(inventory["in_progress"] or 0),
+        }
+        self._event(run_id, sequence, "archive_snapshot", "succeeded", counters)
+
+    @staticmethod
+    def _schedule_timer_active() -> bool:
+        try:
+            enabled = subprocess.run(
+                ["systemctl", "is-enabled", "--quiet", "redstm-schedule.timer"],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            active = subprocess.run(
+                ["systemctl", "is-active", "--quiet", "redstm-schedule.timer"],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+        except OSError, subprocess.SubprocessError:
+            return False
+        return enabled.returncode == 0 and active.returncode == 0
 
     def _heartbeat(
         self,
@@ -701,7 +953,7 @@ class ControlRunner:
             "runner_version": self.profile.runner_version,
             "state": state,
             "disk_free_bytes": shutil.disk_usage(self.profile.state_dir).free,
-            "next_scheduled_at": _next_scheduled_at(),
+            "next_scheduled_at": _next_scheduled_at() if self._schedule_timer_active() else None,
         }
         if run_id is not None:
             payload.update(
