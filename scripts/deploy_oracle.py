@@ -407,7 +407,7 @@ def deploy_release(
     release: str,
     archive: Path,
     archive_sha256: str,
-    installer: Path,
+    installer: Path | None,
     *,
     install_mode: str = "install",
     runner: CommandRunner = subprocess.run,
@@ -422,10 +422,11 @@ def deploy_release(
         raise ValueError("release archive identity is invalid")
     attempt = secrets.token_hex(16)
     committed_installer = _installer_from_archive(archive)
-    installer = installer.expanduser().resolve(strict=True)
-    with installer.open("rb") as source:
-        if source.read(_MAX_INSTALLER_BYTES + 1) != committed_installer:
-            raise RuntimeError("installer does not match the release archive")
+    if installer is not None:
+        installer = installer.expanduser().resolve(strict=True)
+        with installer.open("rb") as source:
+            if source.read(_MAX_INSTALLER_BYTES + 1) != committed_installer:
+                raise RuntimeError("installer does not match the release archive")
     installer_snapshot = archive.with_name(f".redstm-install-release-{attempt}.sh")
     installer_snapshot.write_bytes(committed_installer)
     remote_archive = f"/tmp/redstm-release-{release}-{attempt}.tar.gz.partial"

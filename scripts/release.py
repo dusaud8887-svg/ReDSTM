@@ -605,7 +605,7 @@ def deploy_oracle_application(
             release,
             archive,
             digest,
-            root / "deploy" / "oracle" / "install_release.sh",
+            None,
             install_mode=install_mode,
             runner=safe_runner,
         )
