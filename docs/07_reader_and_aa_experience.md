@@ -1,7 +1,7 @@
 # 소설·AA Reader 상세 사양
 
-- 상태: behavior baseline 구현 완료, live visual acceptance 실패, redesign/actual Android gate 대기
-- 기준일: 2026-07-11
+- 상태: Signal Archive Reader deployed; authenticated/user visual and actual Android gates pending
+- 기준일: 2026-07-12
 - 상위 UX: [`06_final_product_experience.md`](06_final_product_experience.md)
 - 시각 token: [`../DESIGN.md`](../DESIGN.md)
 - 기존 구현 근거: `D:\Dark-Side-of-Type-Moon\src\viewer\src\lib\components\viewers`
@@ -27,12 +27,12 @@ Reader shell
 감싸지 않는다. 설정 source는 versioned state 하나이며 AA compact controls와 상세 dialog가 같은
 값을 조작한다.
 
-2026-07-11 현재 plain Edge Reader에 Cover/이어읽기, mobile single-plane,
-prose typography, AA 9–24px·10–300% zoom·세 preset·680/800 canvas·source style·background,
-progress·immersive·keyboard·comments/end navigation, stable post identity별 mode override를
-구현했다. collection의 object key 없는 항목 수와 직접 조회한 missing object도 구분한다. Playwright
-fixture는 1440/390/320px에서 통과했다. 다만 object-key 기반 browser state와 mobile toolbar,
-실제 font asset, loading/error 상태, live visual direction은 최종 계약을 충족하지 않는다.
+현재 Signal Archive Reader는 stable identity/deep link, Home/이어읽기, mobile single-plane,
+prose typography, AA 9–24px·10–300% zoom·세 preset·680/800 canvas·source style/background,
+progress·immersive·keyboard·comments/end navigation과 per-post mode를 구현했다. self-hosted font,
+compact toolbar, loading/offline/Access-expired와 collection missing 상태도 포함하며 Playwright fixture는
+1440/768/390/320px에서 통과했다. 남은 판정은 authenticated production data, 실제 Android와 사용자
+시각 acceptance다.
 
 ## 2. 공통 reader 상태
 
@@ -180,9 +180,9 @@ import 시 범위를 clamp하거나 알 수 없는 color를 조용히 적용하�
 ### 4.5 원본 CSS port 계약
 
 현재 ReDSTM은 Saitamaar/`Stmr` fallback, 1.125 line-height, 자식 nowrap, 9~24px clamp,
-zoom, preset/canvas, source-style toggle과 background state를 구현했다. 남은 작업은 이 기능을
-mobile compact toolbar에 모두 노출하지 않고 위 설정 dialog로 재배치하는 것이다. DSOTM의 중복된
-Tailwind utility와 component style을 통째로 붙이지 않고 아래 한 component 규칙을 유지한다.
+zoom, preset/canvas, source-style toggle과 background state를 구현했다. mobile compact toolbar에는
+핵심 조절만 두고 나머지는 settings dialog로 분리했다. DSOTM의 중복된 Tailwind utility와 component
+style을 통째로 붙이지 않고 아래 한 component 규칙을 유지한다.
 
 ```css
 .aa-stage {

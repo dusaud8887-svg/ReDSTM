@@ -72,16 +72,12 @@ index.html과 ops.html은 runtime template engine을 쓰지 않는다. Reader와
 분리하고, 작은 token 중복은 억지 shared component 계층보다 허용한다. Reader module은 D1 command
 API를 import하지 않는다.
 
-Font asset 확보와 배포 gate:
+Font asset과 배포 gate:
 
-- SUIT Variable: [sun-typeface/SUIT](https://github.com/sun-typeface/SUIT), SIL OFL 1.1 — variable WOFF2 1개
-- MaruBuri: [네이버 한글캠페인](https://hangeul.naver.com/font), SIL OFL — Regular 1개와 license 원문
-- Saitamaar: 이미 vendored (`Saitamaar-LICENSE.txt` 포함)
-- Saitamaar TTF(1.9MB)는 mobile 전송량을 위해 무손실 WOFF2 재포장을 허용한다. subset은
-  금지한다(AA 글리프 커버리지 보존). 재포장 후 대표 AA screenshot/DOM 대조를 통과해야 교체한다.
-- 새 font 파일 다운로드는 실행 직전 사용자 확인을 거친다. `npm run deploy`는 CSS가 선언한
-  font asset과 license 파일의 존재를 기계적으로 검사한 뒤에만 진행한다. asset이 없는 동안 해당
-  family를 CSS 첫 항목으로 선언하지 않는다는 [DESIGN.md](../DESIGN.md) gate를 유지한다.
+- SUIT Variable WOFF2, MaruBuri Regular WOFF2, Saitamaar TTF와 각 license를 self-host한다.
+- 현재 asset은 bundle에 있으며 deploy가 CSS 선언과 license 존재를 기계적으로 검사한다.
+- Saitamaar TTF의 무손실 WOFF2 재포장은 실제 mobile 전송 병목이 확인될 때만 한다. subset은
+  금지하며 교체 시 대표 AA screenshot/DOM 대조를 다시 통과해야 한다.
 
 ## 4. Route contract
 
