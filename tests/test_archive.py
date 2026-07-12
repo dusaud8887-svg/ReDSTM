@@ -196,6 +196,71 @@ def test_release_schema_guard_rejects_missing_or_wrong_v4_column(
             )
 
 
+def test_release_schema_guard_checks_v4_board_anchor_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    with monkeypatch.context() as patch:
+        patch.setattr(archive_module, "SCHEMA_VERSION", 3)
+        patch.setattr(archive_module, "MIGRATIONS", MIGRATIONS[:3])
+        initialize_archive(path)
+    with connect_archive(path) as connection:
+        connection.execute(
+            "ALTER TABLE crawl_frontier ADD COLUMN expected_comment_count INTEGER "
+            "CHECK (expected_comment_count >= 0)"
+        )
+        connection.execute(
+            "INSERT INTO schema_migrations (version, sha256) VALUES (4, ?)",
+            (MIGRATIONS[3].sha256,),
+        )
+        connection.execute("PRAGMA user_version = 4")
+
+    with connect_archive(path, read_only=True) as connection:
+        with pytest.raises(RuntimeError, match="physical shape"):
+            validate_archive_for_release(
+                connection,
+                target_schema_version=4,
+                target_migration_hashes={
+                    migration.version: migration.sha256 for migration in MIGRATIONS
+                },
+            )
+
+
+def test_release_schema_guard_rejects_schema_zero(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    with connect_archive(path) as connection:
+        connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, sha256 TEXT)"
+        )
+
+    with connect_archive(path, read_only=True) as connection:
+        with pytest.raises(RuntimeError, match="schema v0 is incompatible"):
+            validate_archive_for_release(
+                connection,
+                target_schema_version=SCHEMA_VERSION,
+                target_migration_hashes={
+                    migration.version: migration.sha256 for migration in MIGRATIONS
+                },
+            )
+
+
+def test_initialize_archive_does_not_downgrade_a_future_schema(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    initialize_archive(path)
+    with connect_archive(path) as connection:
+        connection.execute(
+            "INSERT INTO schema_migrations (version, sha256) VALUES (?, ?)",
+            (SCHEMA_VERSION + 1, "f" * 64),
+        )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+
+    with pytest.raises(RuntimeError, match="not supported"):
+        initialize_archive(path)
+    with connect_archive(path, read_only=True) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION + 1
+
+
 def test_release_schema_guard_rejects_inconsistent_ledger_and_target_metadata(
     tmp_path: Path,
 ) -> None:

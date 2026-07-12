@@ -914,6 +914,11 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "migrate-canonical)" in installer
     assert "canonical migration requires two distinct compatible releases" in installer
     assert "migrate_archive_locked" in installer
+    migration_body = installer.split("migrate_canonical_schema() {", 1)[1].split(
+        "rollback_release() {", 1
+    )[0]
+    assert "print(json.dumps(report" not in migration_body
+    assert "canonical-schema=migrated" in migration_body
     assert "CANONICAL_MIGRATION_FREE_MARGIN_BYTES=5368709120" in installer
     rollback_body = installer.split("rollback_release() {", 1)[1].split('mode="${1:-}"', 1)[0]
     assert rollback_body.index("validate_archive_for_release") < rollback_body.index(

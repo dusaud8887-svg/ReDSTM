@@ -13,7 +13,12 @@ from uuid import uuid4
 import pytest
 
 from crawler.archive import connect_archive, initialize_archive
-from crawler.settings import REDSTM_FULL_CONTENT_MAX_POSTS, REDSTM_RECOVERY_MAX_POSTS
+from crawler.settings import (
+    REDSTM_EXPORT_MAX_CHANGED_POSTS,
+    REDSTM_EXPORT_WORKERS,
+    REDSTM_FULL_CONTENT_MAX_POSTS,
+    REDSTM_RECOVERY_MAX_POSTS,
+)
 from scripts.control_client import ControlClient
 from scripts.control_runner import (
     ControlRunner,
@@ -548,6 +553,10 @@ def test_publish_without_marker_always_reconciles_and_smokes(
         "scripts.release_smoke",
     ]
     assert "--incremental-only" in commands[0]
+    assert commands[0][commands[0].index("--workers") + 1] == str(REDSTM_EXPORT_WORKERS)
+    assert commands[0][commands[0].index("--max-changed-posts") + 1] == str(
+        REDSTM_EXPORT_MAX_CHANGED_POSTS
+    )
     assert "--verified-incremental" in commands[1]
     row = store.command(command["command_id"])
     assert row is not None

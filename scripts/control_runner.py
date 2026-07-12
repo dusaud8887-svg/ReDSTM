@@ -20,7 +20,12 @@ from uuid import uuid4
 from filelock import FileLock, Timeout
 
 from crawler.archive import connect_archive
-from crawler.settings import REDSTM_FULL_CONTENT_MAX_POSTS, REDSTM_RECOVERY_MAX_POSTS
+from crawler.settings import (
+    REDSTM_EXPORT_MAX_CHANGED_POSTS,
+    REDSTM_EXPORT_WORKERS,
+    REDSTM_FULL_CONTENT_MAX_POSTS,
+    REDSTM_RECOVERY_MAX_POSTS,
+)
 from scripts.control_client import (
     ControlClient,
     ControlProtocolError,
@@ -69,7 +74,6 @@ _WARNING_CODES = {
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SNAPSHOT_TIME_BUDGET_SECONDS = 30
-_EXPORT_WORKERS = 1
 _DEFAULT_DISK_LOW_BYTES = 40 * 1024**3
 _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS = _DAILY_INTERVAL_SECONDS
 _DEFAULT_TOKEN_EXPIRING_SECONDS = _DAILY_INTERVAL_SECONDS
@@ -652,7 +656,9 @@ class ControlRunner:
                 "--output",
                 str(self.profile.static_root),
                 "--workers",
-                str(_EXPORT_WORKERS),
+                str(REDSTM_EXPORT_WORKERS),
+                "--max-changed-posts",
+                str(REDSTM_EXPORT_MAX_CHANGED_POSTS),
                 "--incremental-only",
             ]
             export_return_code = self._wait(
