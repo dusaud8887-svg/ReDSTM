@@ -7,7 +7,8 @@
   "preview_urls": false,
   "vars": {
     "TEAM_DOMAIN": "https://redstm-archive-private.cloudflareaccess.com",
-    "POLICY_AUD": "fe751d9940fe39ebdf36da5a3e5d3465ef206eb3c59e98f537c5c6df817c0604"
+    "POLICY_AUD": "fe751d9940fe39ebdf36da5a3e5d3465ef206eb3c59e98f537c5c6df817c0604",
+    "RUNNER_POLICY_AUD": "16713ca6268190096ef46bf4b6e23d2f6086d62da50ea2ea138752a6e3612a17"
   },
   "assets": {
     "directory": "./public",
