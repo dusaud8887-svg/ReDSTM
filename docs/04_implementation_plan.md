@@ -170,9 +170,9 @@ mobile-first 제품으로 교체한다.
 - A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation, import preview,
   offline/Access-expired recovery와 Arrow/Enter navigation이 구현됐다.
 - 남은 gate는 authenticated live data smoke, 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
-- 최신 코드 증거: `4342035`, `1cedd77`, `da92148`, `7a92e86`; local gate는 Node 30,
+- 최신 코드 증거: `4342035`, `1cedd77`, `da92148`, `7a92e86`, `95fd00e`, `368fe1b`; local gate는 Node 30,
   self-contained Playwright 44, font/license check, startup check와 strict dry-run 통과다.
-- live evidence: Worker version `2b038d70-6d70-4966-a72b-437d91177820`; `/`, `/ops`,
+- live evidence: Worker version `ef87fd99-ee0d-4d2a-999d-69839ce0f438`; `/`, `/ops`,
   `/archive/release.json`의 unauthenticated 302 Access challenge를 확인했다. 인증 뒤 data flow는
   A0 smoke에서 판정한다.
 
@@ -311,7 +311,7 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): remote D1 migration 2개와 Worker `2b038d70` live 배포, 이전 `c47b2e58` rollback/복귀
+상태(2026-07-12): remote D1 migration 2개와 Worker `ef87fd99` live 배포, 이전 `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
 Python 133 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두

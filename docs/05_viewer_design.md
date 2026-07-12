@@ -2,7 +2,7 @@
 
 - 상태: Accepted redesign; live implementation deployed, authenticated/device acceptance pending
 - 기준일: 2026-07-12
-- live: Worker `2b038d70-6d70-4966-a72b-437d91177820`; unauthenticated Reader/Ops/Release는 Access 302
+- live: Worker `ef87fd99-ee0d-4d2a-999d-69839ce0f438`; unauthenticated Reader/Ops/Release는 Access 302
 - 범위: Edge Reader와 Operations의 시각 방향, mobile shell, typography, interaction quality
 - normative token: [DESIGN.md](../DESIGN.md)
 - 상위 제품 계약: [06 final product](06_final_product_experience.md)
