@@ -24,6 +24,8 @@ from scripts.sync import (
     _write_report,
 )
 
+_RECOVERY_TIME_BUDGET_SECONDS = 2 * 60 * 60
+
 
 def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
@@ -58,6 +60,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             settings.set("REDSTM_ARCHIVE_PATH", str(archive), priority="cmdline")
             settings.set("REDSTM_RUN_ID", run_id, priority="cmdline")
             settings.set("REDSTM_WARC_PATH", str(warc_path), priority="cmdline")
+            settings.set("CLOSESPIDER_TIMEOUT", args.max_seconds, priority="cmdline")
             process = CrawlerProcess(settings)
             crawler = process.create_crawler(TypeMoonRecoverySpider)
             process.crawl(
@@ -75,6 +78,11 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 set(getattr(spider, "failure_codes", ()))
                 | set(_capture_failure_codes(archive, run_id))
             )
+            if (
+                crawler.stats is not None
+                and crawler.stats.get_value("finish_reason") == "closespider_timeout"
+            ):
+                failures = sorted({*failures, "recovery_time_budget"})
 
         outcomes = _capture_summary(archive, run_id)
         status = _run_status(outcomes, scheduled, failures)
@@ -120,11 +128,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session", type=Path, default=Path(".data/private/typemoon-session.json"))
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
     parser.add_argument("--max-posts", type=int, default=20)
+    parser.add_argument("--max-seconds", type=int, default=_RECOVERY_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if min(args.max_posts, args.lease_seconds) < 1:
-        parser.error("max-posts and lease-seconds must be positive")
+    if min(args.max_posts, args.max_seconds, args.lease_seconds) < 1:
+        parser.error("max-posts, max-seconds and lease-seconds must be positive")
     return args
 
 

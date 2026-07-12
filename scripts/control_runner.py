@@ -55,7 +55,7 @@ _WARNING_CODES = {
     "listing_fetch_failed": "site_unreachable",
     "network_error": "site_unreachable",
 }
-_PUBLISH_INTERVAL_SECONDS = 24 * 60 * 60
+_DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _SCHEDULE_HOURS = (0, 6, 12, 18, 24)
 
 
@@ -332,6 +332,16 @@ class ControlRunner:
                 command, report_path, run_id, "crawling", command_id=command_id
             )
         if action == "retry-batch":
+            completed = self.profile.state_dir / "recovery.completed"
+            if (
+                completed.exists()
+                and time.time() - completed.stat().st_mtime < _DAILY_INTERVAL_SECONDS
+            ):
+                return {
+                    "ok": True,
+                    "status": "succeeded",
+                    "safe_code": "recovery_not_due",
+                }
             command = [
                 sys.executable,
                 "-m",
@@ -347,17 +357,17 @@ class ControlRunner:
                 "--output",
                 str(report_path),
             ]
-            return self._execute_report(
+            report = self._execute_report(
                 command, report_path, run_id, "recovery", command_id=command_id
             )
+            if report.get("status") in {"succeeded", "partial"}:
+                completed.touch()
+            return report
         marker = self.profile.state_dir / "publish.pending"
         if not marker.exists():
             return {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"}
         completed = self.profile.state_dir / "publish.completed"
-        if (
-            completed.exists()
-            and time.time() - completed.stat().st_mtime < _PUBLISH_INTERVAL_SECONDS
-        ):
+        if completed.exists() and time.time() - completed.stat().st_mtime < _DAILY_INTERVAL_SECONDS:
             return {"ok": True, "status": "succeeded", "safe_code": "publish_not_due"}
         export_report = report_path.with_suffix(".export.json")
         export = [

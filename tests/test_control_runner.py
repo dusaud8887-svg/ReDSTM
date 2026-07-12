@@ -232,6 +232,22 @@ def test_publish_waits_for_daily_window_without_losing_pending_marker(
     assert (runner.profile.state_dir / "publish.pending").exists()
 
 
+def test_retry_batch_runs_at_most_once_per_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    completed = runner.profile.state_dir / "recovery.completed"
+    completed.touch()
+    monkeypatch.setattr(
+        "scripts.control_runner.subprocess.Popen",
+        lambda *_args, **_kwargs: pytest.fail("recovery process must not start"),
+    )
+
+    report = runner._execute_action("retry-batch", "scheduled", "scheduled")
+
+    assert report["safe_code"] == "recovery_not_due"
+
+
 def test_scheduled_run_crawls_recovers_and_publishes_without_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -290,4 +306,5 @@ def test_scheduled_run_crawls_recovers_and_publishes_without_command(
     finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
     assert finish["release_id"] == "a" * 64
     assert finish["counters"]["changed_posts"] == 1
+    assert (runner.profile.state_dir / "recovery.completed").is_file()
     assert not (runner.profile.state_dir / "publish.pending").exists()

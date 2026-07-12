@@ -124,6 +124,7 @@ def test_empty_recovery_writes_success_report_without_session_request(
             session=tmp_path / "session.json",
             warc_dir=tmp_path / "warc",
             max_posts=5,
+            max_seconds=60,
             lease_seconds=60,
         )
     )
@@ -156,6 +157,13 @@ def test_recovery_report_includes_capture_failure_codes(
     class FakeCrawler:
         spider = None
 
+        class Stats:
+            @staticmethod
+            def get_value(name: str) -> str | None:
+                return "closespider_timeout" if name == "finish_reason" else None
+
+        stats = Stats()
+
     class FakeProcess:
         def __init__(self, settings: object) -> None:
             pass
@@ -181,9 +189,10 @@ def test_recovery_report_includes_capture_failure_codes(
             session=tmp_path / "session.json",
             warc_dir=tmp_path / "warc",
             max_posts=1,
+            max_seconds=60,
             lease_seconds=60,
         )
     )
 
     assert report["ok"] is False
-    assert report["failures"] == ["auth_required"]
+    assert report["failures"] == ["auth_required", "recovery_time_budget"]
