@@ -1,9 +1,8 @@
 # ReDSTM
 
-개인용 TypeMoon 수집·보존·열람 도구다. Phase 0 evidence gate와 schema v1 full legacy import를
-완료했다. `.data/migration/full-import-verification.json`은 count/sample/SQLite health/hash를
-검증해 `ok=true`다. canonical DB는 `D:\ReDSTM\.data\canonical\archive.sqlite`이며 verified
-snapshot/restore 뒤 schema v2로 전환했다. 장기 backup만 `E:\ReDSTM\backups`에 둔다.
+개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
+Oracle canonical runner가 배포돼 있다. 남은 제품 gate는 bounded delta·failure canary, 24시간/7일
+shadow와 실제 Android acceptance다. 완료된 초기 migration·타당성 증거는 `docs/done/`에 둔다.
 
 ## 먼저 읽기
 
@@ -11,7 +10,7 @@ snapshot/restore 뒤 schema v2로 전환했다. 장기 backup만 `E:\ReDSTM\back
 2. [`docs/00_initial_product_architecture.md`](docs/00_initial_product_architecture.md)
 3. [`docs/04_implementation_plan.md`](docs/04_implementation_plan.md)
 4. [`docs/06_final_product_experience.md`](docs/06_final_product_experience.md)
-5. [`docs/archive/2026-07-11/README.md`](docs/archive/2026-07-11/README.md) — 완료 증거
+5. [`docs/done/2026-07-11/README.md`](docs/done/2026-07-11/README.md) — 완료 증거
 
 ## 개발 시작
 

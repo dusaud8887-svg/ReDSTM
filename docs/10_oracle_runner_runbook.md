@@ -1,6 +1,6 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: Latest application/canonical/static installed; Access, shadow and cutover pending
+- 상태: Application/canonical/static와 Access/control canary live; delta, shadow and cutover pending
 - 기준일: 2026-07-12
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)

@@ -4,9 +4,9 @@
 - 기준일: 2026-07-12
 - 범위: 현재 검증된 데이터/코드에서 완전 자동 private archive로 가는 남은 작업
 - 제품 계약: [`00`](00_initial_product_architecture.md)
-- 완료 증거: [`archive/2026-07-11`](archive/2026-07-11/README.md)
+- 완료 증거: [`done/2026-07-11`](done/2026-07-11/README.md)
 
-이 문서는 완료된 작업의 일지를 반복하지 않는다. 완료 증거는 archive와 report에 고정하고,
+이 문서는 완료된 작업의 일지를 반복하지 않는다. 완료 증거는 `done/`과 report에 고정하고,
 여기에는 **현재 판정, 앞으로 할 일, 순서, gate, 사용자 입력**만 둔다.
 
 ## 1. 현재 판정
@@ -318,7 +318,7 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): remote D1 migration 2개와 Worker `9344fbbe` live 배포, 이전 `c47b2e58` rollback/복귀
+상태(2026-07-12): remote D1 migration 2개와 Worker `58a70799` live 배포, 이전 `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
 Python 147 tests와 Edge 30 tests를 통과했다. 비인증 user route는 302이고 path-specific runner는
@@ -520,5 +520,5 @@ Cloudflare/Oracle 변경:
 - B2/restic과 외부 dead-man 계정은 사용자 결정으로 현재 완료 조건에서 제외한다.
 - UI 구현은 실제 font load/mobile/AA visual acceptance를 통과해야 완료다.
 - 7일 shadow는 생략하거나 소급 완료 처리하지 않는다.
-- 완료된 phase의 상세 실행 기록은 [`archive`](archive/2026-07-11/README.md)로 옮기고 이 문서는
+- 완료된 phase의 상세 실행 기록은 [`done`](done/2026-07-11/README.md)으로 옮기고 이 문서는
   다음 active gate만 유지한다.

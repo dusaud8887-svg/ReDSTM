@@ -5,7 +5,7 @@
 - product UX: [06](06_final_product_experience.md)
 - frontend: [09](09_frontend_strategy_and_roadmap.md)
 - runner: [10](10_oracle_runner_runbook.md)
-- completed C0: [archive record](archive/2026-07-11/08_local_operations_console_c0.md)
+- completed C0: [done record](done/2026-07-11/08_local_operations_console_c0.md)
 
 Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 runner AUD를 포함한 Operations
 Worker를 배포했고 현재 version은 `58a70799`다. 이전 `c47b2e58` 100% rollback → Access 302 → current 복귀를

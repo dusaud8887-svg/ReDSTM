@@ -1,6 +1,6 @@
 # Frontend 구현 전략·채택 판단
 
-- 상태: Reader and Operations deployed; authenticated/mobile acceptance pending
+- 상태: Reader and Operations authenticated live; mobile/user acceptance pending
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
@@ -35,13 +35,13 @@
 - keyboard navigation과 desktop Operations rail
 - Access/D1 control API와 responsive `/ops`, fixed command/queued cancel
 - search-first Home, medium settings entry, large-post progress, AA dark-ink/overflow cue,
-  catalog state badge, row skeleton과 상태 가져오기 검토 (`ef87fd99` live)
+  catalog state badge, row skeleton, 상태 가져오기 검토, 검색 URL 복원과 mobile Ops 진입점
+  (`58a70799` live)
 
 ### 남은 acceptance
 
-- authenticated production Reader/Operations data smoke
-- Access user/service role separation과 runner heartbeat/command live flow
 - 실제 Android Back/background/pinch/font와 사용자 시각 acceptance
+- duplicate command와 실제 crawl outage의 Operations 상태 증거
 - 7일 shadow의 idle/running/degraded/stale/failed 상태 증거
 
 문서의 완료 상태는 behavior baseline과 live visual acceptance를 분리한다.

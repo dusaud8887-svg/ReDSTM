@@ -1,6 +1,6 @@
 # 최종 제품 경험·정보구조 사양
 
-- 상태: Reader/Operations deployed; automation, authenticated and device gates in progress
+- 상태: Reader/Operations authenticated live; automation and device gates in progress
 - 기준일: 2026-07-12
 - architecture: [00](00_initial_product_architecture.md)
 - delivery plan: [04](04_implementation_plan.md)

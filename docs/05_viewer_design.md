@@ -1,8 +1,8 @@
 # Viewer 시각·UX 디자인 방향
 
-- 상태: Accepted redesign; live implementation deployed, authenticated/device acceptance pending
+- 상태: Accepted redesign; live/authenticated implementation deployed, user/device acceptance pending
 - 기준일: 2026-07-12
-- live: Worker `ef87fd99-ee0d-4d2a-999d-69839ce0f438`; unauthenticated Reader/Ops/Release는 Access 302
+- live: Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`; authenticated Reader/Ops 통과
 - 범위: Edge Reader와 Operations의 시각 방향, mobile shell, typography, interaction quality
 - normative token: [DESIGN.md](../DESIGN.md)
 - 상위 제품 계약: [06 final product](06_final_product_experience.md)

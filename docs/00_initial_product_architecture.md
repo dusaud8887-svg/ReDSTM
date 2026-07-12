@@ -1,11 +1,11 @@
 # ReDSTM 초기 기획 및 아키텍처 설계서
 
-- 상태: Accepted architecture, legacy migration verified, remaining phases in progress
-- 기준일: 2026-07-11
+- 상태: Accepted architecture; Reader/Operations deployed, automation gates in progress
+- 기준일: 2026-07-12
 - 대상: 개인용 TypeMoon 아카이버 및 뷰어
 - 입력 자료: 기존 [DSOTM](../../Dark-Side-of-Type-Moon/README.md) 문서와 코드
 
-> **2026-07-11 결정:** [`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md)의
+> **2026-07-11 결정:** [`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md)의
 > production sample, full metadata search, Worker/R2, desktop/mobile reader와 rollback gate가
 > 모두 통과했다. 따라서 아래 Worker + private R2 구조가 현재 source of truth이며 이전
 > Django/Gunicorn single-host 안은 fallback 비교안으로만 남는다.
@@ -208,7 +208,7 @@ Phase 0 static-edge gate 통과 후 single-writer canonical DB는 유지하면�
 - SQLite는 기본 4KiB page에서 약 17.5TB, 최대 page size에서 약 281TB까지 지원한다. 실측 26.8GiB는 엔진 한계와 무관하다. [SQLite limits](https://www.sqlite.org/limits.html)
 - SQLite 공식 가이드는 낮은 write concurrency와 1TB 미만의 device-local storage에 SQLite를 적합한 선택으로 설명한다. [Appropriate Uses For SQLite](https://www.sqlite.org/whentouse.html)
 - WAL은 reader/writer 동시성을 높이지만 checkpoint와 같은 host 제약을 추가한다. 2026-03에 발견된 WAL reset bug는 3.51.3, 3.50.7, 3.44.6 이상에서 수정됐다. [SQLite WAL](https://www.sqlite.org/wal.html)
-- 현재 로컬 Python은 SQLite 3.50.4를 사용해 해당 수정 전 버전이고, `better-sqlite3`는 3.53.0을 사용한다. v2 기본 rollback journal은 해당 결함 경로가 아니므로 시작 시 version 검사를 두지 않고, WAL을 켜는 결정에서만 fixed runtime/version test를 선행한다([`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)).
+- 현재 로컬 Python은 SQLite 3.50.4를 사용해 해당 수정 전 버전이고, `better-sqlite3`는 3.53.0을 사용한다. v2 기본 rollback journal은 해당 결함 경로가 아니므로 시작 시 version 검사를 두지 않고, WAL을 켜는 결정에서만 fixed runtime/version test를 선행한다([`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)).
 - SQLite FTS5는 일반 token 검색과 trigram substring 검색을 제공한다. 본문 검색을 별도 검색 서버 없이 구현할 수 있다. [FTS5](https://www.sqlite.org/fts5.html)
 - WARC 1.1은 HTTP 응답, 메타데이터, 변환물, digest와 중복 참조를 보존하는 ISO 표준이다. [IIPC WARC 1.1](https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/), [미국 NARA 허용 포맷](https://www.archives.gov/records-mgmt/policy/transfer-guidance-tables.html)
 - R2 Standard의 월 무료량은 10GB-month, Class A 100만, Class B 1,000만 요청이며 egress는 무료다. 실측 DB snapshot만 26.8GiB이므로 무료 저장량 안에 들어가지 않으며 유료 저장 비용을 전제로 한다. [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
@@ -645,7 +645,7 @@ UNIQUE(post_id, content_sha256, comments_sha256)
 bytes였다. 같은 UTF-8 payload는 gzip-6 21.41%/17.943초, Python 3.14 표준 zstd-3
 20.38%/3.730초였고 zstd schema DB는 231,505,920 bytes로 78.87% 작아졌다. local canonical
 DB는 zstd-3 BLOB을 쓰고, R2 static object는 2026-07-11 결정 이후 zstd level 15를 쓴다
-([`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md) §3의 브라우저 제약 참고). 근거는 `canonical-schema-spike-20260711.json`이다.
+([`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md) §3의 브라우저 제약 참고). 근거는 `canonical-schema-spike-20260711.json`이다.
 
 #### `comments`
 
@@ -917,7 +917,7 @@ total snapshot과 주간 inventory 실행 주기만 아직 live gate 전이다.
 10초 고정 간격의 retry/listing 제외 이론값은 기존 queue 33,712건 복구가 93.64시간(3.90일),
 모든 legacy post 282,239건 detail 재검증이 784.0시간(32.7일)이다. 초기 backfill은 queue recovery로
 한정하고 전체 재검증은 별도 coverage 작업으로 취급한다. 상세 board별 수치는
-[`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)를 따른다.
+[`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)를 따른다.
 
 ### 8.5 collect와 version
 
@@ -957,7 +957,7 @@ storage_error
 
 - restricted 판정은 content root가 없는 응답에서만 login form/field 구조와 안내 구문으로
   결정한다. content root가 있으면 구문은 본문 인용으로 보고 정상 저장한다
-  ([`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)).
+  ([`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)).
 - 현재 capture/DB까지 연결된 error code는 `network_error`, `rate_limited`, `auth_required`,
   `permission_denied`, `not_found`, `parse_drift`다. `quality_rejected`, `storage_error`의 독립 집계는
   아직 구현되지 않았다.
@@ -1019,7 +1019,7 @@ custom Scrapy downloader middleware가 listing/detail GET 응답을 parser와 de
 
 `nh3.Cleaner` 한 instance가 tag, attribute, URL scheme, AA용 style property allowlist를 적용한다. `script/style/iframe/object/embed` 내용과 event attribute, `javascript:`/`data:` URL, remote background와 positioning CSS를 제거한다. `AA_Text`, legacy `font`, color/typography/white-space/table property만 보존한다. 이 두 포맷·보안 계층을 자체 구현하지 않는다.
 
-production HTML 2,000행 profile에서 inline style 문서는 668개였고 모든 문서에 `AA_Text` class가 있었지만 실제 `is_aa`는 464개였다. 따라서 content root class는 보존하되 AA 판정 source로 사용하지 않는다. P0 판정은 AA board/category, root 아래의 명시적 AA marker, Saitamaar/MS Gothic/Mona font hint만 인정한다. box-drawing 문자 개수와 legacy `_detect_aa`도 false positive가 실측되어 단독 신호로 쓰지 않는다. 같은 2,000행 sanitizer corpus는 2,000건 모두 성공했고 active-content marker 0건, sanitized/raw byte ratio 99.66%, 빈 body text 1건이었다. HTML이 유효한 image-only post를 잃지 않도록 body text가 비어도 sanitized HTML이 있으면 허용한다. 근거는 `html-corpus-sample-20260711.json`, `sanitizer-corpus-sample-20260711.json`, [`03_review_validation_20260711.md`](archive/2026-07-11/03_review_validation_20260711.md)다.
+production HTML 2,000행 profile에서 inline style 문서는 668개였고 모든 문서에 `AA_Text` class가 있었지만 실제 `is_aa`는 464개였다. 따라서 content root class는 보존하되 AA 판정 source로 사용하지 않는다. P0 판정은 AA board/category, root 아래의 명시적 AA marker, Saitamaar/MS Gothic/Mona font hint만 인정한다. box-drawing 문자 개수와 legacy `_detect_aa`도 false positive가 실측되어 단독 신호로 쓰지 않는다. 같은 2,000행 sanitizer corpus는 2,000건 모두 성공했고 active-content marker 0건, sanitized/raw byte ratio 99.66%, 빈 body text 1건이었다. HTML이 유효한 image-only post를 잃지 않도록 body text가 비어도 sanitized HTML이 있으면 허용한다. 근거는 `html-corpus-sample-20260711.json`, `sanitizer-corpus-sample-20260711.json`, [`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)다.
 
 Scrapling adaptive selector와 Crawl4AI/LLM extraction은 core 저장 경로에서 금지한다. selector drift는 추정으로 통과시키지 않고 `parse_drift`로 멈춘다. 필요하면 별도 진단 script에서만 새 selector 후보를 제안하고 fixture 승인 뒤 반영한다.
 
@@ -1167,7 +1167,7 @@ silent failure SLO는 D1 heartbeat가 next_expected_by+grace 안에 갱신됐는
 배포 artifact는 실행 중인 database가 아니라 immutable zstd object와 release manifest다.
 Cloudflare Worker가 단일 사용자 인증, private R2 streaming과 제한된 `/ops` route를 담당한다.
 archive data는 R2, operations metadata는 D1으로 분리한다. 상세 수치와 gate는
-[`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md)를 따른다.
+[`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md)를 따른다.
 
 ```text
 Oracle active canonical SQLite
@@ -1339,7 +1339,8 @@ Gate:
 
 상태: 운영 hardening code 완료, live gate 대기. schema/importer/parser/store/frontier, bounded
 listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
-정책과 `doctor`는 구현했다. scheduler/D1 heartbeat 실연결과 24시간·7일 shadow는 남아 있다.
+정책과 `doctor`는 구현했다. systemd source와 D1 heartbeat, marker/outbox/expired command canary는
+실연결했고 bounded delta, duplicate/full-outage, 24시간·7일 shadow가 남아 있다.
 
 - 최소 schema/migration 작성
 - legacy importer
@@ -1389,8 +1390,8 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 
 ### 13.5 Phase 3: viewer
 
-상태: viewer 기능, Signal Archive 재설계, gzip/zstd full local export와 R2 baseline publish 완료.
-authenticated data smoke와 실제 Android acceptance 대기.
+상태: viewer 기능, Signal Archive 재설계, gzip/zstd full local export, R2 baseline publish와
+authenticated data smoke 완료. 실제 Android acceptance 대기.
 Full canonical exporter, collection
 연속 읽기, unavailable entry skip, legacy object-key user-state, Saitamaar와 desktop/mobile Playwright를
 구현했다. 기존 gzip 전수 export와 post-export doctor는 완료했고 baseline은
@@ -1399,11 +1400,11 @@ Full canonical exporter, collection
 완료했다. Worker/private R2 bucket/Access email
 allow/TOTP MFA와 인증된 shell smoke는 완료했다. matching bucket-scoped key로 local `rclone`
 연결을 복구했고 immutable baseline 5,148,165,450 bytes/282,289 objects를 게시했다. remote check
-차이 0과 pointer 검증, remote rollback/복귀가 통과했다. authenticated data smoke와 실제 Android
-gate가 남아 있다.
+차이 0과 pointer 검증, remote rollback/복귀와 authenticated data smoke가 통과했다. 실제 Android
+gate만 남아 있다.
 
 현재 live shell은 [`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose,
-Saitamaar AA와 stable identity/mobile flow로 교체됐다. authenticated/실기기 acceptance 전까지
+Saitamaar AA와 stable identity/mobile flow로 교체됐다. 실기기 acceptance 전까지
 최종 시각 gate는 열려 있다.
 
 Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링한다. 원문 version이
@@ -1415,7 +1416,7 @@ Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 
 - compact metadata search Web Worker
 - R2 post/search/release object streaming
 - bookmark/history/scroll local state
-- user-state JSON export/import 구현; stable post identity migration은 Phase A1 대기
+- user-state JSON export/import와 stable post identity migration 구현
 - legacy collection export와 연속 탐색
 - mobile/desktop visual verification
 
@@ -1624,7 +1625,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
   그보다 오래된 Safari/iOS/WebView는 지원 대상이 아니며 단일 사용자 Windows/Android Chrome을
   production gate로 둔다. [Safari 26.3 zstd](https://webkit.org/blog/17798/webkit-features-for-safari-26-3/)
 - 계약: object key 확장자(`.json.zst`)는 exporter와 browser가 공유하며, user-state는 이전
-  gz 확장자 export 파일을 계속 import함. 세부는 [`02_static_edge_feasibility.md`](archive/2026-07-11/02_static_edge_feasibility.md) §3
+  gz 확장자 export 파일을 계속 import함. 세부는 [`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md) §3
 - 재검토 조건: WebKit 계열 사용 요구가 생기거나 level 15 재export 시간이 release 일정을 반복 위협함
 
 ### ADR-013: 별도 loopback read-only Operations Console C0

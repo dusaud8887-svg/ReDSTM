@@ -2,8 +2,8 @@
 
 - 기준일: 2026-07-12
 - 상태: final target specified; implementation and production gates in progress
-- archive: [`2026-07-11 완료 기록`](archive/2026-07-11/README.md),
-  [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)
+- done: [`2026-07-11 완료 기록`](done/2026-07-11/README.md)
+- archive: [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)
 
 ## 읽는 순서
 
@@ -72,41 +72,32 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token/만료 알림
 - Oracle control oneshot → Access → Worker → D1 heartbeat와 user/service route 분리 smoke
 - authenticated production Reader 282,239건, 일반/AA 본문·댓글과 `/ops` idle heartbeat smoke
+- `/search` query/board/sort URL·History 복원과 mobile 설정의 Operations 진입점
+- pause/resume marker, heartbeat outbox replay와 expired command live canary
 - journald 1GiB/14일 보존 정책 적용과 과거 민감 가능 journal 폐기(4GiB → 24MiB)
 - Signal Archive 디자인·제품·API의 최종 문서 계약
 
-세부 증거와 당시 조건은 [`archive/2026-07-11`](archive/2026-07-11/README.md)에 보존한다.
+세부 증거와 당시 조건은 [`done/2026-07-11`](done/2026-07-11/README.md)에 보존한다.
 
 ### 현재 gate
 
-R2 baseline publish, remote pointer rollback/복귀와 로그인된 Chrome의 authenticated production
-data smoke는 완료됐다. A1은 local 구현과 fixture가 끝났으며,
-offline/Access-expired 복구, control API와 responsive Operations, 검색 우선 Home, AA/목록 사용성과
-상태 가져오기 검토 및 runner AUD를 포함한 version `9344fbbe-dc85-4498-ac1b-c28b2446d88c`이
-배포됐다. 이전 `c47b2e58` rollback/복귀 rehearsal도 통과했다. 실제 Android와 사용자 시각
-acceptance가 남아 있다. Oracle은
-versioned application, resumable canonical activation과 full doctor까지 통과했다. control/schedule
-timer는 disabled/inactive다. R2/TypeMoon credential file 주입과 Oracle의 bucket-scoped R2 조회는
-통과했다. application `d23ce2050fab21bd1ef211bea6861baf6480ee86` 계열의 1건·20건 bounded
-partial과 15분 38초 recovery 종료 진단을 수행했다. 마지막 진단은 selected 100 중 scheduled 4/
-stored 2였고, CPU가 아니라 원본 서버의 network timeout/retry가 지배했다. `100`은 처리 목표가
-아니라 하루 후보 선택 상한이다. 상세 수치와 로그 판정은
-[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다. application `4edc1c9`에는
-하루 1회·2시간 graceful recovery, 4시간 cycle budget, network/429/auth/parser breaker와 offline
-control client를 배포했다. module smoke는 통과했으며 긴 canary는 이번 배포에서 재실행하지 않았다.
-Oracle static root도 verified baseline과 같은 282,289 objects/5,148,165,450 bytes 및 pointer SHA로
-seed했다. 증거는 `/srv/redstm/reports/oracle-static-seed-20260712.json`이다. Access service
-credential과 D1 idle heartbeat는 완료됐고 새 bounded recovery·delta canary가 남았다.
+현재 Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`에서 authenticated Reader/Operations,
+`/search` URL·History 복원과 mobile Operations 진입점을 확인했다. A1의 남은 gate는 실제 Android와
+사용자 시각 acceptance뿐이다. Oracle은 application `4edc1c9`, canonical full doctor, static seed,
+R2/TypeMoon/Access credential과 D1 heartbeat까지 통과했다. 원본 요청 없는 pause/resume marker,
+heartbeat outbox replay와 expired command도 live 검증했다. control/schedule timer는 계속
+disabled/inactive다. crawler 실측과 남은 근거는
+[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 두며, bounded recovery·delta,
+duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 
 ### 구현 필요
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
-1. 검색 URL state와 mobile Operations 진입점 구현
-2. 실제 Android/frontend acceptance
-3. time/failure-bounded recovery·실제 delta publish canary
-4. duplicate/outage/replay failure canary
-5. 24시간 canary, 7일 shadow와 cutover
+1. 실제 Android/frontend acceptance
+2. time/failure-bounded recovery·실제 delta publish canary
+3. duplicate command와 실제 crawl 중 D1/Worker outage canary
+4. 24시간 canary, 7일 shadow와 cutover
 
 ## 확정된 UX·기술 결정
 
@@ -144,7 +135,8 @@ credential 원문은 docs/chat/Git/log에 기록하지 않는다. 전체 경계�
 
 ## 문서 유지 규칙
 
-- 완료된 실행 일지와 spike는 날짜별 archive로 이동한다.
+- 완료된 실행 일지와 spike는 날짜별 `done/`으로 이동한다.
+- 진행 중이거나 당일 남은 gate를 함께 담은 실행 증거만 `archive/`에 둔다.
 - active 문서에는 current contract와 다음 gate만 둔다.
 - 공개 동작, schema, API, setting, permission이 바뀌면 같은 변경에서 docs를 갱신한다.
 - 외부 환경에서 직접 검증하지 못한 항목을 DONE으로 쓰지 않는다.
