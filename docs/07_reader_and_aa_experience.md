@@ -89,9 +89,14 @@ release가 바뀐 뒤에도 이어읽기는 최신 version을 열어야 한다.
 - scroll 저장은 stable post identity별로 throttle한다.
 - `scrollTop`, document height 또는 안정된 progress ratio, `updatedAt`을 저장한다. 구현 schema는 한
   방식으로 고정하고 중복 source of truth를 만들지 않는다.
-- 재진입 시 위치 복원 전 layout에 필요한 font가 준비되어야 한다. image load로 밀리면 한 차례만
-  보정한다.
+- 재진입 시 위치 복원 전 layout에 필요한 font가 준비되어야 한다. font 준비와 image layout 뒤 최대
+  한 차례만 보정하며 자동 복원은 smooth scroll하지 않는다.
 - 95% 이후는 `완독` badge를 만들지 않고 다음 진입 시 끝 부근으로 복원한다.
+- Home 이어읽기 후보는 current release에서 resolve 가능한 최신 history 중 progress 95% 미만인
+  항목이다. legacy의 임의 24시간 expiry는 가져오지 않는다. dismiss가 필요하면 session-only이며
+  user-state/export schema에 넣지 않는다.
+- 다른 tab의 `storage` event는 local dirty write가 없을 때만 v2 state를 다시 읽는다. 현재 tab의
+  변경을 오래된 cross-tab state로 덮어쓰지 않는다.
 
 ## 4. AA mode
 
@@ -279,9 +284,13 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 - mobile: 하단 bar에 목록, 이전, 다음, 설정을 둔다. 진입 시 표시하고 아래로 스크롤하면 숨기며
   위로 스크롤 또는 중앙 tap으로 복귀한다. bookmark는 title action 또는 more cluster로 이동해
   6개 icon row를 피한다.
+- 매 scroll event의 8px 방향 변화가 아니라 누적 이동량 기반 hysteresis로 숨김/복귀를 결정한다.
+  시작값은 아래 50px/위 30px이며 실제 Android fixture로만 조정한다.
 - 3초 timer로 무조건 숨기지 않는다. focus, pointer, screen reader 사용 중에는 유지한다.
-- scroll 방향 기반 숨김은 `prefers-reduced-motion`과 keyboard focus를 존중한다. 이때는 상시
-  표시한다.
+- scroll 방향 기반 숨김은 `prefers-reduced-motion`, keyboard focus, 열린 dialog를 존중한다. 이때는
+  상시 표시한다.
+- compact AA와 Reader의 직접 action은 예외 없이 44×44px 이상이다. legacy의 36px control은 복사하지
+  않는다.
 
 ### 6.4 Immersive
 
@@ -319,7 +328,8 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 - `viewerLocalState.ts`, `clientSettings.ts`, `wakeLock.svelte.ts`
 - post route의 immersive/progress/keyboard 처리
 
-2026-07-11 legacy 원본 코드를 재대조해 §4 parity 값이 실측과 일치함을 확인했다.
+2026-07-12 legacy 원본 코드 8개와 archived viewer spec을 재대조해 §4 parity 값이 실측과 일치하고,
+남은 이식 가치가 기능 추가보다 이어읽기 후보·scroll settlement·mobile chrome 안정화임을 확인했다.
 
 - `AAViewer.svelte`: preset `기본 16(16/auto)`·`11/800`·`9/680`과 preset 적용 시 zoom 100% reset,
   zoom 0.1–3.0(버튼 ±0.25), pinch `거리 delta × 0.003`/적용 임계 `0.002`,
@@ -340,6 +350,9 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 | source color toggle | 채택 | sanitizer 통과 값만 보존 |
 | Ivory/white/background picker | parity 채택 | 기본값·quick choice·custom 저장 유지 |
 | prose font/line/width | 채택 | 기존 ReDSTM 범위와 한 설정 surface |
+| ContinueReading 후보 | 수정 채택 | current release에서 resolve 가능한 최신 미완독(<95%); 24시간 expiry 기각 |
+| font/image 뒤 scroll 보정 | 수정 채택 | layout settlement 뒤 최대 1회, smooth 자동 복원 금지 |
+| cross-tab state refresh | 조건부 채택 | local dirty state가 없을 때만 storage event rehydrate |
 | 독립 state를 가진 settings 중복 | 기각 | compact AA toolbar와 상세 dialog가 같은 versioned state를 사용 |
 | minimap | 보류 | 긴 AA 사용 근거가 생길 때 |
 | 자동 wake lock | 기각 | 권한·battery 비용; 요구 시 opt-in으로 재검토 |
@@ -350,6 +363,8 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 | forced dark `* { color !important }` | 단색 mode에만 제한 | source 보존 mode의 색 hierarchy를 파괴하지 않음 |
 | ScrollToTop button | 기각 | progress line과 browser 기본 스크롤로 충분; 반복 요구가 생기면 Should로 재검토 |
 | zoom `font-size` transition·`scroll-behavior: smooth` | 기각 | reduced-motion 계약과 충돌하고 판독 결과에 영향 없음 |
+| 10% 단위 progress와 24시간 continue expiry | 기각 | 현재 exact scroll state와 장기 개인 장서 사용에 부정확 |
+| adjacent-post hover prefetch | 기각 | private R2 latency 근거 전에는 불필요한 요청 |
 | Svelte component tree | 기각 | plain HTML/CSS/ES module 계약 유지 |
 
 DSOTM 코드는 복사 source가 아니라 검증된 행동의 prototype이다. 계산이나 CSS를 실제로 옮길 때는

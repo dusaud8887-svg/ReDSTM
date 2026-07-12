@@ -19,8 +19,8 @@
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
 | live data | remote pointer rollback/복귀와 authenticated Reader/일반·AA 본문 smoke 완료 | DONE |
-| current UI | Signal Archive live·authenticated `/ops` 완료, Android acceptance 대기 | IN PROGRESS |
-| crawler core | parser/session/WARC/frontier/bounded sync/recovery/failure test | DONE |
+| current UI | Porcelain shell과 핵심 stale/empty/Reader continuity fixture 통과; 세부 Operations 의미·live/Android 전 | IN PROGRESS |
+| crawler core | P0 safety와 schema v3 inventory cursor local test 통과; Oracle migration/canary 전 | IN PROGRESS |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; 24h 전 | IN PROGRESS |
 | Oracle | application `4edc1c9...`, canonical/R2/static/TypeMoon/Access 완료; timer 전 | IN PROGRESS |
 | remote operations | role/marker/outbox replay/expired 통과; duplicate/full outage 전 | IN PROGRESS |
@@ -31,13 +31,12 @@
 failure canary·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-현재 local gate는 Python 147 tests, Ruff 69-file check/format과 mypy가 통과했고,
-Edge는 Node 30 tests/check를 통과했다. control offline/recovery breaker와 4시간 cycle budget은
-targeted test, Ruff와 mypy를 통과했고 Oracle application `4edc1c9...`에 배포됐다.
-Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 44건 통과했고 local R2에
-seed하지 않은 실제 AA/prose fixture의 viewport 조합 8건은 연결 오류로 남는다. 대신 authenticated
-production에서 282,239건 index, 일반 본문 8,738자/댓글 4개와 AA 186,058자/canvas/댓글 7개를 열어
-실데이터 경로를 확인했다.
+현재 local gate는 Python 175 tests, Ruff와 mypy가 통과했고 Edge는 Node 32 tests/check를 통과했다.
+Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 72건을 통과한다. fixture는
+실제 R2 seed가 없어도 AA/prose와 읽기 위치 복원을 검증하고, 환경변수를 주면 대표 live object로
+교체할 수 있다. authenticated production에서는 이전 bundle 기준 282,239건 index, 일반 본문
+8,738자/댓글 4개와 AA 186,058자/canvas/댓글 7개를 열어 실데이터 경로를 확인했다. 이번 local
+palette/crawler 변경은 아직 Oracle/Worker에 배포하지 않았고 실제 DB migration도 실행하지 않았다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -57,7 +56,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 7. Access 보호 `/ops`에서 상태, run, board/queue, release/backup과 고정 명령을 어디서나 본다.
 8. Worker/D1 장애 중에도 자동 crawl과 마지막 R2 release 열람이 계속된다.
 9. 검증된 E legacy source와 기존 격리 restore 사본을 유지하고 외부 backup 부재 위험을 명시한다.
-10. 7일 shadow, live rollback, service-token rotation, killed-runner/duplicate-command failure
+10. 7일 shadow, live rollback, killed-runner/duplicate-command failure
     injection과 실제 Android acceptance를 통과한다.
 11. Oracle에는 SSH 외 public listener가 없고 credential/본문/path가 API·log·D1에 노출되지 않는다.
 12. 관련 unit/type/lint/E2E/doctor가 모두 green이고 공개 계약 변경은 docs와 함께 반영된다.
@@ -83,7 +82,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 1. [완료] background publisher report `ok=true`.
 2. [완료] 5,148,165,450 bytes/282,289 objects, remote check 차이 0.
 3. [완료] versioned manifest와 `release.json` pointer 검증.
-4. 로그인된 Chrome으로 live Home/search/prose/AA/comment/collection을 smoke한다. 자동 E2E는
+4. [완료] 로그인된 Chrome으로 live Home/search/prose/AA/comment/collection을 smoke한다. 자동 E2E는
    local Worker에서 실행하며 테스트를 위해 Any/Everyone/Bypass policy를 만들지 않는다.
 5. [완료] synthetic versioned manifest로 이전 pointer rollback 후 현재 pointer 복귀를 실제 R2에서
    검증했다. 증거: `.data/operations/a0-pointer-rollback-20260712.json`.
@@ -162,6 +161,23 @@ mobile-first 제품으로 교체한다.
 - 실제 Android Chrome에서 search/background restore/AA alignment가 통과한다.
 - 사용자가 live 시각 방향을 최종 확인한다.
 
+#### A1.5 Operations light/meaning correction
+
+2026-07-12 live 검토에서 기능 접근은 통과했지만 Operations light mode의 시각과 의미는 통과하지
+못했다. [`DESIGN`](../DESIGN.md), [`05 §2.2/6.4`](05_viewer_design.md), [`08 §9~11`](08_operations_control_plane.md)을
+source of truth로 다음을 구현한다.
+
+1. light canvas를 white로 올리고 near-white는 navigation/group에만 남긴다.
+2. 58px stale title/96px signal ornament와 과도한 section height를 compact 28~34px verdict와 ruled
+   ledger로 교체한다.
+3. Oracle heartbeat, D1 telemetry, R2 release의 source/as-of를 분리하고 stale 값을 `마지막 보고`로 쓴다.
+4. 없는 run/board 값을 0으로 합성하지 않고 `—`, 원인, 다음 행동을 표시한다.
+5. active/latest run, board exception, release provenance를 분리하고 mobile은 disclosure row로 만든다.
+6. control마다 effect/eligibility/disabled reason/due/last/cooldown을 표시하고 pause/resume을 상호
+   배타적으로 만든다. 동일 intent retry는 같은 idempotency key를 쓴다.
+7. never-enrolled, stale+readable, empty telemetry+nonempty release, disabled control과 polling timeout을
+   desktop/390/320px fixture로 고정한 뒤 live/actual Android acceptance를 다시 받는다.
+
 현재 구현 판정(2026-07-12):
 
 - A1.1 stable identity, v1 migration, stable route/hash migration, SPA fallback과 release resolve는 구현·test 완료다.
@@ -171,20 +187,26 @@ mobile-first 제품으로 교체한다.
 - A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation, import preview,
   offline/Access-expired recovery, Arrow/Enter navigation, 검색 URL/History 상태와 mobile 설정의 운영
   진입점이 구현됐다.
-- 남은 gate는 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
-- local gate는 Node 30, self-contained Playwright 48, font/license check, startup check와 strict dry-run
-  통과다.
+- A1.5의 white canvas/near-white grouping, compact verdict, stale `마지막 보고`, honest empty state,
+  independent R2 continuity, mobile disclosure와 기본 command disable/idempotency는 local 구현·fixture를
+  통과했다.
+- 세 source의 field별 source/as-of, active run과 latest terminal run의 완전한 분리, board/release
+  provenance detail, command별 due/last outcome/cooldown eligibility와 나머지 상태 fixture는 구현이 남았다.
+- 그 뒤 새 bundle의 authenticated live smoke, 실제 Android background/Back/pinch와 사용자 시각
+  acceptance를 통과해야 한다.
+- local gate는 Node 32, self-contained Playwright 72, font/license check와 startup check를 통과한다.
 - live evidence: Worker version `58a70799-eacc-463d-b5d6-5f344dbcd3ab`; 인증한 Reader의 실제
   prose/AA 본문·댓글과 `/ops` healthy idle heartbeat를 확인했다. service token은 runner route 200,
   `/ops` 302, anonymous runner 요청은 403으로 역할이 분리된다. live `/search`의 board/oldest/query
   URL 갱신과 390px 설정 sheet의 운영 콘솔 link도 확인했다.
 
-2026-07-12 배포 소스 실측에서 확인한 A1 local blocking은 해소했다. Home 검색 우선순위와 compact
+2026-07-12 배포 소스 실측에서 확인한 Reader local blocking은 해소했다. Home 검색 우선순위와 compact
 hero, `enterkeyhint`, wordmark, 큰 post 수신 진행률, AA 배경 휘도별 단색 잉크, overflow fade/1회
 힌트, Android `theme-color`, catalog AA/저장/읽음 badge, 72px skeleton과 `/settings` 대칭 route를
 fixture E2E로 고정했다. 심야 재감사에서 발견한 `/search` query/board/sort URL·History 복원과 mobile
-설정 sheet의 운영 콘솔 link도 대상 E2E 8건으로 해소했다. 남은 A1 blocking은 실제 Android 동작과
-사용자 시각 acceptance다.
+설정 sheet의 운영 콘솔 link도 대상 E2E로 해소했다. 새 Porcelain 전역 palette와 Operations의 핵심
+stale/empty/Reader continuity 표현은 local fixture로 닫았다. 남은 A1 blocking은 A1.5의 세부 의미와
+command eligibility 구현, 새 bundle live smoke, 실제 Android 동작과 사용자 시각 acceptance다.
 
 Should — acceptance 직후:
 
@@ -204,7 +226,7 @@ Should — acceptance 직후:
 4. listing/parser warning이 있으면 boundary 조기 종료를 금지한다.
 5. 주 1회 bounded inventory가 boundary 누락을 보완한다.
 
-상태(2026-07-12): local 구현 완료, Oracle canary 진행 중이다. `b3e83e1`에서 views를 제외한 listing
+상태(2026-07-12): local 기본 흐름과 coverage safety 구현 완료, Oracle 적용 전이다. `b3e83e1`에서 views를 제외한 listing
 metadata 비교, 공지 제외 연속 20건 경계와 warning/`--inventory` 우회를 구현했다. Oracle canary에서
 원 사이트 listing이 60초 뒤 timeout되고 약 109초 뒤 비정상 TLS EOF로 끝나는 것을 실측해 listing
 timeout을 120초로 바꾸고 `DOWNLOAD_FAIL_ON_DATALOSS=false`를 명시했다. `python -m` 실행이
@@ -215,6 +237,12 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 `d23ce20`에서 item별 canonical URL로 고정했다. pipeline의 item 예외 repr은 body/title/comment를
 출력하지 않게 제한했다. `write_free21` 1건은 269.8초에 stored/frontier done, failure 0,
 최대 메모리 약 92MB와 WARC partial 0으로 통과했다.
+
+감사에서 발견한 `max_posts` 뒤 changed row 누락은 받은 listing의 모든 변경 row를 먼저 durable seed하고
+이번 detail scheduling만 cap하도록 고쳤다. schema v3은 board별 `inventory_next_page`를 저장해 bounded
+inventory가 다음 page에서 재개되며, 완료 때만 cursor/`last_inventory_at`을 확정한다. dead는
+`network_error` 또는 `parse_drift`만 오류별·건수 제한으로 명시 재개할 수 있다. migration과 cursor
+회귀 테스트는 통과했지만 live schema v2 canonical에는 아직 적용하지 않았다.
 
 #### A2.2 46-board cycle
 
@@ -229,14 +257,14 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 - 전체 4시간 graceful budget을 남은 초 단위로 각 board worker에 전달하고, budget 종료는 현재
   request/WARC를 정리한 뒤 board 경계에서 `partial/time_budget`으로 기록
 
-상태(2026-07-12): local core, 6시간 systemd schedule source와 30분 자동 재로그인 throttle 구현
-완료, Oracle canary는 남았다. 로그인 시도 marker는 실패도 포함하고 atomic write+nonblocking lock으로
+상태(2026-07-12): local cycle과 무인 P0 safety 구현 완료, Oracle canary/systemd 연결 전이다. 로그인 시도 marker는 실패도 포함하고 atomic write+nonblocking lock으로
 동시·30분 내 재시도를 차단한다. session 검증은 오래된 서버가 본문 뒤 TLS EOF를 정상 종료하지 않아도
 필요한 login/logout 표식을 받으면 8MiB 경계 안에서 즉시 끝낸다.
-`d52f63a`/`d71663f`에서 network/auth preflight 분류, 1회 session 검증, enabled board 순차 subprocess,
-board별 원자 report, parse failure 이월, auth 즉시 중단과 연속 network 3회 breaker를 구현했다.
-`f39da46`은 4시간 cycle budget과 Scrapy graceful timeout, 명시적 time-budget 종료 사유를 연결했다.
-Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 사용한다.
+`d52f63a`/`d71663f`의 board 경계 breaker에 더해 일반 sync는 첫 auth/parse drift와 같은 class
+network/429 3회에서 즉시 닫힌다. cycle은 30분 board 경계마다 session을 재검증하고 `.cycle.lock`과
+`.sync.lock`을 전체 run 동안 함께 소유한다. 각 subprocess는 전달된 Scrapy budget보다 60초 긴 hard
+timeout으로 종료되며 `partial/worker_timeout`을 보고한다. Celery/Redis와 병렬 board worker는
+추가하지 않았다. 이 계약의 실제 느린 서버 canary와 systemd timeout 상호작용은 아직 검증 전이다.
 
 #### A2.3 retry/recovery
 
@@ -266,6 +294,11 @@ request 7/exception 4/retry 3은 DB가 아니라 원본 서버 network 대기가
 in-flight lease 1개는 900초 expiry 뒤 다음 run이 reclaim한다. 실행 증거는
 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
 
+non-HTML detail과 invalid URL은 `parse_failed` capture로, normalize/store exception은
+`storage_error` retry로 닫아 token 일치 terminal lease transition을 보장한다. DB 자체 write 실패처럼
+분류 capture도 기록할 수 없는 경우에만 lease expiry가 최후 복구선이다. 관련 회귀와 bounded dead
+재개 CLI는 local test를 통과했으며 live backlog에는 아직 실행하지 않았다.
+
 #### A2.4 delta release
 
 1. 이전 verified release와 새 projection의 참조 차이를 계산한다.
@@ -294,13 +327,16 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 완료 기준:
 
 - 같은 listing 재실행은 불필요 detail fetch 0 또는 설명 가능한 bounded overlap만 만든다.
-- 한 board 실패가 다른 board를 잃지 않고 auth failure는 즉시 전체 중단한다.
+- 한 board 실패가 다른 board를 잃지 않고 auth failure는 같은 board의 추가 detail 전에 전체 중단한다.
 - 사이트 전체 outage에서 run이 십수 분 안에 `site_unreachable`로 끝나고 frontier attempt가
   소모되지 않는다.
 - no-change cycle은 R2 data upload/activate를 하지 않는다.
 - small batch → bounded full-window → 24시간 canary에서 retry storm, 만료 후 미회수 lease,
   WARC partial이 없다.
 - 대표 대형 AA detail이 lease 만료 없이 수집된다.
+- capacity를 넘긴 listing changed row도 durable frontier에 남고 다음 bounded run에서 처리된다.
+- non-HTML/invalid URL/storage exception 뒤 running lease와 무결과 capture가 남지 않는다.
+- 4시간 cycle 동안 session 재검증, cycle-wide single writer와 subprocess hard bound가 동작한다.
 
 ### A3 — Cloudflare/Oracle control API
 
@@ -321,9 +357,9 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 상태(2026-07-12): remote D1 migration 2개와 Worker `58a70799` live 배포, 이전 `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
-Python 147 tests와 Edge 30 tests를 통과했다. 비인증 user route는 302이고 path-specific runner는
+Python 175 tests와 Edge 32 tests를 통과했다. 비인증 user route는 302이고 path-specific runner는
 403 fail-closed다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
-fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 1년 service token, path-specific Service Auth
+fixture를 구현했고 Operations 4개 scenario의 4 viewport 실행 16건이 통과했다. 3의 1년 service token, path-specific Service Auth
 application/policy, Oracle `0640` secret 주입과 runner 200/service→ops 302/anonymous→runner 403 role
 smoke가 통과했다. 실제 control oneshot은 D1에 release `4edc1c9...`, idle, next schedule과 disk를
 기록했고 authenticated `/ops`가 이를 정상 표시했다. pause/resume 명령은 각각 한 번 claim되어
@@ -414,7 +450,7 @@ control/schedule timer는 계속 disabled/inactive이고 기존 public listener�
 
 - Home freshness/continue/recent
 - collection end와 unavailable source 설명
-- command cancel-before-claim, service-token rotation warning
+- command cancel-before-claim, service-token expiry warning
 - R2 storage/object trend와 50%/80% warning
 
 ### Evidence가 생길 때만
@@ -473,16 +509,6 @@ Cloudflare와 Oracle 안에서 현재 자격증명으로 API/CLI 생성 가능�
 service token/application/policy를 생성해 해소했다. font
 다운로드 확인은 A1.2 해당 시점에만 짧게 받고, 실제 Android의 주관적 acceptance와 hard stop은
 구현을 진행하는 동안 기다리지 않고 마지막 gate에서만 확인한다.
-
-### 6.4 최종 credential rotation
-
-라이브 동작과 rollback이 모두 통과한 뒤 사용자와 함께 다음만 회전한다.
-
-- 대화에 노출된 R2 S3 key pair
-- Oracle runner용 Access service token
-- GitHub와 Oracle에 현재 재사용된 SSH key를 용도별 별도 key로 분리
-
-새 credential 주입 → smoke → old credential revoke 순서를 지켜 downtime을 만들지 않는다.
 
 ## 7. 검증 명령
 

@@ -264,9 +264,11 @@ class TypeMoonSpider(scrapy.Spider):
         run_id: str | None = None,
         session: SessionExport | None = None,
         max_pages: int = 1,
+        start_page: int = 1,
         max_posts: int = 20,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
         inventory: bool = False,
+        pause_file: str | Path | None = None,
     ) -> None:
         super().__init__()
         if board_id is not None and not _BOARD_ID_PATTERN.fullmatch(board_id):
@@ -276,11 +278,13 @@ class TypeMoonSpider(scrapy.Spider):
         self.run_id = run_id
         self.session = session
         self.max_pages = int(max_pages)
+        self.start_page = int(start_page)
         self.max_posts = int(max_posts)
         self.lease_seconds = int(lease_seconds)
         self.inventory = bool(inventory)
-        if min(self.max_pages, self.max_posts, self.lease_seconds) < 1:
-            raise ValueError("max_pages, max_posts, and lease_seconds must be positive")
+        self.pause_file = Path(pause_file) if pause_file is not None else None
+        if min(self.max_pages, self.start_page, self.max_posts, self.lease_seconds) < 1:
+            raise ValueError("max_pages, start_page, max_posts, and lease_seconds must be positive")
         configured = (self.archive_path is not None, self.run_id is not None, session is not None)
         if any(configured) and not all(configured):
             raise ValueError("archive_path, run_id, and session must be configured together")
@@ -292,13 +296,26 @@ class TypeMoonSpider(scrapy.Spider):
         self._unchanged_streak = 0
         self._listing_warning = False
         self._boundary_reached = False
+        self._consecutive_network_errors = 0
+        self._consecutive_rate_limits = 0
+        self._halted = False
+        self.paused = False
         self.failure_codes: set[str] = set()
         self.scheduled_posts = 0
+        self.next_inventory_page = self.start_page
+        self.inventory_completed = False
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
         if self.start_board_id is None:
             raise ValueError("board_id spider argument is required")
-        yield self.listing_request(self.start_board_id, session=self.session)
+        if self._stop_requested():
+            return
+        yield self.listing_request(self.start_board_id, page=self.start_page, session=self.session)
+
+    def _stop_requested(self) -> bool:
+        if self.pause_file is not None and self.pause_file.exists():
+            self.paused = True
+        return self._halted or self.paused
 
     @staticmethod
     def listing_url(board_id: str, *, page: int = 1) -> str:
@@ -382,14 +399,27 @@ class TypeMoonSpider(scrapy.Spider):
         )
 
     def listing_error(self, failure: Any) -> None:
-        self.failure_codes.add("listing_fetch_failed")
+        response = getattr(failure.value, "response", None)
+        status = getattr(response, "status", None)
+        error_code = (
+            {401: "auth_required", 403: "auth_required", 429: "rate_limited"}.get(
+                status, "listing_fetch_failed"
+            )
+            if isinstance(status, int) and not isinstance(status, bool)
+            else "listing_fetch_failed"
+        )
+        self.failure_codes.add(error_code)
+        self._halted = True
         self.logger.error("TypeMoon listing request failed: %s", failure.request.url)
 
     def parse_listing(
         self, response: scrapy.http.Response, **_: object
     ) -> Iterable[DiscoveredPostItem | scrapy.Request]:
+        if self._stop_requested():
+            return
         if not isinstance(response, scrapy.http.HtmlResponse):
             self.failure_codes.add("listing_not_html")
+            self._halted = True
             self.logger.error("TypeMoon listing response is not HTML: %s", response.url)
             return
         if self.store is not None and self.run_id is not None:
@@ -402,8 +432,16 @@ class TypeMoonSpider(scrapy.Spider):
                 warc_file=response.meta.get("warc_file"),
                 warc_record_id=response.meta.get("warc_record_id"),
             )
+        if _has_login_form(response):
+            self.failure_codes.add("auth_required")
+            self._halted = True
+            self.logger.error(
+                "TypeMoon listing session is no longer authenticated: %s", response.url
+            )
+            return
         if not response.css("tbody"):
             self.failure_codes.add("listing_parse_failed")
+            self._halted = True
             self.logger.error("TypeMoon listing table is missing: %s", response.url)
             return
         discovered: list[DiscoveredPostItem] = []
@@ -467,26 +505,31 @@ class TypeMoonSpider(scrapy.Spider):
                     break
                 continue
             self._unchanged_streak = 0
-            if (
-                self.frontier is None
-                or self.session is None
-                or identity in self._seen
-                or self.scheduled_posts + len(self._pending_details) >= self.max_posts
-            ):
+            if self.frontier is None or self.session is None or identity in self._seen:
                 continue
             self._seen.add(identity)
             self.frontier.seed(
                 board_id, external_post_id, str(item["canonical_url"]), reopen_done=True
             )
-            self._pending_details.append(identity)
+            if self.scheduled_posts + len(self._pending_details) < self.max_posts:
+                self._pending_details.append(identity)
 
         page = int(parse_qs(urlparse(response.url).query).get("page", ["1"])[0])
+        inventory_rows = [item for item in discovered if not item["is_notice"]]
+        if self.inventory and not page_warning:
+            self.next_inventory_page = page + 1 if inventory_rows else 1
+            self.inventory_completed = not inventory_rows
         if (
             self.frontier is not None
             and self.session is not None
-            and page < self.max_pages
-            and self.scheduled_posts + len(self._pending_details) < self.max_posts
+            and page < self.start_page + self.max_pages - 1
+            and (
+                self.inventory or self.scheduled_posts + len(self._pending_details) < self.max_posts
+            )
+            and (not self.inventory or bool(inventory_rows))
+            and (not self.inventory or not page_warning)
             and not self._boundary_reached
+            and not self._stop_requested()
         ):
             yield self.listing_request(
                 self.start_board_id or "", page=page + 1, session=self.session
@@ -496,7 +539,12 @@ class TypeMoonSpider(scrapy.Spider):
             yield request
 
     def _next_detail_request(self) -> scrapy.Request | None:
-        if self._detail_in_flight or self.frontier is None or self.session is None:
+        if (
+            self._stop_requested()
+            or self._detail_in_flight
+            or self.frontier is None
+            or self.session is None
+        ):
             return None
         while self._pending_details and self.scheduled_posts < self.max_posts:
             board_id, external_post_id = self._pending_details.pop(0)
@@ -518,28 +566,83 @@ class TypeMoonSpider(scrapy.Spider):
     def _parse_sync_detail(
         self, response: scrapy.http.Response, **kwargs: object
     ) -> Iterable[CapturedPostItem | scrapy.Request]:
-        yield from self.parse_detail(response, **kwargs)
+        items = list(self.parse_detail(response, **kwargs))
+        yield from items
         self._detail_in_flight = False
+        if not items or items[0].get("outcome") == "parse_failed":
+            self.failure_codes.add("parse_drift")
+            self._halted = True
+            return
+        if "auth_required" in items[0].get("warnings", ()):
+            self.failure_codes.add("auth_required")
+            self._halted = True
+            return
+        self._consecutive_network_errors = 0
+        self._consecutive_rate_limits = 0
         request = self._next_detail_request()
         if request is not None:
             yield request
 
     def _sync_error(self, failure: Any) -> Iterable[scrapy.Request]:
-        self.detail_error(failure)
+        error_code = self.detail_error(failure)
         self._detail_in_flight = False
+        if error_code == "auth_required":
+            self.failure_codes.add(error_code)
+            self._halted = True
+            return
+        if error_code == "network_error":
+            self._consecutive_network_errors += 1
+            self._consecutive_rate_limits = 0
+        elif error_code == "rate_limited":
+            self._consecutive_rate_limits += 1
+            self._consecutive_network_errors = 0
+        else:
+            self._consecutive_network_errors = 0
+            self._consecutive_rate_limits = 0
+        if max(self._consecutive_network_errors, self._consecutive_rate_limits) >= 3:
+            assert error_code is not None
+            self.failure_codes.add(error_code)
+            self._halted = True
+            return
         request = self._next_detail_request()
         if request is not None:
             yield request
+
+    @staticmethod
+    def _leased_parse_failure(
+        response: scrapy.http.Response, warning: str
+    ) -> CapturedPostItem | None:
+        lease = response.meta.get("frontier_lease")
+        if not isinstance(lease, FrontierLease):
+            return None
+        return CapturedPostItem(
+            board_id=lease.board_id,
+            external_post_id=lease.external_post_id,
+            canonical_url=lease.url,
+            outcome="parse_failed",
+            warnings=[warning],
+            http_status=response.status,
+            raw_sha256=response.meta.get("raw_sha256"),
+            warc_file=response.meta.get("warc_file"),
+            warc_record_id=response.meta.get("warc_record_id"),
+            frontier_lease=lease,
+        )
 
     def parse_detail(
         self, response: scrapy.http.Response, **_: object
     ) -> Iterable[CapturedPostItem]:
         if not isinstance(response, scrapy.http.HtmlResponse):
             self.logger.error("TypeMoon detail response is not HTML: %s", response.url)
+            item = self._leased_parse_failure(response, "non_html")
+            if item is not None:
+                yield item
             return
         post_ref = parse_post_ref(response.url)
         if post_ref is None:
             self.logger.error("Unrecognized TypeMoon detail URL: %s", response.url)
+            item = self._leased_parse_failure(response, "invalid_detail_url")
+            if item is not None:
+                yield item
             return
         board_id, external_post_id = post_ref
         canonical_url = f"{_BASE_URL}/{board_id}/{external_post_id}"
@@ -627,15 +730,15 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         run_id: str,
         session: SessionExport,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
+        pause_file: str | Path | None = None,
     ) -> None:
         self._candidates = iter(candidates)
-        self._consecutive_network_errors = 0
-        self._consecutive_rate_limits = 0
         super().__init__(
             archive_path=archive_path,
             run_id=run_id,
             session=session,
             lease_seconds=lease_seconds,
+            pause_file=pause_file,
         )
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
@@ -646,6 +749,8 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
     def _next_recovery_request(self) -> scrapy.Request | None:
         assert self.frontier is not None
         assert self.session is not None
+        if self._stop_requested():
+            return None
         for board_id, external_post_id in self._candidates:
             lease = self.frontier.claim_identity(
                 board_id,
@@ -674,9 +779,11 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         yield from items
         if not items or items[0].get("outcome") == "parse_failed":
             self.failure_codes.add("parse_drift")
+            self._halted = True
             return
         if "auth_required" in items[0].get("warnings", ()):
             self.failure_codes.add("auth_required")
+            self._halted = True
             return
         self._consecutive_network_errors = 0
         self._consecutive_rate_limits = 0
@@ -688,6 +795,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         error_code = super().detail_error(failure)
         if error_code == "auth_required":
             self.failure_codes.add(error_code)
+            self._halted = True
             return
         if error_code == "network_error":
             self._consecutive_network_errors += 1
@@ -701,6 +809,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         if max(self._consecutive_network_errors, self._consecutive_rate_limits) >= 3:
             assert error_code is not None
             self.failure_codes.add(error_code)
+            self._halted = True
             return
         request = self._next_recovery_request()
         if request is not None:

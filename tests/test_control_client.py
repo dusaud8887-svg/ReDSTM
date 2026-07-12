@@ -155,6 +155,50 @@ def test_claim_rejects_unknown_actions() -> None:
         client.claim("oracle-primary", "claim-attempt-0001")
 
 
+def test_marker_claim_is_explicit_and_rejects_process_commands() -> None:
+    def sender(
+        path: str, body: bytes, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        assert path.endswith("/commands/claim")
+        assert json.loads(body) == {"runner_id": "oracle-primary", "command_kind": "marker"}
+        return (
+            200,
+            {},
+            _response(
+                headers,
+                {"command": {"command_id": "id", "action": "sync-now", "state": "claimed"}},
+            ),
+        )
+
+    client = ControlClient("https://archive.example", "client-id", "client-secret", sender=sender)
+    with pytest.raises(ControlProtocolError, match="invalid_marker_command_response"):
+        client.claim_marker("oracle-primary", "claim-marker-0001")
+
+
+def test_marker_claim_respects_the_outage_circuit() -> None:
+    calls = 0
+
+    def sender(
+        _path: str, _body: bytes, _headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        nonlocal calls
+        calls += 1
+        raise OSError("offline")
+
+    client = ControlClient(
+        "https://archive.example",
+        "client-id",
+        "client-secret",
+        sender=sender,
+        sleep=lambda _delay: None,
+    )
+    with pytest.raises(ControlUnavailableError):
+        client.claim_marker("oracle-primary", "claim-marker-0001")
+
+    assert client.claim_marker("oracle-primary", "claim-marker-0002") is None
+    assert calls == 4
+
+
 def test_rejects_bad_origin_and_mismatched_response_trace() -> None:
     with pytest.raises(ValueError, match="HTTPS origin"):
         ControlClient("http://archive.example/path", "id", "secret")

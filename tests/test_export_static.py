@@ -207,7 +207,7 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     }
 
     release = json.loads((output / "release.json").read_bytes())
-    assert release["canonical_schema_version"] == 2
+    assert release["canonical_schema_version"] == 3
     assert [board["board_id"] for board in release["boards"]] == [
         "aa_a01",
         "ss_temp01",

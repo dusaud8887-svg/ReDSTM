@@ -69,6 +69,7 @@ let zoomPersistTimer;
 let aaHintShown = false;
 let pendingImportPlan = null;
 let lastReaderScroll = 0;
+let readerScrollDelta = 0;
 let latestPosts = [];
 let publishedAt = null;
 const workerRequests = new Map();
@@ -168,7 +169,7 @@ function applySettings() {
   elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
   elements["theme-toggle"].title = elements["theme-toggle"].ariaLabel;
   elements["theme-select"].value = settings.theme;
-  document.querySelector('meta[name="theme-color"]').content = dark ? "#0b0d12" : "#f5f6f8";
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#0b0d12" : "#ffffff";
   for (const [id, value, suffix] of [
     ["prose-size", settings.proseSize, "px"],
     ["line-height", settings.lineHeight, ""],
@@ -391,6 +392,7 @@ function showDestination(destination, navigate = true) {
     }
     return;
   }
+  if (currentSummary) persistReadingPosition();
   currentDestination = destination;
   currentSummary = null;
   currentPayload = null;
@@ -667,6 +669,7 @@ async function updateCollection() {
 }
 
 async function loadPost(summary, navigate = true) {
+  if (currentSummary) persistReadingPosition();
   postController?.abort();
   postController = new AbortController();
   elements["reader-pane"].setAttribute("aria-busy", "true");
@@ -708,6 +711,7 @@ function showPost(payload, suppliedSummary, navigate) {
   };
   elements["reading-progress"].style.width = "0%";
   lastReaderScroll = 0;
+  readerScrollDelta = 0;
   document.body.classList.remove("reader-controls-hidden");
   const collapseCatalog = matchMedia("(min-width: 760px) and (max-width: 899px)").matches;
   document.body.classList.toggle("catalog-collapsed", collapseCatalog);
@@ -817,15 +821,20 @@ function readingPosition() {
 function restoreReadingPosition(summary) {
   const position = historyEntries.find((entry) => samePost(entry.summary, summary))?.scroll ?? 0;
   lastReaderScroll = position;
+  readerScrollDelta = 0;
   elements["reader-pane"].scrollTop = position;
+}
+
+function persistReadingPosition() {
+  clearTimeout(scrollTimer);
+  const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
+  if (entry) entry.scroll = readingPosition();
+  persistUserState();
 }
 
 function queueScrollSave() {
   clearTimeout(scrollTimer);
-  scrollTimer = setTimeout(() => {
-    const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
-    if (entry) { entry.scroll = readingPosition(); persistUserState(); }
-  }, 250);
+  scrollTimer = setTimeout(persistReadingPosition, 250);
 }
 
 function updateReadingProgress() {
@@ -986,9 +995,17 @@ elements["reader-pane"].addEventListener("scroll", () => {
   updateReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   const delta = current - lastReaderScroll;
-  if (isNarrowScreen() && document.body.classList.contains("reader-open")) {
-    if (current > 120 && delta > 8) document.body.classList.add("reader-controls-hidden");
-    else if (delta < -8) document.body.classList.remove("reader-controls-hidden");
+  if (delta && isNarrowScreen() && document.body.classList.contains("reader-open")) {
+    readerScrollDelta = Math.sign(readerScrollDelta) === Math.sign(delta)
+      ? readerScrollDelta + delta
+      : delta;
+    if (readerScrollDelta >= 50) {
+      document.body.classList.add("reader-controls-hidden");
+      readerScrollDelta = 0;
+    } else if (readerScrollDelta <= -30) {
+      document.body.classList.remove("reader-controls-hidden");
+      readerScrollDelta = 0;
+    }
   }
   lastReaderScroll = current;
 }, { passive: true });
@@ -1201,9 +1218,9 @@ document.addEventListener("focusin", () => document.body.classList.remove("reade
 history.scrollRestoration = "manual";
 window.addEventListener("offline", () => renderArchiveError({ code: "offline" }));
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") persistUserState();
+  if (document.visibilityState === "hidden") persistReadingPosition();
 });
-window.addEventListener("pagehide", persistUserState);
+window.addEventListener("pagehide", persistReadingPosition);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (settings.theme === "system") applySettings();
 });

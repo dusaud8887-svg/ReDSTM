@@ -16,6 +16,7 @@ from crawler.frontier import (
     transition_lease,
 )
 from crawler.pipelines import NormalizedPost
+from scripts.legacy_common import normalize_source_timestamp
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +58,7 @@ class ArchiveStore:
                 UPDATE crawl_runs
                 SET status = 'interrupted', finished_at = ?,
                     summary_json = '{"error":"process_interrupted"}'
-                WHERE status = 'running' AND kind IN ('sync', 'retry')
+                WHERE status = 'running' AND kind IN ('sync', 'retry', 'inventory')
                 """,
                 (finished_at,),
             )
@@ -83,14 +84,18 @@ class ArchiveStore:
                 """
                 INSERT INTO posts (
                     board_id, external_post_id, canonical_url, title, author, category,
-                    created_at_raw, first_seen_at, last_seen_at, last_collected_at,
+                    created_at_source, created_at_raw, first_seen_at, last_seen_at,
+                    last_collected_at,
                     availability, views, comment_count, is_aa
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, ?, ?)
                 ON CONFLICT (board_id, external_post_id) DO UPDATE SET
                     canonical_url = excluded.canonical_url,
                     title = excluded.title,
                     author = excluded.author,
                     category = excluded.category,
+                    created_at_source = COALESCE(
+                        excluded.created_at_source, posts.created_at_source
+                    ),
                     created_at_raw = excluded.created_at_raw,
                     last_seen_at = excluded.last_seen_at,
                     last_collected_at = excluded.last_collected_at,
@@ -106,6 +111,7 @@ class ArchiveStore:
                     post.title,
                     post.author,
                     post.category,
+                    normalize_source_timestamp(post.created_at_raw),
                     post.created_at_raw,
                     captured_at_text,
                     captured_at_text,
@@ -379,8 +385,8 @@ class ArchiveStore:
             """
             INSERT INTO comments (
                 post_id, position, source_comment_id, author, content_html, content_text,
-                created_at_raw, parent_position, depth
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at_source, created_at_raw, parent_position, depth
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -390,6 +396,7 @@ class ArchiveStore:
                     comment.author,
                     comment.content_html,
                     comment.content_text,
+                    normalize_source_timestamp(comment.created_at_raw),
                     comment.created_at_raw,
                     comment.parent_position,
                     comment.depth,

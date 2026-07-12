@@ -160,7 +160,8 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in service
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in schedule_service
     assert "ProtectSystem=strict" in service
-    assert "TimeoutStartSec=4h" in service
+    assert "TimeoutStartSec=5h" in service
+    assert "TimeoutStartSec=7h" in schedule_service
     assert "RuntimeMaxSec" not in service
     assert "Persistent=true" in timer
     assert "--scheduled" in schedule_service
@@ -169,6 +170,8 @@ def test_install_assets_never_enable_or_touch_legacy() -> None:
     assert "Persistent=true" in schedule_timer
     assert "redstm-schedule.timer" in installer
     assert "systemctl disable --now redstm-schedule.timer" in installer
+    assert "rollback release does not support canonical schema" in installer
+    assert "SELECT version FROM schema_migrations" in installer
     assert "canonical-transfer-size" in installer
     assert "truncate-canonical-transfer" in installer
     assert "append-canonical-chunk" in installer

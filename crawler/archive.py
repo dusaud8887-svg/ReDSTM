@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 APPLICATION_ID = 0x52445354  # RDST
 BODY_COMPRESSION_LEVEL = 3
 
@@ -210,6 +210,11 @@ CREATE INDEX captures_raw_sha256_idx
     WHERE raw_sha256 IS NOT NULL AND warc_file IS NOT NULL AND warc_record_id IS NOT NULL;
 """
 
+_SCHEMA_V3 = """
+ALTER TABLE boards ADD COLUMN inventory_next_page INTEGER NOT NULL DEFAULT 1
+    CHECK (inventory_next_page >= 1);
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class Migration:
@@ -221,7 +226,7 @@ class Migration:
         return hashlib.sha256(self.sql.encode()).hexdigest()
 
 
-MIGRATIONS = (Migration(1, _SCHEMA_V1), Migration(2, _SCHEMA_V2))
+MIGRATIONS = (Migration(1, _SCHEMA_V1), Migration(2, _SCHEMA_V2), Migration(3, _SCHEMA_V3))
 
 
 def compress_body(value: str) -> bytes:
@@ -295,6 +300,7 @@ def initialize_archive(path: str | Path) -> None:
                 if connection.in_transaction:
                     connection.rollback()
                 raise
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def archive_health(path: str | Path) -> dict[str, Any]:

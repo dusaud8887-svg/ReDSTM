@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -45,10 +46,14 @@ def test_cycle_runs_enabled_boards_sequentially(
 ) -> None:
     args = _args(tmp_path)
     commands: list[list[str]] = []
+    timeouts: list[int] = []
     monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
         commands.append(command)
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, int)
+        timeouts.append(timeout)
         _output_path(command).write_text(
             json.dumps(
                 {
@@ -69,9 +74,11 @@ def test_cycle_runs_enabled_boards_sequentially(
     assert report["status"] == "succeeded"
     assert [command[command.index("--board") + 1] for command in commands] == ["a", "b", "c", "d"]
     assert all("--session-prevalidated" in command for command in commands)
+    assert all("--parent-lock-held" in command for command in commands)
     budgets = [int(command[command.index("--max-seconds") + 1]) for command in commands]
     assert all(1 <= budget <= 14_400 for budget in budgets)
     assert budgets == sorted(budgets, reverse=True)
+    assert timeouts == [budget + 60 for budget in budgets]
     assert report["changed_posts"] == 4
     assert report["failed_posts"] == 0
     assert report["boards_ok"] == 4
@@ -111,6 +118,71 @@ def test_cycle_stops_at_board_boundary_when_time_budget_expires(
     assert commands[0][commands[0].index("--max-seconds") + 1] == "10"
     assert report["status"] == "partial"
     assert report["stop_reason"] == "time_budget"
+
+
+def test_cycle_honors_pause_before_session_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    args.pause_file = tmp_path / "schedule.paused"
+    args.pause_file.touch()
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.ensure_session_export",
+        lambda *args, **kwargs: pytest.fail("paused cycle must not validate a session"),
+    )
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.notify_dead_man",
+        lambda *args, **kwargs: pytest.fail("intentional pause must not fail dead-man"),
+    )
+
+    report = run_cycle(args)
+
+    assert report["status"] == "partial"
+    assert report["stop_reason"] == "schedule_paused"
+
+
+def test_cycle_revalidates_session_after_thirty_minutes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    validations = 0
+    clock = iter((0.0, 0.0, 1_801.0, 1_802.0, 1_803.0))
+    monkeypatch.setattr("scripts.crawl_cycle.time.monotonic", lambda: next(clock))
+
+    def validate(*args: object, **kwargs: object) -> None:
+        nonlocal validations
+        validations += 1
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        _output_path(command).write_text(
+            json.dumps({"ok": True, "status": "succeeded", "outcomes": {}}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", validate)
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    assert run_cycle(args)["status"] == "succeeded"
+    assert validations == 2
+
+
+def test_cycle_bounds_hung_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args = _args(tmp_path)
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, int | float)
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert report["status"] == "partial"
+    assert report["stop_reason"] == "worker_timeout"
+    assert report["boards"][0]["failures"] == ["runner_timeout"]
 
 
 @pytest.mark.parametrize(

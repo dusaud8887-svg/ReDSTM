@@ -255,6 +255,27 @@ class FrontierStore:
             ).fetchall()
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
+    def requeue_dead(self, *, error_code: str, limit: int) -> int:
+        if error_code not in {"network_error", "parse_drift"}:
+            raise ValueError("unsupported dead frontier error code")
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE crawl_frontier
+                SET state = 'retry', attempts = 0, next_attempt_at = NULL,
+                    last_error_code = NULL, lease_token = NULL, lease_expires_at = NULL
+                WHERE (board_id, external_post_id) IN (
+                    SELECT board_id, external_post_id FROM crawl_frontier
+                    WHERE state = 'dead' AND last_error_code = ?
+                    ORDER BY priority DESC, board_id, external_post_id LIMIT ?
+                )
+                """,
+                (error_code, limit),
+            )
+        return cursor.rowcount
+
     def preserve_network_attempts(self, run_ids: list[str]) -> int:
         unique_run_ids = list(dict.fromkeys(run_ids))
         if not unique_run_ids:

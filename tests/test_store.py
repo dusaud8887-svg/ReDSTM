@@ -61,9 +61,10 @@ def test_stale_crawl_runs_are_interrupted_without_touching_imports(tmp_path: Pat
     store = ArchiveStore(path)
     sync_run = store.start_run("sync", now=_NOW)
     retry_run = store.start_run("retry", now=_NOW)
+    inventory_run = store.start_run("inventory", now=_NOW)
     import_run = store.start_run("import", now=_NOW)
 
-    assert store.interrupt_stale_crawl_runs(now=_NOW + timedelta(minutes=1)) == 2
+    assert store.interrupt_stale_crawl_runs(now=_NOW + timedelta(minutes=1)) == 3
 
     with connect_archive(path, read_only=True) as connection:
         rows = {
@@ -78,6 +79,7 @@ def test_stale_crawl_runs_are_interrupted_without_touching_imports(tmp_path: Pat
         '{"error":"process_interrupted"}',
     )
     assert rows[retry_run] == rows[sync_run]
+    assert rows[inventory_run] == rows[sync_run]
     assert rows[import_run] == ("running", None, "{}")
 
 
@@ -117,6 +119,14 @@ def test_store_deduplicates_versions_and_tracks_every_capture(tmp_path: Path) ->
             row[0] for row in connection.execute("SELECT outcome FROM captures ORDER BY id")
         ]
         assert outcomes == ["stored", "unchanged"]
+        post_dates = connection.execute(
+            "SELECT created_at_source, created_at_raw FROM posts"
+        ).fetchone()
+        assert tuple(post_dates) == ("2026-07-11T01:00:00+00:00", "2026.07.11 10:00")
+        comment_dates = connection.execute(
+            "SELECT created_at_source, created_at_raw FROM comments"
+        ).fetchone()
+        assert tuple(comment_dates) == ("2026-07-11T01:01:00+00:00", "2026.07.11 10:01")
         version = connection.execute(
             "SELECT body_html_zstd, body_text_zstd FROM post_versions"
         ).fetchone()

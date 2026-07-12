@@ -9,7 +9,7 @@
 
 Live checkpoint(2026-07-12): remote D1 migration `0001`, `0002`와 runner AUD를 포함한 Operations
 Worker를 배포했고 현재 version은 `58a70799`다. 이전 `c47b2e58` 100% rollback → Access 302 → current 복귀를
-재현했다. path-specific runner application/Service Auth policy와 회전 가능한 1년 token을 만들고
+재현했다. path-specific runner application/Service Auth policy와 1년 만료 token을 만들고
 Oracle `0640` env에 주입했다. runner heartbeat 200, service→ops 302, anonymous→runner 403과 D1 idle
 row, authenticated `/ops` 표시를 확인했다. duplicate/outage/replay live gate 전이므로 A3 전체 완료로
 보지 않는다. 추가 marker canary에서 pause/resume이 각각 D1 `queued → succeeded`, claim 1회와
@@ -21,8 +21,8 @@ queued pause의 expiry injection은 claim 0회·runner 미지정 `expired`로 �
 
 Local frontend checkpoint: Signal Archive graphite/SUIT Operations shell, Overview/Runs/Boards/Releases,
 fixed Controls와 queued cancel을 구현했다. API 값을 `textContent`로만 렌더링하고 secret/path/임의
-인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE E2E 4건과
-Edge unit 30건이 통과했다. `/ops`의 authenticated overview/data와 pause/resume action acceptance는
+인자 field는 만들지 않았다. desktop/768/390/320px route·reflow·dialog·POST/DELETE 4개 scenario,
+16 viewport 실행과 Edge unit 32건이 통과했다. `/ops`의 authenticated overview/data와 pause/resume action acceptance는
 완료됐고 heartbeat outbox/replay와 expired command도 통과했다. duplicate command와 실제 crawl 중
 outage가 다음 gate다.
 
@@ -73,7 +73,7 @@ WARC, body, cookie, raw log를 D1에 넣지 않는다.
 | browser preferences/history | local user-state |
 
 D1 outage는 automatic systemd run을 중단하지 않는다. D1의 last heartbeat가 stale로 남을 뿐이다.
-control 환경변수 3개가 모두 없는 초기 설치/rotation 공백도 scheduled mode에서는 offline transport로
+control 환경변수 3개가 모두 없는 초기 설치/credential 교체 공백도 scheduled mode에서는 offline transport로
 local outbox에 기록하고 crawl을 계속한다. 일부만 설정된 credential은 오설정으로 즉시 실패한다.
 
 ## 4. Authentication
@@ -96,7 +96,7 @@ local outbox에 기록하고 crawl을 계속한다. 일부만 설정된 credenti
 - Worker는 runner application audience와 허용 route를 함께 검증하고 credential header 값은 log하지 않음
 - browser user JWT는 runner poll/event route 사용 금지
 - service token은 browser command create route 사용 금지
-- expiration alert와 rotation runbook 필요
+- expiration alert와 replacement/old-token revocation runbook 필요
 
 [Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)은
 자동화된 system이 Access application에 접근하기 위한 credential pair를 제공한다.
@@ -341,7 +341,7 @@ Remote command와 무관하게 systemd가 실행한다.
 | incremental cycle | 6시간 |
 | bounded recovery | 하루 1회; 후보 최대 100건, 2시간/장애 breaker 우선 |
 | delta publish | 변경 시 하루 최대 1회 |
-| full inventory | 주 1회 |
+| bounded board inventory | 주 1회 |
 
 Operations schedule toggle은 최종 제품에서도 직접 timer file을 편집하지 않는다. pause는
 pause-after-current marker로 다음 automatic start를 보류하고 resume-schedule만 marker를 해제한다.
@@ -351,50 +351,66 @@ pause-after-current marker로 다음 automatic start를 보류하고 resume-sche
 
 Worker/API가 계산하는 UI state:
 
-| 조건 | state |
-|---|---|
-| heartbeat within 3분, no warning | idle/running |
-| heartbeat fresh, partial/warning | degraded |
-| terminal failure | failed |
-| heartbeat가 3분보다 오래됨 | stale |
-| pause marker | paused |
+| 조건 | state | 사용자 의미/행동 |
+|---|---|---|
+| runner row/heartbeat가 한 번도 없음 | not_enrolled | 초기 연결 대기; 설치/telemetry 연결 확인 |
+| heartbeat within 3분, no warning, no run | idle | 정상 대기; 개입 없음 |
+| heartbeat within 3분, active run | running | 현재 step/board 관찰; 필요할 때만 pause-after-current |
+| heartbeat fresh, partial/warning | degraded | warning 이유와 bounded recovery 확인 |
+| terminal failure | failed | safe reason과 실패 board 확인 |
+| heartbeat가 3분보다 오래됨 | stale | runner 응답 없음; 재연결/서비스 상태 확인 |
+| pause marker | paused | 다음 schedule 보류; 의도한 상태인지 확인 |
 
-Oracle 자체가 사라지면 새 heartbeat가 없으므로 stale로 드러난다. healthy percentage를 만들지 않는다.
+Oracle 자체가 사라지면 새 heartbeat가 없으므로 stale로 드러난다. `not_enrolled`과 stale은 다르다.
+stale에서는 runner field를 현재형으로 쓰지 않고 field별 `as_of`와 함께 `마지막 보고`라고 표시한다.
+R2 active release/Reader continuity는 독립 source이므로 runner stale을 이유로 실패 처리하지 않는다.
+healthy percentage를 만들지 않는다.
 
 ## 10. Operations UI
 
 ### Overview
 
-- status label + timestamp + reason
-- current step/board
-- last heartbeat
-- last/next crawl
-- last publish/release
-- last local recovery evidence
-- actionable warnings
+- 첫 field는 action verdict + reason + recommended action이다.
+- status label, heartbeat timestamp/age와 fresh일 때의 current step/board를 표시한다.
+- stale이면 step, next crawl, disk를 `마지막 보고`로 바꾸고 각 값의 as-of를 함께 표시한다.
+- Reader/R2 readable state, active release와 published/activated time을 독립 표시한다.
+- last/next crawl, last publish, last local recovery evidence는 source/as-of를 가진다.
+- actionable warning은 reason, age, next action을 가진 list다.
+- unknown/missing field는 `—`와 원인을 쓴다. JS/HTML default `0`을 만들지 않는다.
+- header refresh는 `화면 갱신 시각`이며 runner heartbeat와 구분한다. 부분 fetch 실패는 section별로
+  source/as-of/error를 남긴다.
 
-### Run history
+### Active run과 Run history
 
-- active run step timeline
+- active run과 latest terminal run을 분리한다.
+- active run은 step timeline, current board, started/elapsed를 표시한다.
 - scheduled/manual source
 - board/outcome counters
 - recent terminal runs
-- safe event tail 200 rows
+- failed/partial disclosure에 safe reason, failed boards, safe event tail 200 rows를 표시한다.
 - immutable report identifier
+- row가 없으면 실행하지 않았다고 단정하지 않고 `자동 수집 전이거나 runner telemetry가 아직 D1에
+  연결되지 않음`을 설명하며 counter는 `—`다.
 
-### Boards & Queue
+### Board exceptions & Queue
 
-- board last scanned/outcome
-- discovered/changed/pending/retry/dead
-- filter by warning/outcome/group
+- board display name/group을 primary, raw board ID를 secondary로 표시한다.
+- count label은 `최근 실행 발견/변경`, `현재 대기`, `재시도 예정`, `수동 확인(dead)`처럼 scope와
+  meaning을 포함하고 last scanned/as-of를 표시한다.
+- warning/dead/retry를 먼저 보이고 healthy group은 접는다. warning/outcome/group filter를 제공한다.
+- row가 없을 때 release board count와 모순처럼 보이지 않게 `현재 release에는 N개 게시판이 있으나
+  board 운영 telemetry는 아직 보고되지 않음`이라고 설명한다.
 - no fabricated completion percentage
 
 ### Releases
 
-- current/previous ID
+- `Reader 사용 가능/불가`와 published/activated freshness를 ID보다 먼저 표시한다.
+- current/previous ID는 secondary copyable provenance다. previous 없음은 rollback 불가능이 아니라 D1에
+  previous metadata가 없다는 뜻이다.
 - exported/uploaded/active/smoke state
 - rollback happened reason
 - object count/bytes
+- E verified source/last local restore evidence를 같은 provenance ledger에 둔다.
 - arbitrary pointer activation action 없음
 
 ### Controls
@@ -402,10 +418,20 @@ Oracle 자체가 사라지면 새 heartbeat가 없으므로 stale로 드러난�
 Button은 action, bound, last run, cooldown을 함께 보여준다. confirmation은 영향을 설명하며 command ID와
 expiry를 결과로 표시한다. claim 전 cancel만 허용한다.
 
+- `sync-now`: 놓친 schedule을 보완하는 1회 bounded incremental cycle이며 정상 운영의 기본 버튼이 아니다.
+- `retry-batch`: due frontier 최대 100건; due 0이면 disable한다.
+- `publish-if-changed`: pending change와 daily publish window가 있을 때만 실행하며 아니면 no-op이다.
+- `pause-after-current`: 현재 request/transaction을 끝내고 이후 schedule을 막는다. 현재 작업 취소가 아니다.
+- `resume-schedule`: pause marker만 해제하며 즉시 crawl하지 않는다.
+- pause/resume은 상호 배타적이다. stale/not_enrolled runner가 claim해야 하는 action은 disabled reason을
+  표시한다.
+- create 응답 전 button을 잠그고 동일 intent retry는 동일 client idempotency key를 사용한다. bounded
+  polling이 끝나도 terminal로 위장하지 않고 background continuation, command ID/expiry/reopen을 남긴다.
+
 ## 11. Mobile UX
 
-- 첫 화면은 state, active run, next schedule, warnings
-- detail table은 drill-down
+- 첫 화면은 action verdict, Reader continuity, active/latest run, next schedule, warnings다.
+- run/board/release detail은 native disclosure/list로 drill-down하며 mobile 8열 표와 horizontal scroll은 금지한다.
 - primary status text가 color 없이 이해됨
 - command는 sticky destructive-looking toolbar가 아니라 Controls section
 - pause-after-current만 active run 화면에서 빠르게 접근
@@ -496,8 +522,11 @@ legacy service stop과 manifest 단위 cleanup은 `10`의 O3/O4 gate를 만족�
 - local event replay is idempotent
 - stale state detects killed runner
 - wrong Origin/Host/content-type/custom command header is denied
-- rotated service token works and revoked old token is denied
+- replacement service token works and revoked old token is denied
 - API/DOM/log secret-path regression test
-- desktop/390/320px idle/running/degraded/stale/failed/queued visual fixture
+- desktop/390/320px idle/running/degraded/stale/failed/not_enrolled/queued visual fixture
+- stale + last-reported facts + readable release fixture
+- empty run/board telemetry + nonempty release에서 false zero가 없는 fixture
+- state별 disabled controls, idempotency retry와 polling timeout/background continuation fixture
 
 Remote control 구현 전에도 archived local C0와 SSH CLI는 fallback으로 남는다.

@@ -1,6 +1,6 @@
 # Frontend 구현 전략·채택 판단
 
-- 상태: Reader and Operations authenticated live; mobile/user acceptance pending
+- 상태: Reader와 Operations visual/core state local 구현; 세부 의미·live/Android acceptance pending
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
@@ -37,11 +37,15 @@
 - search-first Home, medium settings entry, large-post progress, AA dark-ink/overflow cue,
   catalog state badge, row skeleton, 상태 가져오기 검토, 검색 URL 복원과 mobile Ops 진입점
   (`58a70799` live)
+- white canvas/near-white chrome 전역 palette, compact Operations verdict, stale/unknown core state,
+  disclosure ledger와 기본 state disable/idempotent command retry (`local`, 4 viewport fixture)
 
 ### 남은 acceptance
 
 - 실제 Android Back/background/pinch/font와 사용자 시각 acceptance
+- 새 Reader/Operations bundle의 authenticated live visual smoke
 - duplicate command와 실제 crawl outage의 Operations 상태 증거
+- Operations field별 source/as-of, active/latest 분리와 due/last/cooldown eligibility
 - 7일 shadow의 idle/running/degraded/stale/failed 상태 증거
 
 문서의 완료 상태는 behavior baseline과 live visual acceptance를 분리한다.
@@ -139,7 +143,7 @@ Freshness 계약:
 | search | existing Web Worker |
 | async cancellation | AbortController |
 | theme | CSS custom properties + `color-scheme` 동기화 |
-| Android 상단 크롬 색 | `theme-color` meta를 테마 적용 시 JS로 page token(light `#F5F6F8`/dark `#0B0D12`)과 동기화 |
+| Android 상단 크롬 색 | `theme-color` meta를 테마 적용 시 JS로 page token(light `#FFFFFF`/dark `#0B0D12`)과 동기화 |
 | persistence | versioned localStorage JSON |
 | transition | CSS, View Transition progressive only |
 | command/status | fetch + bounded polling |
@@ -177,7 +181,7 @@ fork할 project는 없다.
 - Saitamaar fallback, nowrap, 1.125
 - AA 9–24px, 10–300%, 16/auto·11/800·9/680
 - source color/background/canvas
-- ContinueReading title/progress/time
+- ContinueReading title/progress/time; current-release-resolvable 최신 미완독(<95%) 후보
 - prose settings immediate preview
 - progress, immersive, previous/next
 - safe-area, 100dvh, 44px targets
@@ -185,6 +189,7 @@ fork할 project는 없다.
 - runner heartbeat, last/next schedule
 - pending/retry/dead and board summary
 - graceful stop/stopping
+- font/image settlement 뒤 1회 scroll 보정, mobile chrome 누적 hysteresis, 44px compact action
 
 ### Redesign
 
@@ -205,6 +210,8 @@ fork할 project는 없다.
 - fast/turbo and delay override
 - web VACUUM/restore/delete
 - automatic wake lock
+- legacy 24시간 continue expiry와 10% progress 저장
+- adjacent-post hover prefetch와 36px toolbar action
 - whole archive offline cache
 - duplicate localStorage/server/IndexedDB settings
 
@@ -234,14 +241,16 @@ Operations는 D1을 canonical replica로 쓰지 않는다.
 
 표시:
 
-- heartbeat/freshness
-- active run/step/board
+- action verdict와 독립 Reader/R2 continuity
+- heartbeat/freshness; stale runner 값은 last-reported + as-of
+- active run과 latest terminal run 분리
 - last and next schedule
 - crawl outcomes
 - queue state
 - release and rollback
 - local recovery evidence
 - warnings and safe event tail
+- unknown run/board telemetry는 `—`; synthetic 0 금지
 
 행동:
 
@@ -301,6 +310,8 @@ Operations는 D1을 canonical replica로 쓰지 않는다.
 - status/read API
 - Oracle service-token poll/events
 - fixed commands/idempotency/audit
+- Porcelain white canvas, compact operational brief, ruled/disclosure ledger
+- source/as-of/unknown semantics와 command eligibility/disabled reason/background continuation
 - mobile Operations acceptance
 
 각 Phase는 최대 5개 파일씩 나누고 public contract 변경과 docs를 같은 Phase에서 갱신한다.
@@ -331,7 +342,7 @@ Visual fixtures:
 - comments/collection
 - settings/import
 - unavailable/failure
-- Operations idle/running/stale/failed/queued
+- Operations idle/running/stale/failed/not_enrolled/queued, stale+readable, empty-telemetry+release
 
 Security:
 

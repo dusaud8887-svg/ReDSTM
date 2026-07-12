@@ -17,6 +17,7 @@ from crawler.items import CapturedPostItem
 from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
+from scripts.recover_queue import _parse_args as parse_recovery_args
 from scripts.recover_queue import run_recovery
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "typemoon" / "detail.html"
@@ -102,6 +103,26 @@ def test_recovery_priority_bound_and_idempotent_transition(tmp_path: Path) -> No
 
 async def _collect_start(spider: TypeMoonRecoverySpider) -> list[Request]:
     return [request async for request in spider.start()]
+
+
+def test_recovery_cli_limits_dead_requeue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "recover",
+            "--archive",
+            str(tmp_path / "archive.sqlite"),
+            "--max-posts",
+            "7",
+            "--requeue-dead",
+            "parse_drift",
+        ],
+    )
+
+    args = parse_recovery_args()
+
+    assert args.max_posts == 7
+    assert args.requeue_dead == "parse_drift"
 
 
 @pytest.mark.parametrize(
@@ -191,6 +212,34 @@ def test_recovery_stops_on_auth_response(tmp_path: Path) -> None:
     assert item["warnings"] == ["auth_required"]
     assert spider.failure_codes == {"auth_required"}
     assert spider.scheduled_posts == 1
+
+
+def test_recovery_pause_marker_prevents_frontier_claim(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    frontier = FrontierStore(archive)
+    frontier.seed("aa_a01", 1, "https://www.typemoon.net/aa_a01/1")
+    pause_file = tmp_path / "schedule.paused"
+    pause_file.touch()
+    spider = TypeMoonRecoverySpider(
+        candidates=[("aa_a01", 1)],
+        archive_path=archive,
+        run_id=ArchiveStore(archive).start_run("retry"),
+        session=_session(),
+        pause_file=pause_file,
+    )
+
+    assert asyncio.run(_collect_start(spider)) == []
+    assert spider.paused is True
+    with connect_archive(archive, read_only=True) as connection:
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "pending"
 
 
 def test_empty_recovery_writes_success_report_without_session_request(

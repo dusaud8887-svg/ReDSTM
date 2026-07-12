@@ -137,7 +137,27 @@ class ControlClient:
         raise AssertionError("unreachable")
 
     def claim(self, runner_id: str, idempotency_key: str) -> dict[str, Any] | None:
-        data = self.post("/api/v1/runner/commands/claim", {"runner_id": runner_id}, idempotency_key)
+        return self._claim({"runner_id": runner_id}, idempotency_key)
+
+    def claim_marker(self, runner_id: str, idempotency_key: str) -> dict[str, Any] | None:
+        if time.monotonic() < self._unavailable_until:
+            return None
+        try:
+            command = self._claim(
+                {"runner_id": runner_id, "command_kind": "marker"}, idempotency_key
+            )
+        except ControlUnavailableError:
+            self._unavailable_until = time.monotonic() + 60
+            raise
+        if command is not None and command["action"] not in {
+            "pause-after-current",
+            "resume-schedule",
+        }:
+            raise ControlProtocolError("invalid_marker_command_response")
+        return command
+
+    def _claim(self, payload: dict[str, str], idempotency_key: str) -> dict[str, Any] | None:
+        data = self.post("/api/v1/runner/commands/claim", payload, idempotency_key)
         command = data.get("command")
         if command is None:
             return None

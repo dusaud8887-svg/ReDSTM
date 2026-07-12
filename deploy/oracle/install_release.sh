@@ -206,6 +206,25 @@ rollback_release() {
   previous="$(readlink -f "$PREVIOUS" 2>/dev/null || true)"
   current="$(readlink -f "$CURRENT" 2>/dev/null || true)"
   [[ "$previous" == "${RELEASES}/"* && -d "$previous" ]] || fail "previous release is unavailable"
+  if [[ -f /srv/redstm/canonical/archive.sqlite ]]; then
+    sudo -u redstm env PYTHONPATH="$previous" "$previous/.venv/bin/python" \
+      - /srv/redstm/canonical/archive.sqlite <<'PY'
+import sys
+
+from crawler.archive import MIGRATIONS, connect_archive
+
+known = {migration.version for migration in MIGRATIONS}
+with connect_archive(sys.argv[1], read_only=True) as connection:
+    applied = {int(row[0]) for row in connection.execute("SELECT version FROM schema_migrations")}
+    user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+unknown = sorted(applied - known)
+if unknown or user_version > max(known):
+    raise SystemExit(
+        f"rollback release does not support canonical schema: user_version={user_version}, "
+        f"unknown={unknown}"
+    )
+PY
+  fi
   ln -sfn -- "$previous" "${CURRENT}.new"
   mv -Tf -- "${CURRENT}.new" "$CURRENT"
   if [[ "$current" == "${RELEASES}/"* && -d "$current" ]]; then

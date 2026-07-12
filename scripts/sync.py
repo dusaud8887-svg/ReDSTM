@@ -85,11 +85,15 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
     session_path = args.session.expanduser().resolve()
     warc_dir = args.warc_dir.expanduser().resolve()
-    lock = FileLock(f"{archive}.sync.lock", timeout=0)
-    try:
-        lock.acquire()
-    except Timeout as error:
-        raise RuntimeError("another sync process holds the archive lock") from error
+    pause_file = getattr(args, "pause_file", None)
+    if pause_file is not None:
+        pause_file = pause_file.expanduser().resolve()
+    lock = None if args.parent_lock_held else FileLock(f"{archive}.sync.lock", timeout=0)
+    if lock is not None:
+        try:
+            lock.acquire()
+        except Timeout as error:
+            raise RuntimeError("another sync process holds the archive lock") from error
 
     run_id: str | None = None
     store = ArchiveStore(archive)
@@ -98,7 +102,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         interrupted_runs = store.interrupt_stale_crawl_runs()
         with connect_archive(archive, read_only=True) as connection:
             board = connection.execute(
-                "SELECT 1 FROM boards WHERE board_id = ? AND is_enabled = 1", (args.board,)
+                "SELECT inventory_next_page FROM boards WHERE board_id = ? AND is_enabled = 1",
+                (args.board,),
             ).fetchone()
         if board is None:
             raise ValueError("board is missing or disabled in the canonical archive")
@@ -113,7 +118,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 user_agent=USER_AGENT,
             )
         )
-        run_id = store.start_run("sync")
+        run_id = store.start_run("inventory" if args.inventory else "sync")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
         settings = _project_settings(args.max_seconds)
@@ -129,9 +134,11 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             run_id=run_id,
             session=session,
             max_pages=args.max_pages,
+            start_page=int(board["inventory_next_page"]) if args.inventory else 1,
             max_posts=args.max_posts,
             lease_seconds=args.lease_seconds,
             inventory=args.inventory,
+            pause_file=pause_file,
         )
         process.start(stop_after_crawl=True)
 
@@ -143,7 +150,22 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         if _timed_out(crawler):
             failures = sorted({*failures, "sync_time_budget"})
         outcomes = _capture_summary(archive, run_id)
-        status = _run_status(outcomes, discovered, failures)
+        paused = bool(getattr(spider, "paused", False))
+        status = "partial" if paused else _run_status(outcomes, discovered, failures)
+        inventory_next_page = int(getattr(spider, "next_inventory_page", 1))
+        inventory_completed = bool(getattr(spider, "inventory_completed", False))
+        if args.inventory:
+            with connect_archive(archive) as connection:
+                connection.execute(
+                    """
+                    UPDATE boards SET inventory_next_page = ?,
+                        last_inventory_at = CASE
+                            WHEN ? THEN CURRENT_TIMESTAMP ELSE last_inventory_at
+                        END
+                    WHERE board_id = ?
+                    """,
+                    (inventory_next_page, inventory_completed, args.board),
+                )
         store.finish_run(
             run_id,
             status=status,
@@ -152,9 +174,11 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 "outcomes": outcomes,
                 "failures": failures,
                 "interrupted_runs": interrupted_runs,
+                "inventory_next_page": inventory_next_page if args.inventory else None,
             },
         )
-        notify_dead_man(status == "succeeded", os.environ.get("REDSTM_HEALTHCHECK_URL", ""))
+        if not paused:
+            notify_dead_man(status == "succeeded", os.environ.get("REDSTM_HEALTHCHECK_URL", ""))
         return {
             "ok": status == "succeeded",
             "run_id": run_id,
@@ -164,6 +188,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             "outcomes": outcomes,
             "failures": failures,
             "interrupted_runs": interrupted_runs,
+            "inventory_next_page": inventory_next_page if args.inventory else None,
+            "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
         }
     except Exception:
@@ -174,7 +200,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 pass
         raise
     finally:
-        lock.release()
+        if lock is not None:
+            lock.release()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -188,7 +215,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seconds", type=int)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
+    parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--session-prevalidated", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--parent-lock-held", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     limits = [args.max_pages, args.max_posts, args.lease_seconds]

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,8 @@ from scripts.sync import _write_report
 _NETWORK_FAILURES = {"listing_fetch_failed", "network_error"}
 _OUTCOMES = {"stored", "unchanged", "restricted", "missing", "parse_failed", "fetch_failed"}
 _CYCLE_TIME_BUDGET_SECONDS = 4 * 60 * 60
+_SESSION_REVALIDATE_SECONDS = 30 * 60
+_SUBPROCESS_GRACE_SECONDS = 60
 
 
 def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
@@ -39,12 +42,17 @@ def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def _boards(archive: Path) -> list[str]:
+def _boards(archive: Path, *, inventory: bool = False) -> list[str]:
     with connect_archive(archive, read_only=True) as connection:
+        order = (
+            "(last_inventory_at IS NOT NULL), inventory_next_page, board_id"
+            if inventory
+            else "board_id"
+        )
         return [
             str(row[0])
             for row in connection.execute(
-                "SELECT board_id FROM boards WHERE is_enabled = 1 ORDER BY board_id"
+                f"SELECT board_id FROM boards WHERE is_enabled = 1 ORDER BY {order}"
             )
         ]
 
@@ -94,11 +102,15 @@ def _worker_command(
         "--lease-seconds",
         str(args.lease_seconds),
         "--session-prevalidated",
+        "--parent-lock-held",
         "--output",
         str(output),
     ]
     if args.inventory:
         command.append("--inventory")
+    pause_file = getattr(args, "pause_file", None)
+    if pause_file is not None:
+        command.extend(("--pause-file", str(pause_file)))
     return command
 
 
@@ -107,23 +119,36 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     args.session = args.session.expanduser().resolve()
     args.warc_dir = args.warc_dir.expanduser().resolve()
     args.report_dir = args.report_dir.expanduser().resolve()
-    boards = _boards(args.archive)
+    pause_file = getattr(args, "pause_file", None)
+    args.pause_file = pause_file.expanduser().resolve() if pause_file is not None else None
+    boards = _boards(args.archive, inventory=args.inventory)
     if not boards:
         raise ValueError("canonical archive has no enabled boards")
 
-    lock = FileLock(f"{args.archive}.cycle.lock", timeout=0)
+    locks = ExitStack()
     try:
-        lock.acquire()
+        locks.enter_context(FileLock(f"{args.archive}.cycle.lock", timeout=0))
+        locks.enter_context(FileLock(f"{args.archive}.sync.lock", timeout=0))
     except Timeout as error:
-        raise RuntimeError("another crawl cycle is running") from error
+        locks.close()
+        raise RuntimeError("another crawl cycle or sync writer is running") from error
 
     cycle_id = f"cycle-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     results: list[dict[str, Any]] = []
     started_at = time.monotonic()
     try:
+        if args.pause_file is not None and args.pause_file.exists():
+            return {
+                "ok": False,
+                "cycle_id": cycle_id,
+                "status": "partial",
+                "stop_reason": "schedule_paused",
+                "boards": results,
+            }
         preflight = _preflight(args.session)
         if preflight is not None:
             return {"ok": False, "cycle_id": cycle_id, "status": preflight, "boards": results}
+        session_validated_at = started_at
 
         report_dir = args.report_dir / cycle_id
         report_dir.mkdir(parents=True, exist_ok=False)
@@ -134,16 +159,44 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         status = "succeeded"
         stop_reason: str | None = None
         for board_id in boards:
-            remaining_seconds = args.max_seconds - (time.monotonic() - started_at)
+            if args.pause_file is not None and args.pause_file.exists():
+                status = "partial"
+                stop_reason = "schedule_paused"
+                break
+            now = time.monotonic()
+            remaining_seconds = args.max_seconds - (now - started_at)
             if remaining_seconds <= 0:
                 status = "partial"
                 stop_reason = "time_budget"
                 break
+            if now - session_validated_at >= _SESSION_REVALIDATE_SECONDS:
+                preflight = _preflight(args.session)
+                if preflight is not None:
+                    status = preflight
+                    stop_reason = "session_revalidation"
+                    break
+                session_validated_at = now
             report_path = report_dir / f"{board_id}.json"
-            completed = subprocess.run(
-                _worker_command(args, board_id, report_path, max(1, int(remaining_seconds))),
-                check=False,
-            )
+            worker_seconds = max(1, int(remaining_seconds))
+            try:
+                completed = subprocess.run(
+                    _worker_command(args, board_id, report_path, worker_seconds),
+                    check=False,
+                    timeout=worker_seconds + _SUBPROCESS_GRACE_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                status = "partial"
+                stop_reason = "worker_timeout"
+                results.append(
+                    {
+                        "board_id": board_id,
+                        "status": "failed",
+                        "scheduled_posts": 0,
+                        "outcomes": {},
+                        "failures": ["runner_timeout"],
+                    }
+                )
+                break
             if not report_path.is_file():
                 status = "runner_failed"
                 results.append(
@@ -169,6 +222,10 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                     "failures": sorted(failures),
                 }
             )
+            if report.get("stop_reason") == "schedule_paused":
+                status = "partial"
+                stop_reason = "schedule_paused"
+                break
             if "auth_required" in failures or report.get("error") == "SessionRefreshError":
                 status = "auth_failed"
                 break
@@ -200,7 +257,8 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             for item in results
         )
         boards_ok = sum(item["status"] == "succeeded" for item in results)
-        notify_dead_man(ok, os.environ.get("REDSTM_CYCLE_HEALTHCHECK_URL", ""))
+        if stop_reason != "schedule_paused":
+            notify_dead_man(ok, os.environ.get("REDSTM_CYCLE_HEALTHCHECK_URL", ""))
         return {
             "ok": ok,
             "cycle_id": cycle_id,
@@ -216,7 +274,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "boards": results,
         }
     finally:
-        lock.release()
+        locks.close()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -230,6 +288,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seconds", type=int, default=_CYCLE_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
+    parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:

@@ -32,6 +32,9 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
     session_path = args.session.expanduser().resolve()
     warc_dir = args.warc_dir.expanduser().resolve()
+    pause_file = getattr(args, "pause_file", None)
+    if pause_file is not None:
+        pause_file = pause_file.expanduser().resolve()
     lock = FileLock(f"{archive}.sync.lock", timeout=0)
     try:
         lock.acquire()
@@ -43,14 +46,22 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     try:
         initialize_archive(archive)
         interrupted_runs = store.interrupt_stale_crawl_runs()
-        candidates = FrontierStore(archive).recovery_candidates(limit=args.max_posts)
+        frontier = FrontierStore(archive)
+        requeue_code = getattr(args, "requeue_dead", None)
+        requeued_dead = (
+            frontier.requeue_dead(error_code=requeue_code, limit=args.max_posts)
+            if requeue_code
+            else 0
+        )
+        candidates = frontier.recovery_candidates(limit=args.max_posts)
         run_id = store.start_run("retry")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
 
         scheduled = 0
         failures: list[str] = []
-        if candidates:
+        paused = pause_file is not None and pause_file.exists()
+        if candidates and not paused:
             session = ensure_session_export(
                 session_path,
                 user_id=os.environ.get("TYPEMOON_ID", ""),
@@ -71,10 +82,12 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 run_id=run_id,
                 session=session,
                 lease_seconds=args.lease_seconds,
+                pause_file=pause_file,
             )
             process.start(stop_after_crawl=True)
             spider = crawler.spider
             scheduled = int(getattr(spider, "scheduled_posts", 0)) if spider else 0
+            paused = bool(getattr(spider, "paused", False))
             failures = sorted(
                 set(getattr(spider, "failure_codes", ()))
                 | set(_capture_failure_codes(archive, run_id))
@@ -83,7 +96,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 failures = sorted({*failures, "recovery_time_budget"})
 
         outcomes = _capture_summary(archive, run_id)
-        status = _run_status(outcomes, scheduled, failures)
+        status = "partial" if paused else _run_status(outcomes, scheduled, failures)
         store.finish_run(
             run_id,
             status=status,
@@ -93,11 +106,13 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 "outcomes": outcomes,
                 "failures": failures,
                 "interrupted_runs": interrupted_runs,
+                "requeued_dead": requeued_dead,
             },
         )
-        notify_dead_man(
-            status == "succeeded", os.environ.get("REDSTM_RECOVERY_HEALTHCHECK_URL", "")
-        )
+        if not paused:
+            notify_dead_man(
+                status == "succeeded", os.environ.get("REDSTM_RECOVERY_HEALTHCHECK_URL", "")
+            )
         return {
             "ok": status == "succeeded",
             "run_id": run_id,
@@ -107,6 +122,8 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "outcomes": outcomes,
             "failures": failures,
             "interrupted_runs": interrupted_runs,
+            "requeued_dead": requeued_dead,
+            "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
         }
     except Exception:
@@ -128,6 +145,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-posts", type=int, default=20)
     parser.add_argument("--max-seconds", type=int, default=_RECOVERY_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
+    parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--requeue-dead",
+        choices=("network_error", "parse_drift"),
+        help="Requeue at most max-posts matching dead entries before recovery",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_posts, args.max_seconds, args.lease_seconds) < 1:

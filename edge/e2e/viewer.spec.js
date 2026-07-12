@@ -2,16 +2,14 @@ import { mkdir } from "node:fs/promises";
 
 import { expect, test } from "@playwright/test";
 
-const aaKey = process.env.REDSTM_AA_KEY ||
-  "posts/aa_19/351495-b43dec5cddddbd48c627717b51523ab02a6ac989e8634312ba1e4937b614bf19.json.zst";
-const proseKey = process.env.REDSTM_PROSE_KEY ||
-  "posts/ss_19/189648-9a700c99351f57b2298b4420f20df3663329666c1149e873c2f396ea1fe7266d.json.zst";
 const firstHash = "1".repeat(64);
 const secondHash = "2".repeat(64);
 const standaloneHash = "3".repeat(64);
 const firstKey = `posts/board_a/1-${firstHash}.json.zst`;
 const secondKey = `posts/board_a/2-${secondHash}.json.zst`;
 const standaloneKey = `posts/board_a/3-${standaloneHash}.json.zst`;
+const aaKey = process.env.REDSTM_AA_KEY || firstKey;
+const proseKey = process.env.REDSTM_PROSE_KEY || secondKey;
 
 function stableUrl(key) {
   const match = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-/.exec(key);
@@ -34,11 +32,11 @@ function postPayload(id, title) {
 function aaPostPayload(id, title) {
   const payload = postPayload(id, title);
   payload.post.is_aa = true;
-  payload.post.body_html = `<pre class="AA_Text"><font color="#b4232f">${title}\n（　´∀｀）\n　|　　|</font></pre>`;
+  payload.post.body_html = `<div class="AA_Text"><p><font color="#b4232f">${title}</font></p><p>（　´∀｀）</p><p>　|　　|</p></div>`;
   return payload;
 }
 
-async function useCollectionFixture(page, { largeStandalone = false, releaseDelayMs = 0 } = {}) {
+async function useCollectionFixture(page, { largeStandalone = false, releaseGate } = {}) {
   const standalone = postPayload(3, "비소속");
   if (largeStandalone) standalone.transfer_padding = "x".repeat(1_100_000);
   const payloads = new Map([
@@ -75,9 +73,7 @@ async function useCollectionFixture(page, { largeStandalone = false, releaseDela
     const key = new URL(route.request().url()).pathname.slice("/archive/".length);
     const payload = payloads.get(key);
     if (!payload) return route.fulfill({ status: 404, body: "not found" });
-    if (key === "release.json" && releaseDelayMs) {
-      await new Promise((resolve) => setTimeout(resolve, releaseDelayMs));
-    }
+    if (key === "release.json" && releaseGate) await releaseGate();
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
 }
@@ -99,9 +95,20 @@ test.beforeAll(async () => {
 });
 
 test("shows a row skeleton until the archive index is ready", async ({ page }) => {
-  await useCollectionFixture(page, { releaseDelayMs: 400 });
+  let releaseRequested;
+  let releaseResponse;
+  const requested = new Promise((resolve) => { releaseRequested = resolve; });
+  const responseGate = new Promise((resolve) => { releaseResponse = resolve; });
+  await useCollectionFixture(page, {
+    releaseGate: async () => {
+      releaseRequested();
+      await responseGate;
+    },
+  });
   await page.goto("/");
+  await requested;
   await expect(page.locator("#result-list")).toHaveClass(/loading/);
+  releaseResponse();
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#result-list")).not.toHaveClass(/loading/);
 });
@@ -180,6 +187,7 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#home-search")).toBeVisible();
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#ffffff");
 
   if (testInfo.project.name === "desktop") {
     await expect(page.locator('.rail a[href="/ops"]')).toBeVisible();
@@ -221,6 +229,8 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);
   await expect(page.locator("#aa-controls")).toBeVisible();
+  await expect(page.locator(".aa-canvas p").first()).toHaveCSS("margin-bottom", "0px");
+  await expect(page.locator(".aa-canvas p").first()).toHaveCSS("line-height", "18px");
   const aaResult = page.locator(".result-item", { hasText: "첫째" });
   await expect(aaResult.locator(".result-badges")).toContainText("AA");
   await expect(aaResult.locator(".result-badges")).toContainText("읽음");
@@ -281,11 +291,25 @@ test("shows progress while receiving a large post", async ({ page }) => {
 test("supports progress, immersive mode, and reader shortcuts", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, standaloneKey);
-  await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = 300; });
+  await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = 130; });
   await expect(page.locator("#reading-progress")).not.toHaveCSS("width", "0px");
   if (page.viewportSize().width < 760) {
+    const scrollBy = (delta) => page.locator("#reader-pane").evaluate(async (element, amount) => {
+      element.scrollTop += amount;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, delta);
     await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
-    await page.locator("#archive-body p").nth(10).click();
+    await page.locator("#reader-pane").dispatchEvent("pointerup");
+    await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+    await scrollBy(20);
+    await scrollBy(20);
+    await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+    await scrollBy(10);
+    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+    await scrollBy(-10);
+    await scrollBy(-10);
+    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+    await scrollBy(-10);
     await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
   }
   await page.keyboard.press("f");
@@ -303,9 +327,10 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await expect(page.locator("#reader")).toBeVisible();
 });
 
-test("searches and renders a real AA post", async ({ page }, testInfo) => {
+test("searches and renders a representative AA post", async ({ page }, testInfo) => {
+  if (!process.env.REDSTM_AA_KEY) await useCollectionFixture(page);
   await openPost(page, aaKey);
-  await expect(page.locator("#archive-body")).toHaveClass(/aa/);
+  await expect(page.locator("#archive-body")).toHaveClass(/(^|\s)aa(\s|$)/);
   expect(await page.evaluate(async () => {
     await document.fonts.load("16px Saitamaar");
     return document.fonts.check("16px Saitamaar");
@@ -315,7 +340,7 @@ test("searches and renders a real AA post", async ({ page }, testInfo) => {
   expect(query).toBeTruthy();
 
   await page.keyboard.press("/");
-  await page.locator("#board-filter").selectOption("aa_19");
+  await page.locator("#board-filter").selectOption(stableUrl(aaKey).split("/")[2]);
   await page.locator("#search-input").fill(query);
   await expect(page.locator(".result-item", { hasText: title })).toBeVisible();
   await page.locator(".result-item", { hasText: title }).click();
@@ -340,22 +365,46 @@ test("searches and renders a real AA post", async ({ page }, testInfo) => {
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa.png` });
 });
 
-test("renders prose and restores the reading position", async ({ page }, testInfo) => {
+test("restores the reading position after immediate SPA switches", async ({ page }, testInfo) => {
+  if (!process.env.REDSTM_PROSE_KEY) await useCollectionFixture(page);
   await openPost(page, proseKey);
-  await expect(page.locator("#archive-body")).not.toHaveClass(/aa/);
+  await expect(page.locator("#archive-body")).not.toHaveClass(/(^|\s)aa(\s|$)/);
 
   const available = await page.evaluate(() => {
     const target = document.getElementById("reader-pane");
     return target.scrollHeight - target.clientHeight;
   });
   expect(available).toBeGreaterThan(100);
-  await page.evaluate(() => { document.getElementById("reader-pane").scrollTop = 300; });
-  await page.waitForTimeout(400);
-  await page.reload();
-  await expect(page.locator("#reader")).toBeVisible();
-  await page.waitForTimeout(100);
-  const restored = await page.evaluate(() => document.getElementById("reader-pane").scrollTop);
-  expect(restored).toBeGreaterThan(200);
+  const title = await page.locator("#reader-title").innerText();
+  const destinationPosition = await page.evaluate(() => {
+    const target = document.getElementById("reader-pane");
+    target.scrollTop = 300;
+    const position = target.scrollTop;
+    document.querySelector('[data-destination="library"]').click();
+    return position;
+  });
+  expect(destinationPosition).toBeGreaterThan(200);
+  await expect(page).toHaveURL(/\/$/);
+  await page.goBack();
+  await expect(page.locator("#reader-title")).toHaveText(title);
+  await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(destinationPosition - 20);
+
+  if (!process.env.REDSTM_PROSE_KEY) {
+    await expect(page.locator("#previous-post")).toBeEnabled();
+    const postPosition = await page.evaluate(() => {
+      const target = document.getElementById("reader-pane");
+      target.scrollTop = 220;
+      const position = target.scrollTop;
+      document.getElementById("previous-post").click();
+      return position;
+    });
+    await expect(page.locator("#reader-title")).toHaveText("첫째");
+    await page.goBack();
+    await expect(page.locator("#reader-title")).toHaveText("둘째");
+    await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(postPosition - 20);
+  }
 
   await page.evaluate(() => { document.getElementById("reader-pane").scrollTop = 0; });
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-prose.png` });

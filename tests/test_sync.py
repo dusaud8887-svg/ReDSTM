@@ -7,7 +7,7 @@ from urllib.request import Request as UrlRequest
 
 import pytest
 from scrapy import Request
-from scrapy.http import HtmlResponse
+from scrapy.http import HtmlResponse, Response
 
 from crawler import settings as crawler_settings
 from crawler.archive import connect_archive, initialize_archive
@@ -216,11 +216,14 @@ def test_overlap_boundary_stops_next_listing_page(tmp_path: Path) -> None:
         session=_session(),
         max_pages=2,
         inventory=True,
+        start_page=3,
     )
+    response = response.replace(url=f"{url}?page=3")
     inventory_requests = [
         item for item in inventory.parse_listing(response) if isinstance(item, Request)
     ]
-    assert [request.url for request in inventory_requests] == [f"{url}?page=2"]
+    assert [request.url for request in inventory_requests] == [f"{url}?page=4"]
+    assert inventory.next_inventory_page == 4
 
 
 def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
@@ -264,6 +267,53 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
     requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
 
     assert [request.url for request in requests] == [f"{url}?page=2"]
+
+    inventory = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("inventory"),
+        session=_session(),
+        max_pages=2,
+        inventory=True,
+        start_page=3,
+    )
+    inventory_response = response.replace(url=f"{url}?page=3")
+    inventory_requests = [
+        item for item in inventory.parse_listing(inventory_response) if isinstance(item, Request)
+    ]
+    assert inventory_requests == []
+    assert inventory.next_inventory_page == 3
+
+
+def test_inventory_completes_on_a_notice_only_terminal_page(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    url = "https://www.typemoon.net/write_free21?page=7"
+    response = HtmlResponse(
+        url,
+        request=Request(url),
+        body=(
+            b"<table><tbody><tr class='board-notice'><td class='td-subj-wrap'>"
+            b"<a href='/write_free21/999'><span class='subject'>notice</span></a>"
+            b"</td></tr></tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("inventory"),
+        session=_session(),
+        max_pages=2,
+        inventory=True,
+        start_page=7,
+    )
+
+    requests = [item for item in spider.parse_listing(response) if isinstance(item, Request)]
+
+    assert requests == []
+    assert spider.next_inventory_page == 1
+    assert spider.inventory_completed is True
 
 
 def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
@@ -309,7 +359,7 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
         archive_path=path,
         run_id=run_id,
         session=_session(),
-        max_posts=2,
+        max_posts=1,
     )
     url = "https://www.typemoon.net/write_free21"
     response = HtmlResponse(
@@ -339,6 +389,167 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
             (1, "https://www.typemoon.net/write_free21/1", "running"),
             (2, "https://www.typemoon.net/write_free21/2", "pending"),
         ]
+
+
+def test_sync_stops_current_board_on_auth_response(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_posts=2,
+    )
+    listing_url = "https://www.typemoon.net/write_free21"
+    listing = HtmlResponse(
+        listing_url,
+        request=Request(listing_url),
+        body=(
+            b"<table><tbody>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/1'>"
+            b"<span class='subject'>one</span></a></td></tr>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/2'>"
+            b"<span class='subject'>two</span></a></td></tr>"
+            b"</tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    response = HtmlResponse(
+        request.url,
+        request=request,
+        body=(
+            b"<form action='/bbs/login_check.php'>"
+            b"<input name='mb_id'><input name='mb_password'></form>"
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = list(spider._parse_sync_detail(response))
+
+    assert [item["warnings"] for item in outputs if isinstance(item, CapturedPostItem)] == [
+        ["auth_required"]
+    ]
+    assert not any(isinstance(item, Request) for item in outputs)
+    assert spider.failure_codes == {"auth_required"}
+    assert list(spider.parse_listing(listing.replace(url=f"{listing_url}?page=2"))) == []
+
+
+def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_posts=4,
+    )
+    rows = "".join(
+        f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
+        f"<span class='subject'>{post_id}</span></a></td></tr>"
+        for post_id in range(1, 5)
+    )
+    url = "https://www.typemoon.net/write_free21"
+    listing = HtmlResponse(
+        url,
+        request=Request(url),
+        body=f"<table><tbody>{rows}</tbody></table>".encode(),
+        encoding="utf-8",
+    )
+    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+
+    for expected_remaining in (1, 1, 0):
+        outputs = list(
+            spider._sync_error(SimpleNamespace(request=request, value=OSError("offline")))
+        )
+        assert len(outputs) == expected_remaining
+        if outputs:
+            request = outputs[0]
+
+    assert spider.failure_codes == {"network_error"}
+    assert list(spider.parse_listing(listing.replace(url=f"{url}?page=2"))) == []
+
+
+def test_pause_marker_stops_before_next_detail_lease(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    pause_file = tmp_path / "schedule.paused"
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_posts=2,
+        pause_file=pause_file,
+    )
+    url = "https://www.typemoon.net/write_free21"
+    listing = HtmlResponse(
+        url,
+        request=Request(url),
+        body=(
+            b"<table><tbody>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/1'>"
+            b"<span class='subject'>one</span></a></td></tr>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/2'>"
+            b"<span class='subject'>two</span></a></td></tr>"
+            b"</tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    pause_file.touch()
+    detail = HtmlResponse(
+        request.url,
+        request=request,
+        body=(_FIXTURES / "detail.html").read_bytes(),
+        encoding="utf-8",
+    )
+
+    outputs = list(spider._parse_sync_detail(detail))
+
+    assert not any(isinstance(item, Request) for item in outputs)
+    assert spider.paused is True
+    with connect_archive(path, read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM crawl_frontier WHERE state = 'running'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_non_html_detail_records_terminal_parse_outcome(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync")
+    spider = TypeMoonSpider(
+        board_id="write_free21", archive_path=path, run_id=run_id, session=_session(), max_posts=1
+    )
+    url = "https://www.typemoon.net/write_free21"
+    listing = HtmlResponse(
+        url, request=Request(url), body=(_FIXTURES / "listing.html").read_bytes(), encoding="utf-8"
+    )
+    [request] = [item for item in spider.parse_listing(listing) if isinstance(item, Request)]
+    [item] = [
+        output
+        for output in spider._parse_sync_detail(
+            Response(request.url, request=request, status=200, body=b"binary")
+        )
+        if isinstance(output, CapturedPostItem)
+    ]
+
+    ArchivePipeline(path, run_id).process_item(item)
+
+    with connect_archive(path, read_only=True) as connection:
+        assert tuple(
+            connection.execute(
+                "SELECT outcome, error_code FROM captures WHERE entity_type = 'post'"
+            ).fetchone()
+        ) == ("parse_failed", "parse_drift")
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "dead"
 
 
 def test_captured_post_repr_never_logs_content() -> None:
@@ -375,6 +586,41 @@ def test_listing_failure_and_incomplete_capture_cannot_succeed() -> None:
     assert _run_status({"stored": 1}, 1, []) == "succeeded"
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (None, "listing_fetch_failed"),
+        (401, "auth_required"),
+        (403, "auth_required"),
+        (429, "rate_limited"),
+    ],
+)
+def test_listing_errback_classifies_auth_and_rate_limit(status: int | None, expected: str) -> None:
+    spider = TypeMoonSpider()
+    request = Request("https://www.typemoon.net/write_free21")
+    value: object = OSError("offline")
+    if status is not None:
+        value = SimpleNamespace(response=HtmlResponse(request.url, request=request, status=status))
+
+    spider.listing_error(SimpleNamespace(request=request, value=value))
+
+    assert spider.failure_codes == {expected}
+
+
+def test_listing_login_form_stops_as_auth_failure() -> None:
+    spider = TypeMoonSpider()
+    url = "https://www.typemoon.net/write_free21"
+    response = HtmlResponse(
+        url,
+        request=Request(url),
+        body=b"<form action='/bbs/login_check.php'><input name='mb_id'></form>",
+        encoding="utf-8",
+    )
+
+    assert list(spider.parse_listing(response)) == []
+    assert spider.failure_codes == {"auth_required"}
+
+
 def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -405,11 +651,16 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert parse_sync_args().lease_seconds == 900
     assert parse_sync_args().max_seconds is None
     assert parse_sync_args().session_prevalidated is False
+    assert parse_sync_args().parent_lock_held is False
     monkeypatch.setattr(
         "sys.argv",
         ["sync", "--archive", str(archive), "--board", "write", "--session-prevalidated"],
     )
     assert parse_sync_args().session_prevalidated is True
+    monkeypatch.setattr(
+        "sys.argv", ["sync", "--archive", str(archive), "--board", "write", "--parent-lock-held"]
+    )
+    assert parse_sync_args().parent_lock_held is True
     monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
     assert parse_recovery_args().lease_seconds == 900
 

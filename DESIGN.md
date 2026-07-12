@@ -3,15 +3,15 @@ version: 1.0
 name: Signal Archive
 description: A precise private reading archive with a graphite shell, quiet reading surfaces, and one red signal.
 colors:
-  light-page: "#F5F6F8"
-  light-surface: "#FFFFFF"
-  light-surface-raised: "#FCFCFD"
+  light-page: "#FFFFFF"
+  light-surface: "#F7F8FA"
+  light-surface-raised: "#FFFFFF"
   light-reader: "#FBFAF8"
-  light-ink: "#17191F"
-  light-muted: "#667085"
-  light-subtle: "#98A2B3"
-  light-line: "#E4E7EC"
-  light-line-strong: "#D0D5DD"
+  light-ink: "#15171A"
+  light-muted: "#4B5565"
+  light-subtle: "#7C8798"
+  light-line: "#E7E9EE"
+  light-line-strong: "#CDD2DA"
   light-accent: "#D92D3D"
   light-accent-hover: "#B42332"
   light-accent-soft: "#FFF1F2"
@@ -95,14 +95,18 @@ spacing:
 
 # ReDSTM Design System
 
-- 상태: Signal Archive implemented and deployed; authenticated user acceptance pending
+- 상태: Signal Archive/Porcelain visual local 구현; Operations 세부 의미·live/Android acceptance pending
 - 기준일: 2026-07-12
 - 적용 대상: Edge Reader, remote Operations, local fallback console
 - 근거: [viewer design](docs/05_viewer_design.md)
 
 이 파일은 mood board가 아니라 색·서체·공간·responsive behavior의 normative contract다. 이전
-warm paper + violet + crescent 방향은 사용자 검토에서 거절됐고, 현재 graphite/red Reader와
-Operations candidate가 live 배포됐다. authenticated 사용자 acceptance 전까지 시각 gate는 열려 있다.
+warm paper + violet + crescent 방향은 사용자 검토에서 거절됐고, 2026-07-12 authenticated 검토에서는
+Operations의 넓은 회색 면적, 과대 상태 장식, 옅은 설명과 빈 telemetry의 모호성이 다시 거절됐다.
+아래 Porcelain visual 계약은 Reader·검색·설정·Operations 전역에 로컬 구현됐고
+1440/768/390/320px self-contained fixture를 통과했다. Operations의 field별 source/as-of,
+active/latest와 command due/last/cooldown은 `docs/04`의 남은 의미 gate다. 시각 gate는 새 bundle의
+authenticated live smoke, 실제 Android와 사용자 acceptance 전까지 열려 있다.
 
 ## 1. 방향
 
@@ -115,6 +119,10 @@ Operations candidate가 live 배포됐다. authenticated 사용자 acceptance �
 
 기억점은 달이나 장식 문양이 아니라 ReD의 red signal, 정확한 타이포그래피, catalog와 reader의
 밀도 대비다. red는 활성·현재·주의가 필요한 한 지점에만 쓴다.
+
+Light refinement의 목적은 유행하는 효과를 더하는 것이 아니라 **밝은 흰 캔버스 위에 상태와 근거를
+정확히 배치하는 것**이다. 단순함은 정보 부족이나 큰 빈 공간이 아니다. 흰색을 기본 면으로 쓰고
+near-white는 navigation, filter, grouped control처럼 역할이 있는 영역에만 쓴다.
 
 ## 2. 금지된 이전 방향
 
@@ -140,8 +148,19 @@ Operations candidate가 live 배포됐다. authenticated 사용자 acceptance �
 | selection/action | light-accent | dark-accent |
 | keyboard focus | light-focus | dark-focus |
 
-Light는 cool neutral shell과 아주 약한 warm reader surface를 구분한다. Dark는 true black이 아니라
+Light는 white canvas, cool near-white chrome과 아주 약한 warm reader surface를 구분한다. 화면의
+70% 이상을 `light-page`가 차지하고 `light-surface`는 navigation·filter·묶음 배경에만 쓴다.
+`light-surface-raised`는 dialog/popover처럼 실제로 위에 뜬 면이다. Dark는 true black이 아니라
 blue-neutral graphite다. 테마는 색상 반전이 아니라 독립 token mapping이다.
+
+Light surface 규칙:
+
+- 일반 section과 article을 회색 panel이나 card로 감싸지 않는다.
+- 정보 묶음은 흰 면 + spacing + 1px rule로 구분하고, near-white fill은 보조 grouping에만 쓴다.
+- shadow는 dialog/sheet/popover에만 쓴다. base/raised 차이를 모든 block에 적용하지 않는다.
+- 의미 있는 caption과 timestamp는 `light-muted` 이상을 사용한다. `light-subtle`은 placeholder,
+  disabled, 비필수 장식에만 쓴다.
+- red·green dot만으로 상태를 전달하지 않는다. label, 시각, 이유와 다음 행동이 항상 함께 온다.
 
 Red 규칙:
 
@@ -161,8 +180,8 @@ Red 사용 지도(화면당 신호 한 곳 원칙의 구체화):
 
 대비 규칙(2026-07-12 실측 검증):
 
-- light-subtle은 흰 surface에서 2.6:1로 텍스트 AA에 미달한다. placeholder, disabled,
-  비필수 장식에만 쓰고 날짜·작성자 같은 실제 metadata 텍스트는 muted(5.0:1)를 쓴다.
+- light-subtle은 흰 canvas에서 3.64:1로 일반 텍스트 AA에 미달한다. placeholder, disabled,
+  비필수 장식에만 쓰고 날짜·작성자 같은 실제 metadata 텍스트는 muted(7.54:1)를 쓴다.
 - success/warning/danger 원색은 light 배경 텍스트로 AA에 미달한다(2.4~3.8:1). light에서
   상태 텍스트는 light-success-text/light-warning-text/light-danger-text(5.4~6.6:1)를 쓰고,
   원색은 badge fill, icon, 2px status line에만 쓴다. dark에서는 원색 텍스트가 통과한다(5.2~8.3:1).
@@ -257,7 +276,7 @@ Chrome 치수:
 - bottom navigation: 높이 56px + safe-area, icon 20px + label 11px/500, active만 red
 - Reader bottom bar: 높이 52px + safe-area, 4개 action 등분, label nowrap
 - medium top app bar 56px, rail 폭 72px(icon 20px + label 10px 또는 tooltip)
-- `<meta name="theme-color">`는 theme별 page token(light `#F5F6F8`, dark `#0B0D12`)을 따른다
+- `<meta name="theme-color">`는 theme별 page token(light `#FFFFFF`, dark `#0B0D12`)을 따른다
 
 ## 6. 공간·형태·깊이
 
@@ -359,8 +378,25 @@ canvas width는 settings sheet로 이동한다.
 Operations는 Reader와 token을 공유하지만 더 조밀하다. 표·목록은 13~14px, row 최소 40px,
 숫자 열은 tabular-nums로 정렬한다.
 
-- 상단: current state, last sync/publish/backup, next scheduled
-- 본문: active run, board progress, pending/retry/dead, recent runs, warnings
+- 상단은 160~200px의 compact operational brief다. 28~34px action verdict와 8px status mark를 쓰고,
+  58px 상태 제목과 96px 장식 원은 금지한다.
+- 첫 질문은 `지금 내가 해야 할 일이 있는가?`이고, 다음 줄에 독립적인 Reader/R2 지속 가능 여부를
+  둔다. runner stale과 현재 release readable은 동시에 참일 수 있다.
+- 순서는 action verdict → Reader continuity/current release → active 또는 latest run → warnings와
+  board/queue exception → release provenance → manual controls다. 자동화가 정상 경로이므로 control을
+  화면 전반부의 주인공으로 만들지 않는다.
+- heartbeat가 stale이면 `현재 단계/다음 실행/남은 디스크`라 쓰지 않고 `마지막 보고 단계/마지막으로
+  보고된 다음 실행/마지막 보고 디스크`와 age를 표시한다.
+- D1 run/board telemetry가 없으면 `0`을 합성하지 않는다. `—`와 `아직 보고되지 않음`, 가능한 원인과
+  다음 확인 행동을 쓴다. release의 46 boards와 board telemetry 0 rows는 모순이 아니다.
+- active run과 latest terminal run은 다른 block이다. 실행 기록은 source, step, outcome, safe reason,
+  report ID를 disclosure로 제공한다.
+- board count는 `최근 실행 발견/변경`, `현재 대기`, `재시도 예정`, `수동 확인`처럼 범위와 의미를
+  이름에 포함한다. mobile 8열 표 대신 vertical disclosure ledger를 쓴다.
+- release는 hash보다 `Reader 사용 가능`, activation/publish 시각과 post/comment/byte 근거를 먼저
+  보여준다. previous 없음은 rollback 불가가 아니라 D1 previous metadata가 없다는 뜻이다.
+- control은 effect, eligibility, disabled reason, due count, last outcome, cooldown을 함께 보여준다.
+  pause/resume은 상호 배타적이고 stale runner가 claim해야 하는 action은 이유와 함께 disable한다.
 - color만으로 상태를 표시하지 않고 icon + label + timestamp + reason 사용
 - raw log보다 structured step과 safe tail을 우선
 - destructive command, secret input, arbitrary argument field 없음

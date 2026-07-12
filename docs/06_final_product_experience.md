@@ -94,31 +94,27 @@ Reader와 Operations는 같은 로그인과 visual system을 쓰지만 route, da
 
 ### 4.2 Operations
 
-    Overview
-    ├─ runner heartbeat/state
-    ├─ last and next schedule
-    ├─ crawl/publish/backup freshness
-    └─ warnings requiring action
+    Operational brief
+    ├─ action verdict + runner heartbeat/state
+    ├─ independent Reader/R2 continuity
+    ├─ last-reported facts + last/next schedule
+    └─ warnings with reason, age, next action
 
-    Runs
-    ├─ active run and steps
-    ├─ recent runs
-    └─ safe logs/report
+    Active / latest run
+    ├─ active run and steps, or latest terminal result
+    ├─ scheduled/manual source and outcome counters
+    └─ safe reason/report disclosure
 
-    Boards & Queue
-    ├─ board last scan and outcomes
-    ├─ pending/retry/dead
+    Exceptions & Queue
+    ├─ warning boards before healthy groups
+    ├─ pending/retry/manual-review with scope/as-of
     └─ parse/auth/rate-limit warnings
 
-    Releases
-    ├─ current and previous release
-    ├─ object/upload/smoke state
-    └─ pointer rollback history
-
-    Recovery evidence
-    ├─ E verified legacy source
-    ├─ last local restore result
-    └─ external backup deferred
+    Release provenance
+    ├─ Reader readable/current and previous release
+    ├─ object/upload/smoke/count/bytes
+    ├─ pointer rollback history
+    └─ E verified source + last local restore; external backup deferred
 
     Controls
     ├─ sync now
@@ -311,16 +307,20 @@ Operations의 첫 질문은 “지금 내가 해야 할 일이 있는가?”다.
 
 ### 8.1 Overview
 
-- overall state: idle/running/degraded/failed/stale
-- last heartbeat
-- current step/board if running
-- last successful crawl/publish/backup
-- next scheduled crawl
-- warning list with reason and age
+- 첫 문장은 `개입 불필요`, `확인 필요`, `Runner 응답 없음`, `초기 연결 대기` 중 하나의 action
+  verdict이며 이유와 권장 행동을 한 문장으로 붙인다.
+- overall state는 idle/running/degraded/failed/stale/paused/not_enrolled을 구분한다.
+- Reader/R2 continuity는 runner 상태와 독립이다. runner가 stale이어도 active release가 readable이면
+  `Reader 사용 가능`을 함께 표시한다.
+- fresh일 때만 current step/board/next schedule을 현재형으로 쓴다. stale이면 모든 runner fact를
+  `마지막 보고`로 바꾸고 age를 표시한다.
+- last successful crawl/publish/local recovery와 warning list는 각각 source, as-of, reason, next action을
+  가진다.
+- D1 telemetry가 없거나 field가 unknown이면 `—`다. 값을 0으로 합성하지 않는다.
 
 overall percentage는 만들지 않는다. 각 count는 denominator와 기준 시각을 가진다.
 
-### 8.2 Active run
+### 8.2 Active run과 latest run
 
 상태 전이:
 
@@ -330,6 +330,12 @@ overall percentage는 만들지 않는다. 각 count는 denominator와 기준 �
 
 각 step은 started/finished, outcome, safe message, report reference를 갖는다. raw body/cookie/path/secret은
 없다.
+
+active run과 latest terminal run은 별도 entity다. active가 있으면 current step/board와 elapsed를,
+없으면 가장 최근 terminal outcome과 finished time을 보여준다. 둘 다 없으면 `D1에 아직 실행
+telemetry가 없습니다. 자동 수집 전이거나 runner telemetry가 연결되지 않았습니다.`라고 설명하고
+changed/failed/pending을 0으로 표시하지 않는다. 실패/partial row만 기본 disclosure를 열어 safe reason,
+failed board, report ID를 보여준다.
 
 ### 8.3 Bounded control
 
@@ -344,6 +350,9 @@ Browser가 요청할 수 있는 action은 고정된다.
 | resume-schedule | paused marker만 해제 | next schedule summary |
 
 restore, DB cleanup, arbitrary rollback target, shell, path, concurrency, delay, timeout은 웹 action이 아니다.
+각 action은 effect, eligibility, disabled reason, due count, last outcome, cooldown을 함께 표시한다.
+pause/resume은 상호 배타적이다. runner stale/not_enrolled이면 claim이 필요한 sync/retry/publish와 marker
+명령을 이유와 함께 disable하고 refresh/진단만 남긴다.
 
 ### 8.4 Command UX
 
@@ -359,6 +368,10 @@ restore, DB cleanup, arbitrary rollback target, shell, path, concurrency, delay,
 double click/reload/retry가 같은 idempotency key로 중복 run을 만들지 않아야 한다. claim 전 command는
 cancel할 수 있고 claim 뒤에는 pause-after-current만 요청할 수 있다. paused 상태는
 resume-schedule로만 해제한다.
+
+client는 create 응답 전 action을 잠그고 같은 intent의 재시도에 같은 idempotency key를 재사용한다.
+browser polling 시간이 끝나도 command를 실패로 단정하지 않고 `백그라운드에서 계속 실행 중`과
+command ID, expiry, 다시 확인 link를 남긴다.
 
 ## 9. 완전 자동화 flow
 
@@ -395,7 +408,7 @@ resume-schedule로만 해제한다.
 | medium 760–1179 | top app navigation | catalog + reader |
 | narrow <760 | 4-item bottom navigation | one plane |
 | Reader narrow | no global nav | full-screen article + 4 actions |
-| Operations narrow | overview first | detail drill-down |
+| Operations narrow | verdict + Reader continuity first | vertical disclosure ledger; horizontal table 금지 |
 
 - 100dvh, viewport-fit=cover, safe-area
 - primary target 44×44px
@@ -454,7 +467,10 @@ Automation:
 Operations:
 
 - stale runner를 heartbeat 없이 탐지
+- stale runner와 readable R2 release를 동시에 정확히 설명
+- empty run/board telemetry를 false zero로 표시하지 않음
 - fixed command 중복 요청이 한 run만 생성
+- 각 command의 효과/eligibility/disabled reason을 확인 전에 예측 가능
 - D1/Worker outage 중 systemd schedule 지속
 - secret/path/raw body가 API/DOM/log에 없음
 - mobile에서 상태 확인과 pause-after-current 가능

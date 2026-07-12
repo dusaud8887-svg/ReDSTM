@@ -125,6 +125,31 @@ def test_outbox_evicts_detail_before_terminal_and_honours_defer(tmp_path: Path) 
     assert all(item["id"] != terminal_id for item in store.pending(now=_NOW + timedelta(minutes=2)))
 
 
+def test_outbox_does_not_replay_past_a_deferred_predecessor(tmp_path: Path) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    start_id = store.enqueue(
+        "run_start",
+        "/api/v1/runner/runs",
+        {"run_id": "run-1", "kind": "scheduled"},
+        "run-start-0001",
+        now=_NOW,
+    )
+    store.enqueue(
+        "run_finish",
+        "/api/v1/runner/runs/run-1/finish",
+        {"state": "succeeded", "counters": {}},
+        "run-finish-0001",
+        now=_NOW,
+    )
+    store.defer(start_id, _NOW + timedelta(minutes=1))
+
+    assert store.pending(now=_NOW) == []
+    assert [item["kind"] for item in store.pending(now=_NOW + timedelta(minutes=2))] == [
+        "run_start",
+        "run_finish",
+    ]
+
+
 def test_outbox_rejects_unsafe_or_unbounded_payloads(tmp_path: Path) -> None:
     store = ControlStore(tmp_path / "control.sqlite", max_bytes=100, max_events=2)
     with pytest.raises(ValueError, match="forbidden"):

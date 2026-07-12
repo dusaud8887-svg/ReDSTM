@@ -141,3 +141,33 @@ def test_site_outage_restores_network_attempt_without_reviving_other_failures(
             )
         ]
     assert rows == [(1, "retry", 4, None), (2, "retry", 5, "auth_required")]
+
+
+def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    for post_id, error in ((1, "network_error"), (2, "network_error"), (3, "parse_drift")):
+        store.seed("write_free21", post_id, f"https://www.typemoon.net/write_free21/{post_id}")
+        with connect_archive(path) as connection:
+            connection.execute(
+                """
+                UPDATE crawl_frontier SET state = 'dead', attempts = 5, last_error_code = ?
+                WHERE external_post_id = ?
+                """,
+                (error, post_id),
+            )
+
+    assert store.requeue_dead(error_code="network_error", limit=1) == 1
+
+    with connect_archive(path, read_only=True) as connection:
+        rows = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT external_post_id, state, attempts FROM crawl_frontier "
+                "ORDER BY external_post_id"
+            )
+        ]
+    assert rows == [(1, "retry", 0), (2, "dead", 5), (3, "dead", 5)]
+    with pytest.raises(ValueError, match="unsupported"):
+        store.requeue_dead(error_code="auth_required", limit=1)

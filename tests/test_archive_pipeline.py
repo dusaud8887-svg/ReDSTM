@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import crawler.archive_pipeline as archive_pipeline_module
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.frontier import FrontierLease, FrontierStore
@@ -128,4 +129,32 @@ def test_pipeline_rejects_mismatched_lease_before_writing(tmp_path: Path) -> Non
                 (lease.board_id, lease.external_post_id),
             ).fetchone()[0]
             == "running"
+        )
+
+
+def test_pipeline_records_storage_error_before_reraising(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    pipeline, frontier, run_id = _setup(path)
+    lease = _claim(frontier, 4)
+
+    def fail_normalize(item: CapturedPostItem) -> None:
+        raise ValueError("invalid normalized content")
+
+    monkeypatch.setattr(archive_pipeline_module, "normalize_captured_post", fail_normalize)
+    with pytest.raises(ValueError, match="invalid normalized content"):
+        pipeline.process_item(_item(lease, "stored"))
+
+    with connect_archive(path, read_only=True) as connection:
+        assert tuple(
+            connection.execute(
+                "SELECT outcome, error_code FROM captures WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        ) == ("parse_failed", "storage_error")
+        assert (
+            connection.execute(
+                "SELECT state FROM crawl_frontier WHERE external_post_id = 4"
+            ).fetchone()[0]
+            == "retry"
         )

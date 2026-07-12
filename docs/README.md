@@ -58,7 +58,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 ### 완료
 
 - verified legacy source와 schema v2 canonical/independent local restore
-- bounded crawler, session/parser/WARC/frontier, retry/failure regression
+- bounded crawler core, session/parser/WARC/frontier와 recovery retry/failure regression
 - deterministic gzip/zstd level 15 full export와 count 검증
 - Worker Static Assets, private R2, Access email/MFA와 authenticated shell
 - R2 baseline 5,148,165,450 bytes/282,289 objects, check 차이 0와 pointer 검증
@@ -69,24 +69,33 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - Oracle read-only audit, target runbook, ADR-014/015
 - Oracle에서 12,407,148,544-byte canonical 활성화/full doctor와 application
   `4edc1c9868045454c961cd3f038eb0a66a4cb010` 배포 통과
-- Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token/만료 알림
+- Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token
 - Oracle control oneshot → Access → Worker → D1 heartbeat와 user/service route 분리 smoke
 - authenticated production Reader 282,239건, 일반/AA 본문·댓글과 `/ops` idle heartbeat smoke
 - `/search` query/board/sort URL·History 복원과 mobile 설정의 Operations 진입점
 - pause/resume marker, heartbeat outbox replay와 expired command live canary
 - journald 1GiB/14일 보존 정책 적용과 과거 민감 가능 journal 폐기(4GiB → 24MiB)
-- Signal Archive 디자인·제품·API의 최종 문서 계약
+- Signal Archive/Porcelain light 전역 token과 Reader·검색·설정, Operations 핵심 상태의 local
+  4-viewport 구현
+- complete listing seed, sync mid-board breaker, 30분 session 재검증, cycle-wide writer lock,
+  subprocess hard bound와 bounded dead revive의 local crawler 구현
+- schema v3 inventory cursor migration 코드와 full local Python/Edge/E2E 검증
 
 세부 증거와 당시 조건은 [`done/2026-07-11`](done/2026-07-11/README.md)에 보존한다.
 
 ### 현재 gate
 
 현재 Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`에서 authenticated Reader/Operations,
-`/search` URL·History 복원과 mobile Operations 진입점을 확인했다. A1의 남은 gate는 실제 Android와
-사용자 시각 acceptance뿐이다. Oracle은 application `4edc1c9`, canonical full doctor, static seed,
+`/search` URL·History 복원과 mobile Operations 진입점을 확인했다. 그 live 검토에서 거절된
+Operations light palette, stale/empty 표현과 Reader continuity는 로컬 코드와 fixture에서 교정했다.
+field별 source/as-of, active/latest run 분리와 command별 due/last/cooldown eligibility를 마친 뒤 새
+버전의 live 배포·실제 Android·사용자 시각 acceptance가 남았다. Oracle은 application `4edc1c9`, canonical full doctor, static seed,
 R2/TypeMoon/Access credential과 D1 heartbeat까지 통과했다. 원본 요청 없는 pause/resume marker,
 heartbeat outbox replay와 expired command도 live 검증했다. control/schedule timer는 계속
-disabled/inactive다. crawler 실측과 남은 근거는
+disabled/inactive다. crawler는 listing → durable frontier → serial detail lease → capture/outcome과
+done/retry/dead 전이 구조를 갖고, 앞서 확인한 safety gap은 로컬 코드와 회귀 테스트에서 닫혔다.
+다만 live canonical은 schema v2이므로 schema v3 migration, 새 Oracle application 배포와 실제
+inventory/recovery/delta canary 전에는 production 완료가 아니다. crawler 실측과 남은 근거는
 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 두며, bounded recovery·delta,
 duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 
@@ -94,14 +103,16 @@ duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 
 우선순위는 [`04`](04_implementation_plan.md)의 A0~A5다.
 
-1. 실제 Android/frontend acceptance
-2. time/failure-bounded recovery·실제 delta publish canary
-3. duplicate command와 실제 crawl 중 D1/Worker outage canary
-4. 24시간 canary, 7일 shadow와 cutover
+1. schema v3을 Oracle canonical에 명시적으로 migration하고 새 application을 배포
+2. Operations의 남은 의미·command eligibility를 구현하고 Reader/Operations 새 palette의
+   authenticated live smoke와 실제 Android/frontend acceptance
+3. time/failure-bounded inventory·recovery·실제 delta publish canary
+4. duplicate command와 실제 crawl 중 D1/Worker outage canary
+5. 24시간 canary, 7일 shadow와 cutover
 
 ## 확정된 UX·기술 결정
 
-- visual: graphite/white surface + ReDSTM red signal; old purple glass/moon 장식 금지
+- visual: white canvas + near-white grouped chrome + ReDSTM red signal; old purple glass/moon과 gray card field 금지
 - font: SUIT UI/title, MaruBuri prose, Saitamaar AA
 - mobile navigation: 장서/검색/저장/설정; reader에서는 목록/이전/다음/설정
 - route: 장서 `/`, 검색 `/search`, 저장 `/saved`, 설정 `/settings`, Reader `/read/{board}/{id}`
@@ -113,8 +124,9 @@ duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 - frontend: plain HTML/CSS/ES modules; framework/UI kit 추가 없음
 - control: Worker `/api/v1` 한 경계, Access user/service role 분리
 - command: sync/retry/publish/pause/resume fixed action만; shell/path/restore/delete 금지
-- crawler: concurrency 1, 10초 하한 delay(감속 전용 autothrottle), outage 조기 중단, systemd
-  automation, delta publish; 파라미터 표는 `10 §8.1`
+- crawler: listing index를 queue seed로 쓰고 detail은 lease 1건씩 처리; concurrency 1, 10초 하한
+  delay(감속 전용 autothrottle), bounded outage 중단, durable inventory cursor, systemd automation,
+  delta publish; local safety 계약과 남은 live gate는 `00 §8`/`10 §6·8.1`
 - access: private 유지; live 확인은 로그인된 Chrome, 자동 E2E는 local Worker 사용
 - backup: B2/restic은 현재 범위에서 제외, E verified source 유지
 - budget: Cloudflare 연 $20, projected R2 20GB/800,000 objects hard stop
@@ -125,9 +137,8 @@ duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
 구성, 배포, canary, recovery 검증, Git commit/push와 rollback을 에이전트가 직접 수행하도록 승인했다.
 비파괴·복구 가능한 작업은 반복 승인을 요구하지 않는다.
 
-GitHub CLI login과 remote read는 확인됐다. 현재 GitHub/Oracle이 같은 SSH key를 재사용하므로
-최종 credential rotation에서 용도별 key로 분리한다. Wrangler OAuth에 Access 관리 권한이 없으므로
-A3에는 scoped API token 또는 로그인된 Chrome 사용의 명시 승인이 필요하다([04 §6.3](04_implementation_plan.md)).
+GitHub CLI login과 remote read는 확인됐다. Wrangler OAuth에 Access 관리 권한이 없으므로 A3에는
+scoped API token 또는 로그인된 Chrome 사용의 명시 승인이 필요하다([04 §6.3](04_implementation_plan.md)).
 
 instance/volume/network, 마지막 검증 사본, manifest 없는 data 삭제와 합의 예산 초과는 hard stop이다.
 credential 원문은 docs/chat/Git/log에 기록하지 않는다. 전체 경계는

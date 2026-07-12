@@ -1,6 +1,6 @@
 # Viewer 시각·UX 디자인 방향
 
-- 상태: Accepted redesign; live/authenticated implementation deployed, user/device acceptance pending
+- 상태: Reader와 Operations visual/core state local 구현; 세부 의미·live/Android acceptance pending
 - 기준일: 2026-07-12
 - live: Worker `58a70799-eacc-463d-b5d6-5f344dbcd3ab`; authenticated Reader/Ops 통과
 - 범위: Edge Reader와 Operations의 시각 방향, mobile shell, typography, interaction quality
@@ -24,6 +24,10 @@
 완료 화면은 “아카이브를 흉내 낸 웹페이지”가 아니라 이미 수년간 다듬어진 private reading product처럼
 보여야 한다.
 
+2026-07-12 Operations 검토 뒤 light mode 세부 방향을 **Porcelain Signal**로 고정한다. 이것은 별도
+brand가 아니라 Signal Archive의 밝은 표현이다. canvas는 흰색, chrome/group만 cool near-white,
+본문과 운영 원장은 얇은 rule과 spacing으로 구분한다.
+
 ## 2. 현재 live/source 진단
 
 ### 2.1 시각 실패의 직접 원인
@@ -39,7 +43,26 @@
 6. loading, fetch error, unavailable이 같은 cover 문구 치환으로 보인다.
 7. 현재 URL/history가 release별 object key를 저장해 새 version 이후 최신 post를 다시 찾지 못할 수 있다.
 
-### 2.2 유지할 구현
+### 2.2 2026-07-12 Operations live 진단
+
+현재 화면은 실제 밝기보다 어둡고 오래돼 보인다. `#F5F6F8` canvas가 큰 면적을 차지하고, 58px
+`신호 끊김`과 96px 원이 빈 화면을 지배하며, 10~12px의 옅은 label과 긴 section padding이 제품을
+작동 중인 도구보다 비활성 report처럼 보이게 한다.
+
+더 큰 문제는 세 source와 clock을 하나의 현재 상태처럼 섞은 것이다.
+
+| 화면 사실 | 실제 source/의미 | 금지 표현 | 새 표현 |
+|---|---|---|---|
+| heartbeat 24분 전 | Oracle 마지막 보고 | 현재 단계 `idle` | 마지막 보고 단계 `idle` · 24분 전 |
+| D1 run rows 없음 | 실행 telemetry 미보고 | 최근 실행 없음 + 변경 0 | 기록 `—` · 자동 수집 또는 telemetry가 아직 보고되지 않음 |
+| D1 board rows 없음 | board telemetry 미보고 | 게시판 상태 없음 | release 46개, board 운영 telemetry는 아직 없음 |
+| R2 active release 존재 | Reader가 읽는 검증된 보존본 | hash를 primary | Reader 사용 가능 · 활성/게시 시각 · 수량, ID는 보조 |
+| refresh 시각 | browser가 API를 조회한 시각 | 확인 시각 | 화면 갱신 시각 |
+
+따라서 stale runner와 readable Reader는 동시에 표현한다. unknown을 0으로 만들지 않고, 마지막 보고
+값을 현재형으로 쓰지 않으며, 각 빈 상태에 source·기준 시각·다음 행동을 붙인다.
+
+### 2.3 유지할 구현
 
 - plain HTML/CSS/ES module, native dialog, Web Worker search
 - desktop catalog/reader, mobile single-plane 전환
@@ -55,6 +78,17 @@
 
 평가축은 Reader(R), Library/Archive(A), Modern visual(V), Korean/mobile(K), plain-web transfer(F)이며
 각 5점이다. 외형 복제 점수가 아니라 가져올 원리의 적합도다.
+
+2026-07 현재 검증 기준은 다음과 같다. [Apple의 2026 design
+principles](https://developer.apple.com/design/human-interface-guidelines/design-principles)는
+simplicity를 기능 삭제가 아닌 명료한 hierarchy와 concise label로 다루며,
+[Materials](https://developer.apple.com/design/human-interface-guidelines/materials)도 content 전체가
+아니라 분리된 navigation/control layer에 제한한다. [Primer color
+usage](https://primer.style/product/getting-started/foundations/color-usage/)와 [Carbon
+color](https://v10.carbondesignsystem.com/guidelines/color/overview/)는 흰 기본면과 역할 기반 neutral
+token을, [Atlassian elevation](https://atlassian.design/foundations/elevation/)은 실제로 겹치는
+surface에만 elevation을 쓴다. ReDSTM은 이 원리만 채택하고 Apple glass, SaaS card grid, 브랜드
+외형은 복제하지 않는다.
 
 | 후보 | R | A | V | K | F | 합계 | 가져올 원리 | 배제할 것 |
 |---|---:|---:|---:|---:|---:|---:|---|---|
@@ -106,7 +140,7 @@ DSOTM은 visual reference가 아니라 behavior/provenance source다.
 
 ### 5.1 Palette
 
-- Light shell: F5F6F8 / FFFFFF / 17191F
+- Light shell: FFFFFF canvas / F7F8FA grouped chrome / 15171A ink
 - Light reader: FBFAF8
 - Dark shell: 0B0D12 / 11141A / F4F6F8
 - Signal red: D92D3D light, FF646E dark
@@ -187,14 +221,20 @@ AA compact controls는 A−, 값, A+, zoom, settings만 남긴다.
 
 ### 6.4 Operations
 
-Reader와 같은 brand/token이지만 더 조밀한 workspace다.
+Reader와 같은 brand/token이지만 더 조밀한 **운영 브리프 + 원장**이다.
 
-- current runner state와 next schedule
-- last crawl/publish/backup
-- active run steps와 board
-- pending/retry/dead
-- warnings and safe log tail
-- bounded commands
+1. action verdict: `개입 불필요`, `확인 필요`, `Runner 응답 없음`과 한 문장 이유
+2. Reader continuity: 현재 R2 release가 계속 읽히는지 독립 표시
+3. active run 또는 latest terminal run: 둘 다 없으면 telemetry 미보고 원인
+4. warning과 board/queue exception: healthy table보다 먼저
+5. release provenance: readable/active/smoke/수량/bytes, ID는 보조
+6. bounded commands: 효과와 현재 실행 가능 여부를 설명하며 마지막에 배치
+
+stale 사실은 모두 `마지막 보고` 문법을 사용하고 unknown count는 `—`다. status mark는 8px 수준으로
+축소하고 28~34px verdict를 넘지 않는다. mobile은 가로 표나 card stack이 아니라 native disclosure
+row를 쓴다. `sync-now`는 놓친 schedule 보완, `retry-batch`는 due 최대 100건,
+`publish-if-changed`는 변경과 daily window가 있을 때만, pause는 현재 요청을 끝낸 뒤 다음 schedule을
+막고 resume은 marker만 해제한다.
 
 KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 시각과 정확한 denominator를 둔다.
 
@@ -231,10 +271,15 @@ KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 �
 3. Home actual data와 stable identity resolution
 4. mobile toolbar/bottom navigation
 5. loading/error/unavailable/settings import flow
-6. Operations visual layer
-7. actual device and live Access screenshot acceptance
+6. Operations source/as-of/unknown semantics와 command eligibility
+7. Porcelain light visual layer: white canvas, compact verdict, ruled ledger, disclosure mobile
+8. never-enrolled/stale/empty-telemetry/readable-release fixtures
+9. actual device and live Access screenshot acceptance
 
-기능 baseline을 먼저 보존하고 한 Phase당 최대 5개 파일로 적용한다.
+1~5와 7~8의 visual/core state는 1440/768/390/320px self-contained fixture에서 완료했다. 6의
+field별 source/as-of, active/latest 분리와 due/last/cooldown eligibility, 9와 새 bundle의
+authenticated 실데이터 smoke가 남았다. 기능 baseline을 먼저 보존하고 한 Phase당 최대 5개 파일로
+적용한다.
 
 ## 10. 디자인 완료 정의
 
@@ -244,3 +289,5 @@ KPI percentage card와 가짜 ETA를 만들지 않는다. 숫자마다 기준 �
 - AA source text와 character alignment가 visual redesign 전후 동일하다.
 - mobile toolbar에 세로 글자·두 줄 action·가려진 filter가 없다.
 - decorative effect를 모두 제거해도 hierarchy와 사용성이 유지된다.
+- stale Oracle + empty D1 telemetry + readable R2 release가 한 화면에서 모순 없이 이해된다.
+- 사용자가 설명을 보지 않고도 다섯 command의 효과와 실행 가능 조건을 예측할 수 있다.

@@ -114,6 +114,64 @@ test("returns an existing idempotent command without inserting", async () => {
   assert.equal(calls, 1);
 });
 
+test("allows one marker command alongside an active process command", async () => {
+  let conflictSql = "";
+  let inserted = false;
+  const env = {
+    CONTROL_DB: database((method, sql) => {
+      if (sql === "SELECT * FROM commands WHERE idempotency_key = ?") return null;
+      if (sql.startsWith("SELECT command_id FROM commands")) {
+        conflictSql = sql;
+        return null;
+      }
+      if (method === "run" && sql.includes("INSERT INTO commands")) {
+        inserted = true;
+        return { success: true };
+      }
+      assert.fail(`Unexpected D1 statement: ${method} ${sql}`);
+    }),
+  };
+  const result = await controlApiResponse(
+    request("/api/v1/ops/commands", {
+      method: "POST",
+      body: { action: "pause-after-current", args: {} },
+      headers: {
+        Origin: "https://archive.example",
+        "X-ReDSTM-Command": "1",
+        "Idempotency-Key": "pause-during-process-001",
+      },
+    }),
+    env,
+    { role: "user", subject: "reader@example.test" },
+  );
+
+  assert.equal(result.status, 202);
+  assert.match(conflictSql, /action IN \('pause-after-current', 'resume-schedule'\)/);
+  assert.equal(inserted, true);
+
+  const blocked = await controlApiResponse(
+    request("/api/v1/ops/commands", {
+      method: "POST",
+      body: { action: "sync-now", args: {} },
+      headers: {
+        Origin: "https://archive.example",
+        "X-ReDSTM-Command": "1",
+        "Idempotency-Key": "second-process-command-001",
+      },
+    }),
+    {
+      CONTROL_DB: database((method, sql) => {
+        assert.equal(method, "first");
+        if (sql === "SELECT * FROM commands WHERE idempotency_key = ?") return null;
+        assert.doesNotMatch(sql, /action IN/);
+        return { command_id: "active-process" };
+      }),
+    },
+    { role: "user", subject: "reader@example.test" },
+  );
+  assert.equal(blocked.status, 409);
+});
+
 test("claims one command with a conditional update", async () => {
   let receivedSql = "";
   let receivedParameters = [];
@@ -152,6 +210,7 @@ test("claims one command with a conditional update", async () => {
   assert.equal(result.status, 200);
   assert.match(receivedSql, /UPDATE commands/);
   assert.match(receivedSql, /RETURNING \*/);
+  assert.doesNotMatch(receivedSql, /action IN/);
   assert.equal(receivedParameters[2], "oracle-primary");
   assert.equal(receivedParameters[3], "claim-attempt-001");
   assert.equal((await result.json()).data.command.state, "claimed");
@@ -170,6 +229,55 @@ test("claims one command with a conditional update", async () => {
   );
   assert.equal((await replay.json()).data.command.command_id, claimed.command_id);
   assert.equal(updates, 1);
+});
+
+test("limits marker claims and rejects an invalid command kind", async () => {
+  const noDatabase = { CONTROL_DB: database(() => assert.fail("D1 must not be called")) };
+  const invalid = await controlApiResponse(
+    request("/api/v1/runner/commands/claim", {
+      method: "POST",
+      body: { runner_id: "oracle-primary", command_kind: "process" },
+      headers: { "Idempotency-Key": "claim-marker-invalid" },
+    }),
+    noDatabase,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(invalid.status, 400);
+
+  let claimSql = "";
+  let reconciliation = [];
+  const claimed = {
+    command_id: crypto.randomUUID(),
+    action: "pause-after-current",
+    state: "claimed",
+    requested_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const env = {
+    CONTROL_DB: database((method, sql, parameters) => {
+      if (method === "batch") {
+        reconciliation = parameters;
+        return [];
+      }
+      if (sql.includes("WHERE claim_idempotency_key")) return null;
+      claimSql = sql;
+      return claimed;
+    }),
+  };
+  const result = await controlApiResponse(
+    request("/api/v1/runner/commands/claim", {
+      method: "POST",
+      body: { runner_id: "oracle-primary", command_kind: "marker" },
+      headers: { "Idempotency-Key": "claim-marker-only" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(result.status, 200);
+  assert.match(claimSql, /action IN \('pause-after-current', 'resume-schedule'\)/);
+  assert.match(reconciliation[1].sql, /action IN \('pause-after-current', 'resume-schedule'\)/);
+  assert.match(reconciliation[2].sql, /action IN \('pause-after-current', 'resume-schedule'\)/);
+  assert.equal((await result.json()).data.command.action, "pause-after-current");
 });
 
 test("heartbeat and overview expose only bounded status", async () => {

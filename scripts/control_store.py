@@ -338,16 +338,21 @@ class ControlStore:
     def pending(self, *, limit: int = 50, now: datetime | None = None) -> list[dict[str, Any]]:
         if limit < 1 or limit > 50:
             raise ValueError("outbox page limit must be between 1 and 50")
+        due_at = _timestamp(now)
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM outbox
-                WHERE next_attempt_at IS NULL OR next_attempt_at <= ?
                 ORDER BY id LIMIT ?
                 """,
-                (_timestamp(now), limit),
+                (limit,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        pending = []
+        for row in rows:
+            if row["next_attempt_at"] is not None and str(row["next_attempt_at"]) > due_at:
+                break
+            pending.append(dict(row))
+        return pending
 
     def acknowledge(self, item_id: int) -> None:
         with self._connect() as connection:

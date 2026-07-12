@@ -2,7 +2,9 @@
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
 Oracle canonical runner가 배포돼 있다. 남은 제품 gate는 bounded delta·failure canary, 24시간/7일
-shadow와 실제 Android acceptance다. 완료된 초기 migration·타당성 증거는 `docs/done/`에 둔다.
+shadow와 실제 Android acceptance다. 그 전에 schema v3/새 application·bundle 배포, Operations의
+남은 세부 의미와 authenticated live smoke를 확인한다. 완료된 초기 migration·타당성 증거는
+`docs/done/`에 둔다.
 
 ## 먼저 읽기
 
@@ -71,25 +73,26 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - 검증된 zstd full `release.json`과 `.partial` 0개 산출물
 - pointer-last `rclone` publish command
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
+- R2 baseline upload/check/pointer와 authenticated data smoke/rollback
+- Access user/service role을 분리한 remote `/ops`, D1 heartbeat와 fixed command marker/outbox/expiry canary
 - AA -> 창작 -> 팬픽 우선 bounded legacy queue recovery
 - stable post identity user-state export/import와 vendored Saitamaar font
 - Browsertrix emergency WACZ와 ReplayWeb.page offline replay evidence
 
 아직 포함하지 않음:
 
-- scheduler/D1 heartbeat 실연결, 20/100건 canary, 7일 shadow와 장시간 recovery 실행
-- Access 기반 remote Operations Control Plane과 bounded crawler 제어
+- Oracle schema v3 migration, schedule/control timer enable과 bounded full-window/delta/failure canary
+- 24시간 반복 canary, 7일 shadow와 legacy service cutover
 - content-addressed direct asset/blob ledger
-- R2 baseline upload/check/pointer 검증 완료; authenticated data smoke/rollback 대기
 - 실제 Android memory gate
 - B2/restic 외부 backup은 사용자 결정으로 현재 범위에서 제외
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
 
-현재 crawler는 concurrency 1과 10초 고정 delay의 수동 bounded canary용이다. 별도 DB의 1건 live
-수집은 통과했지만 canonical production sync, 100건 canary와 장기 무인 운전 증거는 없다. network
-정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가 source of truth이며 별도 YAML은
-두지 않는다.
+현재 crawler는 concurrency 1과 10초 고정 delay의 bounded canary 단계다. Oracle canonical의 1건·
+small batch·bounded stop evidence는 있지만 schema v3 migration, bounded full-window/delta와 장기 무인
+운전 증거는 없다. network 정책은 `crawler/settings.py`, run 상한은 CLI, secret은 environment가
+source of truth이며 별도 YAML은 두지 않는다.
 
 현재 상태를 로컬 화면으로 확인하려면 `uv run python -m scripts.console`을 실행하고 출력된
 `http://127.0.0.1:<port>/#token=...` URL을 같은 machine의 browser에서 연다. C0는 canonical을

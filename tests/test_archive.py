@@ -77,7 +77,10 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
     with connect_archive(path) as connection:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
+        assert (
+            connection.execute("SELECT inventory_next_page FROM boards LIMIT 1").fetchone() is None
+        )
 
 
 def test_schema_v2_indexes_raw_capture_hash(tmp_path: Path) -> None:
@@ -98,6 +101,7 @@ def test_schema_v2_indexes_raw_capture_hash(tmp_path: Path) -> None:
         assert index is not None
         assert "raw_sha256" in index["sql"]
         assert connection.execute("SELECT COUNT(*) FROM boards").fetchone()[0] == 1
+        assert connection.execute("SELECT inventory_next_page FROM boards").fetchone()[0] == 1
 
 
 def test_body_compression_round_trip() -> None:

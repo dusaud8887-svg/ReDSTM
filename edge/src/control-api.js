@@ -9,6 +9,7 @@ const actions = new Set([
   "pause-after-current",
   "resume-schedule",
 ]);
+const markerActions = new Set(["pause-after-current", "resume-schedule"]);
 const runnerStates = new Set(["idle", "running", "degraded", "failed", "paused"]);
 const runKinds = new Set(["scheduled", "manual-sync", "retry", "publish"]);
 const runSources = new Set(["systemd", "command"]);
@@ -130,9 +131,12 @@ async function createCommand(request, env, auth, requestId, url) {
   ).bind(idempotencyKey).first();
   if (existing) return envelope(requestId, commandView(existing));
   const now = new Date();
+  const conflictFilter = markerActions.has(body.action)
+    ? "action IN ('pause-after-current', 'resume-schedule') AND "
+    : "";
   const conflict = await env.CONTROL_DB.prepare(
-    "SELECT command_id FROM commands WHERE state = 'claimed' " +
-    "OR (state = 'queued' AND expires_at > ?) LIMIT 1",
+    `SELECT command_id FROM commands WHERE ${conflictFilter}` +
+    "(state = 'claimed' OR (state = 'queued' AND expires_at > ?)) LIMIT 1",
   ).bind(now.toISOString()).first();
   if (conflict) {
     return failure(requestId, 409, "command_conflict", "Another command is active", true);
@@ -174,9 +178,13 @@ async function claimCommand(request, env, requestId) {
     return failure(requestId, 400, "invalid_idempotency_key", "Idempotency key is invalid");
   }
   const body = await readJson(request, 16 * 1024);
-  if (!identifierPattern.test(body.runner_id || "")) {
-    return failure(requestId, 400, "invalid_runner", "Runner identity is invalid");
+  if (!identifierPattern.test(body.runner_id || "") ||
+      (body.command_kind !== undefined && body.command_kind !== "marker")) {
+    return failure(requestId, 400, "invalid_runner", "Runner claim is invalid");
   }
+  const markerFilter = body.command_kind === "marker"
+    ? "AND action IN ('pause-after-current', 'resume-schedule')"
+    : "";
   const replay = await env.CONTROL_DB.prepare(
     "SELECT * FROM commands WHERE claim_idempotency_key = ?",
   ).bind(idempotencyKey).first();
@@ -192,12 +200,12 @@ async function claimCommand(request, env, requestId) {
       `UPDATE commands SET state = 'queued', claimed_at = NULL, claim_expires_at = NULL,
          runner_id = NULL, claim_idempotency_key = NULL
        WHERE state = 'claimed' AND claim_expires_at <= ?
-         AND claim_attempts < 2 AND run_id IS NULL`,
+         AND claim_attempts < 2 AND run_id IS NULL ${markerFilter}`,
     ).bind(nowText),
     env.CONTROL_DB.prepare(
       `UPDATE commands SET state = 'failed', finished_at = ?, safe_message = 'claim_lost'
        WHERE state = 'claimed' AND claim_expires_at <= ?
-         AND claim_attempts >= 2 AND run_id IS NULL`,
+         AND claim_attempts >= 2 AND run_id IS NULL ${markerFilter}`,
     ).bind(nowText, nowText),
   ]);
   let claimed;
@@ -207,7 +215,8 @@ async function claimCommand(request, env, requestId) {
          claim_attempts = claim_attempts + 1, runner_id = ?, claim_idempotency_key = ?
        WHERE command_id = (
          SELECT command_id FROM commands
-         WHERE state = 'queued' AND expires_at > ? ORDER BY requested_at, command_id LIMIT 1
+         WHERE state = 'queued' AND expires_at > ? ${markerFilter}
+         ORDER BY requested_at, command_id LIMIT 1
        ) AND state = 'queued'
        RETURNING *`,
     ).bind(

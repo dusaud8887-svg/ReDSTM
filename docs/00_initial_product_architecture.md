@@ -580,7 +580,8 @@ profile에서만 pinned container로 사용한다.
 ### 7.2 SQLite schema
 
 schema SQL은 `crawler/archive.py`의 hash 검증된 `MIGRATIONS`가 source of truth다. v1이 전체
-schema를 만들고 v2는 WARC 재사용을 위한 capture `(raw_sha256, url)` partial index를 더한다. SQLite
+schema를 만들고 v2는 WARC 재사용을 위한 capture `(raw_sha256, url)` partial index를, v3는 board별
+bounded inventory 재개 cursor를 더한다. SQLite
 `STRICT` table, foreign key, latest-version 소유권 trigger, frontier lease CHECK를 사용하며 같은
 migration version의 SQL hash가 달라지면 DB open을 거부한다. 아래는 외부 계약이다.
 
@@ -596,6 +597,7 @@ first_seen_at
 last_seen_at
 reported_post_count
 last_inventory_at
+inventory_next_page
 ```
 
 #### `posts`
@@ -817,22 +819,24 @@ viewer에 직접 렌더링하지 않는다.
 
 ### 8.0 2026-07-12 구현 감사 판정
 
-현재 crawler core와 Oracle 수동 canary는 동작하지만 **자동 timer와 7일 shadow 전**이다. canonical
-실측 queue는 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의 hard cap일 뿐 처리량이나
+현재 crawler core와 Oracle 수동 canary는 동작하고 P0 safety gap은 local code/test에서 닫혔지만
+**schema v3 Oracle migration, 새 canary, 자동 timer와 7일 shadow 전**이다. canonical 실측 queue는
+약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의
+hard cap일 뿐 처리량이나
 완료 gate가 아니다. 15분 38초 종료 진단에서도 CPU는 약 16초였고 원본 서버 network 대기가 시간을
-지배했다. recovery는 2시간, 46-board cycle은 4시간 budget이며 같은 class의 network/429 3회,
-auth/parser 첫 실패도 더 이른 종료 조건이다. 실행 수치는
+지배했다. recovery는 2시간, 46-board cycle은 4시간 budget이며 recovery에서는 같은 class의
+network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. 실행 수치는
 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 보존한다.
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
 | 부하 제한 | concurrency 1, domain concurrency 1, 고정 10초 delay, robots 준수 | time-bounded canary에서 요청 간격·429 여부 확인 |
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
-| durable retry | frontier 2분 지수 backoff, 6시간 cap, network 5회 후 dead, auth는 보류 | dead/retry 운영 report와 수동 재개 기준 |
-| 중단 복구 | file lock/lease, stale run 회수, capture 누락 종료 판정, WARC `.partial` 진단 | live process kill 확인 |
-| listing | fixed cap, idempotent seed, metadata 변경·overlap boundary, inventory 우회, errback·비HTML/구조 실패 판정 | live board coverage |
-| detail | 1건씩 claim, 인증·restricted·parse drift·WARC/canonical transaction | small batch·2시간·24시간 live canary |
-| monitoring/UI | sync/recovery success hook, JSON report, CLI doctor, loopback read-only C0 console | scheduler/D1 heartbeat, remote Operations와 7일 shadow |
+| durable retry | frontier backoff/dead와 `network_error`·`parse_drift` bounded revive | 실제 backlog에서 revive report 확인 |
+| 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
+| listing | complete changed-row seed, overlap boundary, schema v3 durable inventory cursor | Oracle migration과 실제 cursor progression |
+| detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
+| monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage canary와 7일 shadow |
 
 따라서 현재 command는 수동 bounded canary에만 사용한다. 24시간 반복과 7일 shadow가 통과하기 전
 “crawler 완성” 또는 timer cutover로 표시하지 않는다.
@@ -881,17 +885,40 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 
 ### 8.3 incremental sync 목표와 현재 차이
 
-현재 `scripts.sync`는 board별 page 1부터 `max_pages`/`max_posts` 고정 상한 안에서 listing metadata
-변경을 비교하고 overlap boundary까지 읽는다. `--inventory`는 이 경계를 우회한다. 아래 중 reported
-total snapshot과 주간 inventory 실행 주기만 아직 live gate 전이다.
+현재 `scripts.sync`는 일반 run에서 board별 page 1부터 `max_pages` 상한 안에서 listing metadata
+변경을 비교하고 overlap boundary까지 읽는다. `--inventory`는 schema v3의 board별
+`inventory_next_page`부터 bounded page window를 읽고 미완료면 다음 run에서 이어 간다.
+
+현재 실제 순서는 다음이다.
+
+```text
+board listing page 1..N
+  → row identity/title/category/comment_count parse + listing WARC
+  → canonical metadata와 비교
+  → new/changed row를 SQLite crawl_frontier에 seed/reopen
+  → 이 run의 detail 후보를 1건씩 lease claim
+  → detail fetch/parse/sanitize
+  → post/version/comments/capture/frontier transition을 한 transaction으로 commit
+  → 실패는 retry/backoff, restricted·missing·parse drift는 분류된 terminal state
+```
+
+즉 사용자가 말한 `목차/목록 → queue → 상세 → 완료 확인` 구조가 있다. `crawl_frontier.state`와
+`captures.outcome`이 단일 완료 boolean보다 정확한 근거다. 받은 listing의 new/changed row는
+`max_posts` capacity와 무관하게 모두 durable seed하고, 이번 run의 detail scheduling만 제한한다.
+따라서 capacity 뒤쪽 변경분도 다음 bounded run의 queue에 남으며 원 사이트 요청을 추가하지 않는다.
+
+아래 중 1~4와 durable inventory cursor는 구현됐다. reported total/page-count snapshot과 전체 cursor
+완주를 입증하는 live 주간 실행은 아직 미완이다.
 
 1. 공지/pinned row를 일반 row와 구분한다.
 2. 신규 key 또는 list metadata 변경을 frontier에 넣는다.
 3. 이미 알고 있고 metadata도 같은 일반 row가 연속으로 일정 수 나오면 overlap boundary로 판단한다.
 4. boundary 이전에 page 구조 이상이나 parser warning이 있으면 조기 종료하지 않는다.
-5. board의 reported total/page count를 snapshot으로 남긴다.
+5. board의 reported total/page count와 inventory cursor를 snapshot으로 남긴다.
 
-고정된 page 수를 모두 읽는 대신 overlap boundary를 사용하되, 주 1회 inventory audit로 조기 종료 오류를 보완한다.
+고정된 page 수를 한 run에서 모두 읽는 대신 일반 sync는 overlap boundary를, inventory는 durable
+page cursor를 사용한다. 주간 inventory는 cursor가 끝까지 완주한 report가 있어야 full coverage로
+판정하며 한 번의 bounded invocation을 full coverage라고 부르지 않는다.
 
 ### 8.4 backfill
 
@@ -940,6 +967,11 @@ fetch
 
 transaction이 실패하면 version과 frontier가 반쪽으로 남지 않아야 한다. WARC record가 먼저 생기고 DB commit이 실패한 orphan은 다음 `doctor`가 찾아 재처리한다.
 
+현재 모든 분류 가능한 detail exit는 capture와 token이 일치하는 terminal lease transition을 남긴다.
+non-HTML detail과 invalid URL은 `parse_failed`/`parse_drift`로 `dead`, normalize/store exception은
+`parse_failed`/`storage_error`로 `retry` 처리한다. DB write 자체가 실패해 capture도 기록할 수 없는
+경우에만 900초 lease expiry가 최후 복구선이다.
+
 ### 8.6 상태 분류
 
 목표 상태는 HTTP/parse 실패를 하나의 `failed`로 뭉치지 않는 것이다.
@@ -959,14 +991,17 @@ storage_error
   결정한다. content root가 있으면 구문은 본문 인용으로 보고 정상 저장한다
   ([`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)).
 - 현재 capture/DB까지 연결된 error code는 `network_error`, `rate_limited`, `auth_required`,
-  `permission_denied`, `not_found`, `parse_drift`다. `quality_rejected`, `storage_error`의 독립 집계는
-  아직 구현되지 않았다.
+  `permission_denied`, `not_found`, `parse_drift`, `storage_error`다. `storage_error`는 capture를
+  `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는 아직
+  구현되지 않았다.
 - `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
-- `permission_denied`는 retry storm을 만들지 않고 session 확인 후 보류한다.
+- `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
   6시간에서 멈춘다. `network_error`는 5회 시도 후 `dead`로 전이하며, `auth_required`는
   session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
+- `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `network_error` 또는
+  `parse_drift`를 오류별·건수 제한으로 선택해 다시 pending에 넣으며, 그 실행 수를 report한다.
 - 429는 같은 request 안에서 재시도하지 않는다. `rate_limited`로 기록하고 frontier 기본 backoff와
   `Retry-After` 중 더 긴 시각까지 미룬다. `Retry-After`는 최대 24시간으로 제한한다.
 
@@ -980,7 +1015,7 @@ storage_error
 - listing/detail timeout은 120/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
   10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
   보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
-- site outage 조기 판정: run preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
+- site outage 조기 판정: cycle 시작 preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
   `site_unreachable`로 run을 조기 종료한다. 그 run의 network 실패는 frontier attempt로 세지
   않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 run당 1회, 최소
   간격 30분으로 제한한다.
@@ -989,8 +1024,11 @@ storage_error
 - export는 timezone이 있는 `created_at`/`expires_at`, user agent, browser cookie list만 읽고 만료·중복 cookie·TypeMoon 외 domain·header control character를 거부
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
 - `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
-- `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery의 auth/parse 즉시 중단과
-  network/429 연속 3회 breaker는 구현했다.
+- `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery와 일반 sync는 첫
+  auth/parse drift, 같은 class network/429 연속 3회에서 board 내 요청을 중단한다. cycle은 board
+  경계 결과의 연속 network breaker도 유지한다.
+- session preflight 뒤 30분이 지난 board 경계에서 session을 재검증한다. 재로그인은 run당 1회·최소
+  30분이라는 별도 throttle을 유지한다.
 - crawler user agent는 개인 아카이빙 도구임을 식별하고 연락처는 공개하지 않음
 
 요청률은 코드 review가 가능한 settings에서 관리하고 dashboard에 performance preset이나 임의
@@ -1337,10 +1375,13 @@ Gate:
 
 ### 13.3 Phase 1: archive kernel
 
-상태: 운영 hardening code 완료, live gate 대기. schema/importer/parser/store/frontier, bounded
+상태: archive kernel core와 local P0 safety 완료, schema v3 Oracle migration과 live gate 대기. schema/importer/parser/store/frontier, bounded
 listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
 정책과 `doctor`는 구현했다. systemd source와 D1 heartbeat, marker/outbox/expired command canary는
-실연결했고 bounded delta, duplicate/full-outage, 24시간·7일 shadow가 남아 있다.
+실연결했다. sync mid-board breaker, session mid-cycle revalidation, 모든 분류 가능한 detail exit의 lease
+transition, complete listing seed, dead bounded revive, cycle-wide writer exclusion과 worker hard bound는
+local 회귀를 통과했다. schema v3 migration 뒤 bounded delta, duplicate/full-outage, 24시간·7일 shadow를
+진행한다.
 
 - 최소 schema/migration 작성
 - legacy importer
@@ -1391,7 +1432,8 @@ legacy에 raw response가 없으면 WARC를 만들어낸 척하지 않는다. �
 ### 13.5 Phase 3: viewer
 
 상태: viewer 기능, Signal Archive 재설계, gzip/zstd full local export, R2 baseline publish와
-authenticated data smoke 완료. 실제 Android acceptance 대기.
+이전 bundle authenticated data smoke 완료. 새 bundle live smoke, Operations 세부 의미와 실제
+Android acceptance 대기.
 Full canonical exporter, collection
 연속 읽기, unavailable entry skip, legacy object-key user-state, Saitamaar와 desktop/mobile Playwright를
 구현했다. 기존 gzip 전수 export와 post-export doctor는 완료했고 baseline은
@@ -1400,8 +1442,8 @@ Full canonical exporter, collection
 완료했다. Worker/private R2 bucket/Access email
 allow/TOTP MFA와 인증된 shell smoke는 완료했다. matching bucket-scoped key로 local `rclone`
 연결을 복구했고 immutable baseline 5,148,165,450 bytes/282,289 objects를 게시했다. remote check
-차이 0과 pointer 검증, remote rollback/복귀와 authenticated data smoke가 통과했다. 실제 Android
-gate만 남아 있다.
+차이 0과 pointer 검증, remote rollback/복귀와 authenticated data smoke가 통과했다. 새 bundle의
+authenticated live smoke, Operations의 field별 source/as-of·eligibility와 실제 Android gate가 남아 있다.
 
 현재 live shell은 [`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose,
 Saitamaar AA와 stable identity/mobile flow로 교체됐다. 실기기 acceptance 전까지
@@ -1728,16 +1770,18 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] matching bucket-scoped key pair로 local `rclone` 연결 복구
 [x] zstd full release 생성과 count 검증 (`release.json`, `.partial` 0)
 [x] R2 baseline publish/check/pointer 검증
-[ ] authenticated data smoke/remote rollback
+[x] authenticated data smoke/remote rollback
 [x] `workers.dev` Access 본인 email allow + TOTP MFA policy와 인증 shell smoke
 [x] Access/D1 제한 control-plane 계약과 ADR-015 확정
-[ ] D1 schema/route와 Oracle service-token smoke
+[x] D1 schema/route와 Oracle service-token smoke
 [x] B2/restic을 현재 구현·출시 gate에서 제외
 [x] Phase 1 schema v1 + zstd body ADR 확정
 [x] full legacy import transaction과 auxiliary data 반영
 [x] `scripts.verify_migration` full report `ok=true`
 [x] verified canonical snapshot과 격리 restore rehearsal `ok=true`
 [x] canonical schema v2 적용과 data count 보존
+[x] schema v3 inventory cursor migration 코드와 회귀 test
+[ ] Oracle canonical schema v3 migration과 doctor
 [x] full exporter/collection reader/Access JWT/rclone publish 구현
 ```
 

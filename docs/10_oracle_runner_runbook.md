@@ -153,7 +153,7 @@ R2 writer key와 Access service token은 별도 credential file로만
 
 ### G1. 실제 incremental discovery
 
-상태(2026-07-12): `b3e83e1`로 local 구현·회귀 검증 완료, Oracle canary 전이다. 다음 계약으로 이미
+상태(2026-07-12): local 기본 흐름과 coverage safety를 구현했고 Oracle 적용 전이다. 다음 계약으로 이미
 아는 최신 20건을 6시간마다 전부 재요청하지 않는다.
 
 1. listing metadata에서 새 identity 또는 title/category/comment count 변경만 frontier에 넣는다.
@@ -162,20 +162,32 @@ R2 writer key와 Access service token은 별도 credential file로만
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
 5. 주 1회 bounded inventory audit가 boundary 오류를 보완한다.
 
+받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
+scheduling만 cap한다. schema v3의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서
+재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. dead는 `network_error` 또는
+`parse_drift`만 오류별·건수 제한으로 명시 재개한다. 코드/migration 회귀는 통과했지만 live canonical은
+schema v2이므로 Oracle migration과 실제 cursor 진행 증거가 남았다.
+
 ### G2. board cycle command
 
-46개 enabled board를 별도 수동 명령 없이 순차 실행하는 한 command를 추가한다. command는 board별
+46개 enabled board를 별도 수동 명령 없이 순차 실행하는 한 command다. command는 board별
 결과를 분리 기록하고 network/listing failure는 다음 board로 넘기되, session/auth failure는 전체
 cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Celery/Redis를 추가하지 않는다.
 
-상태(2026-07-12): `scripts.crawl_cycle` local core와 failure test 완료, Oracle canary 및 systemd 연결
-전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
+상태(2026-07-12): `scripts.crawl_cycle` local core와 P0 failure test 완료, 새 코드의 Oracle canary 및
+systemd 연결 전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
 구현됐다. recovery는 2시간 graceful budget과 24시간 completion marker로 하루 한 번만 실행한다.
-cycle은 4시간 남은 budget을 각 순차 worker의 Scrapy timeout으로 전달하고, 만료 시 현재 request와
-WARC를 정리한 뒤 다음 board를 시작하지 않고 partial로 끝낸다.
-세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와
-outage attempt 복원을 적용한다. 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
+cycle은 4시간 남은 budget을 각 순차 worker의 Scrapy graceful timeout으로 전달하고 그보다 60초 긴
+subprocess hard timeout을 둔다. timeout은 `partial/worker_timeout`으로 보고한다.
+세션/도달성 preflight 뒤 30분 board 경계에서 session을 재검증하고 worker는 순차 실행한다.
+board 경계 breaker와 더불어 sync 내부도 첫 auth/parse drift 또는 같은 class network/429 3회에서
+즉시 중단한다. outage attempt 복원을 적용하고 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
 30분에 1회로 제한한다. login/logout 표식 조기 판정은 오래된 서버의 비정상 TLS EOF를 기다리지 않는다.
+
+cycle은 `.cycle.lock`과 `.sync.lock`을 끝까지 함께 소유해 standalone writer가 board 사이에 끼어들지
+못한다. non-HTML/invalid URL/pipeline exception의 terminal lease transition도 local 회귀로 고정했다.
+장기 timer gate에는 이 코드의 실제 느린 서버 canary, schema v3 migration과 systemd hard-timeout
+상호작용 증거가 남았다. 해결은 board 병렬화가 아니라 잘못된 요청을 더 일찍 멈추는 것이다.
 
 ### G3. delta release/publish
 
@@ -209,18 +221,25 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 DB migration, remote DB 삭제, timer enable, legacy service stop은 deploy command의 암묵적 부작용으로
 넣지 않는다.
 
+schema version을 올릴 때는 새 schema를 이해하는 application release를 canonical이 이전 version일 때
+먼저 두 번 순차 배포해 `current`와 `previous`를 모두 호환 release로 만든 뒤 migration한다. rollback은
+symlink를 바꾸기 전에 previous release의 `MIGRATIONS`와 canonical의 `schema_migrations`/
+`user_version`을 읽기 전용 비교하고, 모르는 version이면 거부한다. 따라서 schema v3 migration 뒤
+v2-only application으로 돌아가는 rollback은 허용하지 않는다.
+
 상태(2026-07-12): **완료** — 전용 `redstm` user/path, pinned uv 0.9.21/Python 3.14와 application
 release `4edc1c9868045454c961cd3f038eb0a66a4cb010`을 배포했다. resumable transfer는 remote offset 재개,
 unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,544-byte canonical을
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
-full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 doctor 결과는 `ok=true`, schema v2,
+full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 현재 live doctor 결과는 `ok=true`, schema v2,
 application ID 1380209492, `quick_check=ok`, foreign key 0, expired lease 0,
 missing/invalid/orphan WARC 0이다. root free는 약 82GB다. R2/TypeMoon credential은 주입·권한과
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
-Access service credential, route-role과 D1 idle heartbeat smoke는 완료됐다. **남음** — 새 bounded
-recovery·delta canary다.
+Access service credential, route-role과 D1 idle heartbeat smoke는 완료됐다. local source는 inventory
+cursor용 schema v3으로 올라갔으므로 새 application 배포 때 migration을 별도 명시 실행하고 doctor로
+version 3을 확인해야 한다. **남음** — schema v3 migration과 새 bounded recovery·delta canary다.
 control/schedule timer는 의도대로 disabled/inactive이며 canary 통과 전 enable하지 않는다.
 최신 배포 뒤 recovery/cycle/control module `--help` smoke와 canonical/WARC partial 0을 확인했고,
 DB scan이나 긴 canary는 실행하지 않았다.
@@ -283,7 +302,7 @@ small batch, bounded full-window와 24시간 반복 canary가 통과한 뒤 다�
 | doctor | 각 cycle 뒤 lightweight + 하루 1회 full | full DB scan은 crawl과 겹치지 않음 |
 | canonical snapshot | 성공 변경 뒤 하루 최대 1회 | local staging 2개만 유지 |
 | R2 delta publish | 변경 시 하루 최대 1회 | validated object first, pointer last |
-| full board inventory | 주 1회 | detail 전수 재검증 아님 |
+| bounded board inventory | 주 1회 | detail 전수 재검증 아님; durable page cursor로 다음 window 재개 |
 
 systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전원이 오래 꺼졌다고 누락 횟수만큼
 연속 실행하지 않는다. 서비스가 아직 active면 같은 unit의 중복 실행을 만들지 않는다.
@@ -309,14 +328,16 @@ systemd timer는 `Persistent=true`로 한 번의 missed run만 복구한다. 전
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
 | frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
 | frontier | lease | 900초로 상향 | detail 180초 × 최대 3 시도(~570초+) + 처리 여유; 현행 300초는 느린 AA 재시도 경로를 못 덮음 |
-| recovery | graceful budget | 2시간 | 대형 backlog에서 5시간 systemd hard kill 전에 WARC/report와 lease를 정상 정리 |
-| cycle | graceful budget | 4시간 | 46 board가 느린 사이트에서 늘어져도 board 경계에서 정상 종료하고 hard kill을 기다리지 않음 |
+| recovery | graceful budget | 2시간 | 5시간 control/7시간 schedule hard kill 전에 WARC/report와 lease를 정상 정리 |
+| cycle | graceful/hard budget | 4시간 Scrapy soft close + worker별 남은 budget 60초 여유 hard timeout | 정상 종료를 우선하고 Scrapy 밖 hang은 `partial/worker_timeout`으로 제한 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
-| session | cycle 내 재검증 TTL | 성공 검증 뒤 30분 재사용 | board별 실행이 매번 인증 확인 GET을 보내면 46-board cycle에서 최대 46회 요청 낭비; preflight 검증을 board 실행이 재사용 |
+| session | cycle 내 검증 | 시작 preflight + 30분 board 경계 재검증 | board마다 GET하지 않고 장기 cycle의 session drift를 제한 |
+| parser/auth | sync 중단 | 첫 auth/parse drift, 같은 class network/429 3회 | 잘못된 detail 요청의 board 내 확산 방지 |
 | parser/auth | recovery 중단 | 401/403·login form·parse drift 첫 건 | site-wide drift를 일반 retry로 은폐하지 않음 |
 | systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |
-| systemd | run 상한 | oneshot `TimeoutStartSec=5h` | 느린 사이트에서 무한 run 방지; lease/transaction/`.partial` 계약이 강제 종료를 안전하게 함 |
+| systemd | control run 상한 | oneshot `TimeoutStartSec=5h` | 단일 remote command의 4시간 cycle 뒤 정리 여유 |
+| systemd | schedule run 상한 | oneshot `TimeoutStartSec=7h` | 4시간 crawl + 2시간 recovery/inventory + publish/정리 여유 |
 | control | D1/Worker HTTP | connect 5초/total 15초, backoff 2/5/15초 최대 3회 | [08 §5.4](08_operations_control_plane.md) |
 
 AutoThrottle은 감속 전용이다. Scrapy는 `DOWNLOAD_DELAY`를 하한으로 존중하므로 10초보다
@@ -369,8 +390,9 @@ frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 sele
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
 최신 application module smoke, Access service-token route-role/D1 idle heartbeat와 timer
-disabled/inactive를 재확인했다. pause/resume marker command 왕복도 통과했다. **남음** — bounded
-full-window·delta canary와 duplicate command, 실제 crawl 중 outage failure injection이다. expired
+disabled/inactive를 재확인했다. pause/resume marker command 왕복도 통과했다. **남음** — 새 application과
+schema v3 명시 migration, bounded full-window·delta canary와 duplicate command, 실제 crawl 중 outage
+failure injection이다. expired
 command는 live 통과했다.
 control/schedule timer는 disabled/inactive 상태를 유지한다.
 

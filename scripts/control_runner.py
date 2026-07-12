@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -44,6 +45,7 @@ _STATUS_CODES = {
 }
 _SUCCESS_CODES = {
     "sync-now": "cycle_succeeded",
+    "inventory": "inventory_succeeded",
     "retry-batch": "recovery_succeeded",
     "publish-if-changed": "publish_succeeded",
 }
@@ -56,6 +58,7 @@ _WARNING_CODES = {
     "network_error": "site_unreachable",
 }
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
+_WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SCHEDULE_HOURS = (0, 6, 12, 18, 24)
 
 
@@ -119,10 +122,10 @@ class ControlRunner:
         if (self.profile.state_dir / "schedule.paused").exists():
             self._heartbeat("paused")
             return {"ok": True, "status": "paused"}
-        try:
-            self.client.flush(self.store)
-        except ControlProtocolError, OSError, ValueError:
-            pass
+        self._claim_marker()
+        if (self.profile.state_dir / "schedule.paused").exists():
+            self._heartbeat("paused")
+            return {"ok": True, "status": "paused"}
         run_id = f"scheduled-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
         started_at = _timestamp()
         self._send(
@@ -142,9 +145,19 @@ class ControlRunner:
         counters = {"changed_posts": 0, "failed_posts": 0, "boards_ok": 0, "boards_failed": 0}
         release_id: str | None = None
         crawl_status = "failed"
+        paused = False
+        intentional_pause = False
         sequence = 1
-        for action in ("sync-now", "retry-batch", "publish-if-changed"):
-            if action == "retry-batch" and crawl_status in {
+        follow_up = "inventory" if self._inventory_due() else "retry-batch"
+        for action in ("sync-now", follow_up, "publish-if-changed"):
+            self._claim_marker()
+            if (self.profile.state_dir / "schedule.paused").exists():
+                paused = True
+                if state == "succeeded":
+                    state = "partial"
+                    intentional_pause = True
+                break
+            if action in {"inventory", "retry-batch"} and crawl_status in {
                 "site_unreachable",
                 "rate_limited",
                 "auth_failed",
@@ -161,8 +174,14 @@ class ControlRunner:
                 payload = self._finish_payload("failed", "runner_failed")
             if action == "sync-now":
                 crawl_status = str(report.get("status", "failed"))
+            if report.get("stop_reason") == "schedule_paused":
+                intentional_pause = True
+            if action in {"sync-now", "inventory"}:
                 self._board_summaries(report)
-            if action in {"sync-now", "retry-batch"} and payload["counters"]["changed_posts"]:
+            if (
+                action in {"sync-now", "inventory", "retry-batch"}
+                and payload["counters"]["changed_posts"]
+            ):
                 self._write_publish_marker()
             counters["changed_posts"] += payload["counters"]["changed_posts"]
             counters["failed_posts"] += payload["counters"]["failed_posts"]
@@ -184,7 +203,11 @@ class ControlRunner:
             f"finish-{run_id}",
         )
         self._heartbeat("idle")
-        return {"ok": state == "succeeded", "status": state, "run_id": run_id}
+        return {
+            "ok": state == "succeeded" or (paused and intentional_pause),
+            "status": state,
+            "run_id": run_id,
+        }
 
     def _run_locked(self) -> dict[str, Any]:
         try:
@@ -299,7 +322,11 @@ class ControlRunner:
         self._heartbeat(
             "paused" if (self.profile.state_dir / "schedule.paused").exists() else "idle"
         )
-        return {"ok": state == "succeeded", "status": terminal["state"], "command_id": command_id}
+        return {
+            "ok": state == "succeeded" or report.get("stop_reason") == "schedule_paused",
+            "status": terminal["state"],
+            "command_id": command_id,
+        }
 
     def _execute_action(
         self,
@@ -312,7 +339,7 @@ class ControlRunner:
         command_reports = self.profile.report_dir / "commands"
         command_reports.mkdir(parents=True, exist_ok=True)
         report_path = command_reports / f"{report_id}.json"
-        if action == "sync-now":
+        if action in {"sync-now", "inventory"}:
             command = [
                 sys.executable,
                 "-m",
@@ -325,12 +352,23 @@ class ControlRunner:
                 str(self.profile.warc_dir),
                 "--report-dir",
                 str(self.profile.report_dir / "cycles"),
+                "--pause-file",
+                str(self.profile.state_dir / "schedule.paused"),
                 "--output",
                 str(report_path),
             ]
-            return self._execute_report(
+            if action == "inventory":
+                command.extend(("--inventory", "--max-seconds", str(2 * 60 * 60)))
+            report = self._execute_report(
                 command, report_path, run_id, "crawling", command_id=command_id
             )
+            if (
+                action == "inventory"
+                and report.get("status") in {"succeeded", "partial"}
+                and report.get("stop_reason") != "schedule_paused"
+            ):
+                (self.profile.state_dir / "inventory.completed").touch()
+            return report
         if action == "retry-batch":
             completed = self.profile.state_dir / "recovery.completed"
             if (
@@ -354,13 +392,18 @@ class ControlRunner:
                 str(self.profile.warc_dir),
                 "--max-posts",
                 "100",
+                "--pause-file",
+                str(self.profile.state_dir / "schedule.paused"),
                 "--output",
                 str(report_path),
             ]
             report = self._execute_report(
                 command, report_path, run_id, "recovery", command_id=command_id
             )
-            if report.get("status") in {"succeeded", "partial"}:
+            if (
+                report.get("status") in {"succeeded", "partial"}
+                and report.get("stop_reason") != "schedule_paused"
+            ):
                 completed.touch()
             return report
         marker = self.profile.state_dir / "publish.pending"
@@ -405,6 +448,12 @@ class ControlRunner:
             completed.touch()
         return report
 
+    def _inventory_due(self) -> bool:
+        completed = self.profile.state_dir / "inventory.completed"
+        return not completed.exists() or time.time() - completed.stat().st_mtime >= (
+            _WEEKLY_INTERVAL_SECONDS
+        )
+
     def _execute_report(
         self,
         command: list[str],
@@ -441,12 +490,37 @@ class ControlRunner:
             )
             while True:
                 try:
-                    return process.wait(timeout=30)
+                    return_code = process.wait(timeout=30)
+                    self._claim_marker()
+                    return return_code
                 except subprocess.TimeoutExpired:
+                    self._claim_marker()
                     self._heartbeat("running", run_id=run_id, step=step, command_id=command_id)
         finally:
             if output_handle is not None:
                 output_handle.close()
+
+    def _claim_marker(self) -> None:
+        try:
+            self.client.flush(self.store)
+            if self.store.stats()["rows"]:
+                return
+            command = self.client.claim_marker(
+                self.profile.runner_id, f"claim-marker-{uuid4().hex}"
+            )
+            if command is None:
+                return
+            record = self.store.record_claim(command["command_id"], command["action"])
+            self._run_marker(record, str(command["action"]))
+        except (
+            ControlProtocolError,
+            ControlUnavailableError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            sqlite3.Error,
+        ):
+            return
 
     @staticmethod
     def _read_report(path: Path) -> dict[str, Any]:
@@ -621,6 +695,8 @@ class ControlRunner:
         step: str | None = None,
         command_id: str | None = None,
     ) -> None:
+        if state == "idle" and (self.profile.state_dir / "schedule.paused").exists():
+            state = "paused"
         payload: dict[str, Any] = {
             "runner_version": self.profile.runner_version,
             "state": state,
