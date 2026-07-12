@@ -329,9 +329,9 @@ class TypeMoonSpider(scrapy.Spider):
             meta={"cookiejar": 1, "redstm_capture": True},
         )
 
-    def detail_error(self, failure: Any) -> None:
+    def detail_error(self, failure: Any) -> str | None:
         if self.store is None or self.run_id is None:
-            return
+            return None
         request = failure.request
         lease = request.meta.get("frontier_lease")
         if not isinstance(lease, FrontierLease):
@@ -363,6 +363,7 @@ class TypeMoonSpider(scrapy.Spider):
             frontier_state="retry",
             retry_after_at=_retry_after(response, fetched_at) if status_code == 429 else None,
         )
+        return error_code
 
     def listing_request(
         self, board_id: str, *, page: int = 1, session: SessionExport | None = None
@@ -628,6 +629,8 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
     ) -> None:
         self._candidates = iter(candidates)
+        self._consecutive_network_errors = 0
+        self._consecutive_rate_limits = 0
         super().__init__(
             archive_path=archive_path,
             run_id=run_id,
@@ -667,13 +670,38 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
     def _parse_recovery_detail(
         self, response: scrapy.http.Response, **kwargs: object
     ) -> Iterable[CapturedPostItem | scrapy.Request]:
-        yield from super().parse_detail(response, **kwargs)
+        items = list(super().parse_detail(response, **kwargs))
+        yield from items
+        if not items or items[0].get("outcome") == "parse_failed":
+            self.failure_codes.add("parse_drift")
+            return
+        if "auth_required" in items[0].get("warnings", ()):
+            self.failure_codes.add("auth_required")
+            return
+        self._consecutive_network_errors = 0
+        self._consecutive_rate_limits = 0
         request = self._next_recovery_request()
         if request is not None:
             yield request
 
     def _recovery_error(self, failure: Any) -> Iterable[scrapy.Request]:
-        super().detail_error(failure)
+        error_code = super().detail_error(failure)
+        if error_code == "auth_required":
+            self.failure_codes.add(error_code)
+            return
+        if error_code == "network_error":
+            self._consecutive_network_errors += 1
+            self._consecutive_rate_limits = 0
+        elif error_code == "rate_limited":
+            self._consecutive_rate_limits += 1
+            self._consecutive_network_errors = 0
+        else:
+            self._consecutive_network_errors = 0
+            self._consecutive_rate_limits = 0
+        if max(self._consecutive_network_errors, self._consecutive_rate_limits) >= 3:
+            assert error_code is not None
+            self.failure_codes.add(error_code)
+            return
         request = self._next_recovery_request()
         if request is not None:
             yield request

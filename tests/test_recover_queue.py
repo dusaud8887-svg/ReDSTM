@@ -4,6 +4,7 @@ import asyncio
 from argparse import Namespace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from scrapy import Request
@@ -100,6 +101,94 @@ def test_recovery_priority_bound_and_idempotent_transition(tmp_path: Path) -> No
 
 async def _collect_start(spider: TypeMoonRecoverySpider) -> list[Request]:
     return [request async for request in spider.start()]
+
+
+@pytest.mark.parametrize(
+    ("status", "failure_code"), [(None, "network_error"), (429, "rate_limited")]
+)
+def test_recovery_stops_after_three_consecutive_site_failures(
+    tmp_path: Path, status: int | None, failure_code: str
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    frontier = FrontierStore(archive)
+    for external_post_id in range(1, 5):
+        frontier.seed(
+            "aa_a01",
+            external_post_id,
+            f"https://www.typemoon.net/aa_a01/{external_post_id}",
+        )
+    run_id = ArchiveStore(archive).start_run("retry")
+    spider = TypeMoonRecoverySpider(
+        candidates=[("aa_a01", external_post_id) for external_post_id in range(1, 5)],
+        archive_path=archive,
+        run_id=run_id,
+        session=_session(),
+        lease_seconds=60,
+    )
+    [request] = asyncio.run(_collect_start(spider))
+
+    for attempt in range(3):
+        value: object = OSError("offline")
+        if status is not None:
+            value = SimpleNamespace(
+                response=HtmlResponse(request.url, request=request, status=status)
+            )
+        next_requests = list(spider._recovery_error(SimpleNamespace(request=request, value=value)))
+        if attempt < 2:
+            [request] = next_requests
+        else:
+            assert next_requests == []
+
+    assert spider.scheduled_posts == 3
+    assert spider.failure_codes == {failure_code}
+
+
+def test_recovery_stops_on_auth_response(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    frontier = FrontierStore(archive)
+    for external_post_id in (1, 2):
+        frontier.seed(
+            "aa_a01",
+            external_post_id,
+            f"https://www.typemoon.net/aa_a01/{external_post_id}",
+        )
+    run_id = ArchiveStore(archive).start_run("retry")
+    spider = TypeMoonRecoverySpider(
+        candidates=[("aa_a01", 1), ("aa_a01", 2)],
+        archive_path=archive,
+        run_id=run_id,
+        session=_session(),
+        lease_seconds=60,
+    )
+    [request] = asyncio.run(_collect_start(spider))
+    response = HtmlResponse(
+        request.url,
+        request=request,
+        body=b"<form action='/bbs/login_check.php'>",
+        encoding="utf-8",
+    )
+
+    [item] = list(spider._parse_recovery_detail(response))
+
+    assert item["warnings"] == ["auth_required"]
+    assert spider.failure_codes == {"auth_required"}
+    assert spider.scheduled_posts == 1
 
 
 def test_empty_recovery_writes_success_report_without_session_request(
