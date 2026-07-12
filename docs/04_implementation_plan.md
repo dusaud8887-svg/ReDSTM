@@ -31,7 +31,7 @@
 remote operations·실기기 acceptance가 남았다**이다. “코드가 거의 끝났고 DB만 올리면
 된다”는 판정은 더 이상 유효하지 않다.
 
-마지막 Oracle deploy gate는 Python 142 tests, Ruff 69-file check/format과 mypy가 통과했고,
+현재 local gate는 Python 147 tests, Ruff 69-file check/format과 mypy가 통과했고,
 Edge는 Node 30 tests/check를 통과했다. 이후 control offline/recovery breaker 변경은 targeted test,
 Ruff와 mypy를 통과했지만 최신 Git code의 Oracle 재배포는 남았다.
 Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 44건 통과했고 local R2에
@@ -222,6 +222,8 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 - auth/session failure는 전체 cycle 중단; 자동 재로그인은 run당 1회, 최소 간격 30분
 - board별 run/counters와 final summary
 - duplicate process는 shared sync lock으로 차단
+- 전체 4시간 graceful budget을 남은 초 단위로 각 board worker에 전달하고, budget 종료는 현재
+  request/WARC를 정리한 뒤 board 경계에서 `partial/time_budget`으로 기록
 
 상태(2026-07-12): local core, 6시간 systemd schedule source와 30분 자동 재로그인 throttle 구현
 완료, Oracle canary는 남았다. 로그인 시도 marker는 실패도 포함하고 atomic write+nonblocking lock으로
@@ -229,6 +231,7 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 필요한 login/logout 표식을 받으면 8MiB 경계 안에서 즉시 끝낸다.
 `d52f63a`/`d71663f`에서 network/auth preflight 분류, 1회 session 검증, enabled board 순차 subprocess,
 board별 원자 report, parse failure 이월, auth 즉시 중단과 연속 network 3회 breaker를 구현했다.
+`f39da46`은 4시간 cycle budget과 Scrapy graceful timeout, 명시적 time-budget 종료 사유를 연결했다.
 Celery/Redis는 추가하지 않았고 각 worker는 기존 shared sync lock을 사용한다.
 
 #### A2.3 retry/recovery
@@ -314,7 +317,7 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 상태(2026-07-12): remote D1 migration 2개와 Worker `ef87fd99` live 배포, 이전 `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
-Python 133 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
+Python 147 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두
 302다. 8의 `/ops`는 Overview/Runs/Boards/Releases/fixed Controls, queued cancel과 desktop/768/390/320
 fixture를 구현했고 Operations E2E 4건이 통과했다. 3의 별도 Access service identity와 인증 role
 smoke, Access secret 주입·timer 연결, live failure gate는 아직이므로 A3 전체는 DONE이 아니다.

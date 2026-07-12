@@ -35,7 +35,7 @@
 - keyboard navigation과 desktop Operations rail
 - Access/D1 control API와 responsive `/ops`, fixed command/queued cancel
 - search-first Home, medium settings entry, large-post progress, AA dark-ink/overflow cue,
-  catalog state badge와 row skeleton (`2b038d70` live)
+  catalog state badge, row skeleton과 상태 가져오기 검토 (`ef87fd99` live)
 
 ### 남은 acceptance
 

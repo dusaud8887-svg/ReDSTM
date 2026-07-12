@@ -32,8 +32,8 @@ prose typography, AA 9–24px·10–300% zoom·세 preset·680/800 canvas·sourc
 progress·immersive·keyboard·comments/end navigation과 per-post mode를 구현했다. self-hosted font,
 compact toolbar, loading/offline/Access-expired와 collection missing 상태도 포함하며 Playwright fixture는
 1440/768/390/320px에서 통과했다. 큰 본문 수신 진행률, AA 배경 휘도별 단색 잉크, 가로 overflow
-fade/1회 힌트, 목록 상태 badge와 `/settings` route는 Worker `2b038d70`에 배포됐다. 남은 판정은
-authenticated production data, 실제 Android와 사용자 시각 acceptance다.
+fade/1회 힌트, 목록 상태 badge, `/settings` route와 상태 가져오기 검토는 Worker `ef87fd99`에
+배포됐다. 남은 판정은 authenticated production data, 실제 Android와 사용자 시각 acceptance다.
 
 ## 2. 공통 reader 상태
 

@@ -171,6 +171,8 @@ cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Ce
 상태(2026-07-12): `scripts.crawl_cycle` local core와 failure test 완료, Oracle canary 및 systemd 연결
 전이다. 6시간 `redstm-schedule.timer`와 crawl→recovery→daily-bounded publish orchestration source는
 구현됐다. recovery는 2시간 graceful budget과 24시간 completion marker로 하루 한 번만 실행한다.
+cycle은 4시간 남은 budget을 각 순차 worker의 Scrapy timeout으로 전달하고, 만료 시 현재 request와
+WARC를 정리한 뒤 다음 board를 시작하지 않고 partial로 끝낸다.
 세션/도달성 preflight는 1회, worker는 순차 실행하며 연속 network/429 3회 breaker와
 outage attempt 복원을 적용한다. 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
 30분에 1회로 제한한다. login/logout 표식 조기 판정은 오래된 서버의 비정상 TLS EOF를 기다리지 않는다.

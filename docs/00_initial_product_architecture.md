@@ -820,8 +820,9 @@ viewer에 직접 렌더링하지 않는다.
 현재 crawler core와 Oracle 수동 canary는 동작하지만 **자동 timer와 7일 shadow 전**이다. canonical
 실측 queue는 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의 hard cap일 뿐 처리량이나
 완료 gate가 아니다. 15분 38초 종료 진단에서도 CPU는 약 16초였고 원본 서버 network 대기가 시간을
-지배했다. 실제 종료는 2시간 budget, 같은 class의 network/429 3회, auth/parser 첫 실패 중 먼저
-도달하는 조건이다. 실행 수치는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 보존한다.
+지배했다. recovery는 2시간, 46-board cycle은 4시간 budget이며 같은 class의 network/429 3회,
+auth/parser 첫 실패도 더 이른 종료 조건이다. 실행 수치는
+[`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 보존한다.
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
@@ -829,7 +830,7 @@ viewer에 직접 렌더링하지 않는다.
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | frontier 2분 지수 backoff, 6시간 cap, network 5회 후 dead, auth는 보류 | dead/retry 운영 report와 수동 재개 기준 |
 | 중단 복구 | file lock/lease, stale run 회수, capture 누락 종료 판정, WARC `.partial` 진단 | live process kill 확인 |
-| listing | fixed cap, idempotent seed, errback·비HTML/구조 실패 판정 | overlap boundary/inventory |
+| listing | fixed cap, idempotent seed, metadata 변경·overlap boundary, inventory 우회, errback·비HTML/구조 실패 판정 | live board coverage |
 | detail | 1건씩 claim, 인증·restricted·parse drift·WARC/canonical transaction | small batch·2시간·24시간 live canary |
 | monitoring/UI | sync/recovery success hook, JSON report, CLI doctor, loopback read-only C0 console | scheduler/D1 heartbeat, remote Operations와 7일 shadow |
 
@@ -840,6 +841,7 @@ viewer에 직접 렌더링하지 않는다.
 
 ```text
 uv run python -m scripts.sync --archive ARCHIVE --board BOARD --max-posts 20
+uv run python -m scripts.crawl_cycle --archive ARCHIVE --max-posts 20 --max-seconds 14400
 uv run python -m scripts.recover_queue --archive ARCHIVE --max-posts 100 --max-seconds 7200
 uv run python -m scripts.doctor ARCHIVE --warc-dir WARC_DIR
 uv run python -m scripts.backup_archive ARCHIVE --snapshot SNAPSHOT --manifest MANIFEST
@@ -879,9 +881,9 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 
 ### 8.3 incremental sync 목표와 현재 차이
 
-현재 `scripts.sync`는 board별 page 1부터 `max_pages`/`max_posts` 고정 상한만큼 읽고 detail을 다시
-수집한다. 아래 overlap boundary, metadata 변경 비교, reported total snapshot과 주간 inventory는
-목표 계약이며 아직 구현되지 않았다.
+현재 `scripts.sync`는 board별 page 1부터 `max_pages`/`max_posts` 고정 상한 안에서 listing metadata
+변경을 비교하고 overlap boundary까지 읽는다. `--inventory`는 이 경계를 우회한다. 아래 중 reported
+total snapshot과 주간 inventory 실행 주기만 아직 live gate 전이다.
 
 1. 공지/pinned row를 일반 row와 구분한다.
 2. 신규 key 또는 list metadata 변경을 frontier에 넣는다.
@@ -894,13 +896,13 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 ### 8.4 backfill
 
 현재 구현된 것은 legacy frontier의 due pending/retry를 AA -> 창작 -> 팬픽 -> 나머지 순서로
-선택하고 detail을 한 건씩 claim하는 bounded `scripts.recover_queue`다. 아래 board cursor와 시간
-budget은 아직 없다.
+선택하고 detail을 한 건씩 claim하는 bounded `scripts.recover_queue`다. 100건·2시간 budget은
+구현됐으며 아래 board cursor 기반 장기 backfill은 아직 없다.
 
 - board별 cursor를 DB에 저장
 - 창작/팬픽/AA board 우선
 - 최신에서 과거 방향으로 진행
-- 한 run의 요청 수 또는 시간 budget을 제한
+- board cursor 단위의 bounded batch
 - 중단 후 같은 cursor에서 재개
 - 이미 저장된 content hash는 skip
 
