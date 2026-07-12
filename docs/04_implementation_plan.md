@@ -34,9 +34,9 @@ remote operations·실기기 acceptance가 남았다**이다. “코드가 거�
 마지막 Oracle deploy gate는 Python 142 tests, Ruff 69-file check/format과 mypy가 통과했고,
 Edge는 Node 30 tests/check를 통과했다. 이후 control offline/recovery breaker 변경은 targeted test,
 Ruff와 mypy를 통과했지만 최신 Git code의 Oracle 재배포는 남았다.
-Playwright self-contained fixture는 1440/768/390/320px 28건 통과했고 local R2에 seed하지 않은 실제
-AA/prose fixture의 viewport 조합 8건은 연결 오류로 미검증이다. Access를 공개하지 않고 A0의
-authenticated live smoke에서 확인한다.
+Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 44건 통과했고 local R2에
+seed하지 않은 실제 AA/prose fixture의 viewport 조합 8건은 연결 오류로 미검증이다. Access를
+공개하지 않고 A0의 authenticated live smoke에서 확인한다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -170,10 +170,11 @@ mobile-first 제품으로 교체한다.
 - A1.4 prose/AA/settings, mobile current-post sheet, collection/end navigation, import preview,
   offline/Access-expired recovery와 Arrow/Enter navigation이 구현됐다.
 - 남은 gate는 authenticated live data smoke, 실제 Android background/Back/pinch와 사용자 시각 acceptance다.
-- 코드 증거: `53163e7`, `bda49e1`, `b76c4fe`, `c6fc25c`, `230a00b`, `c259d2f`, `1020564`;
-  local gate는 Node 16, Playwright 28, font/license check와 strict dry-run 통과다.
-- live evidence: Worker version `7787ca24-b141-4f32-8a63-2b60f8ce1a95`, `/`와 stable deep link의
-  unauthenticated 302 Access challenge 확인. 인증 뒤 data flow는 A0 smoke에서 판정한다.
+- 최신 코드 증거: `4342035`, `1cedd77`, `da92148`, `7a92e86`; local gate는 Node 30,
+  self-contained Playwright 44, font/license check, startup check와 strict dry-run 통과다.
+- live evidence: Worker version `2b038d70-6d70-4966-a72b-437d91177820`; `/`, `/ops`,
+  `/archive/release.json`의 unauthenticated 302 Access challenge를 확인했다. 인증 뒤 data flow는
+  A0 smoke에서 판정한다.
 
 2026-07-12 배포 소스 실측에서 확인한 A1 local blocking은 해소했다. Home 검색 우선순위와 compact
 hero, `enterkeyhint`, wordmark, 큰 post 수신 진행률, AA 배경 휘도별 단색 잉크, overflow fade/1회
@@ -312,7 +313,7 @@ upload/check하며 불일치 시 full verify로 강등한다. pointer-last와 20
 8. `/ops` Overview/Runs/Boards/Releases/Controls를 desktop/mobile로 구현한다.
 9. Access/D1 outage, duplicate poll, response loss, expired claim과 token expiry를 failure test한다.
 
-상태(2026-07-12): remote D1 migration 2개와 Worker `cefea2fb` 배포, `c47b2e58` rollback/복귀
+상태(2026-07-12): remote D1 migration 2개와 Worker `2b038d70` live 배포, 이전 `c47b2e58` rollback/복귀
 rehearsal까지 완료했다. 1, 2, 4의 API core, 5의 Worker reclaim + Oracle local ledger, 7의 Worker
 ingest + 10MiB/10,000-event outbox/transport, fixed dispatcher/crash replay가 구현됐고 전체
 Python 133 tests와 Edge 30 tests를 통과했다. 비인증 `/`, deep link, ops, runner, health는 모두

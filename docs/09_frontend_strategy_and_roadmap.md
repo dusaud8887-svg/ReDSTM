@@ -34,6 +34,8 @@
 - stable identity/deep link, Home recent/freshness, offline/Access-expired와 import preview
 - keyboard navigation과 desktop Operations rail
 - Access/D1 control API와 responsive `/ops`, fixed command/queued cancel
+- search-first Home, medium settings entry, large-post progress, AA dark-ink/overflow cue,
+  catalog state badge와 row skeleton (`2b038d70` live)
 
 ### 남은 acceptance
 
