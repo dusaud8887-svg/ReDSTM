@@ -21,6 +21,7 @@ from scripts.sync import (
     _capture_summary,
     _project_settings,
     _run_status,
+    _timed_out,
     _write_report,
 )
 
@@ -78,10 +79,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 set(getattr(spider, "failure_codes", ()))
                 | set(_capture_failure_codes(archive, run_id))
             )
-            if (
-                crawler.stats is not None
-                and crawler.stats.get_value("finish_reason") == "closespider_timeout"
-            ):
+            if _timed_out(crawler):
                 failures = sorted({*failures, "recovery_time_budget"})
 
         outcomes = _capture_summary(archive, run_id)

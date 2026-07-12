@@ -66,10 +66,19 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
         partial.unlink(missing_ok=True)
 
 
-def _project_settings() -> Settings:
+def _project_settings(max_seconds: int | None = None) -> Settings:
     settings = get_project_settings()
     settings.setmodule(crawler_settings, priority="project")
+    if max_seconds is not None:
+        settings.set("CLOSESPIDER_TIMEOUT", max_seconds, priority="cmdline")
     return settings
+
+
+def _timed_out(crawler: Any) -> bool:
+    return bool(
+        crawler.stats is not None
+        and crawler.stats.get_value("finish_reason") == "closespider_timeout"
+    )
 
 
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:
@@ -107,7 +116,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         run_id = store.start_run("sync")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"
-        settings = _project_settings()
+        settings = _project_settings(args.max_seconds)
         settings.set("REDSTM_ARCHIVE_PATH", str(archive), priority="cmdline")
         settings.set("REDSTM_RUN_ID", run_id, priority="cmdline")
         settings.set("REDSTM_WARC_PATH", str(warc_path), priority="cmdline")
@@ -131,6 +140,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         failures = sorted(
             set(getattr(spider, "failure_codes", ())) | set(_capture_failure_codes(archive, run_id))
         )
+        if _timed_out(crawler):
+            failures = sorted({*failures, "sync_time_budget"})
         outcomes = _capture_summary(archive, run_id)
         status = _run_status(outcomes, discovered, failures)
         store.finish_run(
@@ -174,13 +185,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
     parser.add_argument("--max-pages", type=int, default=1)
     parser.add_argument("--max-posts", type=int, default=20)
+    parser.add_argument("--max-seconds", type=int)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
     parser.add_argument("--session-prevalidated", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if min(args.max_pages, args.max_posts, args.lease_seconds) < 1:
-        parser.error("max-pages, max-posts, and lease-seconds must be positive")
+    limits = [args.max_pages, args.max_posts, args.lease_seconds]
+    if args.max_seconds is not None:
+        limits.append(args.max_seconds)
+    if min(limits) < 1:
+        parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
     return args
 
 

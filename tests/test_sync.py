@@ -18,7 +18,13 @@ from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 from scripts.healthcheck import notify_dead_man, ping_success
 from scripts.recover_queue import _parse_args as parse_recovery_args
-from scripts.sync import _capture_failure_codes, _capture_summary, _project_settings, _run_status
+from scripts.sync import (
+    _capture_failure_codes,
+    _capture_summary,
+    _project_settings,
+    _run_status,
+    _timed_out,
+)
 from scripts.sync import _parse_args as parse_sync_args
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
@@ -390,9 +396,14 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
         "crawler.middlewares.WarcCaptureMiddleware": 595
     }
     assert project.getdict("ITEM_PIPELINES") == {"crawler.archive_pipeline.ArchivePipeline": 300}
+    assert _project_settings(123).getint("CLOSESPIDER_TIMEOUT") == 123
+    assert _timed_out(
+        SimpleNamespace(stats=SimpleNamespace(get_value=lambda _name: "closespider_timeout"))
+    )
 
     monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
     assert parse_sync_args().lease_seconds == 900
+    assert parse_sync_args().max_seconds is None
     assert parse_sync_args().session_prevalidated is False
     monkeypatch.setattr(
         "sys.argv",

@@ -30,6 +30,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         report_dir=tmp_path / "reports",
         max_pages=3,
         max_posts=20,
+        max_seconds=14_400,
         lease_seconds=900,
         inventory=False,
     )
@@ -68,10 +69,48 @@ def test_cycle_runs_enabled_boards_sequentially(
     assert report["status"] == "succeeded"
     assert [command[command.index("--board") + 1] for command in commands] == ["a", "b", "c", "d"]
     assert all("--session-prevalidated" in command for command in commands)
+    budgets = [int(command[command.index("--max-seconds") + 1]) for command in commands]
+    assert all(1 <= budget <= 14_400 for budget in budgets)
+    assert budgets == sorted(budgets, reverse=True)
     assert report["changed_posts"] == 4
     assert report["failed_posts"] == 0
     assert report["boards_ok"] == 4
     assert report["boards_failed"] == 0
+
+
+def test_cycle_stops_at_board_boundary_when_time_budget_expires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    args.max_seconds = 10
+    commands: list[list[str]] = []
+    clock = iter((0.0, 0.0, 11.0))
+    monkeypatch.setattr("scripts.crawl_cycle.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "succeeded",
+                    "scheduled_posts": 0,
+                    "outcomes": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert len(commands) == 1
+    assert commands[0][commands[0].index("--max-seconds") + 1] == "10"
+    assert report["status"] == "partial"
+    assert report["stop_reason"] == "time_budget"
 
 
 @pytest.mark.parametrize(

@@ -22,6 +22,7 @@ from scripts.sync import _write_report
 
 _NETWORK_FAILURES = {"listing_fetch_failed", "network_error"}
 _OUTCOMES = {"stored", "unchanged", "restricted", "missing", "parse_failed", "fetch_failed"}
+_CYCLE_TIME_BUDGET_SECONDS = 4 * 60 * 60
 
 
 def _outcome_counts(report: dict[str, Any]) -> dict[str, int]:
@@ -69,7 +70,9 @@ def _preflight(session: Path) -> str | None:
     raise AssertionError("unreachable")
 
 
-def _worker_command(args: argparse.Namespace, board_id: str, output: Path) -> list[str]:
+def _worker_command(
+    args: argparse.Namespace, board_id: str, output: Path, max_seconds: int
+) -> list[str]:
     command = [
         sys.executable,
         "-m",
@@ -86,6 +89,8 @@ def _worker_command(args: argparse.Namespace, board_id: str, output: Path) -> li
         str(args.max_pages),
         "--max-posts",
         str(args.max_posts),
+        "--max-seconds",
+        str(max_seconds),
         "--lease-seconds",
         str(args.lease_seconds),
         "--session-prevalidated",
@@ -114,6 +119,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
 
     cycle_id = f"cycle-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     results: list[dict[str, Any]] = []
+    started_at = time.monotonic()
     try:
         preflight = _preflight(args.session)
         if preflight is not None:
@@ -126,9 +132,18 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         network_run_ids: list[str] = []
         preserved_attempts = 0
         status = "succeeded"
+        stop_reason: str | None = None
         for board_id in boards:
+            remaining_seconds = args.max_seconds - (time.monotonic() - started_at)
+            if remaining_seconds <= 0:
+                status = "partial"
+                stop_reason = "time_budget"
+                break
             report_path = report_dir / f"{board_id}.json"
-            completed = subprocess.run(_worker_command(args, board_id, report_path), check=False)
+            completed = subprocess.run(
+                _worker_command(args, board_id, report_path, max(1, int(remaining_seconds))),
+                check=False,
+            )
             if not report_path.is_file():
                 status = "runner_failed"
                 results.append(
@@ -197,6 +212,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "boards_ok": boards_ok,
             "boards_failed": len(results) - boards_ok,
             "preserved_attempts": preserved_attempts,
+            "stop_reason": stop_reason,
             "boards": results,
         }
     finally:
@@ -211,12 +227,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--report-dir", type=Path, default=Path(".data/operations/cycles"))
     parser.add_argument("--max-pages", type=int, default=3)
     parser.add_argument("--max-posts", type=int, default=20)
+    parser.add_argument("--max-seconds", type=int, default=_CYCLE_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--inventory", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if min(args.max_pages, args.max_posts, args.lease_seconds) < 1:
-        parser.error("max-pages, max-posts, and lease-seconds must be positive")
+    if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:
+        parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
     return args
 
 
