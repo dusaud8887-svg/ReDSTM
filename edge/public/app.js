@@ -72,6 +72,7 @@ let lastReaderScroll = 0;
 let readerScrollDelta = 0;
 let latestPosts = [];
 let publishedAt = null;
+let archiveReady = false;
 let pendingCatalogRestore = userState.lastCatalogState;
 let searchSupportsAa = true;
 let immersiveOpener = null;
@@ -197,10 +198,12 @@ function applySettings() {
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
-  elements["archive-body"].classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
   const aaBackgroundIsLight = relativeLuminance(settings.aaBackground) >= 0.5;
-  elements["archive-body"].classList.toggle("aa-light-ink", aaBackgroundIsLight);
-  elements["archive-body"].classList.toggle("aa-dark-ink", !aaBackgroundIsLight);
+  for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
+    surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
+    surface.classList.toggle("aa-light-ink", aaBackgroundIsLight);
+    surface.classList.toggle("aa-dark-ink", !aaBackgroundIsLight);
+  }
   const canvas = elements["archive-body"].querySelector(".aa-canvas");
   if (canvas) canvas.dataset.width = settings.aaCanvasWidth ?? "auto";
   for (const button of document.querySelectorAll("[data-aa-preset]")) {
@@ -593,6 +596,7 @@ function handleWorkerMessage({ data }) {
     return;
   }
   if (data.type === "ready") {
+    archiveReady = true;
     elements["archive-count"].textContent = `${data.count.toLocaleString("ko-KR")}건`;
     elements["empty-count"].textContent = `${data.count.toLocaleString("ko-KR")}건`;
     elements["archive-state"].textContent = "보존본";
@@ -844,8 +848,14 @@ function showPost(payload, suppliedSummary, navigate) {
   void updateCollection();
   renderResults(renderedResults, elements["result-status"].textContent);
   const nextUrl = `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`;
-  if (navigate) history.pushState({ redstmReader: true }, "", nextUrl);
-  else history.replaceState({ redstmReader: false }, "", nextUrl);
+  if (navigate) {
+    const previousDepth = history.state?.redstmReaderDepth;
+    const readerDepth = previousDepth === undefined ? 1 : previousDepth > 0 ? previousDepth + 1 : 0;
+    history.pushState({ redstmReader: true, redstmReaderDepth: readerDepth }, "", nextUrl);
+  } else {
+    const readerDepth = Number(history.state?.redstmReaderDepth) || 0;
+    history.replaceState({ redstmReader: readerDepth > 0, redstmReaderDepth: readerDepth }, "", nextUrl);
+  }
   openMobileReader();
   requestAnimationFrame(() => {
     elements["reader-title"].focus({ preventScroll: true });
@@ -921,6 +931,7 @@ function renderComments(comments) {
     fragment.append(item);
   }
   elements["comment-list"].append(fragment);
+  applySettings();
 }
 
 function rememberHistory(summary) {
@@ -1051,10 +1062,14 @@ elements["catalog-toggle"].addEventListener("click", () => {
   elements["catalog-toggle"].ariaLabel = collapsed ? "목록 펼치기" : "목록 접기";
 });
 elements["catalog-back"].addEventListener("click", () => {
-  if (history.state?.redstmReader) history.back();
+  const readerDepth = Number(history.state?.redstmReaderDepth) || 0;
+  if (readerDepth > 0) history.go(-readerDepth);
   else {
-    history.replaceState(null, "", "/");
-    showDestination("library", false);
+    const destination = currentDestination;
+    const view = currentView;
+    const path = destination === "library" ? "/" : destination === "bookmarks" ? savedUrl() : searchUrl();
+    history.replaceState(null, "", path);
+    showDestination(destination, false, view);
   }
 });
 window.addEventListener("popstate", () => { void handleRoute(); });
@@ -1361,7 +1376,13 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("focusin", () => document.body.classList.remove("reader-controls-hidden"));
 
 history.scrollRestoration = "manual";
-window.addEventListener("offline", () => renderArchiveError({ code: "offline" }));
+window.addEventListener("offline", () => {
+  elements["archive-state"].textContent = "오프라인";
+  if (!archiveReady) renderArchiveError({ code: "offline" });
+});
+window.addEventListener("online", () => {
+  if (archiveReady) elements["archive-state"].textContent = "보존본";
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     if (currentSummary) persistReadingPosition();

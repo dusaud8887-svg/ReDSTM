@@ -114,9 +114,10 @@ def test_publish_is_noop_when_remote_pointer_matches(
     assert report["pointer_verified"] is True
     assert report["ledger_written"] is True
     assert report["new_bytes"] == report["new_objects"] == 0
-    assert json.loads((tmp_path / ".publish-ledger.json").read_text(encoding="utf-8"))[
-        "release_key"
-    ] == release_key
+    assert (
+        json.loads((tmp_path / ".publish-ledger.json").read_text(encoding="utf-8"))["release_key"]
+        == release_key
+    )
 
 
 def test_publish_noop_reuses_matching_ledger_without_remote_scan(

@@ -130,7 +130,7 @@ test("keeps the settings route symmetric", async ({ page }) => {
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.locator('button[data-destination="settings"]:visible').first().click();
   await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.locator("#settings-dialog")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
   await expect(page.locator("#settings-ops")).toBeVisible();
   await expect(page.locator("#settings-ops")).toHaveAttribute("href", "/ops");
   await page.locator("#settings-dialog form").evaluate((form) => { form.scrollTop = form.scrollHeight; });
@@ -139,6 +139,34 @@ test("keeps the settings route symmetric", async ({ page }) => {
   await page.locator('button[data-destination="settings"]:visible').first().click();
   await expect.poll(() => page.locator("#settings-dialog form").evaluate((form) => form.scrollTop)).toBe(0);
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
+});
+
+test("keeps primary navigation and Operations reachable at every breakpoint", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const width = page.viewportSize().width;
+  const navigation = width >= 1200 ? ".rail nav" : width >= 760 ? ".app-bar" : ".bottom-nav";
+  for (const destination of ["library", "search", "bookmarks", "settings"]) {
+    await expect(page.locator(`${navigation} [data-destination="${destination}"]`)).toBeVisible();
+  }
+  const operations = page.locator(`${width >= 1200 ? ".rail" : ".app-bar"} a[href="/ops"]`);
+  await expect(operations).toBeVisible();
+  await expect(operations).toHaveAccessibleName(/운영/);
+  if (width < 1200) await expect(operations).toContainText("운영");
+
+  await page.locator(`${navigation} [data-destination="search"]`).click();
+  await expect(page).toHaveURL(/\/search$/);
+  await page.locator(`${navigation} [data-destination="bookmarks"]`).click();
+  await expect(page).toHaveURL(/\/saved$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/search$/);
+  await page.locator(`${navigation} [data-destination="settings"]`).click();
+  await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/search$/);
+  await page.locator(`${navigation} [data-destination="library"]`).click();
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("restores search controls from the URL and browser history", async ({ page }) => {
@@ -331,8 +359,10 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("font-size", "11px");
   await page.locator('[data-aa-background="#ffffff"]').click();
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await page.locator("#aa-source-styles").click();
   await expect(page.locator("#archive-body")).toHaveClass(/normalize-source-styles/);
+  await expect(page.locator(".comment-body.aa-comment")).toHaveClass(/normalize-source-styles/);
   await expect(page.locator("#archive-body font")).not.toHaveCSS("color", "rgb(180, 35, 47)");
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(36, 37, 42)");
   await page.locator("#aa-background").evaluate((input) => {
@@ -340,6 +370,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(123, 224, 162)");
+  await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("color", "rgb(123, 224, 162)");
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await page.locator('[data-aa-zoom-delta="0.25"]').click();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
@@ -528,10 +559,25 @@ test("restores the reading position after immediate SPA switches", async ({ page
 
 test("restores collection navigation and keeps list fallback", async ({ page }) => {
   await useCollectionFixture(page);
-  await openPost(page, secondKey);
   const mobile = page.viewportSize().width < 760;
   const previous = mobile ? "#reader-bottom-previous" : "#previous-post";
   const next = mobile ? "#reader-bottom-next" : "#next-post";
+  if (mobile) {
+    await page.goto("/");
+    await expect(page.locator("#archive-state")).toHaveText("보존본");
+    await page.locator('.bottom-nav [data-destination="search"]').click();
+    await page.locator(".result-item", { hasText: "첫째" }).click();
+    await page.locator(next).click();
+    await expect(page.locator("#reader-title")).toHaveText("둘째");
+    await page.reload();
+    await expect(page.locator("#reader-title")).toHaveText("둘째");
+    await page.locator("#reader-bottom-list").click();
+    await expect(page).toHaveURL(/\/search$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  }
+
+  await openPost(page, secondKey);
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
   await expect(page.locator(previous)).toBeEnabled();
   await expect(page.locator(next)).toBeDisabled();
@@ -541,6 +587,11 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 1/3 · 1건 보존 불가");
   await expect(page.locator(previous)).toBeDisabled();
   await expect(page.locator(next)).toBeEnabled();
+  if (mobile) {
+    await page.locator("#reader-bottom-list").click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator("#home-title")).toHaveText("내 장서");
+  }
 
   await page.goto(`/?fixture=standalone#${encodeURIComponent(standaloneKey)}`);
   await expect(page.locator("#reader-title")).toHaveText("비소속");
@@ -567,12 +618,14 @@ test("distinguishes Access expiry from an archive failure", async ({ page }) => 
   await expect(page.locator("#home-action")).toHaveText("다시 로그인");
 });
 
-test("shows an offline recovery state", async ({ page }) => {
+test("preserves loaded Reader content while connectivity changes", async ({ page }) => {
   await useCollectionFixture(page);
-  await page.goto("/");
+  await openPost(page, secondKey);
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await expect(page.locator("#archive-state")).toHaveText("오프라인");
-  await expect(page.locator("#home-title")).toHaveText("오프라인입니다");
-  await expect(page.locator("#home-action")).toHaveText("다시 시도");
+  await expect(page.locator("#reader-title")).toHaveText("둘째");
+  await expect(page.locator("#archive-body")).toContainText("둘째 본문 1");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
 });

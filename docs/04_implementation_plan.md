@@ -31,7 +31,7 @@
 Operations의 자동화 의미·schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
 
 현재 local gate는 Python 187 tests, Ruff와 mypy가 통과했고 Edge는 Node 32 tests/check를 통과했다.
-Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 108건을 통과한다. fixture는
+Playwright self-contained fixture는 1440/768/390/320px Reader/Operations 112건을 통과한다. fixture는
 실제 R2 seed가 없어도 AA/prose와 읽기 위치 복원을 검증하고, 환경변수를 주면 대표 live object로
 교체할 수 있다. authenticated production에서는 이전 bundle 기준 282,239건 index, 일반 본문
 8,738자/댓글 4개와 AA 186,058자/canvas/댓글 7개를 열어 실데이터 경로를 확인했다. canonical schema
@@ -195,7 +195,7 @@ source of truth로 다음을 구현한다.
   provenance detail, command별 due/last outcome/cooldown eligibility와 나머지 상태 fixture는 구현이 남았다.
 - 그 뒤 새 bundle의 authenticated live smoke, 실제 Android background/Back/pinch와 사용자 시각
   acceptance를 통과해야 한다.
-- local gate는 Node 32, self-contained Playwright 108, font/license check와 startup check를 통과한다.
+- local gate는 Node 32, self-contained Playwright 112, font/license check와 startup check를 통과한다.
 - live evidence: Worker version `c1d1d3f3-4642-437a-afdc-941ff42e756f`; 인증한 Reader의 실제
   prose/AA 본문·댓글과 `/ops` healthy idle heartbeat를 확인했다. service token은 runner route 200,
   `/ops` 302, anonymous runner 요청은 403으로 역할이 분리된다. live `/search`의 board/oldest/query

@@ -29,7 +29,7 @@
           <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
           <span>설정</span>
         </button>
-        <a href="/ops" aria-label="Operations">
+        <a href="/ops" aria-label="운영">
           <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>
           <span>운영</span>
         </a>
@@ -45,8 +45,14 @@
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".5"/><circle cx="4" cy="12" r=".5"/><circle cx="4" cy="18" r=".5"/></svg>
       </button>
       <strong>ReDSTM</strong>
+      <nav class="app-nav" aria-label="주요 메뉴">
+        <button class="active" type="button" data-destination="library" aria-pressed="true">홈</button>
+        <button type="button" data-destination="search" aria-pressed="false">탐색</button>
+        <button type="button" data-destination="bookmarks" aria-pressed="false">보관함</button>
+      </nav>
       <a class="archive-facts" href="/ops">
         <span class="sr-only">운영 및 수집 상태:</span>
+        <span class="archive-ops-label">운영</span>
         <span id="archive-count">—</span>
         <span id="archive-state" aria-live="polite">연결 중</span>
       </a>
@@ -174,9 +180,9 @@
 
     <button class="immersive-exit" id="immersive-exit" type="button" hidden>집중 종료</button>
 
-    <dialog id="settings-dialog">
+    <dialog id="settings-dialog" aria-labelledby="settings-dialog-title">
       <form method="dialog">
-        <header><div><p>화면에 바로 적용됩니다</p><h2>읽기 설정</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <header><div><p>화면에 바로 적용됩니다</p><h2 id="settings-dialog-title">읽기 설정</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
         <a class="settings-ops" id="settings-ops" href="/ops"><span><strong>운영 현황</strong><small>수집 상태와 최근 실패 확인</small></span><span aria-hidden="true">→</span></a>
         <fieldset class="post-settings" id="post-settings-actions" hidden>
           <legend>현재 글</legend>

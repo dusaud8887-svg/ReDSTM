@@ -294,7 +294,7 @@ def publish_static(
                     },
                 )
                 ledger_written = True
-            except (OSError, RuntimeError, subprocess.CalledProcessError):
+            except OSError, RuntimeError, subprocess.CalledProcessError:
                 ledger_written = False
         return {
             **validation,
