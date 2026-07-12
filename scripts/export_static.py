@@ -26,6 +26,7 @@ from crawler.archive import (
     decompress_body,
 )
 from crawler.pipelines import NormalizedComment, NormalizedPost
+from crawler.settings import REDSTM_EXPORT_MAX_CHANGED_POSTS
 from crawler.static_archive import (
     StaticPostSummary,
     build_static_post_payload,
@@ -46,7 +47,6 @@ _SEARCH_FIELDS_WITH_AA = [*_SEARCH_FIELDS, "is_aa"]
 _COMPRESSION_LEVEL = 15
 _AGGREGATE_COMPRESSION_LEVEL = 6
 _EXPORT_STATE_SCHEMA_VERSION = 1
-_DEFAULT_MAX_CHANGED_POSTS = 0
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_PROJECTION_VERSION = "source-projection-v1"
 
@@ -1897,7 +1897,7 @@ def export_static(
     workers: int = 1,
     incremental_only: bool = False,
     force_full: bool = False,
-    max_changed_posts: int = _DEFAULT_MAX_CHANGED_POSTS,
+    max_changed_posts: int = REDSTM_EXPORT_MAX_CHANGED_POSTS,
 ) -> dict[str, Any]:
     if workers < 1:
         raise ValueError("workers must be positive")
@@ -1955,7 +1955,7 @@ def _parse_args() -> argparse.Namespace:
     mode = export.add_mutually_exclusive_group()
     mode.add_argument("--incremental-only", action="store_true")
     mode.add_argument("--full", action="store_true")
-    export.add_argument("--max-changed-posts", type=int, default=_DEFAULT_MAX_CHANGED_POSTS)
+    export.add_argument("--max-changed-posts", type=int, default=REDSTM_EXPORT_MAX_CHANGED_POSTS)
     activate = commands.add_parser("activate")
     activate.add_argument("output", type=Path)
     activate.add_argument("release")

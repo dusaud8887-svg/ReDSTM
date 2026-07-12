@@ -134,7 +134,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | cycle | graceful budget | invocation당 4시간 | `crawler/settings.py` + CLI override |
 | recovery | 내부 chunk | normal 20건 / full-content 100건 | 같은 command가 남은 항목 0까지 자동 반복; 총량·총시간 상한 아님 |
 | recovery | board group order | AA → 창작 → 팬픽 → 나머지 | `crawler/settings.py` |
-| export | automatic workers / changed-post cap | 1 / 0(무제한) | `scripts.control_runner`, `scripts.export_static` |
+| export | automatic workers / changed-post cap | 1 / 0(무제한) | `crawler/settings.py` |
 | export | deterministic compression | post object level 15 / board·search·collection aggregate `-v2` level 6 | `scripts.export_static` |
 | publish | R2 hard stop | 20GB / 800,000 objects | `scripts.publish_static` |
 | publish | rclone checkers/transfers | 16 / 16 | `scripts.publish_static` |
