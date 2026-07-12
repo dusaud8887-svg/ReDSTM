@@ -232,7 +232,9 @@ Oracle은 [08](08_operations_control_plane.md)의 runner endpoint만 사용한�
 상태(2026-07-12): local core와 systemd schedule source 구현 완료, Oracle/Access canary 전이다. 별도 SQLite command ledger와
 10MiB/10,000-event outbox, 5초 connect/15초 total retry transport, 60초 circuit breaker, fixed 5-action
 dispatcher, 30초 heartbeat/lease, atomic pause/publish marker, crash terminal replay와 board summary를
-구현했다. subprocess stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
+구현했다. `04765c12`에서 control credential 3개가 모두 없는 scheduled run도 offline transport와
+local outbox로 계속되며, 일부만 설정된 경우는 오설정으로 실패하도록 고정했다. subprocess
+stdout/stderr와 raw exception은 journald로 보내지 않으며 browser args/path는
 실행 명령에 들어가지 않는다. service token 주입과 systemd unit 연결 전이므로 G5 전체를 live
 완료로 표시하지 않는다.
 

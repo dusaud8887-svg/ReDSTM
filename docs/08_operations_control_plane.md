@@ -64,6 +64,8 @@ WARC, body, cookie, raw log를 D1에 넣지 않는다.
 | browser preferences/history | local user-state |
 
 D1 outage는 automatic systemd run을 중단하지 않는다. D1의 last heartbeat가 stale로 남을 뿐이다.
+control 환경변수 3개가 모두 없는 초기 설치/rotation 공백도 scheduled mode에서는 offline transport로
+local outbox에 기록하고 crawl을 계속한다. 일부만 설정된 credential은 오설정으로 즉시 실패한다.
 
 ## 4. Authentication
 
@@ -434,7 +436,7 @@ safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rat
 |---|---|
 | D1 unavailable | automatic runner continues, /ops degraded |
 | Worker unavailable | runner continues, event retry, Reader last R2 release |
-| service token expired | /ops stale + auth warning, systemd continues |
+| service token missing/expired | local outbox, /ops stale + auth warning, systemd continues |
 | duplicate command | same command returned, one local execution |
 | command expires | expired/cancelled, never executed |
 | runner dies after claim | stale claim reconciled from local ledger or marked failed |
