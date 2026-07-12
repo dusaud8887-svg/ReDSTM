@@ -37,6 +37,7 @@ const elements = Object.fromEntries(
     "catalog-toggle", "home-action",
   ].map((id) => [id, document.getElementById(id)]),
 );
+elements["result-list"].classList.add("loading");
 
 let userState = loadUserState();
 let settings;
@@ -347,7 +348,10 @@ function updateDestinationButtons() {
 
 function showDestination(destination, navigate = true) {
   if (destination === "settings") {
-    elements["settings-dialog"].showModal();
+    if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+    if (navigate && location.pathname !== "/settings") {
+      history.pushState({ redstmSettings: true }, "", "/settings");
+    }
     return;
   }
   currentDestination = destination;
@@ -415,11 +419,14 @@ function routeSummary() {
 async function handleRoute() {
   const summary = routeSummary();
   if (!summary) {
+    const settingsRoute = location.pathname === "/settings";
     const destination = location.pathname === "/saved" ? "bookmarks" : location.pathname === "/search" ? "search" : "library";
     showDestination(destination, false);
-    if (location.pathname === "/settings") elements["settings-dialog"].showModal();
+    if (settingsRoute && !elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+    else if (!settingsRoute && elements["settings-dialog"].open) elements["settings-dialog"].close();
     return;
   }
+  if (elements["settings-dialog"].open) elements["settings-dialog"].close();
   if (!samePost(summary, currentSummary)) await loadPost(summary, false);
 }
 
@@ -496,7 +503,10 @@ function renderCurrentView() {
 function renderResults(posts, status) {
   renderedResults = posts;
   elements["result-status"].textContent = status;
+  elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
+  const readIdentities = new Set(historyEntries.map((entry) => postIdentity(entry.summary)).filter(Boolean));
+  const savedIdentities = new Set(bookmarks.map((entry) => postIdentity(entry.summary)).filter(Boolean));
   const fragment = document.createDocumentFragment();
   posts.forEach((post, index) => {
     const item = document.createElement("li");
@@ -508,6 +518,21 @@ function renderResults(posts, status) {
     const title = document.createElement("strong");
     title.className = "result-title";
     title.textContent = post.title || "제목 없음";
+    const titleLine = document.createElement("span");
+    titleLine.className = "result-title-line";
+    const badges = document.createElement("span");
+    badges.className = "result-badges";
+    const identity = postIdentity(post);
+    for (const [visible, label] of [
+      [post.is_aa === true, "AA"], [savedIdentities.has(identity), "저장"], [readIdentities.has(identity), "읽음"],
+    ]) {
+      if (!visible) continue;
+      const badge = document.createElement("span");
+      badge.textContent = label;
+      badges.append(badge);
+    }
+    titleLine.append(title);
+    if (badges.childElementCount) titleLine.append(badges);
     const meta = document.createElement("span");
     meta.className = "result-meta";
     for (const [text, className] of [
@@ -518,7 +543,7 @@ function renderResults(posts, status) {
       part.textContent = text;
       meta.append(part);
     }
-    button.append(title, meta);
+    button.append(titleLine, meta);
     item.append(button);
     fragment.append(item);
   });
@@ -851,6 +876,14 @@ elements["catalog-back"].addEventListener("click", () => {
   }
 });
 window.addEventListener("popstate", () => { void handleRoute(); });
+elements["settings-dialog"].addEventListener("close", () => {
+  if (location.pathname !== "/settings") return;
+  if (history.state?.redstmSettings) history.back();
+  else {
+    history.replaceState(null, "", "/");
+    showDestination("library", false);
+  }
+});
 elements["search-input"].addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(renderCurrentView, 250);
@@ -878,6 +911,7 @@ elements["bookmark-post"].addEventListener("click", () => {
   persistUserState();
   updateBookmarkButton();
   if (currentView === "bookmarks") renderCurrentView();
+  else renderResults(renderedResults, elements["result-status"].textContent);
 });
 elements["previous-post"].addEventListener("click", () => {
   const post = adjacentPost(-1);

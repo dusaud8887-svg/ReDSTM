@@ -38,7 +38,7 @@ function aaPostPayload(id, title) {
   return payload;
 }
 
-async function useCollectionFixture(page, { largeStandalone = false } = {}) {
+async function useCollectionFixture(page, { largeStandalone = false, releaseDelayMs = 0 } = {}) {
   const standalone = postPayload(3, "비소속");
   if (largeStandalone) standalone.transfer_padding = "x".repeat(1_100_000);
   const payloads = new Map([
@@ -49,11 +49,11 @@ async function useCollectionFixture(page, { largeStandalone = false } = {}) {
     }],
     ["search/e2e.json.zst", {
       schema_version: 1,
-      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256"],
+      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
       posts: [
-        ["board_a", 3, "비소속", "작성자", null, "2026-07-11", standaloneHash],
-        ["board_a", 2, "둘째", "작성자", null, "2026-07-11", secondHash],
-        ["board_a", 1, "첫째", "작성자", null, "2026-07-11", firstHash],
+        ["board_a", 3, "비소속", "작성자", null, "2026-07-11", standaloneHash, false],
+        ["board_a", 2, "둘째", "작성자", null, "2026-07-11", secondHash, false],
+        ["board_a", 1, "첫째", "작성자", null, "2026-07-11", firstHash, true],
       ],
     }],
     ["collections/e2e.json.zst", {
@@ -75,6 +75,9 @@ async function useCollectionFixture(page, { largeStandalone = false } = {}) {
     const key = new URL(route.request().url()).pathname.slice("/archive/".length);
     const payload = payloads.get(key);
     if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    if (key === "release.json" && releaseDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, releaseDelayMs));
+    }
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
 }
@@ -93,6 +96,25 @@ async function openPost(page, key) {
 
 test.beforeAll(async () => {
   await mkdir(".wrangler/screenshots", { recursive: true });
+});
+
+test("shows a row skeleton until the archive index is ready", async ({ page }) => {
+  await useCollectionFixture(page, { releaseDelayMs: 400 });
+  await page.goto("/");
+  await expect(page.locator("#result-list")).toHaveClass(/loading/);
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#result-list")).not.toHaveClass(/loading/);
+});
+
+test("keeps the settings route symmetric", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator('button[data-destination="settings"]:visible').first().click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.locator("#settings-dialog")).toBeVisible();
+  await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("shows the archive cover and uses a single-plane mobile reader", async ({ page }, testInfo) => {
@@ -141,6 +163,9 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);
   await expect(page.locator("#aa-controls")).toBeVisible();
+  const aaResult = page.locator(".result-item", { hasText: "첫째" });
+  await expect(aaResult.locator(".result-badges")).toContainText("AA");
+  await expect(aaResult.locator(".result-badges")).toContainText("읽음");
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
   await page.locator('[data-aa-preset="11:800"]').click();
@@ -211,6 +236,7 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await expect(page.locator("body")).not.toHaveClass(/immersive/);
   await page.keyboard.press("b");
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".result-item", { hasText: "비소속" }).locator(".result-badges")).toContainText("저장");
   await page.keyboard.press("/");
   await expect(page.locator("#search-input")).toBeFocused();
   await page.keyboard.press("ArrowDown");

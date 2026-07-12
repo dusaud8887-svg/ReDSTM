@@ -175,22 +175,11 @@ mobile-first 제품으로 교체한다.
 - live evidence: Worker version `7787ca24-b141-4f32-8a63-2b60f8ce1a95`, `/`와 stable deep link의
   unauthenticated 302 Access challenge 확인. 인증 뒤 data flow는 A0 smoke에서 판정한다.
 
-2026-07-12 저녁 배포 소스 실측 감사에서 확인한 A1 잔여 항목. Home 첫 control을 검색 진입점으로
-바꾸고 모바일 hero와 Operations overview를 압축했으며, `enterkeyhint=search`와 rail wordmark 정리는
-32개 fixture E2E에서 통과했다. 아래 남은 blocking 항목은 사용자 시각 acceptance 전에 반영한다.
-
-Blocking — 계약 위반:
-
-1. 압축 1MB 초과 post object의 수신 진행률이 없다(06 §6.3). 큰 AA에서 멈춤과 진행을 구분할 수
-   없어, 느린 회선에서 오류로 오인된다.
-2. AA `단색` mode가 dark 판독을 지원하지 않는다. normalize 시 잉크가 밝은 배경용 고정색이라
-   어두운 custom 배경에서 판독 불가다. [07 §4.4](07_reader_and_aa_experience.md)의 휘도 규칙을 따른다.
-3. AA 횡스크롤 edge fade와 `가로로 이동` 1회 힌트가 없다(07 §4.3).
-4. `theme-color` meta가 light 값 고정이라 dark에서 Android 상단 크롬이 어긋난다(DESIGN §5,
-   [09 §5](09_frontend_strategy_and_roadmap.md) 동기화 규칙).
-5. catalog row에 AA/저장/읽음 상태 배지가 없다(06 §6.2). AA 배지는 `is_aa` 있는 release부터 표시.
-6. catalog 첫 로드가 row 높이 skeleton 없이 2px line만 쓴다(DESIGN §8.2).
-7. 설정 destination이 URL을 `/settings`로 두지 않는다(딥링크 수신만 동작, 06 §4.1 비대칭).
+2026-07-12 배포 소스 실측에서 확인한 A1 local blocking은 해소했다. Home 검색 우선순위와 compact
+hero, `enterkeyhint`, wordmark, 큰 post 수신 진행률, AA 배경 휘도별 단색 잉크, overflow fade/1회
+힌트, Android `theme-color`, catalog AA/저장/읽음 badge, 72px skeleton과 `/settings` 대칭 route를
+fixture E2E로 고정했다. 남은 A1 blocking은 authenticated live data, 실제 Android 동작과 사용자 시각
+acceptance다.
 
 Should — acceptance 직후:
 
