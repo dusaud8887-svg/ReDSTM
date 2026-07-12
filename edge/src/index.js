@@ -114,7 +114,7 @@ async function staticAssetResponse(request, env) {
   return secured;
 }
 
-async function archiveResponse(request, env, key) {
+async function archiveResponse(request, env, key, ctx) {
   if (request.method === "HEAD") {
     const object = await env.ARCHIVE.head(key);
     return object ? response(null, 200, objectHeaders(object, key)) : response("Not found", 404);
@@ -141,12 +141,15 @@ async function archiveResponse(request, env, key) {
       `bytes ${object.range.offset}-${object.range.offset + object.range.length - 1}/${object.size}`,
     );
   }
-  headers.set("Content-Length", String(options.range && object.range ? object.range.length : object.size));
-  return new Response(object.body, { status, headers, encodeBody: "manual" });
+  const length = options.range && object.range ? object.range.length : object.size;
+  const fixed = new FixedLengthStream(length);
+  ctx.waitUntil(object.body.pipeTo(fixed.writable));
+  headers.set("Content-Length", String(length));
+  return new Response(fixed.readable, { status, headers, encodeBody: "manual" });
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const role = url.pathname.startsWith("/api/v1/runner/") ? "runner" : "user";
     const isAuthorized = await authorized(request, env, role);
@@ -181,6 +184,6 @@ export default {
     if (key === "") {
       return response("Invalid archive key", 400);
     }
-    return archiveResponse(request, env, key);
+    return archiveResponse(request, env, key, ctx);
   },
 };

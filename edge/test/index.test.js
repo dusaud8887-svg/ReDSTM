@@ -5,13 +5,19 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import worker from "../src/index.js";
 
+globalThis.FixedLengthStream ??= class extends TransformStream {
+  constructor() {
+    super();
+  }
+};
+
 const username = "reader";
 const password = "test-secret";
 const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 
 function archiveObject(body = "payload", range = null) {
   return {
-    body,
+    body: new Blob([body]).stream(),
     httpEtag: '"etag"',
     range,
     size: body.length,
@@ -19,6 +25,14 @@ function archiveObject(body = "payload", range = null) {
       headers.set("Content-Type", "application/octet-stream");
     },
   };
+}
+
+function workerFetch(workerRequest, env) {
+  return worker.fetch(workerRequest, env, {
+    waitUntil(promise) {
+      void promise.catch((error) => assert.fail(error));
+    },
+  });
 }
 
 function environment(overrides = {}) {
@@ -49,11 +63,11 @@ function request(path, options = {}) {
 }
 
 test("rejects missing or invalid credentials", async () => {
-  const missing = await worker.fetch(new Request("https://archive.example/health"), environment());
+  const missing = await workerFetch(new Request("https://archive.example/health"), environment());
   assert.equal(missing.status, 401);
   assert.match(missing.headers.get("WWW-Authenticate"), /Basic/);
 
-  const unconfigured = await worker.fetch(
+  const unconfigured = await workerFetch(
     new Request("https://archive.example/health"),
     environment({ VIEWER_PASSWORD: "" }),
   );
@@ -86,7 +100,7 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     POLICY_AUD: audience,
   });
   try {
-    const valid = await worker.fetch(
+    const valid = await workerFetch(
       new Request("https://archive.example/health", {
         headers: { "Cf-Access-Jwt-Assertion": token },
       }),
@@ -94,7 +108,7 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     );
     assert.equal(valid.status, 200);
 
-    const invalid = await worker.fetch(
+    const invalid = await workerFetch(
       new Request("https://archive.example/health", {
         headers: { "Cf-Access-Jwt-Assertion": token },
       }),
@@ -123,7 +137,7 @@ test("streams private objects with safe Zstandard and range headers", async () =
       },
     },
   });
-  const result = await worker.fetch(
+  const result = await workerFetch(
     request("/archive/warc/run.warc.gz", { headers: { Range: "bytes=2-5" } }),
     env,
   );
@@ -134,7 +148,7 @@ test("streams private objects with safe Zstandard and range headers", async () =
   assert.equal(result.headers.get("Cache-Control"), "private, immutable");
   assert.equal(options.range.get("Range"), "bytes=2-5");
 
-  const json = await worker.fetch(request("/archive/posts/board/1-hash.json.zst"), env);
+  const json = await workerFetch(request("/archive/posts/board/1-hash.json.zst"), env);
   assert.equal(json.status, 200);
   assert.equal(json.headers.get("Content-Encoding"), "zstd");
   assert.equal(json.headers.get("Content-Type"), "application/json; charset=utf-8");
@@ -154,14 +168,14 @@ test("handles health, missing objects, methods, and invalid keys", async () => {
     },
   });
 
-  assert.equal((await worker.fetch(request("/health"), env)).status, 200);
-  assert.equal((await worker.fetch(request("/archive/missing.json.zst"), env)).status, 404);
-  assert.equal((await worker.fetch(request("/archive/%5Csecret"), env)).status, 400);
-  assert.equal((await worker.fetch(request("/archive/release.json", { method: "POST" }), env)).status, 405);
+  assert.equal((await workerFetch(request("/health"), env)).status, 200);
+  assert.equal((await workerFetch(request("/archive/missing.json.zst"), env)).status, 404);
+  assert.equal((await workerFetch(request("/archive/%5Csecret"), env)).status, 400);
+  assert.equal((await workerFetch(request("/archive/release.json", { method: "POST" }), env)).status, 405);
 });
 
 test("release.json is served as a no-cache pointer", async () => {
-  const result = await worker.fetch(request("/archive/release.json"), environment());
+  const result = await workerFetch(request("/archive/release.json"), environment());
   assert.equal(result.status, 200);
   assert.equal(result.headers.get("Cache-Control"), "no-cache");
 });
@@ -178,7 +192,7 @@ test("release.json exposes R2 uploaded as Last-Modified", async () => {
       },
     },
   });
-  const result = await worker.fetch(request("/archive/release.json"), env);
+  const result = await workerFetch(request("/archive/release.json"), env);
   assert.equal(result.headers.get("Last-Modified"), uploaded.toUTCString());
 });
 
@@ -195,14 +209,14 @@ test("serves authenticated static assets with security headers", async () => {
     },
   });
 
-  const result = await worker.fetch(request("/"), env);
+  const result = await workerFetch(request("/"), env);
   assert.equal(result.status, 200);
   assert.equal(new URL(received.url).pathname, "/");
   assert.match(result.headers.get("Content-Security-Policy"), /default-src 'self'/);
   assert.equal(result.headers.get("X-Content-Type-Options"), "nosniff");
   assert.match(await result.text(), /ReDSTM/);
 
-  const operations = await worker.fetch(request("/ops"), env);
+  const operations = await workerFetch(request("/ops"), env);
   assert.equal(operations.status, 200);
   assert.equal(new URL(received.url).pathname, "/ops");
   assert.match(operations.headers.get("Content-Security-Policy"), /connect-src 'self'/);
