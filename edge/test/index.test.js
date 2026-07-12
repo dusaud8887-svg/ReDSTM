@@ -130,6 +130,7 @@ test("streams private objects with safe Zstandard and range headers", async () =
 
   assert.equal(result.status, 206);
   assert.equal(result.headers.get("Content-Range"), "bytes 2-5/10");
+  assert.equal(result.headers.get("Content-Length"), "4");
   assert.equal(result.headers.get("Cache-Control"), "private, immutable");
   assert.equal(options.range.get("Range"), "bytes=2-5");
 
@@ -137,6 +138,7 @@ test("streams private objects with safe Zstandard and range headers", async () =
   assert.equal(json.status, 200);
   assert.equal(json.headers.get("Content-Encoding"), "zstd");
   assert.equal(json.headers.get("Content-Type"), "application/json; charset=utf-8");
+  assert.equal(json.headers.get("Content-Length"), "10");
   assert.equal(options.range, undefined);
 });
 

@@ -60,6 +60,7 @@ let postController;
 let pinchDistance = 0;
 let zoomFeedbackTimer;
 let zoomPersistTimer;
+let aaHintShown = false;
 let lastReaderScroll = 0;
 let latestPosts = [];
 let publishedAt = null;
@@ -177,6 +178,9 @@ function applySettings() {
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
   elements["archive-body"].classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
+  const aaBackgroundIsLight = relativeLuminance(settings.aaBackground) >= 0.5;
+  elements["archive-body"].classList.toggle("aa-light-ink", aaBackgroundIsLight);
+  elements["archive-body"].classList.toggle("aa-dark-ink", !aaBackgroundIsLight);
   const canvas = elements["archive-body"].querySelector(".aa-canvas");
   if (canvas) canvas.dataset.width = settings.aaCanvasWidth ?? "auto";
   for (const button of document.querySelectorAll("[data-aa-preset]")) {
@@ -187,13 +191,35 @@ function applySettings() {
   for (const button of document.querySelectorAll("[data-aa-background]")) {
     button.classList.toggle("active", button.dataset.aaBackground === settings.aaBackground);
   }
+  requestAnimationFrame(() => updateAaOverflowCue());
+}
+
+function relativeLuminance(hex) {
+  const channels = hex.match(/[0-9a-f]{2}/gi)?.map((value) => Number.parseInt(value, 16) / 255) ?? [1, 1, 1];
+  const [red, green, blue] = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function showReaderFeedback(text, duration = 1200) {
+  clearTimeout(zoomFeedbackTimer);
+  elements["aa-zoom-indicator"].textContent = text;
+  elements["aa-zoom-indicator"].hidden = false;
+  zoomFeedbackTimer = setTimeout(() => { elements["aa-zoom-indicator"].hidden = true; }, duration);
 }
 
 function showZoomFeedback() {
-  clearTimeout(zoomFeedbackTimer);
-  elements["aa-zoom-indicator"].textContent = `${Math.round(settings.aaZoom * 100)}%`;
-  elements["aa-zoom-indicator"].hidden = false;
-  zoomFeedbackTimer = setTimeout(() => { elements["aa-zoom-indicator"].hidden = true; }, 1200);
+  showReaderFeedback(`${Math.round(settings.aaZoom * 100)}%`);
+}
+
+function updateAaOverflowCue(showHint = false) {
+  const body = elements["archive-body"];
+  const overflow = currentMode === "aa" && body.scrollWidth > body.clientWidth + 1;
+  const canScrollRight = overflow && body.scrollLeft < body.scrollWidth - body.clientWidth - 2;
+  body.classList.toggle("aa-can-scroll", canScrollRight);
+  if (showHint && overflow && !aaHintShown) {
+    aaHintShown = true;
+    showReaderFeedback("↔ 가로로 이동", 2200);
+  }
 }
 
 function setAaZoom(value, debounce = false) {
@@ -269,6 +295,22 @@ function requireArchiveResponse(response, message) {
     throw error;
   }
   if (!response.ok) throw new Error(message);
+}
+
+async function responseJsonWithProgress(response, label) {
+  const total = Number(response.headers.get("Content-Length")) || 0;
+  if (total <= 1_048_576 || !response.body) return response.json();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    elements["archive-state"].textContent = `${label} ${Math.min(99, Math.floor(received / total * 100))}%`;
+  }
+  return JSON.parse(await new Blob(chunks, { type: "application/json" }).text());
 }
 
 function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없음") {
@@ -567,8 +609,9 @@ async function loadPost(summary, navigate = true) {
     if (!resolved?.object_key) throw new Error("현재 보존본에서 글을 찾을 수 없습니다");
     const response = await fetch(`/archive/${resolved.object_key}`, { signal: postController.signal });
     requireArchiveResponse(response, response.status === 404 ? "보존 객체가 없습니다" : `본문 응답 ${response.status}`);
-    const payload = await response.json();
+    const payload = await responseJsonWithProgress(response, "본문");
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
+    elements["archive-state"].textContent = "보존본";
     showPost(payload, resolved, navigate);
   } catch (error) {
     if (error.name !== "AbortError") {
@@ -645,6 +688,7 @@ function renderPostBody() {
   }
   applySettings();
   decorateImages(elements["archive-body"]);
+  requestAnimationFrame(() => updateAaOverflowCue(true));
 }
 
 function decorateImages(container) {
@@ -955,6 +999,7 @@ elements["archive-body"].addEventListener("dblclick", () => {
   if (currentMode !== "aa") return;
   setAaZoom(settings.aaZoom < 1.25 ? 1.5 : settings.aaZoom < 1.75 ? 2 : 1);
 });
+elements["archive-body"].addEventListener("scroll", () => updateAaOverflowCue(), { passive: true });
 function touchDistance(event) {
   return Math.hypot(
     event.touches[0].clientX - event.touches[1].clientX,

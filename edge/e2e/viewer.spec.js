@@ -38,7 +38,9 @@ function aaPostPayload(id, title) {
   return payload;
 }
 
-async function useCollectionFixture(page) {
+async function useCollectionFixture(page, { largeStandalone = false } = {}) {
+  const standalone = postPayload(3, "비소속");
+  if (largeStandalone) standalone.transfer_padding = "x".repeat(1_100_000);
   const payloads = new Map([
     ["release.json", {
       schema_version: 1,
@@ -67,7 +69,7 @@ async function useCollectionFixture(page) {
     }],
     [firstKey, aaPostPayload(1, "첫째")],
     [secondKey, postPayload(2, "둘째")],
-    [standaloneKey, postPayload(3, "비소속")],
+    [standaloneKey, standalone],
   ]);
   await page.route("**/archive/**", async (route) => {
     const key = new URL(route.request().url()).pathname.slice("/archive/".length);
@@ -106,6 +108,7 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover.png" });
     await page.locator("#theme-toggle").click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#0b0d12");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
   }
 
@@ -148,6 +151,12 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await page.locator("#aa-source-styles").click();
   await expect(page.locator("#archive-body")).toHaveClass(/normalize-source-styles/);
   await expect(page.locator("#archive-body font")).not.toHaveCSS("color", "rgb(180, 35, 47)");
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(36, 37, 42)");
+  await page.locator("#aa-background").evaluate((input) => {
+    input.value = "#0b0d12";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(123, 224, 162)");
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await page.locator('[data-aa-zoom-delta="0.25"]').click();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
@@ -158,16 +167,32 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await page.locator(mobile ? "#settings-mode" : "#mode-toggle").click();
   await expect(page.locator(mobile ? "#settings-mode-reset" : "#mode-reset")).toBeVisible();
   if (mobile) await page.locator("#settings-dialog button[aria-label='닫기']").click();
-  await expect(page.locator("#archive-body")).not.toHaveClass(/aa/);
+  expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(false);
   await expect(page.locator("#aa-controls")).toBeHidden();
   await page.reload();
-  await expect(page.locator("#archive-body")).not.toHaveClass(/aa/);
+  expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(false);
   if (mobile) await page.locator("#reader-bottom-settings").click();
   await page.locator(mobile ? "#settings-mode-reset" : "#mode-reset").click();
   if (mobile) await page.locator("#settings-dialog button[aria-label='닫기']").click();
-  await expect(page.locator("#archive-body")).toHaveClass(/aa/);
+  expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa-fixture.png` });
+});
+
+test("shows progress while receiving a large post", async ({ page }) => {
+  await useCollectionFixture(page, { largeStandalone: true });
+  await page.goto("/");
+  await page.evaluate(() => {
+    window.__redstmArchiveStates = [];
+    const target = document.getElementById("archive-state");
+    new MutationObserver(() => window.__redstmArchiveStates.push(target.textContent)).observe(target, { childList: true });
+  });
+  if (page.viewportSize().width < 760) await page.locator("#home-search").click();
+  await page.locator(".result-item").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const states = await page.evaluate(() => window.__redstmArchiveStates);
+  expect(states.some((state) => /^본문 \d+%$/.test(state))).toBe(true);
 });
 
 test("supports progress, immersive mode, and reader shortcuts", async ({ page }) => {

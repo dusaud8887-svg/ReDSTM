@@ -141,6 +141,7 @@ async function archiveResponse(request, env, key) {
       `bytes ${object.range.offset}-${object.range.offset + object.range.length - 1}/${object.size}`,
     );
   }
+  headers.set("Content-Length", String(options.range && object.range ? object.range.length : object.size));
   return new Response(object.body, { status, headers, encodeBody: "manual" });
 }
 
