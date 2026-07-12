@@ -201,3 +201,35 @@ def test_exhausted_retry_raises_without_secret_text() -> None:
     with pytest.raises(ControlUnavailableError) as caught:
         client.post("/api/v1/runner/heartbeat", {}, "heartbeat-0001")
     assert "very-secret-value" not in str(caught.value)
+
+
+def test_missing_control_credentials_can_be_explicitly_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in (
+        "REDSTM_CONTROL_URL",
+        "REDSTM_ACCESS_CLIENT_ID",
+        "REDSTM_ACCESS_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ValueError):
+        ControlClient.from_environment()
+    monkeypatch.setenv("REDSTM_CONTROL_URL", "https://archive.example")
+    with pytest.raises(ValueError, match="credentials"):
+        ControlClient.from_environment(allow_offline=True)
+    monkeypatch.delenv("REDSTM_CONTROL_URL")
+
+    store = ControlStore(tmp_path / "control.sqlite")
+    client = ControlClient.from_environment(allow_offline=True)
+
+    assert (
+        client.send_or_enqueue(
+            store,
+            "heartbeat",
+            "/api/v1/runner/heartbeat",
+            {"runner_version": "git-1", "state": "idle"},
+            "heartbeat-offline-0001",
+        )
+        is False
+    )
+    assert store.stats()["rows"] == 1

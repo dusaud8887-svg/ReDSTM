@@ -701,7 +701,9 @@ def main() -> int:
         runner_version=args.runner_version,
     )
     runner = ControlRunner(
-        profile, ControlClient.from_environment(), ControlStore(profile.state_db)
+        profile,
+        ControlClient.from_environment(allow_offline=args.scheduled),
+        ControlStore(profile.state_db),
     )
     report = runner.run_scheduled() if args.scheduled else runner.run_once()
     print(json.dumps(report, sort_keys=True))

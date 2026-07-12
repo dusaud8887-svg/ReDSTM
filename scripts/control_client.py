@@ -47,6 +47,12 @@ class ControlProtocolError(RuntimeError):
         self.code = code
 
 
+def _offline_sender(
+    _path: str, _body: bytes, _headers: dict[str, str]
+) -> tuple[int, Mapping[str, str], bytes]:
+    raise ControlUnavailableError()
+
+
 class ControlClient:
     def __init__(
         self,
@@ -80,12 +86,21 @@ class ControlClient:
         self._unavailable_until = 0.0
 
     @classmethod
-    def from_environment(cls) -> ControlClient:
-        return cls(
+    def from_environment(cls, *, allow_offline: bool = False) -> ControlClient:
+        values = (
             os.environ.get("REDSTM_CONTROL_URL", ""),
             os.environ.get("REDSTM_ACCESS_CLIENT_ID", ""),
             os.environ.get("REDSTM_ACCESS_CLIENT_SECRET", ""),
         )
+        if allow_offline and not any(values):
+            return cls(
+                "https://control.invalid",
+                "offline",
+                "offline",
+                sender=_offline_sender,
+                sleep=lambda _delay: None,
+            )
+        return cls(*values)
 
     def post(self, path: str, payload: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
         if _RUNNER_PATH.fullmatch(path) is None:
