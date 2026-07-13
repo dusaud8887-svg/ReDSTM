@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1535,6 +1536,120 @@ def test_partial_inventory_keeps_running_until_every_board_cursor_completes(
     assert calls == 2
     assert marker.is_file()
     assert not (runner.profile.state_dir / "inventory.started").exists()
+
+
+def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            with connect_archive(runner.profile.archive) as connection:
+                connection.execute("UPDATE boards SET inventory_next_page = 5")
+            return {
+                "ok": False,
+                "status": "partial",
+                "changed_posts": 7,
+                "failed_posts": 1,
+                "boards_ok": 1,
+                "boards_failed": 0,
+                "boards": [{"board_id": "aa", "status": "succeeded"}],
+                "outcomes": {"stored": 7},
+            }
+        return {
+            "ok": False,
+            "status": "site_unreachable",
+            "changed_posts": 2,
+            "failed_posts": 0,
+            "boards": [{"board_id": "aa", "status": "failed"}],
+            "outcomes": {"stored": 2},
+            "failures": ["network_error"],
+        }
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-catalog", "inventory-fail", "inventory-fail", command_id="manual"
+    )
+
+    assert calls == 2
+    assert report["status"] == "site_unreachable"
+    assert report["inventory_pass_complete"] is False
+    assert report["changed_posts"] == 9
+    assert report["failed_posts"] == 1
+    assert report["boards_failed"] == 1
+    assert (runner.profile.state_dir / "inventory.started").exists()
+
+
+def test_full_catalog_retries_once_after_session_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"ok": False, "status": "auth_failed", "boards": []}
+        started_at = runner._latest_inventory_pass_started_at()
+        assert started_at is not None
+        with connect_archive(runner.profile.archive) as connection:
+            connection.execute(
+                "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ?",
+                (started_at,),
+            )
+        return {"ok": True, "status": "succeeded", "boards": []}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-catalog", "inventory-auth", "inventory-auth", command_id="manual"
+    )
+
+    assert calls == 2
+    assert report["status"] == "succeeded"
+    assert report["safe_code"] == "full_catalog_succeeded"
+
+
+def test_full_catalog_aborts_when_inventory_makes_no_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "status": "partial", "boards": []}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-catalog", "inventory-stuck", "inventory-stuck", command_id="manual"
+    )
+
+    assert calls == 2
+    assert report["status"] == "failed"
+    assert report["safe_code"] == "full_catalog_no_progress"
+    assert report["inventory_pass_complete"] is False
+
+
+def test_heartbeat_survives_local_telemetry_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, store = _runner(tmp_path, Api([]))
+
+    def broken_rejection() -> None:
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(store, "rejection", broken_rejection)
+
+    runner._heartbeat("running", run_id="run-1", step="crawling", command_id=str(uuid4()))
 
 
 def test_full_catalog_refetches_even_after_a_completed_pass(

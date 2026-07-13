@@ -13,6 +13,39 @@ from scripts.control_store import ControlStore, OutboxFullError
 _NOW = datetime(2026, 7, 12, tzinfo=UTC)
 
 
+def test_store_closes_every_sqlite_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the runner is a long-lived poller; leaked connections exhausted the
+    # process file-descriptor limit after ~3 hours and killed a manual full-catalog run.
+    connections: list[sqlite3.Connection] = []
+    original_connect = sqlite3.connect
+
+    def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        connection = original_connect(*args, **kwargs)  # type: ignore[arg-type]
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr("scripts.control_store.sqlite3.connect", tracking_connect)
+    store = ControlStore(tmp_path / "control.sqlite")
+    command_id = str(uuid4())
+    store.record_claim(command_id, "sync-now", now=_NOW)
+    store.begin_command(command_id, run_id="run-1", now=_NOW)
+    store.finish_command(command_id, "succeeded", "cycle_succeeded", now=_NOW)
+    store.pending_commands()
+    store.enqueue(
+        "heartbeat", "/api/v1/runner/heartbeat", {"state": "idle"}, "heartbeat-close-1"
+    )
+    store.pending()
+    store.stats()
+    store.rejection()
+
+    assert connections
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+
+
 def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> None:
     store = ControlStore(tmp_path / "control.sqlite")
     command_id = str(uuid4())

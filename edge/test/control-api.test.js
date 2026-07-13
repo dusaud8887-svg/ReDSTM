@@ -593,6 +593,79 @@ test("heartbeat and overview expose only bounded status", async () => {
   assert.equal(overviewData.archive_snapshot.counters.outline_only, 3);
 });
 
+test("keeps a long manual run active while the runner heartbeats it", async () => {
+  const runId = "command-11111111-2222-3333-4444-555555555555";
+  let reconciled = false;
+  const env = {
+    CONTROL_DB: database((method, sql) => {
+      if (method === "batch") {
+        reconciled = true;
+        return [];
+      }
+      if (sql.includes("runner_status WHERE")) {
+        return {
+          state: "running",
+          heartbeat_at: new Date().toISOString(),
+          next_scheduled_at: null,
+          active_run_id: runId,
+        };
+      }
+      if (sql.includes("state = 'running'")) {
+        return {
+          run_id: runId, kind: "manual-sync", source: "command", state: "running",
+          started_at: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString(),
+          safe_summary_json: null,
+        };
+      }
+      if (sql.includes("COUNT(*)")) return { count: 0 };
+      return null;
+    }),
+  };
+  const overview = await controlApiResponse(
+    request("/api/v1/ops/overview"),
+    env,
+    { role: "user", subject: "reader" },
+  );
+  assert.equal(overview.status, 200);
+  const data = (await overview.json()).data;
+  assert.equal(reconciled, false);
+  assert.equal(data.active_run.run_id, runId);
+});
+
+test("stale reconciliation exempts only the actively heartbeated run", async () => {
+  const batches = [];
+  const env = {
+    CONTROL_DB: database((method, sql, parameters) => {
+      if (method === "batch") {
+        batches.push(parameters);
+        return [];
+      }
+      if (sql.includes("runner_status WHERE")) {
+        return { state: "idle", heartbeat_at: "2026-07-12T00:00:00.000Z" };
+      }
+      if (sql.includes("state = 'running'")) {
+        return {
+          run_id: "run-abandoned", kind: "scheduled", source: "systemd", state: "running",
+          started_at: "2020-01-01T00:00:00.000Z", safe_summary_json: null,
+        };
+      }
+      if (sql.includes("COUNT(*)")) return { count: 0 };
+      return null;
+    }),
+  };
+  const overview = await controlApiResponse(
+    request("/api/v1/ops/overview"),
+    env,
+    { role: "user", subject: "reader" },
+  );
+  assert.equal(overview.status, 200);
+  assert.equal(batches.length, 1);
+  for (const statement of batches[0]) {
+    assert.match(statement.sql, /active_run_id FROM runner_status/);
+    assert.match(statement.sql, /heartbeat_at >= \?/);
+  }
+});
+
 test("ignores a historical impossible next schedule timestamp", async () => {
   const env = {
     CONTROL_DB: database((method, sql) => {
