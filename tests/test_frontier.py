@@ -190,13 +190,14 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
     path = tmp_path / "frontier.sqlite"
     store = FrontierStore(path)
     store.initialize()
-    for post_id, error in (
-        (1, "network_error"),
-        (2, "network_error"),
-        (3, "parse_drift"),
-        (4, "storage_error"),
+    for board_id, post_id, error in (
+        ("write_free21", 1, "network_error"),
+        ("write_free21", 2, "network_error"),
+        ("write_free21", 3, "parse_drift"),
+        ("write_free21", 4, "storage_error"),
+        ("aa_a01", 5, "storage_error"),
     ):
-        store.seed("write_free21", post_id, f"https://www.typemoon.net/write_free21/{post_id}")
+        store.seed(board_id, post_id, f"https://www.typemoon.net/{board_id}/{post_id}")
         with connect_archive(path) as connection:
             connection.execute(
                 """
@@ -221,8 +222,16 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
         (2, "dead", 5),
         (3, "dead", 5),
         (4, "dead", 5),
+        (5, "dead", 5),
     ]
-    assert store.requeue_dead(error_code="storage_error", limit=1) == 1
+    assert (
+        store.requeue_dead(
+            error_code="storage_error",
+            limit=1,
+            board_id="write_free21",
+        )
+        == 1
+    )
     with pytest.raises(ValueError, match="unsupported"):
         store.requeue_dead(error_code="auth_required", limit=1)
 

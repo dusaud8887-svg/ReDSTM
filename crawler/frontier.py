@@ -262,20 +262,24 @@ class FrontierStore:
         *,
         limit: int,
         now: datetime | None = None,
+        board_id: str | None = None,
     ) -> list[tuple[str, int]]:
         if limit < 1:
             raise ValueError("limit must be positive")
         selected_at = _timestamp(now or datetime.now(UTC))
+        board_clause = " AND frontier.board_id = ?" if board_id is not None else ""
+        expired_board_clause = " AND board_id = ?" if board_id is not None else ""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
-                """
+                f"""
                 UPDATE crawl_frontier
                 SET state = 'retry', lease_token = NULL, lease_expires_at = NULL,
                     next_attempt_at = ?
                 WHERE state = 'running' AND lease_expires_at <= ?
+                  {expired_board_clause}
                 """,
-                (selected_at, selected_at),
+                (selected_at, selected_at, *([board_id] if board_id is not None else [])),
             )
             group_order_sql = " ".join(
                 f"WHEN ? THEN {rank}" for rank, _group in enumerate(REDSTM_RECOVERY_GROUP_ORDER)
@@ -287,6 +291,7 @@ class FrontierStore:
                 LEFT JOIN boards AS board ON board.board_id = frontier.board_id
                 WHERE frontier.state IN ('pending', 'retry')
                   AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
+                  {board_clause}
                 ORDER BY
                     CASE board.group_name
                         {group_order_sql}
@@ -298,7 +303,12 @@ class FrontierStore:
                     frontier.external_post_id
                 LIMIT ?
                 """,
-                (selected_at, *REDSTM_RECOVERY_GROUP_ORDER, limit),
+                (
+                    selected_at,
+                    *([board_id] if board_id is not None else []),
+                    *REDSTM_RECOVERY_GROUP_ORDER,
+                    limit,
+                ),
             ).fetchall()
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
@@ -390,14 +400,16 @@ class FrontierStore:
         *,
         limit: int,
         stale_before: datetime,
+        board_id: str | None = None,
     ) -> list[tuple[str, int]]:
         if limit < 1:
             raise ValueError("limit must be positive")
         stale_before_text = _timestamp(stale_before)
+        board_clause = " AND frontier.board_id = ?" if board_id is not None else ""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
-                """
+                f"""
                 SELECT frontier.board_id, frontier.external_post_id
                 FROM crawl_frontier AS frontier
                 LEFT JOIN posts AS post
@@ -407,13 +419,14 @@ class FrontierStore:
                   AND julianday(
                     COALESCE(post.last_collected_at, frontier.last_attempt_at)
                   ) <= julianday(?)
+                  {board_clause}
                 ORDER BY julianday(
                            COALESCE(post.last_collected_at, frontier.last_attempt_at)
                          ),
                          frontier.board_id, frontier.external_post_id
                 LIMIT ?
                 """,
-                (stale_before_text, limit),
+                (stale_before_text, *([board_id] if board_id is not None else []), limit),
             ).fetchall()
             connection.executemany(
                 """
@@ -426,24 +439,26 @@ class FrontierStore:
             )
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
-    def requeue_dead(self, *, error_code: str, limit: int) -> int:
+    def requeue_dead(self, *, error_code: str, limit: int, board_id: str | None = None) -> int:
         if error_code not in REDSTM_CAPPED_RETRY_ERROR_CODES:
             raise ValueError("unsupported dead frontier error code")
         if limit < 1:
             raise ValueError("limit must be positive")
+        board_clause = " AND board_id = ?" if board_id is not None else ""
         with self._connect() as connection:
             cursor = connection.execute(
-                """
+                f"""
                 UPDATE crawl_frontier
                 SET state = 'retry', attempts = 0, next_attempt_at = NULL,
                     last_error_code = NULL, lease_token = NULL, lease_expires_at = NULL
                 WHERE (board_id, external_post_id) IN (
                     SELECT board_id, external_post_id FROM crawl_frontier
                     WHERE state = 'dead' AND last_error_code = ?
+                      {board_clause}
                     ORDER BY priority DESC, board_id, external_post_id LIMIT ?
                 )
                 """,
-                (error_code, limit),
+                (error_code, *([board_id] if board_id is not None else []), limit),
             )
         return cursor.rowcount
 

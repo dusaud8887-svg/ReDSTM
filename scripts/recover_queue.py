@@ -40,9 +40,10 @@ def _recovery_batch(
     *,
     limit: int,
     now: datetime | None = None,
+    board_id: str | None = None,
 ) -> tuple[list[tuple[str, int]], int]:
     selected_at = now or datetime.now(UTC)
-    due = frontier.recovery_candidates(limit=limit, now=selected_at)
+    due = frontier.recovery_candidates(limit=limit, now=selected_at, board_id=board_id)
     # Reserve bounded forward progress even while the due queue stays full. Increase only
     # after canary evidence because every reserved slot is another old-source request.
     stale_limit = max(
@@ -53,6 +54,7 @@ def _recovery_batch(
         frontier.requeue_stale_details(
             limit=stale_limit,
             stale_before=selected_at - timedelta(seconds=REDSTM_STALE_DETAIL_REVISIT_SECONDS),
+            board_id=board_id,
         )
         if stale_limit
         else []
@@ -109,11 +111,19 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 )
             else:
                 requeued_dead = (
-                    frontier.requeue_dead(error_code=requeue_code, limit=args.max_posts)
+                    frontier.requeue_dead(
+                        error_code=requeue_code,
+                        limit=args.max_posts,
+                        board_id=board_id,
+                    )
                     if requeue_code
                     else 0
                 )
-                candidates, revisited_posts = _recovery_batch(frontier, limit=args.max_posts)
+                candidates, revisited_posts = _recovery_batch(
+                    frontier,
+                    limit=args.max_posts,
+                    board_id=board_id,
+                )
         run_id = store.start_run("retry")
         warc_dir.mkdir(parents=True, exist_ok=True)
         warc_path = warc_dir / f"{run_id}.warc.gz"

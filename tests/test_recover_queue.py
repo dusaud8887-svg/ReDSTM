@@ -64,6 +64,17 @@ def test_recovery_priority_bound_and_idempotent_transition(tmp_path: Path) -> No
         ("write_free21", 62068),
         ("ss_temp01", 62068),
     ]
+    assert frontier.recovery_candidates(
+        limit=3,
+        now=_NOW,
+        board_id="forum01",
+    ) == [("forum01", 62068)]
+    assert _recovery_batch(
+        frontier,
+        limit=2,
+        now=_NOW,
+        board_id="forum01",
+    ) == ([("forum01", 62068)], 0)
     with connect_archive(archive, read_only=True) as connection:
         assert (
             connection.execute(
@@ -178,9 +189,29 @@ def test_recovery_uses_free_slots_for_oldest_stale_details(
             "WHERE external_post_id = 2"
         )
         connection.execute("UPDATE posts SET comment_count = 1 WHERE external_post_id = 2")
-    assert frontier.requeue_stale_details(limit=1, stale_before=_NOW - timedelta(days=30)) == [
-        ("aa_a01", 2)
-    ]
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('a_other', 'Other', 'https://www.typemoon.net/a_other', 'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title,
+                first_seen_at, last_seen_at, last_collected_at
+            ) VALUES ('a_other', 9, 'https://www.typemoon.net/a_other/9', 'older',
+                      'now', 'now', '2024-01-01T00:00:00Z')
+            """
+        )
+    frontier.seed("a_other", 9, "https://www.typemoon.net/a_other/9")
+    with connect_archive(archive) as connection:
+        connection.execute("UPDATE crawl_frontier SET state = 'done' WHERE board_id = 'a_other'")
+    assert frontier.requeue_stale_details(
+        limit=1,
+        stale_before=_NOW - timedelta(days=30),
+        board_id="aa_a01",
+    ) == [("aa_a01", 2)]
     spider = TypeMoonRecoverySpider(
         candidates=[("aa_a01", 2)],
         archive_path=archive,
