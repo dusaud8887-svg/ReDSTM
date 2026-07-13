@@ -20,6 +20,24 @@ INSTALLER_UPLOAD=""
 INSTALL_ACTIVE=0
 INSTALL_MUTATED=0
 INSTALL_BRIDGE=0
+MAINTENANCE_MARKER="/srv/redstm/state/maintenance"
+MAINTENANCE_ACTIVE=0
+
+cleanup_maintenance() {
+  if (( MAINTENANCE_ACTIVE == 1 )); then
+    rm -f -- "$MAINTENANCE_MARKER" "${MAINTENANCE_MARKER}.partial" || true
+    MAINTENANCE_ACTIVE=0
+  fi
+}
+
+begin_maintenance() {
+  [[ "$1" =~ ^[a-z0-9-]{1,64}$ ]] || fail "invalid maintenance reason"
+  MAINTENANCE_ACTIVE=1
+  printf '%s\n' "$1" > "${MAINTENANCE_MARKER}.partial"
+  chown redstm:redstm "${MAINTENANCE_MARKER}.partial"
+  chmod 0600 "${MAINTENANCE_MARKER}.partial"
+  mv -Tf -- "${MAINTENANCE_MARKER}.partial" "$MAINTENANCE_MARKER"
+}
 
 handle_error() {
   local code=$?
@@ -33,6 +51,7 @@ handle_error() {
 }
 
 trap handle_error ERR
+trap cleanup_maintenance EXIT
 
 fail() {
   if (( INSTALL_ACTIVE == 1 && INSTALL_MUTATED == 0 )); then
@@ -305,7 +324,7 @@ install_release() {
     fail "invalid installer path"
   INSTALL_ARCHIVE="$archive"
   INSTALLER_UPLOAD="$0"
-  trap cleanup_install_uploads EXIT
+  trap 'cleanup_install_uploads; cleanup_maintenance' EXIT
   [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || fail "invalid archive hash"
   [[ -f "$archive" ]] || fail "release archive is missing"
   [[ "$(sha256sum "$archive" | cut -d' ' -f1)" == "$expected" ]] || fail "archive hash mismatch"
@@ -506,6 +525,7 @@ activate_canonical() {
   else
     fail "canonical transfer is missing"
   fi
+  begin_maintenance "canonical-activation"
   sudo -u redstm env PYTHONPATH="$CURRENT" "$CURRENT/.venv/bin/python" \
     -m scripts.doctor "$CANONICAL_STAGING" \
     --warc-dir /srv/redstm/warc --output /srv/redstm/reports/canonical-activation-doctor.json \
@@ -624,6 +644,7 @@ PY
   read -r schema_version target_schema <<<"$metadata"
   [[ "$schema_version" =~ ^[0-9]+$ && "$target_schema" =~ ^[0-9]+$ ]] || \
     fail "canonical migration metadata output is invalid"
+  begin_maintenance "canonical-schema"
   if [[ "$schema_version" == "$target_schema" ]]; then
     sudo -u redstm env PYTHONPATH="$current" "$current/.venv/bin/python" \
       -m scripts.doctor "$CANONICAL_TARGET" --warc-dir /srv/redstm/warc \

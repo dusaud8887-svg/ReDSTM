@@ -130,6 +130,7 @@ CANONICAL_TRANSFER="$PWD/canonical/archive.sqlite.transfer.partial"
 CANONICAL_STAGING="$PWD/canonical/archive.sqlite.partial"
 CURRENT="$PWD/current"
 acquire_runner_lock() { :; }
+begin_maintenance() { :; }
 sudo() { :; }
 sync() { :; }
 canonical_activation_checkpoint() {
@@ -915,10 +916,20 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "if extra_versions or mismatched or user_version > supported_max" not in installer
     assert "migrate-canonical)" in installer
     assert "canonical migration requires two distinct compatible releases" in installer
+    assert 'MAINTENANCE_MARKER="/srv/redstm/state/maintenance"' in installer
+    maintenance_body = installer.split("begin_maintenance() {", 1)[1].split("handle_error() {", 1)[
+        0
+    ]
+    assert maintenance_body.index("MAINTENANCE_ACTIVE=1") < maintenance_body.index("printf '%s\\n'")
     assert "migrate_archive_locked" in installer
     migration_body = installer.split("migrate_canonical_schema() {", 1)[1].split(
         "rollback_release() {", 1
     )[0]
+    assert 'begin_maintenance "canonical-schema"' in migration_body
+    activation_body = installer.split("activate_canonical() {", 1)[1].split(
+        "canonical_schema_status() {", 1
+    )[0]
+    assert 'begin_maintenance "canonical-activation"' in activation_body
     assert "print(json.dumps(report" not in migration_body
     assert "canonical-schema=migrated" in migration_body
     assert "CANONICAL_MIGRATION_FREE_MARGIN_BYTES=5368709120" in installer

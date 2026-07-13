@@ -250,6 +250,9 @@ class ControlRunner:
             with lock:
                 return self._run_locked()
         except Timeout:
+            if (self.profile.state_dir / "maintenance").is_file():
+                self._heartbeat("degraded", step="maintenance", warning_code="maintenance")
+                return {"ok": True, "status": "maintenance"}
             return {"ok": True, "status": "busy"}
 
     def run_scheduled(self) -> dict[str, Any]:
@@ -258,9 +261,13 @@ class ControlRunner:
             with lock:
                 return self._run_scheduled_locked()
         except Timeout:
+            if (self.profile.state_dir / "maintenance").is_file():
+                self._heartbeat("degraded", step="maintenance", warning_code="maintenance")
+                return {"ok": True, "status": "maintenance"}
             return {"ok": True, "status": "busy"}
 
     def _run_scheduled_locked(self) -> dict[str, Any]:
+        (self.profile.state_dir / "maintenance").unlink(missing_ok=True)
         self._reconcile_source_boards()
         if (self.profile.state_dir / "schedule.paused").exists():
             self._heartbeat("paused")
@@ -369,6 +376,7 @@ class ControlRunner:
         }
 
     def _run_locked(self) -> dict[str, Any]:
+        (self.profile.state_dir / "maintenance").unlink(missing_ok=True)
         self._reconcile_source_boards()
         try:
             self.client.flush(self.store)
@@ -1845,11 +1853,18 @@ class ControlRunner:
         run_id: str | None = None,
         step: str | None = None,
         command_id: str | None = None,
+        warning_code: str | None = None,
     ) -> None:
         # Heartbeats are best-effort telemetry; a local failure (disk probe, state DB,
         # timer inspection) must never abort the command or run being reported on.
         try:
-            self._heartbeat_once(state, run_id=run_id, step=step, command_id=command_id)
+            self._heartbeat_once(
+                state,
+                run_id=run_id,
+                step=step,
+                command_id=command_id,
+                warning_code=warning_code,
+            )
         except OSError, RuntimeError, ValueError, sqlite3.Error:
             return
 
@@ -1860,6 +1875,7 @@ class ControlRunner:
         run_id: str | None = None,
         step: str | None = None,
         command_id: str | None = None,
+        warning_code: str | None = None,
     ) -> None:
         if state == "idle" and (self.profile.state_dir / "schedule.paused").exists():
             state = "paused"
@@ -1873,7 +1889,8 @@ class ControlRunner:
             "state": state,
             "disk_free_bytes": disk_free_bytes,
             "next_scheduled_at": next_scheduled_at,
-            "safe_warning_code": self._safe_warning(disk_free_bytes, datetime.now(UTC)),
+            "safe_warning_code": warning_code
+            or self._safe_warning(disk_free_bytes, datetime.now(UTC)),
         }
         if state == "running" and self.profile.archive.is_file():
             try:
@@ -1891,12 +1908,9 @@ class ControlRunner:
             except sqlite3.Error:
                 pass
         if run_id is not None:
-            payload.update(
-                {
-                    "active_run_id": run_id,
-                    "active_step": step,
-                }
-            )
+            payload["active_run_id"] = run_id
+        if step is not None or run_id is not None:
+            payload["active_step"] = step
         if command_id is not None:
             payload.update(
                 {

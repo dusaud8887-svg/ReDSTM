@@ -11,6 +11,7 @@ const stepLabels = {
   crawling: "상세 수집", inventory: "전체 목록 확인", recovery: "본문 대기 재시도",
   "full-catalog": "전체 목차 재수집", "full-content": "전체 본문 재수집",
   "retry-batch": "본문 대기 재시도", "bootstrap-recovery": "최초 본문 채우기",
+  maintenance: "보관소 무결성 점검",
   archive_snapshot: "중간 집계",
   exporting: "Reader 내보내기", publishing: "Reader 반영", verifying: "게시 검증",
   smoking: "Reader 게시 검증", rolling_back: "이전 Reader 복구",
@@ -63,6 +64,7 @@ const warningLabels = {
   control_rejected: "운영 상태 전달이 영구 거절됐습니다. 배포 호환성을 확인해야 합니다.",
   token_expiring: "수집기 인증 갱신이 필요합니다.",
   publish_stale: "새 보존본 게시가 지연되고 있습니다.",
+  maintenance: "Oracle 보관소를 점검하고 있습니다. 수동 수집은 점검 완료 후 다시 사용할 수 있습니다.",
   schedule_overdue: "자동 실행 예정 시각이 지났거나 마지막 자동 실행이 7시간보다 오래됐습니다.",
   schedule_unverified: "예약은 켜져 있지만 자동 실행 완료 이력이 아직 없습니다.",
 };
@@ -182,6 +184,7 @@ function runnerState(runner) {
 
 function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot) {
   const unavailable = state === "stale" || state === "not_enrolled";
+  const maintenance = runner?.state === "degraded" && runner?.active_step === "maintenance";
   const paused = runner?.state === "paused";
   const running = runner?.state === "running";
   const retryWaiting = snapshot
@@ -195,6 +198,7 @@ function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot
     let disabled = pendingActions.has(action);
     if (pendingActions.has(action)) reason = "요청을 보내는 중입니다.";
     else if (unavailable) { disabled = true; reason = "수집기가 다시 연결된 뒤 요청할 수 있습니다."; }
+    else if (maintenance) { disabled = true; reason = "보관소 무결성 점검이 끝난 뒤 요청할 수 있습니다."; }
     else if (running && action !== "pause-after-current") { disabled = true; reason = "현재 작업 중에는 이후 예약만 일시정지할 수 있습니다."; }
     else if (paused && action === "pause-after-current") { disabled = true; reason = "자동 수집이 이미 꺼져 있습니다."; }
     else if (!paused && action === "resume-schedule") { disabled = true; reason = "일시정지 상태에서만 사용할 수 있습니다."; }
@@ -207,6 +211,8 @@ function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot
     ? `활성 명령 ${activeCommands}개 · 완료될 때까지 같은 작업을 다시 요청하지 마세요.`
     : unavailable
     ? "수집기 신호가 돌아오면 수동 작업을 요청할 수 있습니다."
+    : maintenance
+    ? "Oracle 보관소 점검이 끝나면 수동 작업이 자동으로 다시 열립니다."
     : scheduleEnabled
     ? "자동 수집이 켜져 있습니다. 예외가 있을 때만 고정된 작업을 요청합니다."
     : "Oracle 자동 예약이 꺼져 있습니다. redstm-schedule.timer를 활성화하기 전까지 1회 작업만 수동으로 요청할 수 있습니다.";
@@ -309,8 +315,11 @@ function renderOverview(data) {
   const latestAutomatic = data.latest_automatic_run || (latest?.kind === "scheduled" ? latest : null);
   const state = runnerState(runner);
   const stale = state === "stale";
+  const maintenance = runner?.state === "degraded" && runner?.active_step === "maintenance";
   const scheduleEnabled = Boolean(data.schedule_enabled);
-  const baseAutomation = state === "not_enrolled" || stale
+  const baseAutomation = maintenance
+    ? "maintenance"
+    : state === "not_enrolled" || stale
     ? "unknown"
     : runner?.state === "paused"
     ? "paused"
@@ -333,6 +342,7 @@ function renderOverview(data) {
   const verdicts = {
     on: "자동 수집 켜짐", off: "자동 수집 꺼짐", paused: "자동 수집 일시정지",
     delayed: "자동 수집 지연", unverified: "자동 실행 확인 전",
+    maintenance: "보관소 점검 중",
     unknown: state === "stale" ? "수집기 응답 없음" : "자동 수집 상태 미보고",
   };
   const reasons = {
@@ -345,6 +355,7 @@ function renderOverview(data) {
     unverified: "Oracle timer는 켜져 있지만 완료된 자동 실행 증거가 없습니다. 첫 실행 결과를 확인하기 전에는 정상 운전으로 판정하지 않습니다.",
     off: "Oracle 자동 예약이 꺼져 있습니다. redstm-schedule.timer를 활성화하기 전까지 정기 수집은 시작되지 않습니다.",
     paused: "현재 요청과 저장은 마친 뒤 다음 예약 실행을 건너뜁니다.",
+    maintenance: "Oracle에서 보관소 무결성을 확인하고 있습니다. Reader는 계속 사용할 수 있고, 수동 수집은 점검이 끝나면 다시 열립니다.",
     unknown: state === "stale"
       ? "마지막 수집기 신호가 3분보다 오래됐습니다. Reader는 활성 보존본으로 계속 사용할 수 있습니다."
       : "수집기가 아직 상태를 보고하지 않았습니다. Oracle control timer와 Access 연결을 확인하세요.",
@@ -353,11 +364,13 @@ function renderOverview(data) {
   byId("overview-reason").textContent = reasons[automation];
   const automationLabel = {
     on: "켜짐", delayed: "켜짐 · 지연", unverified: "켜짐 · 확인 전",
-    off: "꺼짐", paused: "일시정지", unknown: "확인 불가",
+    off: "꺼짐", paused: "일시정지", maintenance: "점검 중", unknown: "확인 불가",
   }[automation];
   byId("overview-kicker").textContent = `${automationLabel} · 자동 예약`;
   byId("status-signal").dataset.state = automation === "on"
     ? state
+    : automation === "maintenance"
+    ? "degraded"
     : automation === "delayed" || automation === "unverified"
     ? "degraded"
     : automation;

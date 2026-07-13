@@ -215,6 +215,32 @@ test("keeps stale runner, empty telemetry, and readable release distinct", async
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test("shows archive maintenance as live and blocks commands with a clear reason", async ({ page }) => {
+  await useOperationsFixture(page, [], {
+    overview: {
+      runner: {
+        state: "degraded", heartbeat_at: now, active_step: "maintenance",
+        safe_warning_code: "maintenance", next_scheduled_at: null,
+        disk_free_bytes: 80 * 2 ** 30,
+      },
+      schedule_enabled: false,
+      active_run: null,
+      latest_run: null,
+      recent_issue: null,
+      archive_snapshot: null,
+      active_commands: 0,
+    },
+  });
+  await page.goto("/ops");
+
+  await expect(page.locator("#overview-title")).toHaveText("보관소 점검 중");
+  await expect(page.locator("#last-heartbeat")).toContainText("확인 필요");
+  await expect(page.locator("#active-step")).toHaveText("보관소 무결성 점검");
+  await expect(page.locator("#warning-label")).toContainText("수동 수집은 점검 완료 후");
+  await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(7);
+  await expect(page.locator("#control-summary")).toContainText("보관소 점검이 끝나면");
+});
+
 test("does not present an interrupted run's missing counters as real zeroes", async ({ page }) => {
   const interrupted = {
     run_id: "command-interrupted", kind: "manual-sync", source: "command", state: "failed",

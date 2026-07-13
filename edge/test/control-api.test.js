@@ -574,6 +574,20 @@ test("heartbeat and overview expose only bounded status", async () => {
   assert.equal((await renewed.json()).data.command_lease_renewed, true);
   assert.match(statements[1].parameters[1].sql, /state = 'claimed'/);
 
+  const maintenance = await controlApiResponse(
+    request("/api/v1/runner/heartbeat", {
+      method: "POST",
+      body: {
+        runner_version: "git-abc123", state: "degraded", active_step: "maintenance",
+        safe_warning_code: "maintenance",
+      },
+      headers: { "Idempotency-Key": "heartbeat-maintenance" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(maintenance.status, 200);
+
   const overview = await controlApiResponse(
     request("/api/v1/ops/overview"),
     env,

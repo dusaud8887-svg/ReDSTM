@@ -62,6 +62,10 @@ Oracle application 전환, rollback, canonical activation은 runner와 같은
 `/srv/redstm/state/control.lock`을 nonblocking으로 공유한다. 릴리스 준비 작업은 active run과 겹칠 수
 있지만 symlink/DB 전환은 lock을 얻은 뒤에만 수행하며, 충돌은 재시도 가능한 `install not started`로
 끝난다.
+명시적 canonical migration/activation처럼 수 분 이상 잠금을 유지하는 무결성 작업은
+`/srv/redstm/state/maintenance` marker를 원자적으로 게시한다. control timer는 잠금을 우회해 작업을
+실행하지 않고 `degraded + maintenance` heartbeat만 갱신하며, 운영 화면은 이를 장애가 아닌
+`보관소 점검 중`으로 표시하고 수동 명령을 잠근다. 정상 종료·오류·다음 lock 획득 시 marker를 정리한다.
 canonical activation의 경로와 snapshot 보존 방식은 환경별 설정이 아니라 무결성 계약이다. active는
 regular file만 허용하고 같은 filesystem hardlink로 old inode를 보존한 뒤 staging을 active에 한 번만
 atomic replace한다. file/directory sync 뒤 성공하며, 같은 bytes/SHA-256의 active는 transfer가 없어도

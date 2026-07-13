@@ -50,6 +50,7 @@ const safeWarnings = new Set([
   "control_rejected",
   "token_expiring",
   "publish_stale",
+  "maintenance",
 ]);
 const identifierPattern = /^[a-zA-Z0-9_.:-]{1,128}$/;
 const idempotencyPattern = /^[a-zA-Z0-9_.:-]{8,128}$/;

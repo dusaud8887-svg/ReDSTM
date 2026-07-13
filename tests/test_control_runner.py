@@ -12,6 +12,7 @@ from typing import Any, BinaryIO, cast
 from uuid import uuid4
 
 import pytest
+from filelock import FileLock
 
 from crawler.archive import connect_archive, initialize_archive
 from crawler.settings import (
@@ -175,6 +176,30 @@ def test_heartbeat_only_reports_a_next_run_for_an_active_timer(
 
     heartbeat = next(payload for path, payload in api.calls if path.endswith("/heartbeat"))
     assert heartbeat["next_scheduled_at"] is not None
+
+
+def test_locked_runner_reports_explicit_maintenance_heartbeat(tmp_path: Path) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    (runner.profile.state_dir / "maintenance").write_text("canonical-schema\n", encoding="utf-8")
+
+    with FileLock(runner.profile.state_dir / "control.lock", timeout=0):
+        report = runner.run_once()
+
+    assert report == {"ok": True, "status": "maintenance"}
+    heartbeat = next(payload for path, payload in api.calls if path.endswith("/heartbeat"))
+    assert heartbeat["state"] == "degraded"
+    assert heartbeat["active_step"] == "maintenance"
+    assert heartbeat["safe_warning_code"] == "maintenance"
+
+
+def test_runner_clears_an_orphaned_maintenance_marker(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([None]))
+    marker = runner.profile.state_dir / "maintenance"
+    marker.write_text("canonical-schema\n", encoding="utf-8")
+
+    assert runner.run_once()["status"] == "idle"
+    assert not marker.exists()
 
 
 def test_active_timer_with_an_unreadable_calendar_is_degraded(
