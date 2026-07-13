@@ -1392,6 +1392,46 @@ def test_canonical_migration_rejects_two_lost_responses(
     assert raised.value.code == "canonical_schema_migration_ambiguous"
 
 
+def test_canonical_migration_does_not_repeat_a_deterministic_remote_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = tmp_path / "oracle.key"
+    key.write_text("test", encoding="utf-8")
+    target = OracleTarget("oracle.example", "ubuntu", key)
+    current = "a" * 40
+    previous = "b" * 40
+    attempts = 0
+
+    def doctor_failed(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        raise subprocess.CalledProcessError(2, ["ssh", "migrate-canonical"])
+
+    monkeypatch.setattr(
+        "scripts.release.status",
+        lambda *_a, **_k: {"current_release": current, "previous_release": previous},
+    )
+    monkeypatch.setattr("scripts.release.migrate_canonical_schema", doctor_failed)
+    monkeypatch.setattr(
+        "scripts.release.canonical_schema_status",
+        lambda *_a, **_k: {
+            "application_id": APPLICATION_ID,
+            "compatible": True,
+            "exact": True,
+            "migration_count": len(MIGRATIONS),
+            "migrations": [[item.version, item.sha256] for item in MIGRATIONS],
+            "schema_policy": RUNTIME_SCHEMA_POLICY,
+            "schema_version": SCHEMA_VERSION,
+        },
+    )
+
+    with pytest.raises(ReleaseError) as raised:
+        migrate_oracle_canonical(target, expected_current=current, expected_previous=previous)
+
+    assert attempts == 1
+    assert raised.value.code == "canonical_schema_migration_ambiguous"
+
+
 def test_oracle_status_falls_back_to_the_commit_bound_installer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -654,7 +654,7 @@ def migrate_oracle_canonical(
         raise ReleaseError("oracle_schema", "canonical_previous_release_changed")
     migration: dict[str, Any] | None = None
     migration_error: BaseException | None = None
-    for _attempt in range(2):
+    for attempt in range(2):
         try:
             migration = migrate_canonical_schema(
                 target,
@@ -664,6 +664,14 @@ def migrate_oracle_canonical(
             )
         except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as error:
             migration_error = error
+            retryable = (
+                isinstance(error, OSError | subprocess.TimeoutExpired | RuntimeError)
+                or isinstance(error, subprocess.CalledProcessError)
+                and error.returncode == 255
+            )
+            if attempt == 0 and retryable:
+                continue
+            break
         else:
             break
     try:

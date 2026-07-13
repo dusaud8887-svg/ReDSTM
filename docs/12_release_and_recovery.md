@@ -229,8 +229,9 @@ uv run python -m scripts.release deploy --host <oracle-host> --key <ssh-key-path
 
 bridge install은 current symlink를 바꾸기 전에 schedule disabled, control/cycle/sync lock, application ID,
 연속 migration ledger/hash와 `explicit-v1` runtime policy를 검사한다. migration은 canonical 크기 + 5GiB
-여유 공간, fsync된 verified snapshot/manifest와 후속 doctor를 요구한다. SSH 응답이 유실되면 같은 guarded
-명령을 한 번 재시도하고 exact status로 결과를 reconcile한다. v4 적용 뒤 v3-only application rollback은
+여유 공간, fsync된 verified snapshot/manifest와 후속 doctor를 요구한다. SSH 응답 유실·timeout처럼
+결과가 불명확한 전송 실패만 같은 guarded 명령을 한 번 재시도하고 exact status로 reconcile한다. doctor가
+명시적으로 실패한 경우에는 같은 장시간 검사를 반복하지 않는다. v4 적용 뒤 v3-only application rollback은
 static projection 호환 여부와 무관하게 거부한다.
 
 ### 명시적 coordinated rollback
