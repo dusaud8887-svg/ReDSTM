@@ -289,8 +289,11 @@ full row는 담지 않으며 이 snapshot이 Operations의 canonical 요약 sour
     warning_code
 
 full canonical count를 매 poll마다 다시 세거나 복제하지 않는다. run 종료 또는 board 완료 때 목차-only
-frontier와 inventory 진행 summary만 upsert하고, 각 값에 source/as-of를 붙인다. Reader 공개 본문·댓글
-수는 D1 counter가 아니라 R2 active release에서 읽는다.
+frontier와 inventory 진행 summary만 upsert하고, 각 값에 source/as-of를 붙인다. 며칠씩 걸리는
+full catalog/content 수동 run은 내부 crawl cycle이 끝날 때마다 같은 board/archive-snapshot
+summary를 중간 보고해(progress event sequence는 1000부터의 분리 대역 사용) `/ops`가 실행 도중에도
+진행을 보여줄 수 있게 한다. Reader 공개 본문·댓글 수는 D1 counter가 아니라 R2 active release에서
+읽는다.
 
 runner가 보낸 원 timestamp는 evidence로 보존한다. 신규 run/board/event는 Worker 수신 시각보다
 5분을 넘는 미래값을 거부한다. upgrade 전에 저장된 과도한 미래 run/event는 최신 조회에서 제외하고
@@ -573,8 +576,11 @@ incremental export/publish의 terminal safe code는 기존 `publish.pending`을 
 - board_status/runner_status: current upsert
 - raw reports/logs: Oracle/local report에만 보존, D1에 복제 금지
 - 매일 03:00 UTC Worker cron이 8시간을 넘긴 running run/연결 command를 `failed/run_stale`로
-  reconcile한 뒤 indexed DELETE를 실행한다. run 삭제 시 `run_events`는 foreign-key cascade로 함께
-  지운다. queued/claimed와 current upsert row는 retention 삭제 대상이 아니다.
+  reconcile한 뒤 indexed DELETE를 실행한다. 단 runner가 10분 이내 heartbeat에서
+  `active_run_id`로 보고하고 있는 run은 나이와 무관하게 살아 있는 것으로 보고 reconcile하지
+  않는다(full catalog/content 수동 run은 정상적으로 며칠까지 실행된다). run 삭제 시
+  `run_events`는 foreign-key cascade로 함께 지운다. queued/claimed와 current upsert row는
+  retention 삭제 대상이 아니다.
 
 ## 14. Failure matrix
 

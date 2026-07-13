@@ -266,7 +266,10 @@ coverage이며 기존 detail 전체를 다시 요청하는 작업이 아니다.
   `site_unreachable`로 끝낸다
 - network/listing failure는 board failure로 기록하고 다음 board 진행
 - 연속 3개 board가 network-class로 실패하면 `site_unreachable`로 run을 조기 종료한다
-- auth/session failure는 전체 cycle 중단; 자동 재로그인은 run당 1회, 최소 간격 30분
+- auth/session failure는 전체 cycle 중단; 자동 재로그인은 전역 최소 간격 30분 throttle 안에서
+  cycle 시작 preflight와 30분 board 경계 재검증 실패 시 시도한다(4시간을 넘는 장기 cycle이
+  session 수명을 넘겨도 이어서 수집). 수동 full-catalog/full-content 명령은 auth_failed cycle을
+  명령당 1회 재시도해 다음 preflight의 재로그인으로 복구한다
 - board별 run/counters와 final summary
 - duplicate process는 shared sync lock으로 차단
 - 최신 cycle과 수동 전체 작업에는 총 실행시간 상한이 없고 systemd 단일 unit/lock이 중복을 막는다

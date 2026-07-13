@@ -1044,8 +1044,8 @@ storage_error
   1 slot을 예약하고 나머지를 due queue에 주므로 due가 계속 가득 차도 audit이 굶지 않는다.
 - site outage 조기 판정: cycle 시작 preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
   `site_unreachable`로 run을 조기 종료한다. 그 run의 network 실패는 frontier attempt로 세지
-  않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 run당 1회, 최소
-  간격 30분으로 제한한다.
+  않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 전역 최소 간격
+  30분 throttle로 제한한다.
 - 저장 session으로 authenticated GET을 먼저 검증하고 실패 시 login page token을 읽어 form POST를 run당 한 번만 수행
 - login 실패/권한 제한은 retry storm 없이 run을 중단하고 session/credential 값을 log/WARC에 남기지 않음
 - export는 timezone이 있는 `created_at`/`expires_at`, user agent, browser cookie list만 읽고 만료·중복 cookie·TypeMoon 외 domain·header control character를 거부
@@ -1056,8 +1056,9 @@ storage_error
   parse drift 연속 중단을 일관되게 **parse-drift breaker**라고 부른다. 고립된
   parse failure는 해당 항목을 dead로 분류하고 다음 detail을 계속한다. cycle은 board
   경계 결과의 연속 network breaker도 유지한다.
-- session preflight 뒤 30분이 지난 board 경계에서 session을 재검증한다. 재로그인은 run당 1회·최소
-  30분이라는 별도 throttle을 유지한다.
+- session preflight 뒤 30분이 지난 board 경계에서 session을 재검증한다. 재검증이 auth로 실패하면
+  전역 최소 간격 30분 throttle 안에서 재로그인을 한 번 시도해 장기 cycle이 session 수명을 넘겨도
+  이어서 수집한다.
 - crawler user agent는 개인 아카이빙 도구임을 식별하고 연락처는 공개하지 않음
 
 요청률은 코드 review가 가능한 settings에서 관리하고 dashboard에 performance preset이나 임의

@@ -453,8 +453,8 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | recovery | 총량·총시간 | 상한 없음 | due 또는 전체 재수집 대상을 끝까지 순차 처리 |
 | cycle | 총량·총시간 | 상한 없음 | 동일 unit/lock이 다음 slot의 중복 실행을 막음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
-| session | 자동 재로그인 | run당 최대 1회, 최소 간격 30분, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
-| session | cycle 내 검증 | 시작 preflight + 30분 board 경계 재검증 | board마다 GET하지 않고 장기 cycle의 session drift를 제한 |
+| session | 자동 재로그인 | 전역 최소 간격 30분 throttle, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
+| session | cycle 내 검증 | 시작 preflight + 30분 board 경계 재검증(실패 시 throttled 재로그인 1회) | board마다 GET하지 않고 장기 cycle이 session 수명을 넘겨도 이어서 수집 |
 | parse-drift breaker/auth | sync 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift 확산 방지 |
 | parse-drift breaker/auth | recovery 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift를 은폐하지 않음 |
 | parser | 숫자 | 조회수/댓글수는 유일한 non-negative integer만 허용 | 누락·모호한 값을 0으로 합성하지 않음 |
