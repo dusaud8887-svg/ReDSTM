@@ -476,7 +476,12 @@ test("shows progress while receiving a large post", async ({ page }) => {
 test("supports progress, immersive mode, and reader shortcuts", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, standaloneKey);
-  await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = 130; });
+  await page.locator("#reader-pane").evaluate(async (element) => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    element.scrollTop = 130;
+  });
+  await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
   await expect(page.locator("#reading-progress")).not.toHaveCSS("width", "0px");
   if (page.viewportSize().width < 760) {
     const scrollBy = (delta) => page.locator("#reader-pane").evaluate(async (element, amount) => {
