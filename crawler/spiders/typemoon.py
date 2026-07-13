@@ -604,13 +604,14 @@ class TypeMoonSpider(scrapy.Spider):
             if not link:
                 page_warning = True
                 continue
-            canonical_url = response.urljoin(link)
-            post_ref = parse_post_ref(canonical_url)
+            source_url = response.urljoin(link)
+            post_ref = parse_post_ref(source_url)
             if post_ref is None:
                 page_warning = True
-                self.logger.warning("Skipping unrecognized TypeMoon post URL: %s", canonical_url)
+                self.logger.warning("Skipping unrecognized TypeMoon post URL: %s", source_url)
                 continue
             board_id, external_post_id = post_ref
+            canonical_url = self.detail_url(board_id, external_post_id)
             title = _first_text(row, (".td-subj-wrap .subject::text", ".td-subj-wrap strong::text"))
             if not title:
                 page_warning = True

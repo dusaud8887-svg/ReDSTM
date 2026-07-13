@@ -112,7 +112,7 @@ def test_pipeline_records_terminal_outcome_without_warning_text(
     assert tuple(frontier_row) == (expected_state, error_code, None)
 
 
-def test_pipeline_rejects_mismatched_lease_before_writing(tmp_path: Path) -> None:
+def test_pipeline_requeues_a_mismatched_lease_as_storage_error(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     pipeline, frontier, run_id = _setup(path)
     lease = _claim(frontier, 3)
@@ -123,19 +123,18 @@ def test_pipeline_rejects_mismatched_lease_before_writing(tmp_path: Path) -> Non
         pipeline.process_item(item)
 
     with connect_archive(path) as connection:
-        assert (
+        assert tuple(
             connection.execute(
-                "SELECT COUNT(*) FROM captures WHERE run_id = ?", (run_id,)
-            ).fetchone()[0]
-            == 0
-        )
-        assert (
+                "SELECT outcome, error_code FROM captures WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        ) == ("parse_failed", "storage_error")
+        assert tuple(
             connection.execute(
-                "SELECT state FROM crawl_frontier WHERE board_id = ? AND external_post_id = ?",
+                "SELECT state, last_error_code, lease_token FROM crawl_frontier "
+                "WHERE board_id = ? AND external_post_id = ?",
                 (lease.board_id, lease.external_post_id),
-            ).fetchone()[0]
-            == "running"
-        )
+            ).fetchone()
+        ) == ("retry", "storage_error", None)
 
 
 def test_pipeline_stores_listing_metadata_as_outline_post(tmp_path: Path) -> None:

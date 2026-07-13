@@ -16,7 +16,7 @@ from crawler import settings as crawler_settings
 from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.frontier import FrontierStore
-from crawler.items import CapturedPostItem
+from crawler.items import CapturedPostItem, DiscoveredPostItem
 from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
@@ -816,6 +816,53 @@ def test_malformed_listing_comment_count_is_not_synthesized_as_zero(tmp_path: Pa
     assert spider.failure_codes == {"listing_parse_failed"}
     assert spider.next_inventory_page == 4
     assert spider.inventory_completed is False
+
+
+def test_listing_removes_source_page_query_before_seeding_frontier(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    FrontierStore(path).seed(
+        "write_free21",
+        9,
+        "https://www.typemoon.net/write_free21/9?page=3",
+    )
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("inventory"),
+        session=_session(),
+        inventory=True,
+        start_page=4,
+        max_pages=1,
+        max_posts=1,
+    )
+    url = "https://www.typemoon.net/write_free21?page=4"
+    response = HtmlResponse(
+        url,
+        request=Request(url),
+        body=(
+            b"<table><tbody><tr><td class='td-subj-wrap'>"
+            b"<a href='/write_free21/9?page=4'><span class='subject'>post</span></a>"
+            b"</td></tr></tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = list(spider.parse_listing(response))
+    [discovered] = [item for item in outputs if isinstance(item, DiscoveredPostItem)]
+    [detail] = _detail_requests(outputs)
+    canonical = "https://www.typemoon.net/write_free21/9"
+
+    assert discovered["canonical_url"] == canonical
+    assert detail.url == canonical
+    with connect_archive(path, read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT url FROM crawl_frontier WHERE board_id = ? AND external_post_id = ?",
+                ("write_free21", 9),
+            ).fetchone()[0]
+            == canonical
+        )
 
 
 def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:

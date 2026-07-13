@@ -49,6 +49,12 @@ class ArchivePipeline:
         lease = self._lease(item)
         captured_at = datetime.now(UTC)
         try:
+            if (
+                lease.board_id != item.get("board_id")
+                or lease.external_post_id != item.get("external_post_id")
+                or lease.url != item.get("canonical_url")
+            ):
+                raise ValueError("frontier lease does not match captured post")
             outcome = item.get("outcome")
             raw_sha256 = _optional_text(item.get("raw_sha256"))
             warc_file = _optional_text(item.get("warc_file"))
@@ -132,10 +138,4 @@ class ArchivePipeline:
             raise ValueError("captured post requires a frontier lease")
         if not isinstance(value, FrontierLease):
             raise ValueError("frontier_lease must be a FrontierLease")
-        if (
-            value.board_id != item.get("board_id")
-            or value.external_post_id != item.get("external_post_id")
-            or value.url != item.get("canonical_url")
-        ):
-            raise ValueError("frontier lease does not match captured post")
         return value
