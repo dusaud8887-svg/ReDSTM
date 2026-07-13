@@ -705,7 +705,7 @@ def test_inventory_requires_rows_or_an_explicit_empty_page_marker(tmp_path: Path
     assert explicit.inventory_completed is True
 
 
-def test_listing_dataloss_does_not_advance_inventory_coverage(tmp_path: Path) -> None:
+def test_listing_dataloss_retries_without_advancing_inventory_coverage(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
     run_id = ArchiveStore(path).start_run("inventory")
@@ -733,25 +733,60 @@ def test_listing_dataloss_does_not_advance_inventory_coverage(tmp_path: Path) ->
         flags=["dataloss"],
     )
 
-    assert list(spider.parse_listing(response)) == []
-    assert spider.failure_codes == {"listing_fetch_failed"}
+    [retry] = list(spider.parse_listing(response))
+    assert isinstance(retry, Request)
+    assert retry.dont_filter is True
+    assert retry.meta["retry_times"] == 1
+    assert "raw_sha256" not in retry.meta
+    assert spider.failure_codes == set()
     assert spider.next_inventory_page == 3
     assert spider.inventory_completed is False
+
+    for retry_number in (2, 3):
+        retry.meta.update(
+            {
+                "raw_sha256": str(retry_number) * 64,
+                "warc_file": f"listing-{retry_number}.warc.gz",
+                "warc_record_id": f"<urn:uuid:dataloss-listing-{retry_number}>",
+            }
+        )
+        retried_response = HtmlResponse(
+            url,
+            request=retry,
+            body=(_FIXTURES / "listing.html").read_bytes(),
+            encoding="utf-8",
+            flags=["dataloss"],
+        )
+        outputs = list(spider.parse_listing(retried_response))
+        if retry_number == 2:
+            [retry] = outputs
+            assert retry.meta["retry_times"] == 2
+        else:
+            assert outputs == []
+
+    assert spider.failure_codes == {"listing_fetch_failed"}
     with connect_archive(path, read_only=True) as connection:
-        capture = connection.execute(
+        captures = connection.execute(
             """
             SELECT outcome, error_code, raw_sha256, warc_file, warc_record_id
-            FROM captures WHERE run_id = ? AND entity_type = 'listing'
+            FROM captures WHERE run_id = ? AND entity_type = 'listing' ORDER BY id
             """,
             (run_id,),
-        ).fetchone()
-        assert tuple(capture) == (
-            "fetch_failed",
-            "network_error",
-            "d" * 64,
-            "listing.warc.gz",
-            "<urn:uuid:dataloss-listing>",
-        )
+        ).fetchall()
+        assert [tuple(capture) for capture in captures] == [
+            (
+                "fetch_failed",
+                "network_error",
+                digest * 64,
+                warc_file,
+                record_id,
+            )
+            for digest, warc_file, record_id in (
+                ("d", "listing.warc.gz", "<urn:uuid:dataloss-listing>"),
+                ("2", "listing-2.warc.gz", "<urn:uuid:dataloss-listing-2>"),
+                ("3", "listing-3.warc.gz", "<urn:uuid:dataloss-listing-3>"),
+            )
+        ]
 
 
 def test_malformed_listing_comment_count_is_not_synthesized_as_zero(tmp_path: Path) -> None:

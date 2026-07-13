@@ -1043,8 +1043,9 @@ storage_error
   10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
   보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
 - `DOWNLOAD_FAIL_ON_DATALOSS=False`는 잘린 응답을 정상 parse하기 위한 fallback이 아니다. WARC가
-  raw response를 보존한 뒤 listing은 coverage 갱신 없이 중단하고 detail은 `network_error` retry로
-  닫는다. 설명되지 않은 빈 listing과 조회수/댓글수의 모호한 숫자도 정상 0으로 합성하지 않는다.
+  raw response를 보존한 뒤 listing은 같은 URL을 기존 총 3회 예산 안에서 다시 받고, 모두 잘렸을
+  때만 coverage 갱신 없이 다음 cycle로 넘긴다. detail은 `network_error` retry로 닫는다. 설명되지
+  않은 빈 listing과 조회수/댓글수의 모호한 숫자도 정상 0으로 합성하지 않는다.
 - 최신 listing 경계는 persisted exact anchor와 그 뒤 2 page가 우선이고, anchor가 없는 bootstrap의
   fallback만 공지 제외 unchanged 20건이다. body-only 변경 보완은 30일 이상 지난
   `done` detail을 oldest-first로 다시 여는 bounded audit가 맡는다. recovery batch는 stale audit

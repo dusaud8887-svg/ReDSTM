@@ -25,6 +25,7 @@ from crawler.settings import (
     REDSTM_RETRY_AFTER_MAX_SECONDS,
     REDSTM_SYNC_MAX_PAGES,
     REDSTM_SYNC_MAX_POSTS,
+    RETRY_TIMES,
 )
 from crawler.store import ArchiveStore
 
@@ -523,6 +524,22 @@ class TypeMoonSpider(scrapy.Spider):
                     warc_record_id=warc_record_id,
                     error_code="network_error",
                 )
+            retry_times = response.meta.get("retry_times", 0)
+            request = response.request
+            if request is not None and type(retry_times) is int and retry_times < RETRY_TIMES:
+                retry = request.copy()
+                retry.dont_filter = True
+                retry.meta["retry_times"] = retry_times + 1
+                for name in ("raw_sha256", "warc_file", "warc_record_id", "warc_reused"):
+                    retry.meta.pop(name, None)
+                self.logger.warning(
+                    "TypeMoon listing response was truncated; retrying %s/%s: %s",
+                    retry_times + 1,
+                    RETRY_TIMES,
+                    response.url,
+                )
+                yield retry
+                return
             self.failure_codes.add("listing_fetch_failed")
             self._halted = True
             self.logger.warning("TypeMoon listing response was truncated: %s", response.url)
