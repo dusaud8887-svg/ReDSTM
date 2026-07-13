@@ -676,7 +676,9 @@ def migrate_oracle_canonical(
             migration_error or error
         )
     if migration is None:
-        migration = {"state": "reconciled", "schema_version": schema["schema_version"]}
+        raise ReleaseError("oracle_schema", "canonical_schema_migration_ambiguous") from (
+            migration_error
+        )
     return {"oracle": oracle, "migration": migration, "canonical": schema}
 
 

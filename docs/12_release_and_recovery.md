@@ -289,6 +289,8 @@ CLI는 `canonical_schema_upgrade_pending`으로 full deploy를 거부한다. cur
 뒤 schema v3-only release rollback은 installer가 mutation 전에 거부한다. v4는
 static projection을 바꾸지 않으므로 exporter는 exact migration hash를 확인한 경우에만 기존 v3 export
 state를 재사용한다. 이 세 필드와 migration hash가 모두 맞아야 v4 physical-shape 검증을 통과한다.
+두 번의 migration 응답을 모두 잃으면 exact schema만으로 doctor 성공을 추정하지 않고
+`canonical_schema_migration_ambiguous`로 중단한다. 재실행한 idempotent doctor가 `noop`을 반환해야 완료다.
 
 automatic R2 rollback은 publish 시 기록한 predecessor 관계로 pointer와 active ledger를 함께 복구해
 다음 6시간 cycle도 bounded delta를 이어 갈 수 있어야 한다. matching ledger가 없는

@@ -1354,7 +1354,7 @@ def test_canonical_migration_requires_the_exact_remote_release_pair(
         )
 
 
-def test_canonical_migration_reconciles_two_lost_responses(
+def test_canonical_migration_rejects_two_lost_responses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     key = tmp_path / "oracle.key"
@@ -1385,10 +1385,11 @@ def test_canonical_migration_reconciles_two_lost_responses(
     monkeypatch.setattr("scripts.release.migrate_canonical_schema", lost_response)
     monkeypatch.setattr("scripts.release.canonical_schema_status", lambda *_a, **_k: schema)
 
-    result = migrate_oracle_canonical(target, expected_current=current, expected_previous=previous)
+    with pytest.raises(ReleaseError) as raised:
+        migrate_oracle_canonical(target, expected_current=current, expected_previous=previous)
 
     assert attempts == 2
-    assert result["migration"] == {"state": "reconciled", "schema_version": SCHEMA_VERSION}
+    assert raised.value.code == "canonical_schema_migration_ambiguous"
 
 
 def test_oracle_status_falls_back_to_the_commit_bound_installer(
