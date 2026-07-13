@@ -288,6 +288,33 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
     assert board["last_inventory_at"] == "2026-07-12T01:02:03Z"
 
 
+def test_runner_registers_a_current_board_missing_from_the_legacy_catalog(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, group_name, canonical_url,
+                                first_seen_at, last_seen_at)
+            VALUES ('write_nirvana', '창작잡담', 'creation',
+                    'https://www.typemoon.net/write_nirvana', 'now', 'now')
+            """
+        )
+
+    assert runner.run_once()["status"] == "idle"
+
+    with connect_archive(runner.profile.archive, read_only=True) as connection:
+        board = connection.execute(
+            "SELECT name, group_name, canonical_url, is_enabled "
+            "FROM boards WHERE board_id = 'write_drawing'"
+        ).fetchone()
+    assert tuple(board) == (
+        "창작그림",
+        "creation",
+        "https://www.typemoon.net/write_drawing",
+        1,
+    )
+
+
 def test_inventory_completion_requires_every_board_after_the_pass_epoch(tmp_path: Path) -> None:
     runner, _store = _runner(tmp_path, Api([]))
     started_at = "2026-07-12T00:00:00Z"
@@ -447,6 +474,13 @@ def test_interrupted_local_run_replays_failure_without_reexecution(tmp_path: Pat
     runner, store = _runner(tmp_path, api)
     store.record_claim(command["command_id"], command["action"])
     store.begin_command(command["command_id"], run_id=f"command-{command['command_id']}")
+    progress = {
+        "changed_posts": 23,
+        "failed_posts": 2,
+        "boards_ok": 4,
+        "boards_failed": 1,
+    }
+    store.update_progress(command["command_id"], progress)
 
     report = runner.run_once()
 
@@ -454,8 +488,77 @@ def test_interrupted_local_run_replays_failure_without_reexecution(tmp_path: Pat
     finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
     assert finish["state"] == "failed"
     assert finish["safe_summary_code"] == "runner_interrupted"
+    assert finish["counters"] == progress
+    assert finish["counters_reported"] is True
     row = store.command(command["command_id"])
     assert row is not None and row["reported_at"] is not None
+
+
+def test_interrupted_checkpointed_collection_resumes_with_saved_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command("full-catalog")
+    api = Api([])
+    runner, store = _runner(tmp_path, api)
+    store.record_claim(command["command_id"], command["action"])
+    store.begin_command(command["command_id"], run_id=f"command-{command['command_id']}")
+    runner._ensure_inventory_pass_started(None)
+    progress = {
+        "changed_posts": 23,
+        "failed_posts": 2,
+        "boards_ok": 4,
+        "boards_failed": 1,
+    }
+    store.update_progress(command["command_id"], progress)
+    calls: list[dict[str, int] | None] = []
+
+    def execute(*_args: object, **kwargs: object) -> dict[str, Any]:
+        calls.append(cast(dict[str, int] | None, kwargs.get("progress_offset")))
+        return {
+            "ok": True,
+            "status": "succeeded",
+            "changed_posts": 3,
+            "failed_posts": 1,
+            "boards_ok": 2,
+            "boards_failed": 0,
+            "boards": [],
+        }
+
+    monkeypatch.setattr(runner, "_execute_action", execute)
+
+    report = runner.run_once()
+
+    assert report["status"] == "succeeded"
+    assert calls == [progress]
+    assert not any(path == "/api/v1/runner/runs" for path, _payload in api.calls)
+    finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
+    assert finish["counters"] == {
+        "changed_posts": 26,
+        "failed_posts": 3,
+        "boards_ok": 6,
+        "boards_failed": 1,
+    }
+
+
+def test_interrupted_full_action_without_an_open_checkpoint_is_not_reexecuted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command("full-content")
+    api = Api([])
+    runner, store = _runner(tmp_path, api)
+    store.record_claim(command["command_id"], command["action"])
+    store.begin_command(command["command_id"], run_id=f"command-{command['command_id']}")
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise AssertionError("a completed or not-yet-checkpointed pass must not restart")
+
+    monkeypatch.setattr(runner, "_execute_action", execute)
+
+    report = runner.run_once()
+
+    assert report["status"] == "replayed"
+    finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
+    assert finish["safe_summary_code"] == "runner_interrupted"
 
 
 def test_permanent_terminal_rejection_does_not_block_the_next_local_command(
@@ -1211,6 +1314,24 @@ def test_publish_rollback_confirmation_failure_keeps_the_publish_retry_marker(
     assert publish_marker.is_file()
 
 
+def test_execute_report_does_not_reuse_a_previous_cycle_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    report_path = tmp_path / "reports" / "cycle.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps({"ok": True, "status": "succeeded"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "_wait", lambda *_args, **_kwargs: 1)
+
+    report = runner._execute_report(["crawler"], report_path, "run", "crawling")
+
+    assert report == {"ok": False, "status": "failed", "safe_code": "runner_failed"}
+    assert not report_path.exists()
+
+
 def test_retry_batch_runs_each_cycle_even_with_a_legacy_completion_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1541,7 +1662,8 @@ def test_partial_inventory_keeps_running_until_every_board_cursor_completes(
 def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runner, _store = _runner(tmp_path, Api([]))
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
     calls = 0
 
     def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
@@ -1583,6 +1705,20 @@ def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
     assert report["failed_posts"] == 1
     assert report["boards_failed"] == 1
     assert (runner.profile.state_dir / "inventory.started").exists()
+    snapshots = [
+        payload["events"][0]
+        for path, payload in api.calls
+        if path.endswith("/events:batch") and payload["events"][0]["step"] == "archive_snapshot"
+    ]
+    expected_progress = {
+        "changed_posts": 9,
+        "failed_posts": 1,
+        "boards_ok": 0,
+        "boards_failed": 1,
+    }
+    assert {
+        name: snapshots[-1]["counters"][name] for name in expected_progress
+    } == expected_progress
 
 
 def test_full_catalog_retries_once_after_session_expiry(
@@ -1781,6 +1917,11 @@ def test_running_process_claims_pause_marker(
         if path.endswith("/commands/claim") and payload.get("command_kind") == "marker"
     )
     assert marker_claim["runner_id"] == "oracle-primary"
+    assert any(
+        payload["events"][0]["sequence"] >= 1000
+        for path, payload in api.calls
+        if path.endswith("/events:batch") and payload["events"][0]["step"] == "archive_snapshot"
+    )
 
 
 def test_short_scheduled_action_claims_pause_before_follow_up(

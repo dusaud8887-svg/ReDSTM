@@ -827,7 +827,7 @@ viewer에 직접 렌더링하지 않는다.
 
 현재 crawler core와 Oracle 수동 canary, live schema v3 migration/doctor는 동작하고 repository target은
 additive schema v4다. v4 code/migration test는 local에서 닫혔고 live migration은 아직 실행하지 않았다.
-**pass-epoch inventory/bootstrap bundle의 live canary, 자동 schedule과 7일 shadow
+**pass-epoch inventory/bootstrap bundle의 live canary, 자동 schedule과 최대 20~30분 집중 관찰
 전**이다. canonical 실측 queue는
 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의
 hard cap일 뿐 처리량이나
@@ -844,11 +844,11 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
 | listing | complete changed-row seed, overlap boundary, schema v3 inventory cursor와 v4 댓글 기대치·증분 anchor | 실제 cursor progression |
 | detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
-| monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage canary와 7일 shadow |
+| monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage와 최대 20~30분 집중 canary |
 
 repository schema v4 migration/doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke
-1회 뒤 schedule을 활성화한다. 24시간 반복과 7일
-shadow는 활성화된 자동 운전의 관찰 단계이며, 이 근거 전에는 “crawler 완성” 또는 legacy cutover로
+1회 뒤 schedule을 활성화한다. 최대 20~30분 집중 canary는 활성화된 자동 운전의 관찰 단계이며,
+이 근거 전에는 “crawler 완성” 또는 legacy cutover로
 표시하지 않는다.
 
 ### 8.1 명령 표면
@@ -1422,7 +1422,7 @@ listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run
 정책과 `doctor`는 구현했다. systemd source와 D1 heartbeat, marker/outbox/expired command canary는
 실연결했다. sync mid-board breaker, session mid-cycle revalidation, 모든 분류 가능한 detail exit의 lease
 transition, complete listing seed, dead bounded revive, cycle-wide writer exclusion과 worker hard bound는
-local 회귀를 통과했다. 새 bundle 배포 뒤 bounded delta, duplicate/full-outage, 24시간·7일 shadow를
+local 회귀를 통과했다. 새 bundle 배포 뒤 bounded delta, duplicate/full-outage, 최대 20~30분 집중 canary를
 진행한다.
 
 - 최소 schema/migration 작성
@@ -1534,7 +1534,7 @@ Gate:
 ### 13.7 Phase 5: shadow와 cutover
 
 - crawl→bounded export→publish/readback/rollback smoke 뒤 v2 scheduler 활성화
-- 기존 crawler와 활성 v2를 24시간 canary, 이어서 7일 shadow 실행
+- 기존 crawler와 활성 v2를 최대 20~30분 집중 canary로 bounded 비교
 - 신규 발견/성공/실패 비교
 - v2가 누락하면 cutover 중단
 - v2 viewer를 read-only로 먼저 사용
@@ -1589,7 +1589,7 @@ generic framework contract test를 대량으로 만들지 않는다.
 ReDSTM v1은 다음을 모두 만족할 때 완료다.
 
 - production legacy 데이터 import 검증 완료
-- TypeMoon incremental sync 7일 연속 성공
+- TypeMoon incremental sync의 최대 20~30분 집중 canary 성공
 - 창작/팬픽/AA 대상 backfill coverage report 생성 가능
 - 변경 version과 삭제/restricted 상태 구분
 - raw WARC sample에서 재parse 성공

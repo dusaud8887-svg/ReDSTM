@@ -121,7 +121,7 @@ export/publish로 교체됐다. `/srv/redstm/static/.export-state.json`과 publi
 baseline은 명시적 full export/publish bootstrap과 authenticated delta readback/rollback canary를
 통과하지 않았으므로 schedule은 disabled다. crawler 실측과 남은 근거는
 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에
-두며, bounded recovery/delta live canary, duplicate/full-outage, 24시간/7일 shadow는 아직 완료하지 않았다.
+두며, bounded recovery/delta live canary, duplicate/full-outage, 최대 20~30분 집중 관찰은 아직 완료하지 않았다.
 
 ### 구현 필요
 
@@ -130,7 +130,7 @@ baseline은 명시적 full export/publish bootstrap과 authenticated delta readb
 1. 실제 Android/frontend acceptance
 2. 명시적 full export/publish bootstrap 뒤 장기 inventory·recovery·실제 delta publish canary
 3. duplicate command와 실제 crawl 중 D1/Worker outage canary
-4. schedule 활성 상태의 24시간 canary, 7일 shadow와 cutover
+4. schedule 활성 상태의 최대 20~30분 집중 canary, bounded legacy 비교와 cutover
 
 ## 확정된 UX·기술 결정
 

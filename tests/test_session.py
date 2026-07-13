@@ -79,7 +79,7 @@ def test_loaded_session_carries_the_adult_permission_cookie(tmp_path: Path) -> N
     assert "adult_view" in scrapy_cookies
 
 
-def test_existing_adult_cookie_is_not_duplicated(tmp_path: Path) -> None:
+def test_existing_adult_cookies_are_replaced_with_one_canonical_cookie(tmp_path: Path) -> None:
     path = tmp_path / "session.json"
     path.write_text(
         json.dumps(
@@ -95,9 +95,17 @@ def test_existing_adult_cookie_is_not_duplicated(tmp_path: Path) -> None:
                     },
                     {
                         "name": "adult_view",
-                        "value": "1",
+                        "value": "0",
+                        "domain": "www.typemoon.net",
+                        "path": "/bbs",
+                        "secure": True,
+                        "httpOnly": True,
+                    },
+                    {
+                        "name": "adult_view",
+                        "value": "stale",
                         "domain": ".typemoon.net",
-                        "path": "/",
+                        "path": "/old",
                         "secure": False,
                         "httpOnly": False,
                     },
@@ -112,7 +120,13 @@ def test_existing_adult_cookie_is_not_duplicated(tmp_path: Path) -> None:
     )
     session = load_session_export(path, now=datetime(2026, 7, 11, 12, tzinfo=UTC))
 
-    assert [cookie.name for cookie in session.cookies].count("adult_view") == 1
+    adult = [cookie for cookie in session.cookies if cookie.name == "adult_view"]
+    assert len(adult) == 1
+    assert adult[0].value == "1"
+    assert adult[0].domain == ".typemoon.net"
+    assert adult[0].path == "/"
+    assert adult[0].secure is False
+    assert adult[0].http_only is False
 
 
 def test_session_rejects_expiry_and_non_typemoon_cookie_domain(tmp_path: Path) -> None:
@@ -203,6 +217,9 @@ def test_refresh_session_submits_once_and_writes_loadable_export(
     assert state["post_count"] == 1
     assert session.expires_at == datetime(2026, 7, 11, 16, tzinfo=UTC)
     assert "secret" not in repr(session)
+    assert [cookie.name for cookie in session.cookies].count("adult_view") == 1
+    persisted_names = {cookie["name"] for cookie in json.loads(path.read_text())["cookies"]}
+    assert persisted_names == {"PHPSESSID"}
     assert load_session_export(path, now=now).cookies[0].name == "PHPSESSID"
 
 

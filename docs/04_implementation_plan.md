@@ -48,7 +48,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
    bookmark/history/settings를 안정적으로 사용한다.
 2. browser state는 `board_id:external_post_id`만 저장하고 새 release의 object key로 재해석된다.
 3. Oracle systemd가 PC와 무관하게 6시간 incremental cycle을 실행한다.
-4. 알려진 최신 글을 매번 detail fetch하지 않고 46개 board를 한 번에 하나씩 순차 처리한다.
+4. 알려진 최신 글을 매번 detail fetch하지 않고 현재 enabled board를 한 번에 하나씩 순차 처리한다.
 5. 변경된 serving object만 R2에 올리고 검증 뒤 `release.json`을 마지막에 바꾼다.
 6. 실패 글은 전체 cycle을 막지 않고 bounded retry queue로 넘으며 auth/parser drift는 조용히
    정상 처리되지 않는다.
@@ -56,7 +56,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
    board별 inventory cursor와 고정 명령을 source/as-of와 함께 본다.
 8. Worker/D1 장애 중에도 자동 crawl과 마지막 R2 release 열람이 계속된다.
 9. 검증된 E legacy source와 기존 격리 restore 사본을 유지하고 외부 backup 부재 위험을 명시한다.
-10. 7일 shadow, live rollback, killed-runner/duplicate-command failure
+10. 최대 20~30분 집중 canary, bounded legacy 비교, live rollback, killed-runner/duplicate-command failure
     injection과 실제 Android acceptance를 통과한다.
 11. Oracle에는 SSH 외 public listener가 없고 credential/본문/path가 API·log·D1에 노출되지 않는다.
 12. 관련 unit/type/lint/E2E/doctor가 모두 green이고 공개 계약 변경은 docs와 함께 반영된다.
@@ -364,7 +364,7 @@ marker 생성 전 crash와 publisher의 pending-ledger 복구도 다음 cycle에
 - state/ledger가 없거나 불일치한 automatic run은 full scan을 시작하지 않고 partial 증거를 남기며,
   기존 `publish.pending`이 있으면 보존한다.
 - 명시적 full bootstrap 뒤 delta publish/readback/rollback이 active pointer와 ledger를 함께 복구한다.
-- schedule 활성화 뒤 24시간 canary 관찰에서 retry storm, 만료 후 미회수 lease,
+- schedule 활성화 뒤 최대 20~30분 집중 canary에서 retry storm, 만료 후 미회수 lease,
   WARC partial이 없다.
 - 대표 대형 AA detail이 lease 만료 없이 수집된다.
 - capacity를 넘긴 listing changed row도 durable frontier에 남고 다음 bounded run에서 처리된다.
@@ -470,11 +470,11 @@ journald 1GiB/14일 정책을 적용하고 과거 journal을 폐기해 4GiB에�
 1. 명시적 full export/publish baseline bootstrap 뒤
    `crawl → bounded export → publish/readback → rollback rehearsal` authenticated canary 1회가 성공하면
    schedule을 enable한다.
-2. 활성화된 자동 운전을 24시간 canary, 이어서 7일 shadow로 관찰한다. 둘은 schedule 활성화 전
-   대기 gate가 아니다.
+2. 활성화된 자동 운전을 최대 20~30분 집중 canary로 관찰하고 같은 구간의 bounded legacy 표본을
+   비교한다. 그보다 긴 관찰은 완료 gate로 두지 않는다.
 3. board coverage, request interval/p95, timeout/429, retry/dead, parse drift, disk/RAM, publish/snapshot을
    매일 report한다.
-4. 관찰 gate가 green이면 legacy PM2/Nginx/BookToki helper를 stop/disable한다.
+4. 집중 관찰 gate가 green이면 legacy PM2/Nginx/BookToki helper를 stop/disable한다.
 5. 7일 rollback window 동안 legacy application/data를 유지한다.
 6. 외부 backup이 deferred인 동안 legacy data cleanup은 하지 않는다.
 7. instance, boot volume, SSH key, VCN은 정리 대상에서 제외한다.
@@ -596,6 +596,6 @@ Cloudflare/Oracle 변경:
 - shell load는 data workflow smoke를 대체하지 않는다.
 - B2/restic과 외부 dead-man 계정은 사용자 결정으로 현재 완료 조건에서 제외한다.
 - UI 구현은 실제 font load/mobile/AA visual acceptance를 통과해야 완료다.
-- 7일 shadow는 생략하거나 소급 완료 처리하지 않는다.
+- 집중 canary는 생략하거나 소급 완료 처리하지 않고, 실제 실행 근거를 남긴다.
 - 완료된 phase의 상세 실행 기록은 [`done`](done/2026-07-11/README.md)으로 옮기고 이 문서는
   다음 active gate만 유지한다.

@@ -47,7 +47,7 @@ main { margin-left: 72px; padding: 0 clamp(20px, 4vw, 64px) 80px; }
 .reader-continuity strong, .reader-continuity small { display: block; }
 .reader-continuity strong { font-size: 14px; }
 .reader-continuity small { margin-top: 2px; color: var(--muted); font-size: 12px; }
-.overview-facts { grid-column: 1 / -1; margin: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+.overview-facts { grid-column: 1 / -1; margin: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); }
 .overview-facts div { min-width: 0; padding: 16px 20px 0 0; }
 dt { color: var(--muted); font-size: 12px; }
 dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere; }

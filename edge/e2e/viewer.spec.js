@@ -23,7 +23,10 @@ function postPayload(id, title) {
     post: {
       board_id: "board_a", external_post_id: id, canonical_url: `https://example.test/${id}`,
       title, author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1,
-      body_html: Array.from({ length: 30 }, (_, index) => `<p>${title} 본문 ${index + 1}</p>`).join(""), is_aa: false,
+      body_html: [
+        `<p class="legacy-prose" style="font: italic 10px/1.1 Arial !important"><font face="Arial" size="1">${title} 본문 1</font></p>`,
+        ...Array.from({ length: 29 }, (_, index) => `<p>${title} 본문 ${index + 2}</p>`),
+      ].join(""), is_aa: false,
     },
     comments: [],
   };
@@ -32,7 +35,7 @@ function postPayload(id, title) {
 function aaPostPayload(id, title) {
   const payload = postPayload(id, title);
   payload.post.is_aa = true;
-  payload.post.body_html = `<div class="AA_Text"><p><font color="#b4232f">${title}</font></p><p>（　´∀｀）</p><p>　|　　|</p></div>`;
+  payload.post.body_html = `<div class="AA_Text"><p><font color="#b4232f" style="font: bold 20px/2 Arial !important">${title}</font></p><p>（　´∀｀）</p><p>　|　　|</p></div>`;
   payload.comments = [
     {
       position: 1, author: "일반", created_at_raw: "2026-07-11",
@@ -362,9 +365,17 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(aaResult.locator(".result-badges")).toContainText("읽음");
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
+  await expect(page.locator('[data-aa-background="#f5f5f0"]')).toHaveText("아이보리");
+  await expect(page.locator('[data-aa-background="#ffffff"]')).toHaveText("흰색");
+  await expect(page.locator(".aa-color-picker")).toContainText("직접");
+  expect(await page.locator(".aa-appearance").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(page.locator("#aa-background")).toHaveValue("#f5f5f0");
+  await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(245, 245, 240)");
   await page.locator('[data-aa-preset="11:800"]').click();
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
   await expect(page.locator("#aa-inline-size")).toHaveText("11px");
+  await expect(page.locator("#archive-body font")).toHaveCSS("font-size", "11px");
+  await expect(page.locator("#archive-body font")).toHaveCSS("font-weight", "700");
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("font-size", "11px");
   await page.locator('[data-aa-background="#ffffff"]').click();
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
@@ -380,12 +391,22 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   });
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(123, 224, 162)");
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("color", "rgb(123, 224, 162)");
+  await page.locator("#aa-background").evaluate((input) => {
+    input.value = "#808080";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator(".aa-color-picker")).toHaveClass(/active/);
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(0, 0, 0)");
+  await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("color", "rgb(0, 0, 0)");
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await page.locator('[data-aa-zoom-delta="0.25"]').click();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
   await page.reload();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
+  await expect(page.locator("#aa-background")).toHaveValue("#808080");
+  await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(128, 128, 128)");
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(0, 0, 0)");
   if (mobile) await page.locator("#reader-bottom-settings").click();
   await page.locator(mobile ? "#settings-mode" : "#mode-toggle").click();
   await expect(page.locator(mobile ? "#settings-mode-reset" : "#mode-reset")).toBeVisible();
@@ -400,6 +421,40 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa-fixture.png` });
+});
+
+test("applies and persists prose typography over legacy source styles", async ({ page }) => {
+  await useCollectionFixture(page);
+  await openPost(page, proseKey);
+  await expect(page.locator("#aa-controls")).toBeHidden();
+  await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#theme-select").selectOption("light");
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(251, 250, 248)");
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(21, 23, 26)");
+  await page.locator("#theme-select").selectOption("dark");
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(17, 19, 24)");
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(244, 246, 248)");
+  await page.locator("#theme-select").selectOption("light");
+  await page.locator("#prose-size").evaluate((input) => {
+    input.value = "22";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator("#line-height").evaluate((input) => {
+    input.value = "2";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator("#prose-font").selectOption("sans");
+
+  const legacyProse = page.locator(".legacy-prose");
+  await expect(legacyProse).toHaveCSS("font-size", "22px");
+  await expect(legacyProse).toHaveCSS("line-height", "44px");
+  await expect(legacyProse).toHaveCSS("font-style", "italic");
+  expect(await legacyProse.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SUIT");
+
+  await page.reload();
+  await expect(legacyProse).toHaveCSS("font-size", "22px");
+  await expect(legacyProse).toHaveCSS("line-height", "44px");
+  expect(await legacyProse.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SUIT");
 });
 
 test("shows progress while receiving a large post", async ({ page }) => {

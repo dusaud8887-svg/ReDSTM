@@ -194,21 +194,25 @@
           <button id="settings-immersive" type="button">집중</button>
         </fieldset>
         <label>테마<select id="theme-select"><option value="system">시스템 설정</option><option value="light">밝게</option><option value="dark">어둡게</option></select></label>
-        <label>본문 크기 <output id="prose-size-output"></output><input id="prose-size" type="range" min="15" max="24" step="1"></label>
-        <label>줄 간격 <output id="line-height-output"></output><input id="line-height" type="range" min="1.4" max="2.2" step="0.1"></label>
-        <label>본문 너비 <output id="prose-width-output"></output><input id="prose-width" type="range" min="560" max="960" step="20"><small class="mobile-control-note">모바일에서는 화면 너비에 맞춥니다.</small></label>
-        <label>본문 서체<select id="prose-font"><option value="serif">마루부리</option><option value="sans">SUIT</option></select></label>
-        <label>AA 크기 <output id="aa-size-output"></output><input id="aa-size" type="range" min="9" max="24" step="1"></label>
+        <fieldset class="prose-settings">
+          <legend>소설 본문</legend>
+          <label>본문 크기 <output id="prose-size-output"></output><input id="prose-size" type="range" min="15" max="24" step="1"></label>
+          <label>줄 간격 <output id="line-height-output"></output><input id="line-height" type="range" min="1.4" max="2.2" step="0.1"></label>
+          <label>본문 너비 <output id="prose-width-output"></output><input id="prose-width" type="range" min="560" max="960" step="20"><small class="mobile-control-note">모바일에서는 화면 너비에 맞춥니다.</small></label>
+          <label>본문 서체<select id="prose-font"><option value="serif">마루부리</option><option value="sans">SUIT</option></select></label>
+        </fieldset>
         <fieldset class="aa-settings">
           <legend>AA 화면</legend>
+          <label>AA 크기 <output id="aa-size-output"></output><input id="aa-size" type="range" min="9" max="24" step="1"></label>
           <div class="aa-control-group aa-presets" aria-label="AA 화면 프리셋">
             <button type="button" data-aa-preset="16:auto">기본 16</button><button type="button" data-aa-preset="11:800">11 / 800</button><button type="button" data-aa-preset="9:680">9 / 680</button>
           </div>
           <div class="aa-control-group aa-appearance">
             <button id="aa-source-styles" type="button" aria-pressed="true">원본색</button>
-            <button type="button" class="aa-color-choice" data-aa-background="#f5f5f0" aria-label="아이보리 배경"></button>
-            <button type="button" class="aa-color-choice white" data-aa-background="#ffffff" aria-label="흰색 배경"></button>
-            <label class="aa-color-picker" title="AA 배경색"><span class="sr-only">AA 배경색</span><input id="aa-background" type="color" value="#f5f5f0"></label>
+            <span class="aa-control-label">배경</span>
+            <button type="button" class="aa-color-choice" data-aa-background="#f5f5f0">아이보리</button>
+            <button type="button" class="aa-color-choice white" data-aa-background="#ffffff">흰색</button>
+            <label class="aa-color-picker" title="AA 배경색"><input id="aa-background" type="color" value="#f5f5f0" aria-label="직접 고른 AA 배경색">직접</label>
           </div>
         </fieldset>
         <div class="settings-actions"><button class="text-command reset-settings" id="reset-settings" type="button">기본값</button><button class="text-command" id="export-state" type="button">상태 내보내기</button><button class="text-command" id="import-state" type="button">상태 가져오기</button></div>

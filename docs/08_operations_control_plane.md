@@ -210,6 +210,7 @@ Control DB 이름은 redstm-control이다. schema는 command/status 책임만 �
     active_run_id
     active_step
     active_board_id
+    active_post_id
     disk_free_bytes
     safe_warning_code
 
@@ -264,7 +265,7 @@ unique index를 둔다. 별도 conflict column이나 기존 row rewrite 없이, 
 사이에 두 요청이 경합해도 DB가 각 group 하나만 허용한다. constraint race는 stable
 `409 command_conflict`로 변환한다.
 
-run 종료의 `archive_snapshot` event는 `outline_only`, frontier state counts와
+run 진행/종료의 `archive_snapshot` event는 `outline_only`, frontier state counts와
 `inventory_completed_boards`/`inventory_total_boards`만 담고 `recorded_at`을 as-of로 쓴다.
 post/comment 원문이나
 full row는 담지 않으며 이 snapshot이 Operations의 canonical 요약 source다.
@@ -290,10 +291,12 @@ full row는 담지 않으며 이 snapshot이 Operations의 canonical 요약 sour
 
 full canonical count를 매 poll마다 다시 세거나 복제하지 않는다. run 종료 또는 board 완료 때 목차-only
 frontier와 inventory 진행 summary만 upsert하고, 각 값에 source/as-of를 붙인다. 며칠씩 걸리는
-full catalog/content 수동 run은 내부 crawl cycle이 끝날 때마다 같은 board/archive-snapshot
-summary를 중간 보고해(progress event sequence는 1000부터의 분리 대역 사용) `/ops`가 실행 도중에도
-진행을 보여줄 수 있게 한다. Reader 공개 본문·댓글 수는 D1 counter가 아니라 R2 active release에서
-읽는다.
+full catalog/content 수동 run은 child process가 실행 중일 때 5분마다 archive snapshot을 보고하고,
+내부 crawl cycle이 끝날 때 누적 변경·실패·게시판 수와 같은 board/archive summary를 다시 보고한다.
+progress event sequence는 고정 terminal sequence와 충돌하지 않고 프로세스 재시작 뒤에도 앞선
+중간 event를 덮지 않도록 현재 UTC microsecond 기반의 분리 대역을 사용한다. 마지막 누적치는 local command ledger에도
+저장하고 `counters_reported` 여부를 함께 보내 runner 재시작 시 실제 0건과 미보고를 구분한다. Reader 공개
+본문·댓글 수는 D1 counter가 아니라 R2 active release에서 읽는다.
 
 runner가 보낸 원 timestamp는 evidence로 보존한다. 신규 run/board/event는 Worker 수신 시각보다
 5분을 넘는 미래값을 거부한다. upgrade 전에 저장된 과도한 미래 run/event는 최신 조회에서 제외하고
@@ -400,14 +403,19 @@ pause-after-current marker로 다음 automatic start를 보류하고 resume-sche
 수동 전체 목차는 `inventory_next_page`와 scope marker로 모든 row를 다시 읽으며, 수동 전체 본문은
 시작 시각과 frontier 최대 rowid를 checkpoint로 고정해 이미 성공한 글도 양수 chunk로 다시 받는다.
 두 작업 모두 전체 pass 총량·총시간 상한은 없지만 각 child invocation은 설정된 page/post/time 상한을
-지키며 단일 writer lock을 잡는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않고 `busy`로 끝난다.
+지키며 단일 writer lock을 잡는다. runner/VM이 중단되면 local command ledger의 누적치와 inventory/full-content
+checkpoint로 같은 run을 자동 재개하며 새 run을 중복 생성하지 않는다. 각 child report는 실행 전에 제거해
+이전 회차 성공 JSON을 새 결과로 오인하지 않는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않고 `busy`로 끝난다.
+
+legacy 기준 장서 이후 새로 생긴 source board는 explicit addition registry로 idempotent 등록한다.
+2026-07-13 공개 내비게이션에서 확인한 `write_drawing`(창작그림)을 기존 46개 장서에 추가해 현재 목표는
+47개다. 기존 row가 있으면 이름·활성 여부를 덮지 않으며, 전체 목차/증분 작업이 새 board를 같은 순차 정책으로 처리한다.
 
 `redstm-control.timer`는 application release 설치 뒤 heartbeat와 fixed-command poll을 유지하는 baseline으로
 enable한다. `redstm-schedule.timer`는 authenticated route, repository schema v4 doctor, 명시적 full
 export/publish baseline bootstrap과 crawl→bounded export→publish/readback→rollback rehearsal canary가
-성공할 때까지 disabled로 둔다. 이후 24시간
-canary와 7일 shadow는 켜진 자동 운전을 관찰하는 milestone이며,
-schedule 활성화를 늦추는 선행 gate가 아니다.
+성공할 때까지 disabled로 둔다. 이후 최대 20~30분 집중 canary는 켜진 자동 운전과 bounded
+failure/rollback을 관찰하는 milestone이며, 그보다 긴 대기는 완료 gate로 두지 않는다.
 service unit은 recoverable file 누락을 `ConditionPathExists`로 조용히 skip하지 않는다. application을
 실행해 canonical/session 오류를 run/journal에 남기고, 다음 timer slot에서 다시 시도한다.
 
@@ -445,9 +453,10 @@ fresh heartbeat와 별개로 `자동 수집 지연`을 표시한다.
 
 ### Overview
 
-- 상단 다섯 field는 자동 예약, 수집기 신호, 마지막 자동 실행, 다음 자동 실행, 현재 작업이다.
-- stale이면 현재 작업과 next crawl을 `마지막 보고`로 바꾼다. 디스크는 정상 숫자로 자리를 차지하지 않고
-  부족할 때만 warning으로 올린다.
+- 상단 여섯 field는 자동 예약, 수집기 신호, 마지막 자동 실행, 다음 자동 실행, 현재 작업,
+  Oracle 여유 공간이다. 작업 중이면 현재 board와 post ID까지 표시한다.
+- stale이면 현재 작업과 next crawl을 `마지막 보고`로 바꾼다. 디스크는 항상 마지막 보고 수치와 함께
+  보이고 40GiB 미만이면 별도 warning도 올린다.
 - Reader/R2는 사용 가능 여부, active release, 공개 본문 수와 댓글 수, published/activated time을
   독립 표시한다. 이 수치는 canonical 전체가 아니라 현재 Reader snapshot임을 label에 쓴다.
 - 수집 현황의 첫 줄은 Reader 글, 목차만 있는 글, 수집된 댓글, 최초 전체수집 완료 board/전체 board다.
@@ -460,15 +469,16 @@ fresh heartbeat와 별개로 `자동 수집 지연`을 표시한다.
   행동을 표시한다. 이후 scheduled success가 있으면 `정상화됨`으로 표시하고 실행 기록 anchor를 제공한다.
 - last/next crawl, last publish, last local recovery evidence는 source/as-of를 가진다.
 - actionable warning은 reason, age, next action을 가진 list다.
-- unknown/missing field는 `—`와 원인을 쓴다. JS/HTML default `0`을 만들지 않는다.
+- unknown/missing field는 `—` 또는 `미보고`와 원인을 쓴다. JS/HTML default `0`을 만들지 않는다.
 - header refresh는 `화면 갱신 시각`이며 runner heartbeat와 구분한다. 부분 fetch 실패는 section별로
   source/as-of/error를 남긴다.
 
 ### Active run과 Run history
 
 - active run과 latest terminal run을 분리한다.
-- active run은 step/current board/started를 표시하고 중간의 0을 확정값처럼 보이지 않게 변경·실패·게시판
-  수는 종료 뒤에만 표시한다.
+- active run은 step/current board/started를 표시한다. 누적 중간 보고가 있으면 변경·실패·게시판 수를
+  함께 표시하고, 아직 없으면 `중간 집계 대기`/`—`로 두어 0을 확정값처럼 보이지 않게 한다.
+- `runner_interrupted`가 마지막 누적치를 남기지 못한 경우 run history도 `0/0` 대신 `미보고`를 쓴다.
 - scheduled/manual source
 - board/outcome counters
 - recent terminal runs
@@ -507,7 +517,8 @@ Button은 action, bound, 현재 eligibility와 disabled reason을 함께 보여�
 Runs/Releases ledger에서 별도로 확인한다.
 
 - `sync-now`: 전체 또는 선택 게시판의 최신 증분을 한 번 실행한다.
-- `full-catalog`: 전체 또는 선택 게시판의 목차를 첫 page부터 끝까지 다시 수집한다.
+- `full-catalog`: 전체 또는 선택 게시판의 제목·주소·목록만 첫 page부터 끝까지 다시 수집한다. 본문은
+  `full-content`의 별도 범위다.
 - `full-content`: 전체 또는 선택 게시판의 발견된 모든 본문을 성공 여부와 무관하게 다시 수집한다.
 - `retry-batch`: 현재 due인 pending/retry frontier를 상한 없이 순차 처리한다. due 0이면 disable한다.
 - `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,

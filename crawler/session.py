@@ -119,10 +119,8 @@ def load_session_export(
 
 
 def _with_adult_permission(cookies: tuple[SessionCookie, ...]) -> tuple[SessionCookie, ...]:
-    if any(cookie.name == _ADULT_COOKIE_NAME for cookie in cookies):
-        return cookies
     return (
-        *cookies,
+        *(cookie for cookie in cookies if cookie.name != _ADULT_COOKIE_NAME),
         SessionCookie(
             _ADULT_COOKIE_NAME,
             _ADULT_COOKIE_VALUE,

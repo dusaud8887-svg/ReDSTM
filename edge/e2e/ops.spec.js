@@ -125,6 +125,7 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
 
   await expect(page.locator("#overview-title")).toHaveText("자동 수집 켜짐");
   await expect(page.locator("#automation-mode")).toHaveText("켜짐");
+  await expect(page.locator("#runner-disk")).toHaveText("80.0 GiB");
   await expect(page.locator("#last-automatic")).toContainText("성공");
   await expect(page.locator("#active-title")).toContainText("예약 실행 · 성공");
   await expect(page.locator("#boards-list")).toContainText("AA 장편");
@@ -208,9 +209,74 @@ test("keeps stale runner, empty telemetry, and readable release distinct", async
   await expect(page.locator("#reader-state")).toHaveText("Reader 사용 가능");
   await expect(page.locator("#active-title")).toHaveText("아직 보고된 실행 없음");
   await expect(page.locator("#latest-changed")).toHaveText("—");
+  await expect(page.locator("#outline-only")).toHaveText("미보고");
   await expect(page.locator("#boards-list")).toContainText("운영 기록이 아직 보고되지 않았습니다");
   await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(7);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("does not present an interrupted run's missing counters as real zeroes", async ({ page }) => {
+  const interrupted = {
+    run_id: "command-interrupted", kind: "manual-sync", source: "command", state: "failed",
+    started_at: now, finished_at: now, changed_posts: 0, failed_posts: 0,
+    boards_ok: 0, boards_failed: 0, safe_summary_code: "runner_interrupted",
+    counters_reported: false,
+    latest_event: { step: "full-catalog", counters: {} },
+  };
+  await useOperationsFixture(page, [], {
+    overview: {
+      runner: { state: "idle", heartbeat_at: now, next_scheduled_at: null },
+      schedule_enabled: false,
+      active_run: null,
+      latest_run: interrupted,
+      recent_issue: interrupted,
+      archive_snapshot: null,
+      active_commands: 0,
+    },
+    runs: { items: [interrupted], next_cursor: null },
+  });
+  await page.goto("/ops");
+
+  await expect(page.locator("#issue-posts")).toHaveText("미보고");
+  await expect(page.locator("#issue-boards")).toHaveText("미보고");
+  await expect(page.locator("#issue-reason")).toContainText("저장된 체크포인트부터");
+  await expect(page.locator("#latest-changed")).toHaveText("미보고");
+  await expect(page.locator("#latest-failed")).toHaveText("미보고");
+  await expect(page.locator("#latest-boards")).toHaveText("미보고");
+  await expect(page.locator(".run-entry .run-id strong")).toHaveText("전체 목차 재수집");
+  await expect(page.locator(".run-entry .run-metric strong").nth(0)).toHaveText("미보고");
+  await expect(page.locator(".run-entry .run-metric strong").nth(1)).toHaveText("미보고");
+  await expect(page.locator(".run-entry .run-metric strong").nth(2)).toHaveText("미보고");
+});
+
+test("shows a reported zero checkpoint after an interrupted run", async ({ page }) => {
+  const interrupted = {
+    run_id: "command-interrupted-zero", kind: "manual-sync", source: "command", state: "failed",
+    started_at: now, finished_at: now, changed_posts: 0, failed_posts: 0,
+    boards_ok: 0, boards_failed: 0, safe_summary_code: "runner_interrupted",
+    counters_reported: true,
+    latest_event: { step: "full-catalog", counters: {} },
+  };
+  await useOperationsFixture(page, [], {
+    overview: {
+      runner: { state: "idle", heartbeat_at: now, next_scheduled_at: null },
+      schedule_enabled: false,
+      active_run: null,
+      latest_run: interrupted,
+      recent_issue: interrupted,
+      archive_snapshot: null,
+      active_commands: 0,
+    },
+    runs: { items: [interrupted], next_cursor: null },
+  });
+  await page.goto("/ops");
+
+  await expect(page.locator("#issue-posts")).toHaveText("0");
+  await expect(page.locator("#issue-boards")).toHaveText("0");
+  await expect(page.locator("#latest-changed")).toHaveText("0");
+  await expect(page.locator("#latest-failed")).toHaveText("0");
+  await expect(page.locator("#latest-boards")).toHaveText("0/0");
+  await expect(page.locator(".run-entry .run-metric strong").nth(0)).toHaveText("0");
 });
 
 test("shows a connected runner with a disabled schedule as automation off", async ({ page }) => {
@@ -360,9 +426,19 @@ test("names the sections affected by a partial refresh failure", async ({ page }
 test("only enables pause while the runner is working", async ({ page }) => {
   await useOperationsFixture(page, [], {
     overview: {
-      runner: { state: "running", heartbeat_at: now, active_step: "crawling" },
+      runner: {
+        state: "running", heartbeat_at: now, active_step: "full-catalog",
+        active_board_id: "aa_19", active_post_id: 314, disk_free_bytes: 80 * 2 ** 30,
+      },
       schedule_enabled: false,
-      active_run: { kind: "manual-sync", source: "command", state: "running", started_at: now },
+      active_run: {
+        kind: "manual-sync", source: "command", state: "running", started_at: now,
+        changed_posts: 23, failed_posts: 2, boards_ok: 4, boards_failed: 1,
+        latest_event: {
+          step: "archive_snapshot", recorded_at: now,
+          counters: { changed_posts: 23, failed_posts: 2, boards_ok: 4, boards_failed: 1 },
+        },
+      },
       latest_run: null,
       recent_issue: null,
       archive_snapshot: null,
@@ -373,6 +449,10 @@ test("only enables pause while the runner is working", async ({ page }) => {
 
   await expect(page.locator('.control-list [data-action="pause-after-current"]')).toBeEnabled();
   await expect(page.locator('.control-list [data-action]:not([data-action="pause-after-current"]):disabled')).toHaveCount(6);
-  await expect(page.locator("#latest-changed")).toHaveText("—");
-  await expect(page.locator("#active-reason")).toContainText("수치는 종료 후 집계");
+  await expect(page.locator("#latest-changed")).toHaveText("23");
+  await expect(page.locator("#latest-failed")).toHaveText("2");
+  await expect(page.locator("#latest-boards")).toHaveText("4/5");
+  await expect(page.locator("#active-title")).toContainText("전체 목차 재수집");
+  await expect(page.locator("#active-reason")).toContainText("중간 집계");
+  await expect(page.locator("#active-step")).toHaveText("전체 목차 재수집 · aa_19 · #314");
 });

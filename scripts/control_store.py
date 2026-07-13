@@ -23,6 +23,7 @@ _ACTIONS = {
     "resume-schedule",
 }
 _TERMINAL_STATES = {"succeeded", "partial", "failed"}
+_PROGRESS_COUNTERS = {"changed_posts", "failed_posts", "boards_ok", "boards_failed"}
 _PRIORITIES = {
     "event_batch": 50,
     "board_status": 60,
@@ -231,6 +232,26 @@ class ControlStore:
             )
             began = result.rowcount == 1
         return began
+
+    def update_progress(
+        self, command_id: str, counters: dict[str, int], *, now: datetime | None = None
+    ) -> bool:
+        if set(counters) != _PROGRESS_COUNTERS or any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in counters.values()
+        ):
+            raise ValueError("command progress counters are invalid")
+        result_json = json.dumps({"progress": counters}, separators=(",", ":"), sort_keys=True)
+        with self._transaction() as connection:
+            result = connection.execute(
+                """
+                UPDATE command_ledger SET result_json = ?, updated_at = ?
+                WHERE command_id = ? AND state = 'running'
+                """,
+                (result_json, _timestamp(now), command_id),
+            )
+            updated = result.rowcount == 1
+        return updated
 
     def finish_command(
         self,

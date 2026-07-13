@@ -467,7 +467,7 @@ Reader:
 
 Automation:
 
-- 7일 무인 run, duplicate writer 0, retry storm 0
+- 최대 20~30분 집중 무인 run, duplicate writer 0, retry storm 0
 - TypeMoon request interval 10초 이상
 - change 없음은 export/publish no-op
 - E verified source와 기존 local restore evidence 보존

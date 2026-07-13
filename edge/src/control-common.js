@@ -60,10 +60,14 @@ export function runView(row) {
     boards_ok: Number(row.boards_ok ?? 0),
     boards_failed: Number(row.boards_failed ?? 0),
     release_id: row.release_id ?? null,
+    counters_reported: null,
   };
   try {
     const summary = JSON.parse(row.safe_summary_json || "{}");
     run.safe_summary_code = typeof summary?.code === "string" ? summary.code : null;
+    run.counters_reported = typeof summary?.counters_reported === "boolean"
+      ? summary.counters_reported
+      : null;
   } catch {
     run.safe_summary_code = null;
   }
@@ -83,6 +87,11 @@ export function runView(row) {
       counters,
       safe_message: row.event_safe_message ?? null,
     };
+    if (run.state === "running") {
+      for (const name of ["changed_posts", "failed_posts", "boards_ok", "boards_failed"]) {
+        if (Object.hasOwn(counters, name)) run[name] = counters[name];
+      }
+    }
   }
   return run;
 }

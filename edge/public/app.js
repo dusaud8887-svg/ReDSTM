@@ -176,6 +176,7 @@ function applySettings() {
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * settings.aaZoom}px`);
   root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * settings.aaZoom}px`);
   root.style.setProperty("--aa-background", settings.aaBackground);
+  root.style.setProperty("--aa-ink", readableAaInk(settings.aaBackground));
   elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
   elements["theme-toggle"].title = elements["theme-toggle"].ariaLabel;
   elements["theme-select"].value = settings.theme;
@@ -198,11 +199,8 @@ function applySettings() {
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
-  const aaBackgroundIsLight = relativeLuminance(settings.aaBackground) >= 0.5;
   for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
     surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
-    surface.classList.toggle("aa-light-ink", aaBackgroundIsLight);
-    surface.classList.toggle("aa-dark-ink", !aaBackgroundIsLight);
   }
   const canvas = elements["archive-body"].querySelector(".aa-canvas");
   if (canvas) canvas.dataset.width = settings.aaCanvasWidth ?? "auto";
@@ -211,9 +209,13 @@ function applySettings() {
     button.classList.toggle("active", settings.aaSize === Number(size) &&
       settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && settings.aaZoom === 1);
   }
+  let backgroundPresetSelected = false;
   for (const button of document.querySelectorAll("[data-aa-background]")) {
-    button.classList.toggle("active", button.dataset.aaBackground === settings.aaBackground);
+    const selected = button.dataset.aaBackground === settings.aaBackground;
+    button.classList.toggle("active", selected);
+    backgroundPresetSelected ||= selected;
   }
+  elements["aa-background"].closest(".aa-color-picker").classList.toggle("active", !backgroundPresetSelected);
   requestAnimationFrame(() => updateAaOverflowCue());
 }
 
@@ -221,6 +223,21 @@ function relativeLuminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi)?.map((value) => Number.parseInt(value, 16) / 255) ?? [1, 1, 1];
   const [red, green, blue] = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(left, right) {
+  const lighter = Math.max(relativeLuminance(left), relativeLuminance(right));
+  const darker = Math.min(relativeLuminance(left), relativeLuminance(right));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function readableAaInk(background) {
+  const darkContrast = contrastRatio(background, "#24252a");
+  const greenContrast = contrastRatio(background, "#7be0a2");
+  if (Math.max(darkContrast, greenContrast) >= 4.5) {
+    return darkContrast >= greenContrast ? "#24252a" : "#7be0a2";
+  }
+  return contrastRatio(background, "#000000") >= contrastRatio(background, "#ffffff") ? "#000000" : "#ffffff";
 }
 
 function showReaderFeedback(text, duration = 1200) {
@@ -884,9 +901,18 @@ function renderPostBody() {
   } else {
     elements["archive-body"].innerHTML = post.body_html;
   }
+  normalizeReaderTypography(elements["archive-body"]);
   applySettings();
   decorateImages(elements["archive-body"]);
   requestAnimationFrame(() => updateAaOverflowCue(true));
+}
+
+function normalizeReaderTypography(container) {
+  for (const element of container.querySelectorAll('font, [style*="font" i], [style*="line-height" i]')) {
+    for (const property of ["font-family", "font-size", "line-height"]) {
+      element.style.setProperty(property, "inherit", "important");
+    }
+  }
 }
 
 function decorateImages(container) {
@@ -921,10 +947,10 @@ function renderComments(comments) {
     const body = document.createElement("div");
     body.className = "comment-body";
     body.innerHTML = comment.content_html;
-    body.classList.toggle(
-      "aa-comment",
-      /AA_Text|saitamaar|Stmr|MS P(?:Gothic|ゴシック)|ＭＳ Ｐゴシック|IPAMona|(?:font-family|face)\s*[:=]\s*["']?Mona\b/i.test(comment.content_html),
-    );
+    const isAaComment =
+      /AA_Text|saitamaar|Stmr|MS P(?:Gothic|ゴシック)|ＭＳ Ｐゴシック|IPAMona|(?:font-family|face)\s*[:=]\s*["']?Mona\b/i.test(comment.content_html);
+    body.classList.toggle("aa-comment", isAaComment);
+    if (isAaComment) normalizeReaderTypography(body);
     decorateImages(body);
     header.append(author, date);
     item.append(header, body);

@@ -160,7 +160,8 @@ async function runsPage(env, requestId, url) {
      FROM runs AS r
      LEFT JOIN run_events AS e ON e.run_id = r.run_id AND e.sequence = (
        SELECT MAX(latest.sequence) FROM run_events AS latest
-       WHERE latest.run_id = r.run_id AND latest.step <> 'archive_snapshot'
+       WHERE latest.run_id = r.run_id
+         AND (r.state = 'running' OR latest.step <> 'archive_snapshot')
      )
      WHERE r.started_at <= ? ${cursorWhere}
      ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?`,
@@ -514,7 +515,14 @@ async function overview(env, requestId) {
     "SELECT * FROM runner_status WHERE id = 1",
   ).first();
   let activeRow = await env.CONTROL_DB.prepare(
-    "SELECT * FROM runs WHERE state = 'running' ORDER BY started_at DESC, run_id DESC LIMIT 1",
+    `SELECT r.*, e.sequence AS event_sequence, e.step AS event_step,
+       e.state AS event_state, e.recorded_at AS event_recorded_at,
+       e.counters_json AS event_counters_json, e.safe_message AS event_safe_message
+     FROM runs AS r
+     LEFT JOIN run_events AS e ON e.run_id = r.run_id AND e.sequence = (
+       SELECT MAX(latest.sequence) FROM run_events AS latest WHERE latest.run_id = r.run_id
+     )
+     WHERE r.state = 'running' ORDER BY r.started_at DESC, r.run_id DESC LIMIT 1`,
   ).first();
   const activeStartedAt = Date.parse(activeRow?.started_at ?? "");
   const runnerKeepsRunAlive = Boolean(

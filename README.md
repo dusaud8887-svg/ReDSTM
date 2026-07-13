@@ -2,8 +2,8 @@
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
 schema v3 Oracle canonical runner가 배포돼 있고 repository target은 additive schema v4다. v4는 댓글 기대값과 증분 기준 게시글을 함께 이관한다. 남은 제품 작업은 production delta/failure canary,
-그 전에 필요한 명시적 full export/publish baseline bootstrap, 실제 Android acceptance와 24시간/7일
-운영 관찰이다. 완료된 초기
+그 전에 필요한 명시적 full export/publish baseline bootstrap, 실제 Android acceptance와 최대 20~30분
+집중 운영 관찰이다. 완료된 초기
 migration·타당성 증거는 `docs/done/`에 둔다.
 
 ## 먼저 읽기
@@ -109,7 +109,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 아직 포함하지 않음:
 
 - 명시적 full export/publish baseline bootstrap, 자동 schedule live activation과 bounded delta/failure canary
-- 24시간 반복 canary, 7일 shadow와 legacy service cutover
+- 최대 20~30분 집중 canary, bounded legacy 비교와 legacy service cutover
 - content-addressed direct asset/blob ledger
 - 실제 Android memory gate
 - B2/restic 외부 backup은 사용자 결정으로 현재 범위에서 제외
@@ -130,8 +130,8 @@ export state/publish ledger가 없거나 불일치하면 full scan으로 강등�
 유지한다. control heartbeat timer는 release 설치 직후의 baseline이고, schedule timer는 명시적 full
 export/publish baseline bootstrap과 `crawl → bounded export → publish/readback → rollback rehearsal`
 authenticated canary 성공 뒤 켠다. 그 전에는 disabled다.
-24시간 canary와 7일 shadow는 활성화 전 대기 gate가
-아니라 활성화된 자동 운전을 관찰하는 단계다.
+집중 canary는 최대 20~30분 동안 활성화된 자동 운전, 대표 delta와 failure/rollback을 관찰한다.
+그보다 긴 대기는 완료 gate로 두지 않는다.
 
 현재 상태를 로컬 화면으로 확인하려면 `uv run python -m scripts.console`을 실행하고 출력된
 `http://127.0.0.1:<port>/#token=...` URL을 같은 machine의 browser에서 연다. C0는 canonical을

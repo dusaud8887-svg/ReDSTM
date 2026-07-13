@@ -456,7 +456,7 @@ test("heartbeat and overview expose only bounded status", async () => {
           next_scheduled_at: "2026-07-12T06:17:00.000Z",
         };
       }
-      if (sql.includes("FROM run_events")) {
+      if (sql.includes("WHERE step = 'archive_snapshot'")) {
         assert.match(sql, /recorded_at <= \?/);
         return {
           counters_json: JSON.stringify({
@@ -611,10 +611,19 @@ test("keeps a long manual run active while the runner heartbeats it", async () =
         };
       }
       if (sql.includes("state = 'running'")) {
+        assert.match(sql, /LEFT JOIN run_events/);
         return {
           run_id: runId, kind: "manual-sync", source: "command", state: "running",
           started_at: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString(),
           safe_summary_json: null,
+          event_sequence: 1001,
+          event_step: "archive_snapshot",
+          event_state: "succeeded",
+          event_recorded_at: new Date().toISOString(),
+          event_counters_json: JSON.stringify({
+            changed_posts: 23, failed_posts: 2, boards_ok: 4, boards_failed: 1,
+            outline_only: 10,
+          }),
         };
       }
       if (sql.includes("COUNT(*)")) return { count: 0 };
@@ -630,6 +639,10 @@ test("keeps a long manual run active while the runner heartbeats it", async () =
   const data = (await overview.json()).data;
   assert.equal(reconciled, false);
   assert.equal(data.active_run.run_id, runId);
+  assert.equal(data.active_run.changed_posts, 23);
+  assert.equal(data.active_run.failed_posts, 2);
+  assert.equal(data.active_run.boards_ok, 4);
+  assert.equal(data.active_run.boards_failed, 1);
 });
 
 test("stale reconciliation exempts only the actively heartbeated run", async () => {
@@ -708,6 +721,7 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
       event_state: "succeeded",
       event_recorded_at: "2026-07-12T03:01:00Z",
       event_counters_json: '{"changed_posts":1}',
+      safe_summary_json: '{"code":"scheduled_succeeded","counters_reported":true}',
     },
     {
       run_id: "run-002",
@@ -722,7 +736,7 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
     CONTROL_DB: database((method, sql, values) => {
       assert.equal(method, "all");
       assert.match(sql, /LEFT JOIN run_events/);
-      assert.match(sql, /latest\.step <> 'archive_snapshot'/);
+      assert.match(sql, /r\.state = 'running' OR latest\.step <> 'archive_snapshot'/);
       assert.match(sql, /WHERE r\.started_at <= \?/);
       parameters = values;
       return { results: rows };
@@ -738,6 +752,7 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
   assert.equal(page.items.length, 1);
   assert.deepEqual(page.items[0].latest_event.counters, { changed_posts: 1 });
   assert.equal(page.items[0].safe_summary_code, "scheduled_succeeded");
+  assert.equal(page.items[0].counters_reported, true);
   assert.match(page.next_cursor, /^[a-zA-Z0-9_-]+$/);
   assert.equal(parameters.length, 2);
   assert.ok(Date.parse(parameters[0]) > Date.now());
@@ -1570,12 +1585,24 @@ test("batches idempotent run events and terminal command state", async () => {
   assert.equal(batches[0].length, 2);
   assert.match(batches[0][0].sql, /ON CONFLICT\(run_id, sequence\) DO NOTHING/);
 
+  const invalidFinish = await controlApiResponse(
+    request("/api/v1/runner/runs/sync-run-001/finish", {
+      method: "POST",
+      body: { state: "failed", counters_reported: "yes" },
+      headers: { "Idempotency-Key": "finish-run-invalid" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(invalidFinish.status, 400);
+
   const finish = await controlApiResponse(
     request("/api/v1/runner/runs/sync-run-001/finish", {
       method: "POST",
       body: {
         state: "succeeded",
         counters: { changed_posts: 1, boards_ok: 46 },
+        counters_reported: true,
         release_id: "release-abc123",
         safe_summary_code: "cycle_succeeded",
       },
@@ -1585,8 +1612,10 @@ test("batches idempotent run events and terminal command state", async () => {
     { role: "runner", subject: "runner-token" },
   );
   assert.equal(finish.status, 200);
+  assert.equal((await finish.json()).data.counters_reported, true);
   assert.equal(batches[1].length, 2);
   assert.match(batches[1][1].sql, /UPDATE commands/);
+  assert.equal(JSON.parse(batches[1][0].parameters.at(-2)).counters_reported, true);
 });
 
 test("rejects oversized event batches before D1", async () => {

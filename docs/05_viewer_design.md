@@ -54,7 +54,7 @@ brand가 아니라 Signal Archive의 밝은 표현이다. canvas는 흰색, chro
 | 화면 사실 | 실제 source/의미 | 금지 표현 | 새 표현 |
 |---|---|---|---|
 | heartbeat 24분 전 | Oracle 마지막 보고 | 현재 단계 `idle` | 마지막 보고 단계 `idle` · 24분 전 |
-| D1 run rows 없음 | 실행 telemetry 미보고 | 최근 실행 없음 + 변경 0 | 기록 `—` · 자동 수집 또는 telemetry가 아직 보고되지 않음 |
+| D1 run rows 없음 | 실행 telemetry 미보고 | 최근 실행 없음 + 변경 `—` | 자동 수집 또는 telemetry가 아직 보고되지 않음 |
 | D1 board rows 없음 | board telemetry 미보고 | 게시판 상태 없음 | release 46개, board 운영 telemetry는 아직 없음 |
 | R2 active release 존재 | Reader가 읽는 검증된 보존본 | hash를 primary | Reader 사용 가능 · 활성/게시 시각 · 수량, ID는 보조 |
 | refresh 시각 | browser가 API를 조회한 시각 | 확인 시각 | 화면 갱신 시각 |

@@ -11,6 +11,7 @@ const stepLabels = {
   crawling: "상세 수집", inventory: "전체 목록 확인", recovery: "본문 대기 재시도",
   "full-catalog": "전체 목차 재수집", "full-content": "전체 본문 재수집",
   "retry-batch": "본문 대기 재시도", "bootstrap-recovery": "최초 본문 채우기",
+  archive_snapshot: "중간 집계",
   exporting: "Reader 내보내기", publishing: "Reader 반영", verifying: "게시 검증",
   smoking: "Reader 게시 검증", rolling_back: "이전 Reader 복구",
   rollback_smoking: "Reader 복구 검증",
@@ -68,7 +69,7 @@ const warningLabels = {
 const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
 const commandCopy = {
   "sync-now": ["증분 수집 지금 실행", "등록된 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판을 첫 페이지부터 끝까지 다시 확인합니다. 이미 수집한 목차도 건너뛰지 않으며 며칠 이상 걸릴 수 있습니다."],
+  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판에서 제목·주소·목록을 처음부터 다시 확인합니다. 본문은 수집하지 않으며 며칠 이상 걸릴 수 있습니다."],
   "full-content": ["전체 게시글 본문 다시 수집", "선택 범위에서 발견된 모든 글을 성공 여부와 관계없이 다시 수집합니다. 장기간 실행될 수 있습니다."],
   "retry-batch": ["본문 대기 재시도", "처리 시각이 된 모든 대기 또는 재시도 항목을 우선순위대로 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
@@ -215,14 +216,34 @@ function number(value) {
   return Number.isFinite(value) ? Number(value).toLocaleString("ko-KR") : "—";
 }
 
+function bytes(value) {
+  if (!Number.isFinite(value) || value < 0) return "미보고";
+  if (value >= 2 ** 30) return `${(value / 2 ** 30).toFixed(1)} GiB`;
+  if (value >= 2 ** 20) return `${(value / 2 ** 20).toFixed(1)} MiB`;
+  if (value >= 2 ** 10) return `${(value / 2 ** 10).toFixed(1)} KiB`;
+  return `${number(value)} B`;
+}
+
+function runCountersReported(run) {
+  if (typeof run?.counters_reported === "boolean") return run.counters_reported;
+  return run?.safe_summary_code !== "runner_interrupted" ||
+    [run.changed_posts, run.failed_posts, run.boards_ok, run.boards_failed]
+      .some((value) => Number.isFinite(value) && value > 0);
+}
+
+function runLabel(run, activeStep = null) {
+  const action = run?.source === "command" ? activeStep || run.latest_event?.step : null;
+  return stepLabels[action] || labels[run?.kind] || run?.kind;
+}
+
 function renderArchiveSnapshot(snapshot) {
   const counters = snapshot?.counters || null;
   lastSnapshot = counters;
   if (!counters) {
-    byId("outline-only").textContent = "—";
-    byId("frontier-waiting").textContent = "—";
-    byId("inventory-progress").textContent = "—";
-    byId("frontier-dead").textContent = "—";
+    byId("outline-only").textContent = "미보고";
+    byId("frontier-waiting").textContent = "미보고";
+    byId("inventory-progress").textContent = "미보고";
+    byId("frontier-dead").textContent = "미보고";
     byId("inventory-detail").textContent = "게시판별 전체 목록 확인 이력 집계";
     byId("archive-as-of").textContent = "Oracle 원본 DB 집계가 아직 보고되지 않았습니다.";
     return;
@@ -238,12 +259,12 @@ function renderArchiveSnapshot(snapshot) {
     ? `${completed === total ? "완료" : "진행 중"} · ${number(completed)}/${number(total)}`
     : "—";
   byId("inventory-detail").textContent = inProgress
-    ? `${number(inProgress)}개 게시판은 다음 자동 실행에서 이어서 확인`
+    ? `${number(inProgress)}개 게시판의 전체 목록을 계속 확인 중`
     : completed === total && total
     ? "전체 목록 확인 완료 · 이후 최신 페이지만 주기적으로 확인"
     : "전체 분량을 알 수 없어 완료 게시판 수로 표시";
   byId("frontier-dead").textContent = number(counters.frontier_dead);
-  byId("archive-as-of").textContent = `Oracle 원본 DB · 실행 종료 집계 ${time(snapshot.recorded_at)}`;
+  byId("archive-as-of").textContent = `Oracle 원본 DB · 최근 집계 ${time(snapshot.recorded_at)}`;
 }
 
 function renderIssue(issue) {
@@ -270,11 +291,14 @@ function renderIssue(issue) {
   byId("issue-title").textContent = `${recovered ? "정상화됨" : labels[recent.state] || recent.state} · ${reason}`;
   byId("issue-reason").textContent = recovered
     ? `이후 자동 실행이 성공했습니다${recent.recovered_at ? ` · 정상화 ${time(recent.recovered_at)}` : ""}.`
+    : recent.safe_summary_code === "runner_interrupted"
+    ? "같은 작업을 다시 요청하면 저장된 체크포인트부터 이어갑니다. 실행 기록과 Oracle 여유 공간을 확인하세요."
     : "남은 항목은 다음 자동 실행에서 재시도하며, 반복 실패는 사람 확인 필요로 분리됩니다.";
   byId("issue-time").textContent = `${age(recent.finished_at || recent.started_at)} · ${time(recent.finished_at || recent.started_at)}`;
   byId("issue-kind").textContent = labels[recent.kind] || recent.kind;
-  byId("issue-posts").textContent = number(recent.failed_posts ?? 0);
-  byId("issue-boards").textContent = number(recent.boards_failed ?? 0);
+  const countersReported = runCountersReported(recent);
+  byId("issue-posts").textContent = countersReported ? number(recent.failed_posts ?? 0) : "미보고";
+  byId("issue-boards").textContent = countersReported ? number(recent.boards_failed ?? 0) : "미보고";
   byId("issue-link").hidden = false;
 }
 
@@ -349,7 +373,12 @@ function renderOverview(data) {
   byId("active-step-label").textContent = stale ? "마지막 보고 작업" : "현재 작업";
   byId("next-schedule-label").textContent = stale ? "마지막 보고 다음 실행" : "다음 자동 실행";
   const step = stepLabels[runner?.active_step] || runner?.active_step || labels[runner?.state] || "—";
-  byId("active-step").textContent = runner?.active_board_id ? `${step} · ${runner.active_board_id}` : step;
+  byId("active-step").textContent = [
+    step,
+    runner?.active_board_id,
+    Number.isFinite(runner?.active_post_id) ? `#${runner.active_post_id}` : null,
+  ].filter(Boolean).join(" · ");
+  byId("runner-disk").textContent = bytes(runner?.disk_free_bytes);
   byId("next-schedule").textContent = !scheduleEnabled
     ? "예약 없음"
     : nextOverdue
@@ -363,18 +392,24 @@ function renderOverview(data) {
   byId("warning-line").hidden = !warning;
   byId("warning-label").textContent = warningLabels[warning] || warning || "";
   const shown = active || latest;
+  const activeCounters = active?.latest_event?.counters;
+  const telemetryReported = Boolean(activeCounters) && Object.keys(activeCounters).length > 0;
+  const progressReported = Boolean(active) &&
+    ["changed_posts", "failed_posts", "boards_ok", "boards_failed"]
+      .every((name) => Number.isFinite(activeCounters?.[name]));
+  const shownCountersReported = runCountersReported(shown);
   byId("active-kicker").textContent = active ? "현재 작업" : "최근 완료";
-  byId("active-title").textContent = shown ? `${labels[shown.kind] || shown.kind} · ${labels[shown.state] || shown.state}` : "아직 보고된 실행 없음";
+  byId("active-title").textContent = shown ? `${runLabel(shown, active ? runner?.active_step : null)} · ${labels[shown.state] || shown.state}` : "아직 보고된 실행 없음";
   byId("active-reason").textContent = shown
-    ? `${sourceLabels[shown.source] || shown.source || "출처 미보고"} · ${active ? `시작 ${time(shown.started_at)} · 수치는 종료 후 집계` : `완료 ${time(shown.finished_at)}`}`
+    ? `${sourceLabels[shown.source] || shown.source || "출처 미보고"} · ${active ? `시작 ${time(shown.started_at)} · ${telemetryReported ? `중간 집계 ${time(active.latest_event.recorded_at)}` : "중간 집계 대기"}` : `완료 ${time(shown.finished_at)}`}`
     : "수집기 실행 기록이 아직 보고되지 않았습니다.";
   byId("latest-start").textContent = time(shown?.started_at);
-  byId("latest-changed").textContent = shown && !active ? number(shown.changed_posts) : "—";
-  byId("latest-failed").textContent = shown && !active ? number(shown.failed_posts) : "—";
+  byId("latest-changed").textContent = shown && (!active || progressReported) && shownCountersReported ? number(shown.changed_posts) : active || !shown ? "—" : "미보고";
+  byId("latest-failed").textContent = shown && (!active || progressReported) && shownCountersReported ? number(shown.failed_posts) : active || !shown ? "—" : "미보고";
   const boardsReported = Number.isFinite(shown?.boards_ok) && Number.isFinite(shown?.boards_failed);
-  byId("latest-boards").textContent = boardsReported && !active
+  byId("latest-boards").textContent = boardsReported && (!active || progressReported) && shownCountersReported
     ? `${shown.boards_ok}/${shown.boards_ok + shown.boards_failed}`
-    : "—";
+    : active || !shown ? "—" : "미보고";
   renderIssue(data.recent_issue);
   renderArchiveSnapshot(data.archive_snapshot);
   lastRunner = runner;
@@ -390,13 +425,14 @@ function runRow(run) {
   const state = node("span", "run-state", labels[run.state] || run.state);
   state.dataset.state = run.state;
   const identity = node("div", "run-id");
-  identity.append(node("strong", "", labels[run.kind] || run.kind), node("small", "", shortId(run.run_id)));
+  identity.append(node("strong", "", runLabel(run)), node("small", "", shortId(run.run_id)));
+  const countersReported = runCountersReported(run);
   const changed = node("div", "run-metric");
-  changed.append(node("strong", "", run.changed_posts), node("small", "", "변경"));
+  changed.append(node("strong", "", countersReported ? run.changed_posts : "미보고"), node("small", "", "변경"));
   const failed = node("div", "run-metric");
-  failed.append(node("strong", "", run.failed_posts), node("small", "", "실패"));
+  failed.append(node("strong", "", countersReported ? run.failed_posts : "미보고"), node("small", "", "실패"));
   const boards = node("div", "run-metric");
-  boards.append(node("strong", "", `${run.boards_ok}/${run.boards_ok + run.boards_failed}`), node("small", "", "게시판"));
+  boards.append(node("strong", "", countersReported ? `${run.boards_ok}/${run.boards_ok + run.boards_failed}` : "미보고"), node("small", "", "게시판"));
   const started = node("div", "run-metric");
   started.append(node("strong", "", age(run.started_at)), node("small", "", time(run.started_at)));
   summary.append(state, identity, changed, failed, boards, started);

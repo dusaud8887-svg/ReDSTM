@@ -695,6 +695,7 @@ async function recordEvents(request, env, requestId, runId) {
 async function finishRun(request, env, requestId, runId) {
   const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   if (!terminalStates.has(body.state) || !validCounters(body.counters ?? {}) ||
+      (body.counters_reported != null && typeof body.counters_reported !== "boolean") ||
       (body.release_id != null && !identifierPattern.test(body.release_id)) ||
       (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
     return failure(requestId, 400, "invalid_finish", "Run result is invalid");
@@ -710,6 +711,10 @@ async function finishRun(request, env, requestId, runId) {
   }
   const counters = body.counters ?? {};
   const finishedAt = new Date().toISOString();
+  const safeSummary = { code: body.safe_summary_code ?? null };
+  if (typeof body.counters_reported === "boolean") {
+    safeSummary.counters_reported = body.counters_reported;
+  }
   await env.CONTROL_DB.batch([
     env.CONTROL_DB.prepare(
       `UPDATE runs SET state = ?, finished_at = ?, changed_posts = ?, failed_posts = ?,
@@ -723,7 +728,7 @@ async function finishRun(request, env, requestId, runId) {
       counters.boards_ok ?? 0,
       counters.boards_failed ?? 0,
       body.release_id ?? null,
-      JSON.stringify({ code: body.safe_summary_code ?? null }),
+      JSON.stringify(safeSummary),
       runId,
     ),
     env.CONTROL_DB.prepare(
@@ -737,6 +742,7 @@ async function finishRun(request, env, requestId, runId) {
     state: body.state,
     finished_at: finishedAt,
     release_id: body.release_id ?? null,
+    safe_summary_json: JSON.stringify(safeSummary),
   }));
 }
 

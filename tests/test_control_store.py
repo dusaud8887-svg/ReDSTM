@@ -22,7 +22,7 @@ def test_store_closes_every_sqlite_connection(
     original_connect = sqlite3.connect
 
     def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
-        connection = original_connect(*args, **kwargs)  # type: ignore[arg-type]
+        connection = original_connect(*args, **kwargs)  # type: ignore[call-overload]
         connections.append(connection)
         return connection
 
@@ -33,9 +33,7 @@ def test_store_closes_every_sqlite_connection(
     store.begin_command(command_id, run_id="run-1", now=_NOW)
     store.finish_command(command_id, "succeeded", "cycle_succeeded", now=_NOW)
     store.pending_commands()
-    store.enqueue(
-        "heartbeat", "/api/v1/runner/heartbeat", {"state": "idle"}, "heartbeat-close-1"
-    )
+    store.enqueue("heartbeat", "/api/v1/runner/heartbeat", {"state": "idle"}, "heartbeat-close-1")
     store.pending()
     store.stats()
     store.rejection()
@@ -54,6 +52,17 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
     assert claimed["state"] == "claimed"
     assert store.begin_command(command_id, run_id="run-1", now=_NOW) is True
     assert store.begin_command(command_id, run_id="run-2", now=_NOW) is False
+
+    progress = {
+        "changed_posts": 7,
+        "failed_posts": 1,
+        "boards_ok": 2,
+        "boards_failed": 0,
+    }
+    assert store.update_progress(command_id, progress, now=_NOW) is True
+    running = store.command(command_id)
+    assert running is not None
+    assert json.loads(running["result_json"]) == {"progress": progress}
 
     payload = {"state": "succeeded", "counters": {"changed_posts": 2}}
     terminal = store.finish_command(

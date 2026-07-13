@@ -145,8 +145,9 @@ R2 writer key와 Access service token은 별도 credential file로만
   `/srv/redstm/state/control.lock`을 공유한다. installer는 active run을 중단하지 않고 mutation 전에
   `redstm_install_not_started`로 끝난다.
 - crawler는 `CONCURRENT_REQUESTS=1`, domain/detail concurrency 1, fixed start delay 10초를 유지한다.
-- systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 timer와
-  durable frontier가 복구한다.
+- systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 control timer가
+  checkpointed full-catalog/full-content command를 같은 run으로 재개한다. 짧은 증분 작업은 durable
+  frontier를 보존하고 실패를 명시 보고한 뒤 다음 요청/예약 실행에서 복구한다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.
@@ -193,7 +194,8 @@ inventory는 listing coverage이며 기존 detail 전체 재요청은 별도 수
 
 ### G2. board cycle command
 
-46개 enabled board를 별도 수동 명령 없이 순차 실행하는 한 command다. command는 board별
+현재 enabled board를 별도 수동 명령 없이 순차 실행하는 한 command다. legacy 46개와 2026-07-13
+확인한 `write_drawing`을 합친 현재 기준은 47개다. command는 board별
 결과를 분리 기록하고 network/listing failure는 다음 board로 넘기되, session/auth failure는 전체
 cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Celery/Redis를 추가하지 않는다.
 
@@ -413,8 +415,8 @@ pointer 교체 뒤 실패하면 이전 pointer와 그 release의 ledger로 함�
 
 repository schema v4 migration/doctor, 명시적 full export/publish baseline bootstrap과 authenticated
 `crawl → bounded export → publish/readback → rollback rehearsal` canary 1회가 통과하면 다음 값으로
-schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 24시간 canary와 7일 shadow는 활성화된
-자동 운전의 관찰 구간이며 시작 전 대기 gate가 아니다.
+schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 이후 최대 20~30분 집중 canary에서
+활성화된 자동 운전, bounded legacy 비교와 failure/rollback을 확인하며 더 긴 대기는 완료 gate로 두지 않는다.
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
@@ -443,7 +445,7 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | dataloss/빈 listing | raw capture 뒤 listing coverage 중단, detail network retry; 명시 empty marker만 빈 page 허용 | 잘린/변형 응답을 정상 0건으로 확정하지 않음 |
 | network | 429/network breaker | `Retry-After` 우선(최대 24시간), 같은 class 연속 3회면 recovery 조기 종료 | 과속·전체 outage에서 다음 97건 요청 금지 |
-| outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 46개 board를 순회하지 않음 |
+| outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 enabled board 전체를 순회하지 않음 |
 | outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료 | listing 3회 retry 포함 최악 약 20분 안팎에 중단 |
 | outage | attempt 보존 | `site_unreachable` run의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
 | frontier | network attempts | 5회 뒤 dead | 기존 유지 |
@@ -528,9 +530,9 @@ command는 live 통과했다.
 
 - 명시적 full export/publish baseline bootstrap과 authenticated
   crawl→bounded export→publish/readback→rollback rehearsal canary가 성공하면 schedule을 enable한다.
-- 활성화 상태에서 24시간 반복 canary와 7일 shadow를 차례로 관찰한다.
+- 활성화 상태에서 최대 20~30분 집중 canary를 관찰한다.
 - 요청 간격, p95 latency, 429/timeout, auth, parse drift, WARC partial, memory/disk를 기록한다.
-- 7일 동안 legacy data와 새 capture 결과를 비교한다.
+- 같은 구간의 bounded 표본으로 legacy data와 새 capture 결과를 비교한다.
 - Cloudflare viewer와 R2 delta release를 실제로 읽는다.
 - D1 duplicate command, expired command, Worker outage와 event replay를 failure injection한다.
 
@@ -551,7 +553,7 @@ command는 live 통과했다.
 1. E source 재해시 통과
 2. Oracle active canonical doctor/backup/restore 통과
 3. Cloudflare release rollback 통과
-4. 7일 shadow와 legacy rollback window 종료
+4. 집중 canary와 bounded legacy 비교 종료
 
 외부 backup이 deferred인 현재 O4는 실행하지 않는다. 아래 조건은 future cleanup 계약으로만 남긴다.
 
@@ -580,7 +582,7 @@ Oracle runner 전환 완료는 다음을 모두 의미한다.
 
 - ReDSTM source와 systemd/deploy artifact가 Git에서 재현 가능하다.
 - E verified source와 기존 격리 restore 사본이 보존된다.
-- incremental cycle이 7일 동안 중복 process, retry storm, parse drift 은폐 없이 돈다.
+- 최대 20~30분 집중 canary에서 incremental cycle이 중복 process, retry storm, parse drift 은폐 없이 돈다.
 - R2 delta publish와 pointer rollback이 검증된다.
 - D1 outage 중 schedule이 계속되고 duplicate remote command가 한 run만 만든다.
 - public listener는 SSH 외에 없고 viewer는 Cloudflare에서만 제공된다.

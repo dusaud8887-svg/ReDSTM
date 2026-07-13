@@ -75,6 +75,7 @@ _WARNING_CODES = {
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SNAPSHOT_TIME_BUDGET_SECONDS = 30
+_LIVE_SNAPSHOT_INTERVAL_SECONDS = 5 * 60
 _DEFAULT_DISK_LOW_BYTES = 40 * 1024**3
 _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS = _DAILY_INTERVAL_SECONDS
 _DEFAULT_TOKEN_EXPIRING_SECONDS = _DAILY_INTERVAL_SECONDS
@@ -87,6 +88,9 @@ _CALENDAR_PATTERN = re.compile(
 _INVENTORY_STARTED = "inventory.started"
 _INVENTORY_COMPLETED = "inventory.completed"
 _FULL_CONTENT_STARTED = "full-content.started"
+# The legacy import is the baseline catalog. Source boards added after that snapshot are
+# registered explicitly once a baseline-only board proves this is a TypeMoon archive.
+_SOURCE_BOARD_ADDITIONS = (("write_drawing", "창작그림", "creation", "write_nirvana"),)
 # Mid-run progress events use a disjoint sequence range so they never collide with the
 # fixed start(0)/terminal(1)/final-snapshot(2) sequences of a run.
 _PROGRESS_EVENT_SEQUENCE_BASE = 1000
@@ -143,6 +147,41 @@ def _installed_next_scheduled_at(timer_path: Path, now: datetime | None = None) 
 
 def _integer(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _collection_counters(report: dict[str, Any]) -> dict[str, int]:
+    raw_outcomes = report.get("outcomes")
+    outcomes: dict[str, Any] = raw_outcomes if isinstance(raw_outcomes, dict) else {}
+    return {
+        "changed_posts": _integer(report.get("changed_posts", outcomes.get("stored", 0))),
+        "failed_posts": _integer(
+            report.get(
+                "failed_posts",
+                _integer(outcomes.get("parse_failed")) + _integer(outcomes.get("fetch_failed")),
+            )
+        ),
+        "boards_ok": _integer(report.get("boards_ok")),
+        "boards_failed": _integer(report.get("boards_failed")),
+    }
+
+
+def _sum_collection_counters(
+    counters: dict[str, int], offset: dict[str, int] | None
+) -> dict[str, int]:
+    if offset is None:
+        return counters
+    return {name: counters[name] + offset[name] for name in counters}
+
+
+def _saved_progress(record: dict[str, Any]) -> dict[str, int] | None:
+    try:
+        progress = json.loads(record["result_json"]).get("progress")
+    except AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError:
+        return None
+    if not isinstance(progress, dict):
+        return None
+    counters = _collection_counters(progress)
+    return counters if set(progress) == set(counters) else None
 
 
 def _nonnegative_integer(value: str) -> int:
@@ -222,6 +261,7 @@ class ControlRunner:
             return {"ok": True, "status": "busy"}
 
     def _run_scheduled_locked(self) -> dict[str, Any]:
+        self._reconcile_source_boards()
         if (self.profile.state_dir / "schedule.paused").exists():
             self._heartbeat("paused")
             return {"ok": True, "status": "paused"}
@@ -329,6 +369,7 @@ class ControlRunner:
         }
 
     def _run_locked(self) -> dict[str, Any]:
+        self._reconcile_source_boards()
         try:
             self.client.flush(self.store)
         except ControlProtocolError, OSError, ValueError, sqlite3.Error:
@@ -348,12 +389,69 @@ class ControlRunner:
         )
         return self._resume(record)
 
+    def _reconcile_source_boards(self) -> None:
+        if not self.profile.archive.is_file():
+            return
+        board_ids = {
+            board_id
+            for addition in _SOURCE_BOARD_ADDITIONS
+            for board_id in (addition[0], addition[3])
+        }
+        placeholders = ",".join("?" for _ in board_ids)
+        with archive_transaction(self.profile.archive, read_only=True) as connection:
+            present = {
+                str(row[0])
+                for row in connection.execute(
+                    f"SELECT board_id FROM boards WHERE board_id IN ({placeholders})",
+                    tuple(sorted(board_ids)),
+                )
+            }
+        missing = [
+            item
+            for item in _SOURCE_BOARD_ADDITIONS
+            if item[0] not in present and item[3] in present
+        ]
+        if not missing:
+            return
+        observed_at = _timestamp()
+        with archive_transaction(self.profile.archive) as connection:
+            for board_id, name, group_name, _baseline_board_id in missing:
+                connection.execute(
+                    """
+                    INSERT INTO boards (
+                        board_id, name, group_name, canonical_url, first_seen_at, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(board_id) DO NOTHING
+                    """,
+                    (
+                        board_id,
+                        name,
+                        group_name,
+                        f"https://www.typemoon.net/{board_id}",
+                        observed_at,
+                        observed_at,
+                    ),
+                )
+
     def _resume(self, record: dict[str, Any]) -> dict[str, Any]:
         state = str(record["state"])
         if state in {"succeeded", "partial", "failed"}:
             return self._replay_terminal(record)
         if state == "running":
-            payload = self._finish_payload("failed", "runner_interrupted")
+            action = str(record["action"])
+            checkpoint = {
+                "full-catalog": self.profile.state_dir / _INVENTORY_STARTED,
+                "full-content": self.profile.state_dir / _FULL_CONTENT_STARTED,
+            }.get(action)
+            if checkpoint is not None and checkpoint.is_file():
+                return self._run_process_action(record, action, resuming=True)
+            progress = _saved_progress(record)
+            payload = self._finish_payload(
+                "failed",
+                "runner_interrupted",
+                progress,
+                counters_reported=progress is not None,
+            )
             record = self.store.finish_command(
                 record["command_id"],
                 "failed",
@@ -398,22 +496,26 @@ class ControlRunner:
         self._heartbeat("paused" if marker.exists() else "idle")
         return {"ok": True, "status": terminal["state"], "command_id": command_id}
 
-    def _run_process_action(self, record: dict[str, Any], action: str) -> dict[str, Any]:
+    def _run_process_action(
+        self, record: dict[str, Any], action: str, *, resuming: bool = False
+    ) -> dict[str, Any]:
         command_id = str(record["command_id"])
         run_id = str(record.get("run_id") or f"command-{command_id}")
-        if not self.store.begin_command(command_id, run_id=run_id):
-            return self._resume(self.store.command(command_id) or record)
-        started_at = _timestamp()
-        start_payload = {
-            "run_id": run_id,
-            "kind": _RUN_KINDS[action],
-            "source": "command",
-            "command_id": command_id,
-            "requested_at": record["claimed_at"],
-            "started_at": started_at,
-        }
-        self._send("run_start", "/api/v1/runner/runs", start_payload, f"start-{command_id}")
-        self._event(run_id, 0, action, "running")
+        progress_offset = _saved_progress(record) if resuming else None
+        if not resuming:
+            if not self.store.begin_command(command_id, run_id=run_id):
+                return self._resume(self.store.command(command_id) or record)
+            started_at = _timestamp()
+            start_payload = {
+                "run_id": run_id,
+                "kind": _RUN_KINDS[action],
+                "source": "command",
+                "command_id": command_id,
+                "requested_at": record["claimed_at"],
+                "started_at": started_at,
+            }
+            self._send("run_start", "/api/v1/runner/runs", start_payload, f"start-{command_id}")
+            self._event(run_id, 0, action, "running")
         report: dict[str, Any] = {}
         board_id = None
         try:
@@ -426,13 +528,21 @@ class ControlRunner:
             ):
                 raise ValueError("command board id is invalid")
             report = self._execute_action(
-                action, command_id, run_id, command_id=command_id, board_id=board_id
+                action,
+                command_id,
+                run_id,
+                command_id=command_id,
+                board_id=board_id,
+                progress_offset=progress_offset,
             )
             state, safe_code, finish_payload = self._result(action, report)
+            finish_payload["counters"] = _sum_collection_counters(
+                finish_payload["counters"], progress_offset
+            )
         except OSError, RuntimeError, ValueError:
             state = "failed"
             safe_code = "runner_failed"
-            finish_payload = self._finish_payload(state, safe_code)
+            finish_payload = self._finish_payload(state, safe_code, progress_offset)
         terminal = self.store.finish_command(
             command_id,
             state,
@@ -502,6 +612,7 @@ class ControlRunner:
         *,
         command_id: str | None = None,
         board_id: str | None = None,
+        progress_offset: dict[str, int] | None = None,
         reconcile_attempt: int = 0,
         pending_recovery_checked: bool = False,
     ) -> dict[str, Any]:
@@ -543,15 +654,22 @@ class ControlRunner:
             reports: list[dict[str, Any]] = []
             auth_retried = False
             previous_signature: tuple[int, int] | None = None
+            crawl_step = "full-catalog" if action == "full-catalog" else "crawling"
             while True:
                 report = self._execute_report(
-                    command, report_path, run_id, "crawling", command_id=command_id
+                    command, report_path, run_id, crawl_step, command_id=command_id
                 )
                 reports.append(report)
                 if action != "full-catalog":
                     return report
                 self._board_summaries(report)
-                self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
+                progress = _sum_collection_counters(
+                    _collection_counters(self._combined_collection_report(reports)),
+                    progress_offset,
+                )
+                if command_id is not None:
+                    self.store.update_progress(command_id, progress)
+                self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id), progress)
                 if self._inventory_pass_complete(str(inventory_started_at), board_id):
                     self._complete_inventory_pass(str(inventory_started_at), board_id)
                     return self._combined_collection_report(
@@ -624,12 +742,19 @@ class ControlRunner:
             reports = []
             auth_retried = False
             previous_remaining: int | None = None
+            recovery_step = "full-content" if action == "full-content" else "recovery"
             while True:
                 report = self._execute_report(
-                    command, report_path, run_id, "recovery", command_id=command_id
+                    command, report_path, run_id, recovery_step, command_id=command_id
                 )
                 reports.append(report)
-                self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
+                progress = _sum_collection_counters(
+                    _collection_counters(self._combined_collection_report(reports)),
+                    progress_offset,
+                )
+                if command_id is not None:
+                    self.store.update_progress(command_id, progress)
+                self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id), progress)
                 status = str(report.get("status", "failed"))
                 if status == "auth_failed" and not auth_retried:
                     auth_retried = True
@@ -993,7 +1118,8 @@ class ControlRunner:
 
     def _next_progress_sequence(self, run_id: str) -> int:
         counter = self._progress_sequences.setdefault(
-            run_id, itertools.count(_PROGRESS_EVENT_SEQUENCE_BASE)
+            run_id,
+            itertools.count(max(_PROGRESS_EVENT_SEQUENCE_BASE, time.time_ns() // 1_000)),
         )
         return next(counter)
 
@@ -1190,8 +1316,15 @@ class ControlRunner:
         *,
         command_id: str | None = None,
     ) -> dict[str, Any]:
+        try:
+            report_path.unlink(missing_ok=True)
+        except OSError:
+            return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         return_code = self._wait(command, run_id, step, command_id=command_id)
-        report = self._read_report(report_path)
+        try:
+            report = self._read_report(report_path)
+        except OSError, ValueError:
+            return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         if return_code not in (0, 2) and report.get("ok") is not True:
             return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         return report
@@ -1207,6 +1340,7 @@ class ControlRunner:
     ) -> int:
         output_handle: BinaryIO | None = stdout.open("wb") if stdout is not None else None
         output: BinaryIO | int = output_handle or subprocess.DEVNULL
+        next_snapshot_at = time.monotonic()
         try:
             process = subprocess.Popen(
                 command,
@@ -1223,6 +1357,14 @@ class ControlRunner:
                 except subprocess.TimeoutExpired:
                     self._claim_marker()
                     self._heartbeat("running", run_id=run_id, step=step, command_id=command_id)
+                    now = time.monotonic()
+                    if (
+                        command_id is not None
+                        and step in {"crawling", "full-catalog", "recovery", "full-content"}
+                        and now >= next_snapshot_at
+                    ):
+                        self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
+                        next_snapshot_at = now + _LIVE_SNAPSHOT_INTERVAL_SECONDS
         finally:
             if output_handle is not None:
                 output_handle.close()
@@ -1374,19 +1516,7 @@ class ControlRunner:
         safe_code = str(report.get("safe_code") or default_code)
         if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", safe_code) is None:
             safe_code = "run_failed"
-        raw_outcomes = report.get("outcomes")
-        outcomes: dict[str, Any] = raw_outcomes if isinstance(raw_outcomes, dict) else {}
-        counters = {
-            "changed_posts": _integer(report.get("changed_posts", outcomes.get("stored", 0))),
-            "failed_posts": _integer(
-                report.get(
-                    "failed_posts",
-                    _integer(outcomes.get("parse_failed")) + _integer(outcomes.get("fetch_failed")),
-                )
-            ),
-            "boards_ok": _integer(report.get("boards_ok")),
-            "boards_failed": _integer(report.get("boards_failed")),
-        }
+        counters = _collection_counters(report)
         release_id = None
         release_key = report.get("release_key")
         if isinstance(release_key, str):
@@ -1401,6 +1531,8 @@ class ControlRunner:
         safe_code: str,
         counters: dict[str, int] | None = None,
         release_id: str | None = None,
+        *,
+        counters_reported: bool | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "state": state,
@@ -1410,6 +1542,8 @@ class ControlRunner:
         }
         if release_id is not None:
             payload["release_id"] = release_id
+        if counters_reported is not None:
+            payload["counters_reported"] = counters_reported
         return payload
 
     def _replay_terminal(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -1577,7 +1711,9 @@ class ControlRunner:
                 f"failures-{generation}-{index}",
             )
 
-    def _archive_snapshot_event(self, run_id: str, sequence: int) -> None:
+    def _archive_snapshot_event(
+        self, run_id: str, sequence: int, run_counters: dict[str, int] | None = None
+    ) -> None:
         if not self.profile.archive.is_file():
             return
         inventory_started_at = self._latest_inventory_pass_started_at()
@@ -1631,6 +1767,7 @@ class ControlRunner:
             "inventory_completed_boards": int(inventory["completed"] or 0),
             "inventory_in_progress_boards": int(inventory["in_progress"] or 0),
         }
+        counters.update(run_counters or {})
         self._event(run_id, sequence, "archive_snapshot", "succeeded", counters)
 
     @staticmethod
