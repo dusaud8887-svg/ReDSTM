@@ -249,6 +249,11 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 출력하지 않게 제한했다. `write_free21` 1건은 269.8초에 stored/frontier done, failure 0,
 최대 메모리 약 92MB와 WARC partial 0으로 통과했다.
 
+상태(2026-07-14): 원본의 저속·미완결 응답 outage 모드를 실측([`10 §8.2`](10_oracle_runner_runbook.md))한
+뒤 listing timeout을 180초로 올려 detail과 상한을 맞췄고, robots.txt 미준수를 사용자 결정으로
+확정했다(`ROBOTSTXT_OBEY=False`; 10초 간격은 robots `Crawl-delay`와 동일하게 유지, per-process
+robots fetch 제거).
+
 감사에서 발견한 `max_posts` 뒤 changed row 누락은 받은 listing의 모든 변경 row를 먼저 durable seed하고
 이번 detail scheduling만 cap하도록 고쳤다. schema v3은 board별 `inventory_next_page`를 저장해 bounded
 inventory가 다음 page에서 재개된다. repository schema v4는 기존 post 댓글 수와 board별 최신 frontier ID를 backfill하고,
@@ -301,6 +306,11 @@ timeout으로 종료되며 `partial/worker_timeout`을 보고한다. Celery/Redi
   경로에서 처리 중 만료될 수 있다
 - `site_unreachable`로 끝난 run의 network 실패는 frontier attempt로 세지 않는다
 - 파라미터 시작값은 [`10 §8.1`](10_oracle_runner_runbook.md)을 따른다
+
+상태(2026-07-14): recovery run의 시작 preflight와 breaker/auth halt를 cycle과 같은
+`site_unreachable`/`rate_limited`/`auth_failed` status로 분류하고, `site_unreachable` run이 소모한
+network attempt를 복원하도록 확장했다. 이전에는 breaker 중단이 `partial`로만 보고돼 control 루프가
+죽은 원본을 상대로 후보를 계속 소진시켰다.
 
 상태(2026-07-12): local core 구현 완료, 24시간·대형 AA canary 전이다. Oracle 실측 queue는
 pending 29,379/retry 4,328/running 1이어서 100건 count만으로는 5시간 service 상한을 보장하지 못했다.

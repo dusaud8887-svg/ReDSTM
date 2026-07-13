@@ -1,6 +1,6 @@
 # ReDSTM 문서 인덱스
 
-- 기준일: 2026-07-12
+- 기준일: 2026-07-14
 - 상태: final target specified; implementation and production gates in progress
 - done: [`2026-07-11 완료 기록`](done/2026-07-11/README.md)
 - archive: [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)
