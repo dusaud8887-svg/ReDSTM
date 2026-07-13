@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Iterator
 from compression import zstd
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -290,6 +291,20 @@ def connect_archive(path: str | Path, *, read_only: bool = False) -> sqlite3.Con
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.execute("PRAGMA trusted_schema = OFF")
     return connection
+
+
+@contextmanager
+def archive_transaction(
+    path: str | Path, *, read_only: bool = False
+) -> Iterator[sqlite3.Connection]:
+    # sqlite3's connection context manager only wraps a transaction. Long-lived processes
+    # (runner poller, Scrapy workers) must close each connection or file descriptors leak.
+    connection = connect_archive(path, read_only=read_only)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def initialize_archive(path: str | Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -19,7 +20,7 @@ from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
-from crawler.archive import connect_archive
+from crawler.archive import archive_transaction
 from crawler.settings import (
     REDSTM_EXPORT_MAX_CHANGED_POSTS,
     REDSTM_EXPORT_WORKERS,
@@ -86,6 +87,9 @@ _CALENDAR_PATTERN = re.compile(
 _INVENTORY_STARTED = "inventory.started"
 _INVENTORY_COMPLETED = "inventory.completed"
 _FULL_CONTENT_STARTED = "full-content.started"
+# Mid-run progress events use a disjoint sequence range so they never collide with the
+# fixed start(0)/terminal(1)/final-snapshot(2) sequences of a run.
+_PROGRESS_EVENT_SEQUENCE_BASE = 1000
 
 
 def _timestamp() -> str:
@@ -197,6 +201,7 @@ class ControlRunner:
         self.profile = profile
         self.client = client
         self.store = store
+        self._progress_sequences: dict[str, itertools.count[int]] = {}
         self.profile.state_dir.mkdir(parents=True, exist_ok=True)
         self.profile.report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -326,7 +331,7 @@ class ControlRunner:
     def _run_locked(self) -> dict[str, Any]:
         try:
             self.client.flush(self.store)
-        except ControlProtocolError, OSError, ValueError:
+        except ControlProtocolError, OSError, ValueError, sqlite3.Error:
             pass
         pending = self.store.pending_commands(limit=1)
         if pending:
@@ -410,15 +415,16 @@ class ControlRunner:
         self._send("run_start", "/api/v1/runner/runs", start_payload, f"start-{command_id}")
         self._event(run_id, 0, action, "running")
         report: dict[str, Any] = {}
-        raw_args = record.get("args")
-        if not isinstance(raw_args, dict):
-            raw_args = json.loads(str(record.get("args_json", "{}")))
-        board_id = raw_args.get("board_id")
-        if board_id is not None and (
-            not isinstance(board_id, str) or re.fullmatch(r"[a-z0-9_]{1,64}", board_id) is None
-        ):
-            raise ValueError("command board id is invalid")
+        board_id = None
         try:
+            raw_args = record.get("args")
+            if not isinstance(raw_args, dict):
+                raw_args = json.loads(str(record.get("args_json", "{}")))
+            board_id = raw_args.get("board_id")
+            if board_id is not None and (
+                not isinstance(board_id, str) or re.fullmatch(r"[a-z0-9_]{1,64}", board_id) is None
+            ):
+                raise ValueError("command board id is invalid")
             report = self._execute_action(
                 action, command_id, run_id, command_id=command_id, board_id=board_id
             )
@@ -439,7 +445,7 @@ class ControlRunner:
         if action in {"sync-now", "full-catalog"} and report:
             self._board_summaries(report)
         elif action in {"full-content", "retry-batch"} and self.profile.archive.is_file():
-            with connect_archive(self.profile.archive, read_only=True) as connection:
+            with archive_transaction(self.profile.archive, read_only=True) as connection:
                 if board_id:
                     board_ids = [board_id]
                 else:
@@ -535,6 +541,8 @@ class ControlRunner:
                     )
                 )
             reports: list[dict[str, Any]] = []
+            auth_retried = False
+            previous_signature: tuple[int, int] | None = None
             while True:
                 report = self._execute_report(
                     command, report_path, run_id, "crawling", command_id=command_id
@@ -542,20 +550,40 @@ class ControlRunner:
                 reports.append(report)
                 if action != "full-catalog":
                     return report
+                self._board_summaries(report)
+                self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
                 if self._inventory_pass_complete(str(inventory_started_at), board_id):
                     self._complete_inventory_pass(str(inventory_started_at), board_id)
                     return self._combined_collection_report(
                         reports, safe_code="full_catalog_succeeded"
                     )
-                if report.get("status") in {
+                status = str(report.get("status", "failed"))
+                if status == "auth_failed" and not auth_retried:
+                    # The next cycle's preflight performs a throttled re-login; one retry
+                    # covers routine session expiry during a multi-hour pass.
+                    auth_retried = True
+                    continue
+                if status in {
                     "auth_failed",
                     "site_unreachable",
                     "rate_limited",
                     "runner_failed",
                     "failed",
                 }:
-                    report["inventory_pass_complete"] = False
-                    return report
+                    combined = self._combined_collection_report(reports)
+                    combined["inventory_pass_complete"] = False
+                    return combined
+                signature = self._inventory_progress_signature(board_id)
+                if signature is not None and signature == previous_signature:
+                    combined = self._combined_collection_report(reports)
+                    combined.update(
+                        ok=False,
+                        status="failed",
+                        safe_code="full_catalog_no_progress",
+                        inventory_pass_complete=False,
+                    )
+                    return combined
+                previous_signature = signature
         if action in {"full-content", "retry-batch"}:
             full_content_checkpoint = (
                 self._ensure_full_content_pass_started(board_id)
@@ -594,13 +622,19 @@ class ControlRunner:
                     )
                 )
             reports = []
+            auth_retried = False
             previous_remaining: int | None = None
             while True:
                 report = self._execute_report(
                     command, report_path, run_id, "recovery", command_id=command_id
                 )
                 reports.append(report)
-                if report.get("status") in {
+                self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
+                status = str(report.get("status", "failed"))
+                if status == "auth_failed" and not auth_retried:
+                    auth_retried = True
+                    continue
+                if status in {
                     "auth_failed",
                     "site_unreachable",
                     "rate_limited",
@@ -957,10 +991,38 @@ class ControlRunner:
             seconds=_WEEKLY_INTERVAL_SECONDS
         )
 
+    def _next_progress_sequence(self, run_id: str) -> int:
+        counter = self._progress_sequences.setdefault(
+            run_id, itertools.count(_PROGRESS_EVENT_SEQUENCE_BASE)
+        )
+        return next(counter)
+
+    def _inventory_progress_signature(self, board_id: str | None) -> tuple[int, int] | None:
+        if not self.profile.archive.is_file():
+            return None
+        board_filter = " AND board_id = ?" if board_id is not None else ""
+        parameters: tuple[object, ...] = (board_id,) if board_id is not None else ()
+        try:
+            with archive_transaction(self.profile.archive, read_only=True) as connection:
+                row = connection.execute(
+                    f"""
+                    SELECT COALESCE(SUM(inventory_next_page), 0) AS pages,
+                           COALESCE(SUM(inventory_next_page = 1
+                                        AND last_inventory_at IS NOT NULL), 0) AS completed
+                    FROM boards WHERE is_enabled = 1{board_filter}
+                    """,
+                    parameters,
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        return (int(row["pages"]), int(row["completed"]))
+
     def _inventory_pass_complete(self, started_at: str, board_id: str | None = None) -> bool:
         if not self.profile.archive.is_file():
             return False
-        with connect_archive(self.profile.archive, read_only=True) as connection:
+        with archive_transaction(self.profile.archive, read_only=True) as connection:
             board_filter = " AND board_id = ?" if board_id is not None else ""
             parameters: tuple[object, ...] = (started_at,)
             if board_id is not None:
@@ -989,7 +1051,7 @@ class ControlRunner:
                 raise RuntimeError("an inventory pass with a different scope is active")
             return existing.isoformat(timespec="seconds").replace("+00:00", "Z")
         started_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-        with connect_archive(self.profile.archive) as connection:
+        with archive_transaction(self.profile.archive) as connection:
             where = "board_id = ? AND is_enabled = 1" if board_id else "is_enabled = 1"
             parameters = (board_id,) if board_id else ()
             cursor = connection.execute(
@@ -1001,7 +1063,7 @@ class ControlRunner:
         return started_at
 
     def _complete_inventory_pass(self, started_at: str, board_id: str | None = None) -> None:
-        with connect_archive(self.profile.archive) as connection:
+        with archive_transaction(self.profile.archive) as connection:
             board_filter = " AND board_id = ?" if board_id is not None else ""
             parameters: tuple[object, ...] = (board_id,) if board_id is not None else ()
             connection.execute(
@@ -1042,7 +1104,7 @@ class ControlRunner:
             ):
                 raise RuntimeError("full-content checkpoint is invalid or has another scope")
             return started_at, max_rowid
-        with connect_archive(self.profile.archive, read_only=True) as connection:
+        with archive_transaction(self.profile.archive, read_only=True) as connection:
             board_filter = " WHERE board_id = ?" if board_id is not None else ""
             parameters = (board_id,) if board_id is not None else ()
             max_rowid = int(
@@ -1103,7 +1165,7 @@ class ControlRunner:
     def _bootstrap_pending(self) -> bool:
         if not self.profile.archive.is_file():
             return False
-        with connect_archive(self.profile.archive, read_only=True) as connection:
+        with archive_transaction(self.profile.archive, read_only=True) as connection:
             row = connection.execute(
                 """
                 SELECT EXISTS (
@@ -1273,6 +1335,11 @@ class ControlRunner:
             ),
             failed_posts=sum(_integer(report.get("failed_posts")) for report in reports),
         )
+        if boards:
+            boards_ok = sum(
+                1 for board in boards.values() if str(board.get("status")) == "succeeded"
+            )
+            result.update(boards_ok=boards_ok, boards_failed=len(boards) - boards_ok)
         if safe_code is not None:
             result.update(ok=True, status="succeeded", safe_code=safe_code)
         return result
@@ -1400,7 +1467,7 @@ class ControlRunner:
         if not isinstance(boards, list) or not self.profile.archive.is_file():
             return
         inventory_pass_started_at = self._latest_inventory_pass_started_at()
-        with connect_archive(self.profile.archive, read_only=True) as connection:
+        with archive_transaction(self.profile.archive, read_only=True) as connection:
             for item in boards:
                 if not isinstance(item, dict) or not isinstance(item.get("board_id"), str):
                     continue
@@ -1515,7 +1582,7 @@ class ControlRunner:
             return
         inventory_started_at = self._latest_inventory_pass_started_at()
         try:
-            with connect_archive(self.profile.archive, read_only=True) as connection:
+            with archive_transaction(self.profile.archive, read_only=True) as connection:
                 deadline = time.monotonic() + _SNAPSHOT_TIME_BUDGET_SECONDS
                 connection.set_progress_handler(
                     lambda: int(time.monotonic() >= deadline),
@@ -1642,6 +1709,21 @@ class ControlRunner:
         step: str | None = None,
         command_id: str | None = None,
     ) -> None:
+        # Heartbeats are best-effort telemetry; a local failure (disk probe, state DB,
+        # timer inspection) must never abort the command or run being reported on.
+        try:
+            self._heartbeat_once(state, run_id=run_id, step=step, command_id=command_id)
+        except OSError, RuntimeError, ValueError, sqlite3.Error:
+            return
+
+    def _heartbeat_once(
+        self,
+        state: str,
+        *,
+        run_id: str | None = None,
+        step: str | None = None,
+        command_id: str | None = None,
+    ) -> None:
         if state == "idle" and (self.profile.state_dir / "schedule.paused").exists():
             state = "paused"
         disk_free_bytes = shutil.disk_usage(self.profile.state_dir).free
@@ -1658,7 +1740,7 @@ class ControlRunner:
         }
         if state == "running" and self.profile.archive.is_file():
             try:
-                with connect_archive(self.profile.archive, read_only=True) as connection:
+                with archive_transaction(self.profile.archive, read_only=True) as connection:
                     active = connection.execute(
                         """
                         SELECT board_id, external_post_id FROM crawl_frontier
@@ -1701,7 +1783,7 @@ class ControlRunner:
     ) -> DeliveryResult | None:
         try:
             return self.client.send_or_enqueue(self.store, kind, path, payload, idempotency_key)
-        except ControlProtocolError, OutboxFullError, OSError, ValueError:
+        except ControlProtocolError, OutboxFullError, OSError, ValueError, sqlite3.Error:
             return None
 
     def _finish_command_reporting(self, command_id: str, delivery: DeliveryResult | None) -> None:

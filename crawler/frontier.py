@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from crawler.archive import connect_archive, initialize_archive
+from crawler.archive import archive_transaction, initialize_archive
 from crawler.settings import (
     REDSTM_CAPPED_RETRY_ERROR_CODES,
     REDSTM_FRONTIER_BACKOFF_BASE_SECONDS,
@@ -109,8 +110,8 @@ class FrontierStore:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def _connect(self) -> sqlite3.Connection:
-        return connect_archive(self.path)
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return archive_transaction(self.path)
 
     def initialize(self) -> None:
         initialize_archive(self.path)

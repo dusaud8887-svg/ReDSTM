@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from crawler.archive import compress_body, connect_archive
+from crawler.archive import archive_transaction, compress_body
 from crawler.frontier import (
     FrontierLease,
     complete_lease,
@@ -43,7 +43,7 @@ class ArchiveStore:
     def start_run(self, kind: str, *, now: datetime | None = None) -> str:
         run_id = f"{kind}-{uuid.uuid4().hex}"
         started_at = _timestamp(now or datetime.now(UTC))
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             connection.execute(
                 """
                 INSERT INTO crawl_runs (run_id, kind, status, started_at)
@@ -55,7 +55,7 @@ class ArchiveStore:
 
     def interrupt_stale_crawl_runs(self, *, now: datetime | None = None) -> int:
         finished_at = _timestamp(now or datetime.now(UTC))
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             cursor = connection.execute(
                 """
                 UPDATE crawl_runs
@@ -81,7 +81,7 @@ class ArchiveStore:
         comment_count = int(item["comment_count"])
         if not title or external_post_id < 1 or comment_count < 0:
             raise ValueError("discovered post metadata is invalid")
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             connection.execute(
                 """
                 INSERT INTO posts (
@@ -137,7 +137,7 @@ class ArchiveStore:
             raise ValueError("captured post has fewer comments than the listing advertised")
         captured_at_text = _timestamp(captured_at)
         created_at_source = normalize_source_timestamp(post.created_at_raw)
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             self._require_running_run(connection, run_id)
             connection.execute("BEGIN IMMEDIATE")
             existing_post = connection.execute(
@@ -340,7 +340,7 @@ class ArchiveStore:
         fetched_at_text = _timestamp(fetched_at)
         if retry_after_at is not None and retry_after_at.tzinfo is None:
             raise ValueError("retry_after_at must be timezone-aware")
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             self._require_running_run(connection, run_id)
             if error_code == "not_found":
                 previous = connection.execute(
@@ -419,7 +419,7 @@ class ArchiveStore:
         error_code: str | None = None,
     ) -> int:
         fetched_at_text = _timestamp(fetched_at)
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             self._require_running_run(connection, run_id)
             previous = connection.execute(
                 "SELECT 1 FROM captures WHERE entity_type = 'listing' AND url = ? "
@@ -455,7 +455,7 @@ class ArchiveStore:
             return cursor.lastrowid
 
     def find_warc_capture(self, raw_sha256: str, url: str) -> tuple[str, str] | None:
-        with connect_archive(self.path, read_only=True) as connection:
+        with archive_transaction(self.path, read_only=True) as connection:
             row = connection.execute(
                 """
                 SELECT warc_file, warc_record_id
@@ -480,7 +480,7 @@ class ArchiveStore:
         now: datetime | None = None,
     ) -> None:
         finished_at = _timestamp(now or datetime.now(UTC))
-        with connect_archive(self.path) as connection:
+        with archive_transaction(self.path) as connection:
             self._require_running_run(connection, run_id)
             counters = connection.execute(
                 """

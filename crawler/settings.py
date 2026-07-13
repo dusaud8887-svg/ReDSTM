@@ -53,6 +53,9 @@ REDSTM_SESSION_HTML_MAX_BYTES = 8 << 20
 REDSTM_SYNC_MAX_PAGES = 3
 REDSTM_SYNC_MAX_POSTS = 20
 REDSTM_CYCLE_MAX_PAGES = 3
+# Inventory (full-catalog) passes walk every page of every board; a larger per-worker
+# page budget amortizes Scrapy process startup without changing request pacing.
+REDSTM_INVENTORY_MAX_PAGES = 40
 REDSTM_CYCLE_MAX_POSTS = 20
 REDSTM_CYCLE_TIME_BUDGET_SECONDS = 4 * 60 * 60
 REDSTM_WORKER_GRACE_SECONDS = 60

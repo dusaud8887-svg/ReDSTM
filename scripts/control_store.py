@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -134,7 +136,7 @@ class ControlStore:
         self.max_bytes = max_bytes
         self.max_events = max_events
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.executescript(_SCHEMA)
             columns = {
                 str(row["name"]) for row in connection.execute("PRAGMA table_info(command_ledger)")
@@ -163,6 +165,17 @@ class ControlStore:
         connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        # sqlite3's connection context manager only wraps a transaction; the runner is a
+        # long-lived poller, so every connection must be closed or file descriptors leak.
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def record_claim(
         self,
         command_id: str,
@@ -180,7 +193,7 @@ class ControlStore:
         if action not in _ACTIONS:
             raise ValueError("command action is not allowed")
         timestamp = _timestamp(now)
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO command_ledger (
@@ -208,7 +221,7 @@ class ControlStore:
     def begin_command(
         self, command_id: str, *, run_id: str | None = None, now: datetime | None = None
     ) -> bool:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             result = connection.execute(
                 """
                 UPDATE command_ledger SET state = 'running', run_id = ?, updated_at = ?
@@ -216,7 +229,8 @@ class ControlStore:
                 """,
                 (run_id, _timestamp(now), command_id),
             )
-        return result.rowcount == 1
+            began = result.rowcount == 1
+        return began
 
     def finish_command(
         self,
@@ -239,7 +253,7 @@ class ControlStore:
         result_json = json.dumps(result, separators=(",", ":"), sort_keys=True)
         if len(result_json.encode()) > 16 * 1024:
             raise ValueError("command result is too large")
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute(
                 """
                 UPDATE command_ledger
@@ -259,7 +273,7 @@ class ControlStore:
     def pending_commands(self, *, limit: int = 50) -> list[dict[str, Any]]:
         if limit < 1 or limit > 50:
             raise ValueError("command page limit must be between 1 and 50")
-        with self._connect() as connection:
+        with self._transaction() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM command_ledger
@@ -271,7 +285,7 @@ class ControlStore:
         return [dict(row) for row in rows]
 
     def mark_reported(self, command_id: str, *, now: datetime | None = None) -> None:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             result = connection.execute(
                 """
                 UPDATE command_ledger SET reported_at = ?, report_state = 'delivered'
@@ -280,14 +294,15 @@ class ControlStore:
                 """,
                 (_timestamp(now), command_id),
             )
+            updated = result.rowcount == 1
             row = connection.execute(
                 "SELECT report_state FROM command_ledger WHERE command_id = ?", (command_id,)
             ).fetchone()
-        if result.rowcount != 1 and (row is None or row["report_state"] != "delivered"):
+        if not updated and (row is None or row["report_state"] != "delivered"):
             raise ValueError("only terminal commands can be marked reported")
 
     def mark_report_rejected(self, command_id: str, *, now: datetime | None = None) -> None:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             result = connection.execute(
                 """
                 UPDATE command_ledger
@@ -297,14 +312,15 @@ class ControlStore:
                 """,
                 (_timestamp(now), command_id),
             )
+            updated = result.rowcount == 1
             row = connection.execute(
                 "SELECT report_state FROM command_ledger WHERE command_id = ?", (command_id,)
             ).fetchone()
-        if result.rowcount != 1 and (row is None or row["report_state"] != "permanently_rejected"):
+        if not updated and (row is None or row["report_state"] != "permanently_rejected"):
             raise ValueError("only pending terminal reports can be marked rejected")
 
     def command(self, command_id: str) -> dict[str, Any] | None:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM command_ledger WHERE command_id = ?", (command_id,)
             ).fetchone()
@@ -332,7 +348,7 @@ class ControlStore:
             raise ValueError("outbox payload is empty or too large")
         dedupe_key = self._dedupe_key(kind, payload)
         priority = _PRIORITIES[kind]
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute("BEGIN IMMEDIATE")
             duplicate = connection.execute(
                 "SELECT id FROM outbox WHERE idempotency_key = ?", (idempotency_key,)
@@ -361,9 +377,10 @@ class ControlStore:
                     _timestamp(now),
                 ),
             )
-        if cursor.lastrowid is None:
+            item_id = cursor.lastrowid
+        if item_id is None:
             raise RuntimeError("outbox insert did not return an id")
-        return cursor.lastrowid
+        return item_id
 
     @staticmethod
     def _dedupe_key(kind: str, payload: dict[str, Any]) -> str | None:
@@ -404,7 +421,7 @@ class ControlStore:
         if limit < 1 or limit > 50:
             raise ValueError("outbox page limit must be between 1 and 50")
         due_at = _timestamp(now)
-        with self._connect() as connection:
+        with self._transaction() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM outbox
@@ -420,7 +437,7 @@ class ControlStore:
         return pending
 
     def acknowledge(self, item_id: int) -> None:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute("DELETE FROM outbox WHERE id = ?", (item_id,))
 
     def reject(
@@ -432,7 +449,7 @@ class ControlStore:
     ) -> None:
         if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", code) is None:
             raise ValueError("control rejection code is invalid")
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute("BEGIN IMMEDIATE")
             deleted = connection.execute("DELETE FROM outbox WHERE id = ?", (item_id,))
             if deleted.rowcount != 1:
@@ -453,7 +470,7 @@ class ControlStore:
     def record_rejection(self, code: str, *, now: datetime | None = None) -> None:
         if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", code) is None:
             raise ValueError("control rejection code is invalid")
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO control_rejections (
@@ -468,19 +485,19 @@ class ControlStore:
             )
 
     def rejection(self) -> dict[str, Any] | None:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             row = connection.execute("SELECT * FROM control_rejections WHERE id = 1").fetchone()
         return dict(row) if row is not None else None
 
     def defer(self, item_id: int, next_attempt_at: datetime) -> None:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             connection.execute(
                 "UPDATE outbox SET attempts = attempts + 1, next_attempt_at = ? WHERE id = ?",
                 (_timestamp(next_attempt_at), item_id),
             )
 
     def stats(self) -> dict[str, int]:
-        with self._connect() as connection:
+        with self._transaction() as connection:
             row = connection.execute(
                 """
                 SELECT COUNT(*) AS rows, COALESCE(SUM(payload_bytes), 0) AS bytes,

@@ -30,6 +30,7 @@ from crawler.settings import (
     REDSTM_CYCLE_MAX_POSTS,
     REDSTM_CYCLE_TIME_BUDGET_SECONDS,
     REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_INVENTORY_MAX_PAGES,
     REDSTM_SESSION_PREFLIGHT_ATTEMPTS,
     REDSTM_SESSION_PREFLIGHT_RETRY_DELAY_SECONDS,
     REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
@@ -237,6 +238,10 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 break
             if now - session_validated_at >= REDSTM_SESSION_REVALIDATE_SECONDS:
                 preflight = _revalidate(args.session)
+                if preflight == "auth_failed":
+                    # The session routinely outlives its export lifetime mid-cycle; attempt
+                    # one throttled re-login before abandoning the remaining boards.
+                    preflight = _preflight(args.session)
                 if preflight is not None:
                     status = preflight
                     stop_reason = "session_revalidation"
@@ -356,7 +361,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--warc-dir", type=Path, default=Path(".data/warc"))
     parser.add_argument("--report-dir", type=Path, default=Path(".data/operations/cycles"))
     parser.add_argument("--board")
-    parser.add_argument("--max-pages", type=int, default=REDSTM_CYCLE_MAX_PAGES)
+    parser.add_argument("--max-pages", type=int)
     parser.add_argument("--max-posts", type=int, default=REDSTM_CYCLE_MAX_POSTS)
     parser.add_argument("--max-seconds", type=int, default=REDSTM_CYCLE_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
@@ -366,6 +371,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.max_pages is None:
+        args.max_pages = REDSTM_INVENTORY_MAX_PAGES if args.inventory else REDSTM_CYCLE_MAX_PAGES
     if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:
         parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
     if args.listing_only and not args.inventory:

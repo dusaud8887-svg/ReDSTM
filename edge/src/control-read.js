@@ -8,6 +8,7 @@ import {
 } from "./control-common.js";
 
 const ACTIVE_RUN_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+const RUNNER_RUN_LIVENESS_MS = 10 * 60 * 1000;
 const RELEASE_MAX_BYTES = 64 * 1024;
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 50;
@@ -448,22 +449,38 @@ async function releaseSmoke(env, requestId, url) {
   });
 }
 
+// A run is only stale when its age exceeds the cap AND the runner is not actively
+// heartbeating it: bounded manual runs (full catalog/content) legitimately run for days.
+const LIVE_RUN_FILTER = `run_id NOT IN (
+  SELECT active_run_id FROM runner_status
+  WHERE id = 1 AND active_run_id IS NOT NULL AND heartbeat_at >= ?
+)`;
+
 function staleRunStatements(env, now) {
   const nowText = now.toISOString();
   const staleBefore = new Date(now.getTime() - ACTIVE_RUN_MAX_AGE_MS).toISOString();
   const futureAfter = new Date(now.getTime() + CLIENT_FUTURE_CLOCK_SKEW_MS).toISOString();
+  const liveHeartbeatAfter = new Date(now.getTime() - RUNNER_RUN_LIVENESS_MS).toISOString();
   return [
     env.CONTROL_DB.prepare(
       `UPDATE commands SET state = 'failed', finished_at = ?, safe_message = ?
        WHERE state = 'claimed' AND run_id IN (
          SELECT run_id FROM runs
          WHERE state = 'running' AND (started_at < ? OR started_at > ?)
+           AND ${LIVE_RUN_FILTER}
        )`,
-    ).bind(nowText, STALE_RUN_CODE, staleBefore, futureAfter),
+    ).bind(nowText, STALE_RUN_CODE, staleBefore, futureAfter, liveHeartbeatAfter),
     env.CONTROL_DB.prepare(
       `UPDATE runs SET state = 'failed', finished_at = ?, safe_summary_json = ?
-       WHERE state = 'running' AND (started_at < ? OR started_at > ?)`,
-    ).bind(nowText, JSON.stringify({ code: STALE_RUN_CODE }), staleBefore, futureAfter),
+       WHERE state = 'running' AND (started_at < ? OR started_at > ?)
+         AND ${LIVE_RUN_FILTER}`,
+    ).bind(
+      nowText,
+      JSON.stringify({ code: STALE_RUN_CODE }),
+      staleBefore,
+      futureAfter,
+      liveHeartbeatAfter,
+    ),
   ];
 }
 
@@ -493,11 +510,18 @@ export async function runControlMaintenance(env, now = new Date()) {
 
 async function overview(env, requestId) {
   const now = new Date();
+  const runner = await env.CONTROL_DB.prepare(
+    "SELECT * FROM runner_status WHERE id = 1",
+  ).first();
   let activeRow = await env.CONTROL_DB.prepare(
     "SELECT * FROM runs WHERE state = 'running' ORDER BY started_at DESC, run_id DESC LIMIT 1",
   ).first();
   const activeStartedAt = Date.parse(activeRow?.started_at ?? "");
-  if (activeRow && (!Number.isFinite(activeStartedAt) ||
+  const runnerKeepsRunAlive = Boolean(
+    activeRow && runner && runner.active_run_id === activeRow.run_id &&
+    Date.parse(runner.heartbeat_at ?? "") >= now.getTime() - RUNNER_RUN_LIVENESS_MS,
+  );
+  if (activeRow && !runnerKeepsRunAlive && (!Number.isFinite(activeStartedAt) ||
       activeStartedAt < now.getTime() - ACTIVE_RUN_MAX_AGE_MS ||
       activeStartedAt > now.getTime() + CLIENT_FUTURE_CLOCK_SKEW_MS)) {
     await reconcileStaleRuns(env, now);
@@ -505,8 +529,7 @@ async function overview(env, requestId) {
   }
   const issueSince = new Date(now.getTime() - RECENT_ISSUE_MAX_AGE_MS).toISOString();
   const futureAfter = new Date(now.getTime() + CLIENT_FUTURE_CLOCK_SKEW_MS).toISOString();
-  const [runner, latest, automatic, issue, queued, snapshot] = await Promise.all([
-    env.CONTROL_DB.prepare("SELECT * FROM runner_status WHERE id = 1").first(),
+  const [latest, automatic, issue, queued, snapshot] = await Promise.all([
     env.CONTROL_DB.prepare(
       `SELECT * FROM runs WHERE state <> 'running' AND started_at <= ?
        ORDER BY started_at DESC, run_id DESC LIMIT 1`,
