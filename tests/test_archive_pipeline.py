@@ -83,6 +83,7 @@ def test_pipeline_stores_post_and_completes_lease_atomically(tmp_path: Path) -> 
     ("outcome", "expected_state", "error_code"),
     [
         ("restricted", "done", "permission_denied"),
+        ("missing", "done", "not_found"),
         ("parse_failed", "retry", "parse_drift"),
         ("fetch_failed", "retry", "auth_required"),
     ],

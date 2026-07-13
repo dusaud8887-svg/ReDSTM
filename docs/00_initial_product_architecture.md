@@ -1010,6 +1010,13 @@ storage_error
 - restricted 판정은 content root가 없는 응답에서만 login form/field 구조와 안내 구문으로
   결정한다. content root가 있으면 구문은 본문 인용으로 보고 정상 저장한다
   ([`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)).
+- content root와 제목이 모두 없고 원본이 명시적 삭제 문구(`존재하지 않는 자료`, `삭제된
+  게시물` 등)를 담으면 `missing`으로 분류해 frontier를 `done`으로 닫는다. 이는 구조 변경(parse
+  drift)과 구분되는 positive 신호이므로 parse-drift breaker를 올리지 않는다. 삭제 문구가 없는
+  빈 본문은 여전히 `parse_failed`로 남겨 drift 감지를 보존한다.
+- 19금 게시판은 로그인 외에 `adult_view=1` 쿠키를 요구한다. 세션 로드/갱신 시 이 쿠키를
+  런타임에 주입(디스크 export에는 남기지 않음)해 인증 회원이 성인 게시판 본문을 받도록 한다.
+  쿠키가 없으면 상세가 restricted 인터스티셜로 막혀 글이 목차-only로만 남는다.
 - 현재 capture/DB까지 연결된 error code는 `network_error`, `rate_limited`, `auth_required`,
   `permission_denied`, `not_found`, `parse_drift`, `storage_error`다. `storage_error`는 capture를
   `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는 아직
@@ -1049,6 +1056,8 @@ storage_error
 - 저장 session으로 authenticated GET을 먼저 검증하고 실패 시 login page token을 읽어 form POST를 run당 한 번만 수행
 - login 실패/권한 제한은 retry storm 없이 run을 중단하고 session/credential 값을 log/WARC에 남기지 않음
 - export는 timezone이 있는 `created_at`/`expires_at`, user agent, browser cookie list만 읽고 만료·중복 cookie·TypeMoon 외 domain·header control character를 거부
+- 로드 시 서버 발급 cookie에 더해 `adult_view=1` 성인 열람 cookie를 런타임 주입한다. 이 합성
+  cookie는 disk export에는 쓰지 않아 저장 파일은 서버가 준 cookie 집합 그대로 유지한다
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
 - `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
 - `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery와 일반 sync는 첫

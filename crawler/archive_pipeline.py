@@ -72,10 +72,14 @@ class ArchivePipeline:
                 )
                 return item
 
-            if outcome not in {"restricted", "parse_failed", "fetch_failed"}:
+            if outcome not in {"restricted", "missing", "parse_failed", "fetch_failed"}:
                 raise ValueError(f"unsupported capture outcome: {outcome!r}")
             if outcome == "restricted":
                 error_code, frontier_state = "permission_denied", "done"
+            elif outcome == "missing":
+                # An explicit source "post is gone" message is authoritative in one pass, so
+                # the frontier entry is settled (done) rather than retried like a 404.
+                error_code, frontier_state = "not_found", "done"
             elif outcome == "parse_failed":
                 error_code, frontier_state = "parse_drift", "retry"
             else:

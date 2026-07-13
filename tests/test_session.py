@@ -66,6 +66,55 @@ def test_valid_session_builds_captured_detail_request_without_repr_leak(tmp_path
     assert request.meta["redstm_capture"] is True
 
 
+def test_loaded_session_carries_the_adult_permission_cookie(tmp_path: Path) -> None:
+    session = load_session_export(
+        _session_file(tmp_path), now=datetime(2026, 7, 11, 12, tzinfo=UTC)
+    )
+    adult = [cookie for cookie in session.cookies if cookie.name == "adult_view"]
+
+    assert len(adult) == 1
+    assert adult[0].value == "1"
+    assert adult[0].domain == ".typemoon.net"
+    scrapy_cookies = {cookie["name"] for cookie in session.as_scrapy_cookies()}
+    assert "adult_view" in scrapy_cookies
+
+
+def test_existing_adult_cookie_is_not_duplicated(tmp_path: Path) -> None:
+    path = tmp_path / "session.json"
+    path.write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {
+                        "name": "PHPSESSID",
+                        "value": "cookie-secret",
+                        "domain": ".typemoon.net",
+                        "path": "/",
+                        "secure": True,
+                        "httpOnly": True,
+                    },
+                    {
+                        "name": "adult_view",
+                        "value": "1",
+                        "domain": ".typemoon.net",
+                        "path": "/",
+                        "secure": False,
+                        "httpOnly": False,
+                    },
+                ],
+                "created_at": "2026-07-11T00:00:00+00:00",
+                "expires_at": "2026-07-12T00:00:00+00:00",
+                "user_agent": "ReDSTM-test/1.0",
+                "metadata": {"session_format_version": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+    session = load_session_export(path, now=datetime(2026, 7, 11, 12, tzinfo=UTC))
+
+    assert [cookie.name for cookie in session.cookies].count("adult_view") == 1
+
+
 def test_session_rejects_expiry_and_non_typemoon_cookie_domain(tmp_path: Path) -> None:
     path = _session_file(tmp_path)
     with pytest.raises(ValueError, match="expired"):

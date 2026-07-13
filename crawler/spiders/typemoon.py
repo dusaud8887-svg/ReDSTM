@@ -44,6 +44,18 @@ _RESTRICTED_PHRASES = (
     "member only",
     "adult_view",
 )
+# Explicit gnuboard "the post is gone" messages. These are a positive signal that a post
+# was deleted at the source, distinct from an HTML structure change (parse drift): a post
+# that yields no content AND carries one of these phrases is recorded as missing instead of
+# tripping the parse-drift breaker and halting the board.
+_ABSENT_PHRASES = (
+    "존재하지 않는 자료",
+    "존재하지 않는 게시",
+    "삭제된 게시물",
+    "삭제되었습니다",
+    "없는 게시물",
+    "이미 삭제",
+)
 _CONTENT_SELECTORS = (
     "div.wr-content",
     ".board-view-con-mobile.view-content",
@@ -188,6 +200,11 @@ def _has_login_form(response: scrapy.http.HtmlResponse) -> bool:
 def _looks_restricted(response: scrapy.http.HtmlResponse) -> bool:
     visible_text = " ".join(response.css("body ::text").getall()).casefold()
     return any(phrase.casefold() in visible_text for phrase in _RESTRICTED_PHRASES)
+
+
+def _looks_absent(response: scrapy.http.HtmlResponse) -> bool:
+    visible_text = " ".join(response.css("body ::text").getall())
+    return any(phrase in visible_text for phrase in _ABSENT_PHRASES)
 
 
 def _is_aa(board_id: str, category: str | None, content: Selector) -> bool:
@@ -863,6 +880,16 @@ class TypeMoonSpider(scrapy.Spider):
                 external_post_id=external_post_id,
                 canonical_url=canonical_url,
                 outcome="restricted",
+                warnings=[],
+                **capture_metadata,
+            )
+            return
+        if content is None and title is None and _looks_absent(response):
+            yield CapturedPostItem(
+                board_id=board_id,
+                external_post_id=external_post_id,
+                canonical_url=canonical_url,
+                outcome="missing",
                 warnings=[],
                 **capture_metadata,
             )

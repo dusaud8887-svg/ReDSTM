@@ -158,6 +158,41 @@ def test_restricted_detail_is_not_misparsed() -> None:
     assert "body_html" not in items[0]
 
 
+def test_deleted_post_message_is_recorded_as_missing_not_parse_failed() -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    response = HtmlResponse(
+        url=url,
+        body=(
+            "<html><body><div class='container'>"
+            "<p>존재하지 않는 자료 입니다.</p>"
+            "</div></body></html>"
+        ).encode(),
+        encoding="utf-8",
+        request=Request(url=url),
+    )
+
+    items = list(TypeMoonSpider().parse_detail(response))
+
+    assert len(items) == 1
+    assert items[0]["outcome"] == "missing"
+    assert "body_html" not in items[0]
+
+
+def test_missing_post_does_not_trip_the_parse_drift_breaker() -> None:
+    spider = TypeMoonSpider()
+    missing = CapturedPostItem(
+        board_id="aa_a01",
+        external_post_id=1,
+        canonical_url="https://www.typemoon.net/aa_a01/1",
+        outcome="missing",
+        warnings=[],
+    )
+    for _ in range(5):
+        assert spider._detail_result_halted(missing) is False
+    assert spider.failure_codes == set()
+    assert spider._halted is False
+
+
 def test_detail_and_comments_use_explicit_selectors() -> None:
     spider = TypeMoonSpider()
     items = list(

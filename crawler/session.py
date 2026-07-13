@@ -29,6 +29,13 @@ if TYPE_CHECKING:
 
 _COOKIE_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 _TYPEMOON_DOMAINS = {"typemoon.net", "www.typemoon.net"}
+# The TypeMoon theme gates 19+ boards behind an `adult_view` cookie in addition to
+# login; without it authenticated detail requests return the restricted interstitial and
+# the post stays outline-only. Both legacy crawlers force this cookie on every session, so
+# we inject it at load time to unlock adult-board bodies for the logged-in member.
+_ADULT_COOKIE_NAME = "adult_view"
+_ADULT_COOKIE_VALUE = "1"
+_ADULT_COOKIE_DOMAIN = ".typemoon.net"
 _BASE_URL = "https://www.typemoon.net/"
 _LOGIN_PAGE_URL = f"{_BASE_URL}bbs/login.php"
 _LOGIN_CHECK_URL = f"{_BASE_URL}bbs/login_check.php"
@@ -108,7 +115,23 @@ def load_session_export(
     if len(identities) != len(cookies):
         raise ValueError("session export contains duplicate cookies")
 
-    return SessionExport(cookies, created_at, expires_at, user_agent)
+    return SessionExport(_with_adult_permission(cookies), created_at, expires_at, user_agent)
+
+
+def _with_adult_permission(cookies: tuple[SessionCookie, ...]) -> tuple[SessionCookie, ...]:
+    if any(cookie.name == _ADULT_COOKIE_NAME for cookie in cookies):
+        return cookies
+    return (
+        *cookies,
+        SessionCookie(
+            _ADULT_COOKIE_NAME,
+            _ADULT_COOKIE_VALUE,
+            _ADULT_COOKIE_DOMAIN,
+            "/",
+            secure=False,
+            http_only=False,
+        ),
+    )
 
 
 def ensure_session_export(
@@ -321,8 +344,16 @@ def refresh_session_export(
         raise SessionRefreshError("TypeMoon login returned no usable session cookies")
 
     session = SessionExport(cookies, created_at, created_at + _SESSION_LIFETIME, user_agent.strip())
+    # The adult_view cookie is a synthetic runtime permission, not a real login artifact, so
+    # it is injected for use but never written to disk (keeping the persisted export the exact
+    # set of server-issued cookies). load_session_export re-injects it on every read.
     _write_session_export(Path(path), session)
-    return session
+    return SessionExport(
+        _with_adult_permission(session.cookies),
+        session.created_at,
+        session.expires_at,
+        session.user_agent,
+    )
 
 
 def _read_html(response: object, *, complete: Callable[[str], bool]) -> str:
