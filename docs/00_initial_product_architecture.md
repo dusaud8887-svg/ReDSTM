@@ -1002,6 +1002,7 @@ rate_limited
 auth_required
 permission_denied
 not_found
+blocked
 parse_drift
 quality_rejected
 storage_error
@@ -1018,9 +1019,13 @@ storage_error
   런타임에 주입(디스크 export에는 남기지 않음)해 인증 회원이 성인 게시판 본문을 받도록 한다.
   쿠키가 없으면 상세가 restricted 인터스티셜로 막혀 글이 목차-only로만 남는다.
 - 현재 capture/DB까지 연결된 error code는 `network_error`, `rate_limited`, `auth_required`,
-  `permission_denied`, `not_found`, `parse_drift`, `storage_error`다. `storage_error`는 capture를
-  `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는 아직
-  구현되지 않았다.
+  `permission_denied`, `not_found`, `blocked`, `parse_drift`, `storage_error`다. `storage_error`는
+  capture를 `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는
+  아직 구현되지 않았다.
+- `blocked`(detail)/`listing_blocked`(listing)는 downloader 정책(robots.txt)이 요청을 네트워크
+  이전에 거부한 경우다. 첫 발생에서 auth와 같이 run을 중단하고(같은 정책에 반복 요청은 attempt만
+  소모), network-class가 아니므로 site outage breaker와 attempt 보존 대상에 들어가지 않는다.
+  Operations에는 `source_blocked` 경고로 표시한다.
 - `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
 - `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고

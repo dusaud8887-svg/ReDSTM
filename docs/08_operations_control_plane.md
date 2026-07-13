@@ -563,9 +563,13 @@ API/D1/DOM 금지:
 safe_message는 stable code와 operator-facing summary만 가진다.
 
 safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rate_limited`,
-`site_unreachable`, `disk_low`, `control_rejected`, `token_expiring`, `publish_stale`.
-새 code가 필요하면 이 문서를 먼저 갱신한다. `site_unreachable`은 원 사이트 outage로 run이
-조기 종료됐음을 뜻하며 runner 장애(stale)와 구분해 표시한다. `control_rejected`는 재시도해도
+`site_unreachable`, `source_blocked`, `disk_low`, `control_rejected`, `token_expiring`,
+`publish_stale`.
+새 code가 필요하면 이 문서를 먼저 갱신한다. `site_unreachable`은 원 사이트 outage(연결 실패,
+timeout, 완결되지 않는 저속 응답 포함)로 run이
+조기 종료됐음을 뜻하며 runner 장애(stale)와 구분해 표시한다. `source_blocked`는 원본 downloader
+정책(robots.txt)이 요청을 네트워크 이전 단계에서 거부했음을 뜻한다. outage가 아니므로 network
+circuit breaker와 frontier attempt 보존 대상이 아니며, 반복되면 원본 정책 변화를 사람이 확인한다. `control_rejected`는 재시도해도
 성공하지 않는 control 4xx가 최근 24시간 안에 발생했다는 generic 경고다. 원래 code는 Oracle local
 evidence에만 보존하고 D1/UI에 노출하지 않는다.
 

@@ -30,6 +30,7 @@ export const safeCodeLabels = {
   full_catalog_no_progress: "전체 목차 진행 없음 · 원본 응답 확인 필요",
   auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",
   site_unreachable: "원본 연결 실패", rate_limited: "원본 속도 제한",
+  source_blocked: "원본 정책 차단",
   export_failed: "Reader 내보내기 실패", publish_failed: "Reader 반영 실패",
   incremental_base_invalid: "Reader 증분 기준 보존본 검증 실패",
   incremental_bootstrap_required: "Reader 증분 상태 초기화 필요",
@@ -59,7 +60,9 @@ export const safeCodeLabels = {
 };
 const warningLabels = {
   auth_failed: "원본 인증을 확인해야 합니다.", parse_drift: "원본 구조 변경이 감지됐습니다.",
-  rate_limited: "원본 서버의 속도 제한으로 감속했습니다.", site_unreachable: "원본 서버에 도달하지 못했습니다.",
+  rate_limited: "원본 서버의 속도 제한으로 감속했습니다.",
+  site_unreachable: "원본 서버에 도달하지 못했거나 응답이 완결되지 않았습니다.",
+  source_blocked: "원본 서버 정책(robots)이 수집 요청을 차단했습니다. 정책 변경 여부를 확인해야 합니다.",
   disk_low: "Oracle 저장 공간이 부족합니다.",
   control_rejected: "운영 상태 전달이 영구 거절됐습니다. 배포 호환성을 확인해야 합니다.",
   token_expiring: "수집기 인증 갱신이 필요합니다.",

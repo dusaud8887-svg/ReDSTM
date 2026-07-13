@@ -31,6 +31,11 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 TasksMax=64
 MemoryMax=700M
+# Under the 700M cgroup cap the kernel OOM-kills one process (usually the Scrapy child).
+# The default OOMPolicy=stop would then also terminate the runner mid-command, leaving the
+# command unreported (runner_interrupted). continue lets the runner observe the dead child
+# and finish the command with a truthful failure report instead.
+OOMPolicy=continue
 
 [Install]
 WantedBy=multi-user.target

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from argparse import Namespace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,7 +15,12 @@ from crawler.archive import connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.frontier import FrontierStore
 from crawler.items import CapturedPostItem
-from crawler.session import SessionCookie, SessionExport
+from crawler.session import (
+    SessionCookie,
+    SessionExport,
+    SessionNetworkError,
+    SessionRefreshError,
+)
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.recover_queue import _parse_args as parse_recovery_args
@@ -441,6 +447,66 @@ def test_empty_recovery_writes_success_report_without_session_request(
     assert report["outcomes"] == {}
     assert report["interrupted_runs"] == 1
     assert pings == [True]
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (SessionNetworkError("offline"), "site_unreachable"),
+        (SessionRefreshError("auth"), "auth_failed"),
+    ],
+)
+def test_recovery_preflight_classifies_session_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception, status: str
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    FrontierStore(archive).seed("aa_a01", 62068, "https://www.typemoon.net/aa_a01/62068")
+
+    def preflight(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr("scripts.recover_queue.ensure_session_export", preflight)
+    monkeypatch.setattr("scripts.crawl_cycle.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "scripts.recover_queue.CrawlerProcess",
+        lambda *args, **kwargs: pytest.fail("crawler must not run without a session"),
+    )
+    pings: list[bool] = []
+    monkeypatch.setattr(
+        "scripts.recover_queue.notify_dead_man",
+        lambda succeeded, url: pings.append(succeeded),
+    )
+
+    report = run_recovery(
+        Namespace(
+            archive=archive,
+            session=tmp_path / "session.json",
+            warc_dir=tmp_path / "warc",
+            max_posts=5,
+            max_seconds=60,
+            lease_seconds=60,
+        )
+    )
+
+    assert report["ok"] is False
+    assert report["status"] == status
+    assert report["scheduled_posts"] == 0
+    assert pings == [False]
+    with connect_archive(archive, read_only=True) as connection:
+        run = connection.execute(
+            "SELECT status, summary_json FROM crawl_runs WHERE kind = 'retry'"
+        ).fetchone()
+        assert run["status"] == "failed"
+        assert json.loads(run["summary_json"])["preflight_status"] == status
+        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "pending"
 
 
 def test_recovery_report_includes_capture_failure_codes(

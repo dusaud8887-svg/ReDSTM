@@ -291,6 +291,9 @@ timeout으로 종료되며 `partial/worker_timeout`을 보고한다. Celery/Redi
 - child process의 graceful close는 WARC/report 정리를 위한 경계일 뿐 전체 작업의 총시간 상한이 아니다
 - 429 `Retry-After` 우선, timeout/5xx는 backoff; 같은 class의 429·network·parse drift가
   연속 3회면 run을 조기 종료하고 401/403·login form은 즉시 중단
+- recovery 시작 세션 preflight 실패는 cycle과 같은 기준으로 `site_unreachable`/`auth_failed`로
+  분류해 보고한다(원본 outage를 local `runner_failed`로 위장하지 않음)
+- downloader 정책 거부(robots)는 `blocked`로 첫 발생에서 중단하고 network-class로 세지 않는다
 - 404는 서로 다른 run 2회 뒤 missing
 - parse drift/auth는 일반 retry와 분리
 - frontier lease 기본을 900초로 상향한다. 현행 300초는 느린 detail(180초 timeout × 최대 3 시도)

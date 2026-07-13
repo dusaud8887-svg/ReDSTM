@@ -12,18 +12,20 @@ from scrapy.crawler import CrawlerProcess
 
 from crawler.archive import require_archive_schema
 from crawler.frontier import FrontierStore
-from crawler.session import SessionRefreshError, ensure_session_export
+from crawler.session import SessionExport, SessionRefreshError, ensure_session_export
 from crawler.settings import (
     REDSTM_CAPPED_RETRY_ERROR_CODES,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_RECOVERY_MAX_POSTS,
     REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
+    REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
     REDSTM_STALE_DETAIL_RESERVED_POSTS,
     REDSTM_STALE_DETAIL_REVISIT_SECONDS,
     USER_AGENT,
 )
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
+from scripts.crawl_cycle import _session_status
 from scripts.healthcheck import notify_dead_man
 from scripts.sync import (
     _capture_failure_codes,
@@ -130,13 +132,24 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
 
         scheduled = 0
         failures: list[str] = []
+        preflight_status: str | None = None
+        sessions: list[SessionExport] = []
         if candidates and not paused:
-            session = ensure_session_export(
-                session_path,
-                user_id=os.environ.get("TYPEMOON_ID", ""),
-                password=os.environ.get("TYPEMOON_PASSWORD", ""),
-                user_agent=USER_AGENT,
+            # Classify session preflight failures exactly like crawl_cycle so an origin
+            # outage reports site_unreachable (not a local runner defect) to operations.
+            preflight_status = _session_status(
+                lambda: sessions.append(
+                    ensure_session_export(
+                        session_path,
+                        user_id=os.environ.get("TYPEMOON_ID", ""),
+                        password=os.environ.get("TYPEMOON_PASSWORD", ""),
+                        user_agent=USER_AGENT,
+                        timeout=REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
+                    )
+                )
             )
+        if candidates and not paused and preflight_status is None:
+            session = sessions[-1]
             settings = _project_settings()
             settings.set("REDSTM_ARCHIVE_PATH", str(archive), priority="cmdline")
             settings.set("REDSTM_RUN_ID", run_id, priority="cmdline")
@@ -174,15 +187,20 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             if full_content_before is not None and full_content_max_rowid is not None
             else None
         )
-        status = "partial" if paused else _run_status(outcomes, scheduled, failures)
+        if preflight_status is not None:
+            status = preflight_status
+        else:
+            status = "partial" if paused else _run_status(outcomes, scheduled, failures)
         store.finish_run(
             run_id,
-            status=status,
+            # crawl_runs only stores terminal DB statuses; the report keeps the precise one.
+            status=status if status in {"succeeded", "partial", "failed"} else "failed",
             discovered=len(candidates),
             summary={
                 "selected_posts": len(candidates),
                 "outcomes": outcomes,
                 "failures": failures,
+                "preflight_status": preflight_status,
                 "interrupted_runs": interrupted_runs,
                 "requeued_dead": requeued_dead,
                 "revisited_posts": revisited_posts,
@@ -255,7 +273,10 @@ def main() -> int:
     try:
         report = run_recovery(args)
     except (OSError, RuntimeError, SessionRefreshError, ValueError) as error:
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        report = {"ok": False, "error": type(error).__name__, "message": str(error)}
+        if args.output is not None:
+            _write_report(args.output, report)
+        print(json.dumps(report, ensure_ascii=False))
         return 1
     if args.output is not None:
         _write_report(args.output, report)

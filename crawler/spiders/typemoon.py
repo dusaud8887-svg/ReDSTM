@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import scrapy
 from parsel import Selector
+from scrapy.exceptions import IgnoreRequest
 
 from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
@@ -440,13 +441,19 @@ class TypeMoonSpider(scrapy.Spider):
         status = getattr(response, "status", None)
         status_code = status if isinstance(status, int) else None
         fetched_at = datetime.now(UTC)
-        error_code = (
-            {401: "auth_required", 403: "auth_required", 404: "not_found", 429: "rate_limited"}.get(
-                status_code, "network_error"
-            )
-            if status_code is not None
-            else "network_error"
-        )
+        if isinstance(failure.value, IgnoreRequest):
+            # A downloader policy (robots.txt) refused the request before any network I/O;
+            # this is a source-side block, not an outage, and must not count as network.
+            error_code = "blocked"
+        elif status_code is not None:
+            error_code = {
+                401: "auth_required",
+                403: "auth_required",
+                404: "not_found",
+                429: "rate_limited",
+            }.get(status_code, "network_error")
+        else:
+            error_code = "network_error"
         self.store.record_outcome(
             self.run_id,
             url=request.url,
@@ -484,13 +491,16 @@ class TypeMoonSpider(scrapy.Spider):
     def listing_error(self, failure: Any) -> None:
         response = getattr(failure.value, "response", None)
         status = getattr(response, "status", None)
-        error_code = (
-            {401: "auth_required", 403: "auth_required", 429: "rate_limited"}.get(
+        if isinstance(failure.value, IgnoreRequest):
+            # Refused by downloader policy (robots.txt) before any network I/O: distinct
+            # from an outage so the cycle breaker does not report site_unreachable.
+            error_code = "listing_blocked"
+        elif isinstance(status, int) and not isinstance(status, bool):
+            error_code = {401: "auth_required", 403: "auth_required", 429: "rate_limited"}.get(
                 status, "listing_fetch_failed"
             )
-            if isinstance(status, int) and not isinstance(status, bool)
-            else "listing_fetch_failed"
-        )
+        else:
+            error_code = "listing_fetch_failed"
         self.failure_codes.add(error_code)
         self._halted = True
         self.logger.error("TypeMoon listing request failed: %s", failure.request.url)
@@ -772,7 +782,9 @@ class TypeMoonSpider(scrapy.Spider):
     def _sync_error(self, failure: Any) -> Iterable[scrapy.Request]:
         error_code = self.detail_error(failure)
         self._detail_in_flight -= 1
-        if error_code == "auth_required":
+        if error_code in {"auth_required", "blocked"}:
+            # Both are deterministic for the whole run: retrying other posts only burns
+            # frontier attempts against the same auth state or downloader policy.
             self.failure_codes.add(error_code)
             self._halted = True
             return
@@ -1053,7 +1065,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
     def _recovery_error(self, failure: Any) -> Iterable[scrapy.Request]:
         error_code = super().detail_error(failure)
         self._detail_in_flight -= 1
-        if error_code == "auth_required":
+        if error_code in {"auth_required", "blocked"}:
             self.failure_codes.add(error_code)
             self._halted = True
             return

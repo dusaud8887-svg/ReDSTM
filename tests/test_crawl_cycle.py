@@ -323,6 +323,42 @@ def test_cycle_breaks_after_three_network_boards(
     assert len(commands) == 3
 
 
+def test_cycle_reports_policy_blocked_boards_as_partial_not_outage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    commands: list[list[str]] = []
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.FrontierStore.preserve_network_attempts",
+        lambda self, run_ids: pytest.fail("policy blocks must not preserve network attempts"),
+    )
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "failed",
+                    "run_id": f"run-{len(commands)}",
+                    "scheduled_posts": 0,
+                    "failures": ["listing_blocked"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=2)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert report["status"] == "partial"
+    assert len(commands) == 4
+    assert all(board["failures"] == ["listing_blocked"] for board in report["boards"])
+
+
 def test_cycle_breaks_after_three_rate_limited_boards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

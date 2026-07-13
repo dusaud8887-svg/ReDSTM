@@ -148,6 +148,11 @@ R2 writer key와 Access service token은 별도 credential file로만
 - systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 control timer가
   checkpointed full-catalog/full-content command를 같은 run으로 재개한다. 짧은 증분 작업은 durable
   frontier를 보존하고 실패를 명시 보고한 뒤 다음 요청/예약 실행에서 복구한다.
+- `MemoryMax=700M` cgroup 아래에서 kernel이 자식 process(주로 Scrapy worker)를 OOM kill해도
+  `OOMPolicy=continue`로 runner 본체는 살아남아 해당 board를 실패로 보고하고 command를 정상
+  종결한다. runner 자체가 죽으면 다음 poll이 command를 `runner_interrupted`로 닫으며 `/ops` 실행
+  기록에 counters `미보고`로 보인다. `미보고`가 보이면 reboot/배포/OOM 순으로
+  `journalctl -u redstm-control.service`와 `dmesg | grep -i oom`을 확인한다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.
@@ -474,6 +479,32 @@ AutoThrottle은 감속 전용이다. Scrapy는 `DOWNLOAD_DELAY`를 하한으로 
 `scripts.sync`와 `scripts.recover_queue`는 module 실행 시 `scrapy.cfg` 발견에 의존하지 않고
 `crawler.settings`를 project priority로 명시 로드한다. 그렇지 않으면 concurrency/delay,
 AutoThrottle, WARC middleware와 archive pipeline이 조용히 빠지므로 회귀 test로 고정한다.
+
+### 8.2 원본 저속·미완결 응답(dribble) outage 진단
+
+2026-07-13(UTC) 실측으로 확인된 원 사이트 outage 모드다. 정적 파일(`robots.txt`)은 수 초에
+정상 완료되지만 PHP 동적 페이지(홈/listing/detail)는 HTTP 200과 headers를 반환한 뒤 본문을
+초당 수십 byte 수준으로 흘리다 chunked stream을 끝내지 않는다. 이때 시스템은 다음처럼 동작하는
+것이 정상이다:
+
+- 세션 preflight는 성공할 수 있다. 인증 marker가 첫 KB 안에 있어 조기 종료 read가 통과한다.
+- 모든 listing 요청은 `DOWNLOAD_TIMEOUT`/listing timeout에서 실패하고 retry 소진 뒤
+  network-class로 분류된다. 연속 3개 board 실패에서 run이 `site_unreachable`
+  (`/ops` 표기 "원본 연결 실패")로 조기 종료되고 frontier attempt는 보존된다.
+- run당 최악 소요는 board 3개 × (robots + listing) retry 시간으로 수십 분이다. 반복 수동
+  재실행은 대기 시간만 늘리므로 다음 자동 실행 또는 원본 회복 뒤 재시도한다.
+
+원본 상태는 Oracle에서 아래로 직접 판별한다(수집 정책과 같은 10초 간격 준수, 1회씩만):
+
+```bash
+curl -sS -o /dev/null -m 60 -w 'code=%{http_code} size=%{size_download} ttfb=%{time_starttransfer}s total=%{time_total}s\n' \
+  https://www.typemoon.net/robots.txt
+curl -sS -o /dev/null -m 130 -w 'code=%{http_code} size=%{size_download} ttfb=%{time_starttransfer}s total=%{time_total}s\n' \
+  https://www.typemoon.net/aa_a01
+```
+
+robots.txt가 빠르게 완료되는데 listing이 `-m` 상한까지 부분 수신으로 끝나면 원본 degradation이
+맞다. 둘 다 즉시 실패하면 네트워크/DNS, listing만 401/403이면 인증·차단을 본다.
 
 ## 9. 현재 recovery 범위
 
