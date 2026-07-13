@@ -3,7 +3,11 @@ BOT_NAME = "redstm"
 SPIDER_MODULES = ["crawler.spiders"]
 NEWSPIDER_MODULE = "crawler.spiders"
 
-ROBOTSTXT_OBEY = True
+# Operator decision (2026-07-14): authenticated member archival ignores robots.txt.
+# Request pacing still honors the origin's published Crawl-delay via DOWNLOAD_DELAY=10.
+# Disabling this also removes the per-process robots fetch, which stalled for minutes
+# during origin degradation before any listing request could start.
+ROBOTSTXT_OBEY = False
 USER_AGENT = "ReDSTM/0.1 (+personal archival tool; single user)"
 CONCURRENT_REQUESTS = 1
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
@@ -33,7 +37,9 @@ REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS = REDSTM_FRONTIER_MAX_ATTEMPTS
 REDSTM_CAPPED_RETRY_ERROR_CODES = frozenset({"network_error", "parse_drift", "storage_error"})
 REDSTM_FRONTIER_BACKOFF_BASE_SECONDS = 120
 REDSTM_FRONTIER_BACKOFF_CAP_SECONDS = 6 * 60 * 60
-REDSTM_LISTING_TIMEOUT_SECONDS = 120
+# Aligned with the detail timeout: the origin routinely streams listing pages for
+# minutes under load, and 120s cut off slow-but-completing responses too early.
+REDSTM_LISTING_TIMEOUT_SECONDS = 180
 REDSTM_LISTING_OVERLAP_UNCHANGED = 20
 REDSTM_INCREMENTAL_OVERLAP_PAGES = 2
 REDSTM_DETAIL_CONCURRENCY = 1

@@ -238,7 +238,7 @@ Phase 0 static-edge gate 통과 후 single-writer canonical DB는 유지하면�
 
 2026-07-11 기준 TypeMoon homepage와 short board listing은 로그인 없이 접근 가능하고, 일부 상세 콘텐츠는 “권한이 제한된 게시물”로 표시된다. 사이트 footer는 콘텐츠 저작권과 책임이 각 게시자에게 있다고 밝힌다. [TypeMoon homepage](https://www.typemoon.net/)
 
-공식 [`robots.txt`](https://www.typemoon.net/robots.txt)는 `User-agent: *`에 `Crawl-delay: 10`을 두고 `/bbs/li`, `/bbs/lo`, `/bbs/wr` 등 list/login/write 계열 경로를 금지한다. 따라서 crawler는 허용된 short board/post URL만 사용하며 동시성 1, 고정 10초 간격보다 빠르게 요청하지 않는다. sitemap 9,446개 URL의 최신 `lastmod`는 2021-03-23이고 detail query URL은 5개뿐이어서 현재 게시물 discovery 근거로 사용하지 않는다.
+공식 [`robots.txt`](https://www.typemoon.net/robots.txt)는 `User-agent: *`에 `Crawl-delay: 10`을 두고 `/bbs/li`, `/bbs/lo`, `/bbs/wr` 등 list/login/write 계열 경로를 금지한다. 사용자는 2026-07-14에 인증 회원 본인 전용 아카이브로서 robots 정책을 준수하지 않기로 결정했다(`ROBOTSTXT_OBEY=False`). crawler는 계속 short board/post URL만 사용하고 동시성 1, 고정 10초 간격(robots의 `Crawl-delay: 10`과 동일)보다 빠르게 요청하지 않는다. sitemap 9,446개 URL의 최신 `lastmod`는 2021-03-23이고 detail query URL은 5개뿐이어서 현재 게시물 discovery 근거로 사용하지 않는다.
 
 공식 [이용약관](https://www.typemoon.net/page/provision)의 회원 의무 조항은 서비스에서 얻은 정보의 복제·출판·제3자 제공을 금지하고, 저작권 조항은 게시물 저작권이 게시자에게 있으며 영리 이용을 금지한다고 명시한다. 개인 아카이빙을 허용하는 운영자 승인은 확인되지 않았다. 사용자는 2026-07-11 결과를 공개·공유하지 않는 본인 전용 아카이브로 수집을 진행한다고 명시적으로 결정했다. 따라서 `full_crawl_approved=true`로 기록하되 이 결정은 운영자 허락이나 법률 판단을 뜻하지 않는다.
 
@@ -838,7 +838,7 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
-| 부하 제한 | detail concurrency 1, 요청 시작 간 고정 10초 delay, robots 준수 | canary에서 요청 간격·429 여부 확인 |
+| 부하 제한 | detail concurrency 1, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
 | 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | frontier backoff/dead와 network/parse/storage bounded revive | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
@@ -1002,7 +1002,6 @@ rate_limited
 auth_required
 permission_denied
 not_found
-blocked
 parse_drift
 quality_rejected
 storage_error
@@ -1019,13 +1018,9 @@ storage_error
   런타임에 주입(디스크 export에는 남기지 않음)해 인증 회원이 성인 게시판 본문을 받도록 한다.
   쿠키가 없으면 상세가 restricted 인터스티셜로 막혀 글이 목차-only로만 남는다.
 - 현재 capture/DB까지 연결된 error code는 `network_error`, `rate_limited`, `auth_required`,
-  `permission_denied`, `not_found`, `blocked`, `parse_drift`, `storage_error`다. `storage_error`는
-  capture를 `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는
-  아직 구현되지 않았다.
-- `blocked`(detail)/`listing_blocked`(listing)는 downloader 정책(robots.txt)이 요청을 네트워크
-  이전에 거부한 경우다. 첫 발생에서 auth와 같이 run을 중단하고(같은 정책에 반복 요청은 attempt만
-  소모), network-class가 아니므로 site outage breaker와 attempt 보존 대상에 들어가지 않는다.
-  Operations에는 `source_blocked` 경고로 표시한다.
+  `permission_denied`, `not_found`, `parse_drift`, `storage_error`다. `storage_error`는 capture를
+  `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는 아직
+  구현되지 않았다.
 - `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
 - `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
@@ -1043,8 +1038,9 @@ storage_error
   board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
 - 구현값은 `CONCURRENT_REQUESTS=1`, `CONCURRENT_REQUESTS_PER_DOMAIN=1`, detail concurrency 1,
   `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, `RETRY_TIMES=2`,
-  `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=True`다.
-- listing/detail timeout은 120/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
+  `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=False`(2026-07-14
+  사용자 결정; 요청 간격은 robots `Crawl-delay`와 같은 10초를 계속 지킴)다.
+- listing/detail timeout은 180/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
   10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
   보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
 - `DOWNLOAD_FAIL_ON_DATALOSS=False`는 잘린 응답을 정상 parse하기 위한 fallback이 아니다. WARC가
@@ -1056,7 +1052,8 @@ storage_error
   `done` detail을 oldest-first로 다시 여는 bounded audit가 맡는다. recovery batch는 stale audit
   1 slot을 예약하고 나머지를 due queue에 주므로 due가 계속 가득 차도 audit이 굶지 않는다.
 - site outage 조기 판정: cycle 시작 preflight(도달성 GET 1회)와 연속 3개 board network-class 실패 시
-  `site_unreachable`로 run을 조기 종료한다. 그 run의 network 실패는 frontier attempt로 세지
+  `site_unreachable`로 run을 조기 종료한다. recovery run도 연속 network breaker가 발화하면 같은
+  기준으로 `site_unreachable`로 닫는다. 그 run의 network 실패는 frontier attempt로 세지
   않아 오래 죽어 있는 사이트가 entry를 dead로 밀지 않는다. 자동 재로그인은 전역 최소 간격
   30분 throttle로 제한한다.
 - 저장 session으로 authenticated GET을 먼저 검증하고 실패 시 login page token을 읽어 form POST를 run당 한 번만 수행

@@ -132,6 +132,8 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
 
         scheduled = 0
         failures: list[str] = []
+        spider_failures: set[str] = set()
+        preserved_attempts = 0
         preflight_status: str | None = None
         sessions: list[SessionExport] = []
         if candidates and not paused:
@@ -170,10 +172,10 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             spider = crawler.spider
             scheduled = int(getattr(spider, "scheduled_posts", 0)) if spider else 0
             paused = bool(getattr(spider, "paused", False))
-            failures = sorted(
-                set(getattr(spider, "failure_codes", ()))
-                | set(_capture_failure_codes(archive, run_id))
-            )
+            # Spider-level failure codes are only set when a breaker or auth halt fired,
+            # unlike capture codes which record every isolated item failure.
+            spider_failures = set(getattr(spider, "failure_codes", ()))
+            failures = sorted(spider_failures | set(_capture_failure_codes(archive, run_id)))
             if _timed_out(crawler):
                 failures = sorted({*failures, "recovery_time_budget"})
 
@@ -189,8 +191,20 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         )
         if preflight_status is not None:
             status = preflight_status
+        elif paused:
+            status = "partial"
+        elif "auth_required" in spider_failures:
+            status = "auth_failed"
+        elif "network_error" in spider_failures:
+            # The consecutive-network breaker halted the run: classify it as an origin
+            # outage like crawl_cycle does, and give the attempts burned by this run
+            # back so a long outage cannot push entries toward dead.
+            status = "site_unreachable"
+            preserved_attempts = frontier.preserve_network_attempts([run_id])
+        elif "rate_limited" in spider_failures:
+            status = "rate_limited"
         else:
-            status = "partial" if paused else _run_status(outcomes, scheduled, failures)
+            status = _run_status(outcomes, scheduled, failures)
         store.finish_run(
             run_id,
             # crawl_runs only stores terminal DB statuses; the report keeps the precise one.
@@ -204,6 +218,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 "interrupted_runs": interrupted_runs,
                 "requeued_dead": requeued_dead,
                 "revisited_posts": revisited_posts,
+                "preserved_attempts": preserved_attempts,
                 "full_content_remaining": full_content_remaining,
             },
         )
@@ -222,6 +237,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "interrupted_runs": interrupted_runs,
             "requeued_dead": requeued_dead,
             "revisited_posts": revisited_posts,
+            "preserved_attempts": preserved_attempts,
             "full_content_remaining": full_content_remaining,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),

@@ -71,8 +71,6 @@ _WARNING_CODES = {
     "rate_limited": "rate_limited",
     "listing_fetch_failed": "site_unreachable",
     "network_error": "site_unreachable",
-    "blocked": "source_blocked",
-    "listing_blocked": "source_blocked",
 }
 _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS

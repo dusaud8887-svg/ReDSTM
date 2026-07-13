@@ -46,7 +46,6 @@ const safeWarnings = new Set([
   "parse_drift",
   "rate_limited",
   "site_unreachable",
-  "source_blocked",
   "disk_low",
   "control_rejected",
   "token_expiring",

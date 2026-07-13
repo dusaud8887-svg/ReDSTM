@@ -509,6 +509,84 @@ def test_recovery_preflight_classifies_session_failures(
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "pending"
 
 
+def test_recovery_network_breaker_reports_outage_and_preserves_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+    FrontierStore(archive).seed("aa_a01", 62068, "https://www.typemoon.net/aa_a01/62068")
+    monkeypatch.setattr(
+        "scripts.recover_queue.ensure_session_export", lambda *args, **kwargs: _session()
+    )
+    preserved: list[list[str]] = []
+
+    def preserve(self: FrontierStore, run_ids: list[str]) -> int:
+        preserved.append(run_ids)
+        return 3
+
+    monkeypatch.setattr("scripts.recover_queue.FrontierStore.preserve_network_attempts", preserve)
+
+    class FakeCrawler:
+        # The spider halted through the consecutive-network breaker: spider-level
+        # failure codes carry network_error while captures record each item failure.
+        spider = SimpleNamespace(scheduled_posts=3, paused=False, failure_codes={"network_error"})
+
+        class Stats:
+            @staticmethod
+            def get_value(name: str) -> str | None:
+                return None
+
+        stats = Stats()
+
+    class FakeProcess:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        def create_crawler(self, spider: object) -> FakeCrawler:
+            return FakeCrawler()
+
+        def crawl(self, crawler: FakeCrawler, **kwargs: object) -> None:
+            pass
+
+        def start(self, *, stop_after_crawl: bool) -> None:
+            pass
+
+    monkeypatch.setattr("scripts.recover_queue.CrawlerProcess", FakeProcess)
+    monkeypatch.setattr(
+        "scripts.recover_queue._capture_failure_codes",
+        lambda archive, run_id: ["network_error"],
+    )
+
+    report = run_recovery(
+        Namespace(
+            archive=archive,
+            session=tmp_path / "session.json",
+            warc_dir=tmp_path / "warc",
+            max_posts=5,
+            max_seconds=60,
+            lease_seconds=60,
+        )
+    )
+
+    assert report["ok"] is False
+    assert report["status"] == "site_unreachable"
+    assert report["preserved_attempts"] == 3
+    assert preserved == [[report["run_id"]]]
+    with connect_archive(archive, read_only=True) as connection:
+        run = connection.execute(
+            "SELECT status, summary_json FROM crawl_runs WHERE kind = 'retry'"
+        ).fetchone()
+        assert run["status"] == "failed"
+        assert json.loads(run["summary_json"])["preserved_attempts"] == 3
+
+
 def test_recovery_report_includes_capture_failure_codes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

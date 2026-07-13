@@ -444,15 +444,16 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | 영역 | 항목 | 시작값 | 근거 |
 |---|---|---|---|
 | network | 요청 간격 | 10초 하한 + 감속 전용 AutoThrottle 최대 60초 | 서버 응답이 느려지면 자동으로 더 길게; `DOWNLOAD_DELAY` 하한 아래로 빨라지지 않음 |
-| network | listing timeout | 120초 | Oracle 실측상 본문 뒤 비정상 TLS EOF까지 약 109초; preflight가 outage를 먼저 차단 |
+| network | robots | `ROBOTSTXT_OBEY=False` (2026-07-14 사용자 결정) | 인증 회원 본인 전용 아카이브; 10초 간격은 robots `Crawl-delay`와 동일하게 유지, per-process robots fetch 대기 제거 |
+| network | listing timeout | 180초 | 저속 원본에서 목록도 수 분간 streaming됨; 실측상 본문 뒤 비정상 TLS EOF(약 109초)와 저속 완결 응답을 모두 수용, detail과 동일 상한 |
 | network | detail timeout | 180초 | 수 MB AA + 느린 응답(기존 유지) |
 | network | request retry | 총 3회(`RETRY_TIMES=2`), 408/5xx/522/524 | 기존 유지 |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; detail network retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 0건으로 확정하지 않음 |
 | network | 429/network breaker | `Retry-After` 우선(최대 24시간), 같은 class 연속 3회면 recovery 조기 종료 | 과속·전체 outage에서 다음 97건 요청 금지 |
 | outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 enabled board 전체를 순회하지 않음 |
-| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료 | listing 3회 retry 포함 최악 약 20분 안팎에 중단 |
-| outage | attempt 보존 | `site_unreachable` run의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
+| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery run도 연속 3회 network breaker에서 `site_unreachable`로 종료 | listing 3회 retry × 180초 포함 최악 약 30분 안팎에 중단 |
+| outage | attempt 보존 | `site_unreachable` run(cycle/recovery 모두)의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
 | frontier | network attempts | 5회 뒤 dead | 기존 유지 |
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
 | frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
@@ -491,7 +492,7 @@ AutoThrottle, WARC middleware와 archive pipeline이 조용히 빠지므로 회�
 - 모든 listing 요청은 `DOWNLOAD_TIMEOUT`/listing timeout에서 실패하고 retry 소진 뒤
   network-class로 분류된다. 연속 3개 board 실패에서 run이 `site_unreachable`
   (`/ops` 표기 "원본 연결 실패")로 조기 종료되고 frontier attempt는 보존된다.
-- run당 최악 소요는 board 3개 × (robots + listing) retry 시간으로 수십 분이다. 반복 수동
+- run당 최악 소요는 board 3개 × listing retry(3회 × 180초) 시간으로 약 30분 안팎이다. 반복 수동
   재실행은 대기 시간만 늘리므로 다음 자동 실행 또는 원본 회복 뒤 재시도한다.
 
 원본 상태는 Oracle에서 아래로 직접 판별한다(수집 정책과 같은 10초 간격 준수, 1회씩만):

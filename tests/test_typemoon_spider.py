@@ -34,7 +34,9 @@ def _response(name: str, url: str) -> HtmlResponse:
 
 
 def test_policy_settings_and_urls_are_conservative() -> None:
-    assert settings.ROBOTSTXT_OBEY is True
+    # robots.txt is intentionally not obeyed (2026-07-14 operator decision); pacing still
+    # honors the origin's published Crawl-delay through the fixed DOWNLOAD_DELAY.
+    assert settings.ROBOTSTXT_OBEY is False
     assert settings.DOWNLOAD_DELAY == 10.0
     assert settings.DOWNLOAD_TIMEOUT == 180
     assert settings.RANDOMIZE_DOWNLOAD_DELAY is False

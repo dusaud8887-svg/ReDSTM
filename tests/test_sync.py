@@ -10,7 +10,6 @@ from urllib.request import Request as UrlRequest
 
 import pytest
 from scrapy import Request
-from scrapy.exceptions import IgnoreRequest
 from scrapy.http import HtmlResponse, Response
 
 from crawler import settings as crawler_settings
@@ -1228,63 +1227,6 @@ def test_listing_errback_classifies_auth_and_rate_limit(status: int | None, expe
     assert spider.failure_codes == {expected}
 
 
-def test_listing_errback_classifies_policy_block_as_non_network() -> None:
-    spider = TypeMoonSpider()
-    request = Request("https://www.typemoon.net/write_free21")
-
-    spider.listing_error(
-        SimpleNamespace(request=request, value=IgnoreRequest("Forbidden by robots.txt"))
-    )
-
-    assert spider.failure_codes == {"listing_blocked"}
-
-
-def test_sync_halts_on_first_policy_blocked_detail(tmp_path: Path) -> None:
-    path = tmp_path / "archive.sqlite"
-    _initialize(path)
-    run_id = ArchiveStore(path).start_run("sync")
-    spider = TypeMoonSpider(
-        board_id="write_free21",
-        archive_path=path,
-        run_id=run_id,
-        session=_session(),
-        max_posts=4,
-        detail_concurrency=1,
-    )
-    rows = "".join(
-        f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
-        f"<span class='subject'>{post_id}</span></a></td></tr>"
-        for post_id in range(1, 5)
-    )
-    url = "https://www.typemoon.net/write_free21"
-    listing = HtmlResponse(
-        url,
-        request=Request(url),
-        body=f"<table><tbody>{rows}</tbody></table>".encode(),
-        encoding="utf-8",
-    )
-    [request] = _detail_requests(list(spider.parse_listing(listing)))
-
-    outputs = list(
-        spider._sync_error(
-            SimpleNamespace(request=request, value=IgnoreRequest("Forbidden by robots.txt"))
-        )
-    )
-
-    assert outputs == []
-    assert spider.failure_codes == {"blocked"}
-    assert spider.scheduled_posts == 1
-    assert _capture_failure_codes(path, run_id) == ["blocked"]
-    with connect_archive(path, read_only=True) as connection:
-        assert (
-            connection.execute(
-                "SELECT state FROM crawl_frontier WHERE external_post_id = 1"
-            ).fetchone()[0]
-            == "retry"
-        )
-    assert list(spider.parse_listing(listing.replace(url=f"{url}?page=2"))) == []
-
-
 def test_listing_login_form_stops_as_auth_failure() -> None:
     spider = TypeMoonSpider()
     url = "https://www.typemoon.net/write_free21"
@@ -1310,8 +1252,8 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.DOWNLOAD_MAXSIZE == 64 << 20
     assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 900
     assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
-    assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 120
-    assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 120
+    assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 180
+    assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 180
     assert "download_timeout" not in TypeMoonSpider().detail_request("write", 1, _session()).meta
     project = _project_settings()
     assert project.getint("CONCURRENT_REQUESTS") == 1
