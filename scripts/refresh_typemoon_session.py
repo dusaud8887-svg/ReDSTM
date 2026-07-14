@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from crawler.session import SessionRefreshError, refresh_session_export
-from crawler.settings import USER_AGENT
+from crawler.settings import REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS, USER_AGENT
 
 
 def _parse_args() -> argparse.Namespace:
@@ -30,6 +30,7 @@ def main() -> int:
             user_id=user_id,
             password=password,
             user_agent=USER_AGENT,
+            timeout=REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
         )
     except SessionRefreshError as error:
         print(f"session refresh failed: {error}", file=sys.stderr)
