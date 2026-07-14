@@ -27,7 +27,9 @@ const wrongBoardResults = searchPosts(index, {
 
 const authorRow = index.rows.find((row) => /[가-힣]{2}/.test(row[3] ?? ""));
 const authorQuery = authorRow?.[3].match(/[가-힣]{2}/)?.[0];
-const authorResults = authorQuery ? searchPosts(index, { query: authorQuery, limit: 200 }) : [];
+const authorResults = authorQuery
+  ? searchPosts(index, { query: authorQuery, limit: 200 }).posts
+  : [];
 
 const timings = [];
 for (let run = 0; run < 30; run += 1) {
@@ -46,8 +48,8 @@ console.log(
       prepare_ms: Number(prepareMs.toFixed(3)),
       rss_increase_bytes: process.memoryUsage().rss - before,
       title_query_characters: titleQuery.length,
-      title_match_found: titleResults.some((post) => post.external_post_id === titleRow[1]),
-      wrong_board_excluded: !wrongBoardResults.some(
+      title_match_found: titleResults.posts.some((post) => post.external_post_id === titleRow[1]),
+      wrong_board_excluded: !wrongBoardResults.posts.some(
         (post) => post.board_id === titleRow[0] && post.external_post_id === titleRow[1],
       ),
       author_query_checked: Boolean(authorQuery),
