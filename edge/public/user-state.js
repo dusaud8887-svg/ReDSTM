@@ -6,6 +6,9 @@ const objectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(
 const themes = new Set(["system", "light", "dark"]);
 const proseFonts = new Set(["serif", "sans"]);
 const aaBackgroundPattern = /^#[0-9a-f]{6}$/i;
+const BOOKMARK_NOTE_LIMIT = 1000;
+const BOOKMARK_TAG_LIMIT = 10;
+const BOOKMARK_TAG_LENGTH = 30;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -62,6 +65,32 @@ function timestampMap(value, timestampKey) {
     if (timestampKey === "readAt" && Number.isFinite(entry.progress) && entry.progress >= 0 && entry.progress <= 1) {
       result[identity].progress = entry.progress;
     }
+  }
+  return result;
+}
+
+export function sanitizeBookmarkMetadata(note, tags) {
+  const sanitizedNote = typeof note === "string" ? note.trim().slice(0, BOOKMARK_NOTE_LIMIT) : "";
+  const sanitizedTags = [];
+  const seen = new Set();
+  for (const value of Array.isArray(tags) ? tags : []) {
+    if (typeof value !== "string") continue;
+    const tag = value.trim().slice(0, BOOKMARK_TAG_LENGTH);
+    const identity = tag.normalize("NFKC").toLocaleLowerCase("ko-KR");
+    if (!tag || seen.has(identity)) continue;
+    seen.add(identity);
+    sanitizedTags.push(tag);
+    if (sanitizedTags.length === BOOKMARK_TAG_LIMIT) break;
+  }
+  return { note: sanitizedNote, tags: sanitizedTags };
+}
+
+function bookmarkMap(value) {
+  const result = timestampMap(value, "savedAt");
+  for (const [identity, entry] of Object.entries(result)) {
+    const metadata = sanitizeBookmarkMetadata(value[identity].note, value[identity].tags);
+    if (metadata.note) entry.note = metadata.note;
+    if (metadata.tags.length) entry.tags = metadata.tags;
   }
   return result;
 }
@@ -142,7 +171,7 @@ function normalizeV2State(value, defaultSettings = {}) {
     schema_version: 2,
     settings: sanitizeSettings(value.settings, defaultSettings),
     history: timestampMap(value.history, "readAt"),
-    bookmarks: timestampMap(value.bookmarks, "savedAt"),
+    bookmarks: bookmarkMap(value.bookmarks),
     scroll: scrollMap(value.scroll),
     viewModes: viewModeMap(value.viewModes),
     lastCatalogState: safeCatalogState(value.lastCatalogState),

@@ -97,6 +97,7 @@ const COMMAND_KEY_PREFIX = "redstm.commandIntent.v1.";
 let runsCursor = null;
 let boardsCursor = null;
 let failuresCursor = null;
+let runItems = [];
 let boardItems = [];
 let selectedAction = null;
 let selectedArgs = {};
@@ -463,12 +464,37 @@ function runRow(run) {
   return row;
 }
 
+function runSearchText(run) {
+  return [
+    run.run_id, run.kind, runLabel(run), run.state, labels[run.state], run.source, sourceLabels[run.source],
+    run.latest_event?.step, stepLabels[run.latest_event?.step], run.latest_event?.safe_message,
+    safeCodeLabels[run.latest_event?.safe_message], run.safe_summary_code, safeCodeLabels[run.safe_summary_code],
+  ].filter(Boolean).join(" ").normalize("NFKC").toLocaleLowerCase("ko-KR");
+}
+
+function renderRuns() {
+  const list = byId("runs-list");
+  const state = byId("run-state-filter").value;
+  const query = byId("run-query").value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR");
+  const visible = runItems
+    .filter((run) => state === "all" ||
+      (state === "succeeded" && run.state === "succeeded") ||
+      (state === "warning" && ["partial", "degraded", "stale"].includes(run.state)) ||
+      (state === "error" && ["failed", "expired", "cancelled"].includes(run.state)))
+    .filter((run) => !query || runSearchText(run).includes(query));
+  list.replaceChildren();
+  if (!visible.length) {
+    list.append(node("p", "empty-row", runItems.length ? "조건에 맞는 실행 기록이 없습니다." : "아직 기록된 실행이 없습니다."));
+  } else {
+    for (const run of visible) list.append(runRow(run));
+  }
+  byId("run-filter-status").textContent = `${number(visible.length)}/${number(runItems.length)}개 표시 · 불러온 기록 기준`;
+}
+
 async function loadRuns(append = false) {
   const data = await api(`/api/v1/ops/runs?limit=${RUN_PAGE_SIZE}${append && runsCursor ? `&cursor=${encodeURIComponent(runsCursor)}` : ""}`);
-  const list = byId("runs-list");
-  if (!append) list.replaceChildren();
-  if (!data.items.length && !append) list.append(node("p", "empty-row", "아직 기록된 실행이 없습니다."));
-  for (const run of data.items) list.append(runRow(run));
+  runItems = append ? [...runItems, ...data.items] : data.items;
+  renderRuns();
   runsCursor = data.next_cursor;
   byId("runs-more").hidden = !runsCursor;
 }
@@ -784,6 +810,8 @@ if (typeof document !== "undefined") {
   });
   byId("refresh").addEventListener("click", () => { void loadAll(); });
   byId("runs-more").addEventListener("click", () => { void loadRuns(true).catch((error) => showError(error, "실행 기록")); });
+  byId("run-state-filter").addEventListener("change", renderRuns);
+  byId("run-query").addEventListener("input", renderRuns);
   byId("boards-more").addEventListener("click", () => { void loadBoards(true).catch((error) => showError(error, "게시판별 진척")); });
   byId("failures-more").addEventListener("click", () => { void loadFailures(true).catch((error) => showError(error, "최종 실패 게시글")); });
   void loadAll();

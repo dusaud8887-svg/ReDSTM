@@ -5,12 +5,14 @@ import {
   migrateLegacyState,
   planImport,
   postIdentity,
+  sanitizeBookmarkMetadata,
   samePost,
 } from "/user-state.js";
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const collectionObjectKeyPattern = /^collections\/[a-z0-9_/-]+-[a-f0-9]{64}\.json\.zst$/;
 const titleCollator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
+const collectionDateFormatter = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium" });
 const storageKeys = {
   settings: "redstm.settings.v1",
   history: "redstm.history.v1",
@@ -28,9 +30,9 @@ const settingLabels = {
 };
 const elements = Object.fromEntries(
   [
-    "archive-count", "archive-state", "search-input", "board-filter", "mode-filter", "sort-filter", "result-status", "result-list", "result-more",
+    "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-entry-list",
+    "scope-tabs", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comment-count", "comment-list", "previous-post", "next-post", "bookmark-post", "source-link",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "aa-size-output", "reset-settings",
@@ -41,8 +43,9 @@ const elements = Object.fromEntries(
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-select",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-bookmark", "reader-bottom-next", "reader-bottom-settings",
-    "post-settings-actions", "settings-bookmark", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
+    "post-settings-actions", "settings-bookmark", "settings-bookmark-detail", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
     "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
+    "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove", "bookmark-save",
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
@@ -64,6 +67,7 @@ let collectionIndexPromise;
 const collectionDetailPromises = new Map();
 const collectionMembershipPromises = new Map();
 let renderedCollections = [];
+let collectionProgressById = new Map();
 let currentScope = "posts";
 let collectionSearchId = 0;
 let currentView = "all";
@@ -88,6 +92,7 @@ let archiveReady = false;
 let pendingCatalogRestore = userState.lastCatalogState;
 let searchSupportsAa = true;
 let immersiveOpener = null;
+let editingBookmarkSummary = null;
 const workerRequests = new Map();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -125,6 +130,7 @@ function entriesFromState(map, timestampKey) {
         summary: { board_id: boardId, external_post_id: Number(externalId) },
         [timestampKey]: value[timestampKey],
         ...(timestampKey === "readAt" ? { scroll: userState.scroll[identity] ?? 0, progress: value.progress ?? 0 } : {}),
+        ...(timestampKey === "savedAt" ? { note: value.note ?? "", tags: value.tags ?? [] } : {}),
       };
     })
     .sort((left, right) => Date.parse(right[timestampKey]) - Date.parse(left[timestampKey]));
@@ -150,7 +156,11 @@ function persistUserState() {
       postIdentity(entry.summary), { readAt: entry.readAt, progress: entry.progress ?? 0 },
     ]).filter(([identity]) => identity)),
     bookmarks: Object.fromEntries(bookmarks.map((entry) => [
-      postIdentity(entry.summary), { savedAt: entry.savedAt },
+      postIdentity(entry.summary), {
+        savedAt: entry.savedAt,
+        ...(entry.note ? { note: entry.note } : {}),
+        ...(entry.tags?.length ? { tags: entry.tags } : {}),
+      },
     ]).filter(([identity]) => identity)),
     scroll: Object.fromEntries(historyEntries.map((entry) => [
       postIdentity(entry.summary), entry.scroll ?? 0,
@@ -413,10 +423,14 @@ function setScope(scope) {
   }
   const collectionScope = currentScope === "collections";
   const options = collectionScope
-    ? [["가나다순", "title"], ["편수 많은순", "longest"]]
+    ? [["가나다순", "title"], ["최근 글순", "updated"], ["편수 많은순", "longest"]]
     : [["최신순", "latest"], ["오래된순", "oldest"]];
   elements["sort-filter"].replaceChildren(...options.map(([label, value]) => new Option(label, value)));
   elements["mode-filter"].closest("label").hidden = collectionScope;
+  document.querySelector(".search-target-field").hidden = collectionScope;
+  document.querySelector(".search-match-field").hidden = collectionScope;
+  document.querySelector(".collection-kind-field").hidden = !collectionScope;
+  document.querySelector(".collection-read-field").hidden = !collectionScope;
   elements["search-input"].placeholder = collectionScope ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
 }
 
@@ -426,6 +440,10 @@ function currentSearchState() {
     boardId: elements["board-filter"].value,
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
+    target: elements["search-target"].value,
+    match: elements["search-match"].value,
+    collectionKind: elements["collection-kind-filter"].value,
+    collectionRead: elements["collection-read-filter"].value,
   };
 }
 
@@ -434,6 +452,10 @@ function searchUrl(state = currentSearchState()) {
   if (state.query) params.set("q", state.query);
   if (state.boardId) params.set("board", state.boardId);
   if (currentScope === "posts" && state.mode !== "all") params.set("mode", state.mode);
+  if (currentScope === "posts" && state.target !== "all") params.set("target", state.target);
+  if (currentScope === "posts" && state.match !== "and") params.set("match", state.match);
+  if (currentScope === "collections" && state.collectionKind !== "all") params.set("kind", state.collectionKind);
+  if (currentScope === "collections" && state.collectionRead !== "all") params.set("read", state.collectionRead);
   const defaultSort = currentScope === "collections" ? "title" : "latest";
   if (state.sort !== defaultSort) params.set("sort", state.sort);
   const query = params.toString();
@@ -447,6 +469,8 @@ function savedUrl(state = currentSearchState(), view = currentView) {
   if (state.query) params.set("q", state.query);
   if (state.boardId) params.set("board", state.boardId);
   if (state.mode !== "all") params.set("mode", state.mode);
+  if (state.target !== "all") params.set("target", state.target);
+  if (state.match !== "and") params.set("match", state.match);
   const query = params.toString();
   return query ? `/saved?${query}` : "/saved";
 }
@@ -458,10 +482,14 @@ function applyCatalogRoute(destination) {
   elements["board-filter"].value = params.get("board") ?? "";
   const mode = params.get("mode");
   elements["mode-filter"].value = searchSupportsAa && (mode === "aa" || mode === "prose") ? mode : "all";
+  elements["search-target"].value = ["title", "author"].includes(params.get("target")) ? params.get("target") : "all";
+  elements["search-match"].value = params.get("match") === "or" ? "or" : "and";
   const sort = params.get("sort");
   elements["sort-filter"].value = currentScope === "collections"
-    ? (sort === "longest" ? sort : "title")
+    ? (["updated", "longest"].includes(sort) ? sort : "title")
     : (destination === "search" && sort === "oldest" ? sort : "latest");
+  elements["collection-kind-filter"].value = ["series", "oneshot"].includes(params.get("kind")) ? params.get("kind") : "all";
+  elements["collection-read-filter"].value = ["unread", "reading", "finished"].includes(params.get("read")) ? params.get("read") : "all";
   currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
     destination === "bookmarks" ? "bookmarks" : "all";
 }
@@ -484,6 +512,10 @@ function updateDestinationLayout() {
   document.querySelector(".saved-tabs").hidden = !saved;
   document.querySelector(".sort-field").hidden = saved;
   elements["mode-filter"].closest("label").hidden = saved || currentScope === "collections";
+  document.querySelector(".search-target-field").hidden = currentScope === "collections";
+  document.querySelector(".search-match-field").hidden = currentScope === "collections";
+  document.querySelector(".collection-kind-field").hidden = saved || currentScope !== "collections";
+  document.querySelector(".collection-read-field").hidden = saved || currentScope !== "collections";
   elements["catalog-title"].textContent = saved ? "내 보관함" : currentScope === "collections" ? "작품 탐색" : "글 탐색";
   elements["catalog-subtitle"].textContent = saved
     ? (currentView === "history" ? "최근 읽은 글" : "저장한 글")
@@ -496,15 +528,19 @@ function openSettings() {
 }
 
 function persistCatalogState() {
+  if (!elements["collection-view"].hidden) return;
   const search = currentSearchState();
   if (currentDestination === "bookmarks") search.sort = "latest";
   const focused = document.activeElement?.closest?.(".result-item");
   userState.lastCatalogState = {
     destination: currentDestination,
     view: currentView,
+    scope: currentScope,
     ...search,
     scrollTop: elements["result-list"].scrollTop,
+    loadedCount: currentScope === "collections" ? renderedCollections.length : renderedResults.length,
     focusedPost: focused ? postIdentity(renderedResults[Number(focused.dataset.index)]) : "",
+    focusedCollectionId: Number(focused?.dataset.collectionId) || null,
   };
   pendingCatalogRestore = userState.lastCatalogState;
   persistUserState();
@@ -512,20 +548,34 @@ function persistCatalogState() {
 
 function restoreCatalogPosition() {
   const state = pendingCatalogRestore;
-  if (currentSummary || !state || state.destination !== currentDestination || state.view !== currentView) return;
+  if (currentSummary || !state || state.destination !== currentDestination || state.view !== currentView ||
+      (state.scope ?? "posts") !== currentScope) return;
   const current = currentSearchState();
   if (state.query !== current.query || state.boardId !== current.boardId ||
       (state.mode ?? "all") !== current.mode ||
+      (state.target ?? "all") !== current.target ||
+      (state.match ?? "and") !== current.match ||
+      (state.collectionKind ?? "all") !== current.collectionKind ||
+      (state.collectionRead ?? "all") !== current.collectionRead ||
       (currentDestination !== "bookmarks" && state.sort !== current.sort)) return;
   requestAnimationFrame(() => {
     elements["result-list"].scrollTop = Math.max(0, state.scrollTop ?? 0);
-    const index = renderedResults.findIndex((post) => postIdentity(post) === state.focusedPost);
-    if (index < 0 && state.focusedPost && currentView === "all" && renderedResults.length < resultTotal) {
-      requestSearch(renderedResults.length);
+    const collections = currentScope === "collections";
+    const rendered = collections ? renderedCollections : renderedResults;
+    const index = collections
+      ? renderedCollections.findIndex((collection) => collection.id === state.focusedCollectionId)
+      : renderedResults.findIndex((post) => postIdentity(post) === state.focusedPost);
+    const targetLoaded = Math.min(Number(state.loadedCount) || 0, resultTotal);
+    if (currentView === "all" && rendered.length < targetLoaded) {
+      if (collections) void renderCollectionCatalog(rendered.length);
+      else requestSearch(rendered.length);
       return;
     }
     pendingCatalogRestore = null;
-    if (index >= 0) elements["result-list"].querySelector(`[data-index="${index}"]`)?.focus({ preventScroll: true });
+    if (index >= 0) {
+      const selector = collections ? `[data-collection-id="${state.focusedCollectionId}"]` : `[data-index="${index}"]`;
+      elements["result-list"].querySelector(selector)?.focus({ preventScroll: true });
+    }
   });
 }
 
@@ -539,7 +589,7 @@ function showDestination(destination, navigate = true, view = destination === "b
     return;
   }
   if (currentSummary) persistReadingPosition();
-  else if (currentDestination !== "library" && currentScope === "posts") persistCatalogState();
+  else if (currentDestination !== "library") persistCatalogState();
   setImmersive(false, false);
   if (destination !== "search") setScope("posts");
   currentDestination = destination;
@@ -724,6 +774,8 @@ function requestSearch(offset = 0) {
     boardId: elements["board-filter"].value,
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
+    target: elements["search-target"].value,
+    match: elements["search-match"].value,
     limit: RESULT_PAGE_SIZE,
     offset,
   });
@@ -751,14 +803,22 @@ function updateLoadMore() {
 }
 
 function localResults(entries) {
-  const query = normalized(elements["search-input"].value).trim();
+  const tokens = normalized(elements["search-input"].value).trim().split(/\s+/).filter(Boolean);
   const board = elements["board-filter"].value;
   const mode = elements["mode-filter"].value;
+  const target = elements["search-target"].value;
+  const match = elements["search-match"].value;
   return entries
     .map((entry) => entry.summary)
     .filter((post) => !board || post.board_id === board)
     .filter((post) => mode === "all" || (mode === "aa") === Boolean(post.is_aa))
-    .filter((post) => !query || normalized([post.title, post.author, post.category, post.board_id].join(" ")).includes(query));
+    .filter((post) => {
+      const searchText = target === "title" ? normalized(post.title) : target === "author" ? normalized(post.author) :
+        normalized([post.title, post.author, post.category, post.board_id].join(" "));
+      return !tokens.length || (match === "or"
+        ? tokens.some((token) => searchText.includes(token))
+        : tokens.every((token) => searchText.includes(token)));
+    });
 }
 
 function renderCurrentView() {
@@ -785,6 +845,7 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
   const badges = document.createElement("span");
   badges.className = "result-badges";
   const identity = postIdentity(post);
+  const bookmark = bookmarks.find((entry) => postIdentity(entry.summary) === identity);
   for (const [visible, label] of [
     [post.is_aa === true, "AA"], [savedIdentities.has(identity), "저장"], [readIdentities.has(identity), "읽음"],
   ]) {
@@ -792,6 +853,19 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
     const badge = document.createElement("span");
     badge.textContent = label;
     badges.append(badge);
+  }
+  if (currentView === "bookmarks") {
+    const tags = bookmark?.tags ?? [];
+    for (const tag of tags.slice(0, 2)) {
+      const badge = document.createElement("span");
+      badge.textContent = `#${tag}`;
+      badges.append(badge);
+    }
+    if (tags.length > 2) {
+      const badge = document.createElement("span");
+      badge.textContent = `+${tags.length - 2}`;
+      badges.append(badge);
+    }
   }
   titleLine.append(title);
   if (badges.childElementCount) titleLine.append(badges);
@@ -806,7 +880,23 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
     meta.append(part);
   }
   button.append(titleLine, meta);
+  if (currentView === "bookmarks" && bookmark?.note) {
+    const note = document.createElement("span");
+    note.className = "bookmark-note";
+    note.textContent = bookmark.note;
+    button.append(note);
+  }
   item.append(button);
+  if (currentView === "bookmarks") {
+    item.className = "bookmark-row";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "bookmark-edit";
+    edit.dataset.identity = identity;
+    edit.textContent = "편집";
+    edit.ariaLabel = `${post.title || "제목 없음"} 메모와 태그 편집`;
+    item.append(edit);
+  }
   return item;
 }
 
@@ -853,15 +943,30 @@ async function renderCollectionCatalog(offset = 0) {
   }
   try {
     const index = await collectionIndex();
+    const progress = await collectionReadingProgress(index);
     if (requestId !== collectionSearchId || currentScope !== "collections") return;
     const query = normalized(elements["search-input"].value).trim();
     const boardId = elements["board-filter"].value;
+    const kind = elements["collection-kind-filter"].value;
+    const readState = elements["collection-read-filter"].value;
     const matches = index.summaries
       .filter((collection) => !boardId || collection.board_id === boardId)
+      .filter((collection) => kind === "all" || collection.kind === kind)
+      .filter((collection) => {
+        const readCount = progress.get(collection.id)?.positions.size ?? 0;
+        if (readState === "unread") return readCount === 0;
+        if (readState === "reading") return readCount > 0 && readCount < collection.entry_count;
+        if (readState === "finished") return readCount >= collection.entry_count;
+        return true;
+      })
       .filter((collection) => !query || normalized(collection.title).includes(query))
       .sort(elements["sort-filter"].value === "longest"
         ? (left, right) => right.entry_count - left.entry_count || titleCollator.compare(left.title, right.title)
+        : elements["sort-filter"].value === "updated"
+        ? (left, right) => (Date.parse(right.latest_created_at) || 0) - (Date.parse(left.latest_created_at) || 0) ||
+          titleCollator.compare(left.title, right.title)
         : (left, right) => titleCollator.compare(left.title, right.title) || left.id - right.id);
+    collectionProgressById = progress;
     resultTotal = matches.length;
     renderedCollections = matches.slice(0, offset + RESULT_PAGE_SIZE);
     renderCollectionResults();
@@ -886,7 +991,18 @@ function renderCollectionResults() {
     title.textContent = collection.title;
     const meta = document.createElement("span");
     meta.className = "result-meta";
-    for (const text of [collection.board_id, `${collection.entry_count.toLocaleString("ko-KR")}편`]) {
+    const progress = collectionProgressById.get(collection.id);
+    const readCount = progress?.positions.size ?? 0;
+    const lastRead = progress?.lastPosition ? `최근 ${progress.lastPosition}편` : null;
+    const updated = Number.isFinite(Date.parse(collection.latest_created_at))
+      ? `최근 글 ${collectionDateFormatter.format(new Date(collection.latest_created_at))}` : null;
+    for (const text of [
+      collection.board_id,
+      collection.kind === "oneshot" ? "단편 묶음" : "연재",
+      readCount ? `읽음 ${readCount}/${collection.entry_count}` : `${collection.entry_count.toLocaleString("ko-KR")}편`,
+      lastRead,
+      updated,
+    ].filter(Boolean)) {
       const part = document.createElement("span");
       part.textContent = text;
       meta.append(part);
@@ -901,6 +1017,44 @@ function renderCollectionResults() {
     ? `${resultTotal.toLocaleString("ko-KR")}개 작품 중 ${shown.toLocaleString("ko-KR")}개`
     : `${resultTotal.toLocaleString("ko-KR")}개 작품`;
   updateLoadMore();
+  restoreCatalogPosition();
+}
+
+async function collectionReadingProgress(index) {
+  const progress = new Map();
+  const record = (collectionId, position, readAt) => {
+    const current = progress.get(collectionId) ?? { positions: new Set(), lastPosition: null, lastReadAt: "" };
+    current.positions.add(position);
+    if (!current.lastReadAt || Date.parse(readAt) > Date.parse(current.lastReadAt)) {
+      current.lastReadAt = readAt;
+      current.lastPosition = position;
+    }
+    progress.set(collectionId, current);
+  };
+  const historyByIdentity = new Map(historyEntries.map((entry) => [postIdentity(entry.summary), entry]));
+  if (index.schemaVersion === 1) {
+    for (const collection of index.legacy) {
+      for (const entry of collection.entries) {
+        const history = historyByIdentity.get(postIdentity(entry));
+        if (history) record(collection.id, entry.position, history.readAt);
+      }
+    }
+    return progress;
+  }
+  const byBoard = new Map();
+  for (const entry of historyEntries) {
+    const boardEntries = byBoard.get(entry.summary.board_id) ?? [];
+    boardEntries.push(entry);
+    byBoard.set(entry.summary.board_id, boardEntries);
+  }
+  await Promise.all([...byBoard].map(async ([boardId, entries]) => {
+    const membership = await loadCollectionMembership(boardId);
+    for (const entry of entries) {
+      const member = membership.get(entry.summary.external_post_id);
+      if (member) record(member.collectionId, member.position, entry.readAt);
+    }
+  }));
+  return progress;
 }
 
 async function openCollectionDetail(collectionId, navigate = true) {
@@ -922,11 +1076,24 @@ async function openCollectionDetail(collectionId, navigate = true) {
     document.body.classList.add("collection-detail-open");
     elements["collection-title"].textContent = collection.title;
     const unavailable = collection.entries.filter((entry) => !entry.object_key).length;
+    const historyByIdentity = new Map(historyEntries.map((entry) => [postIdentity(entry.summary), entry]));
+    const available = collection.entries.filter((entry) => entry.object_key);
+    const readEntries = available.filter((entry) => historyByIdentity.has(postIdentity(entry)));
+    const lastRead = readEntries
+      .map((entry) => ({ entry, readAt: historyByIdentity.get(postIdentity(entry)).readAt }))
+      .sort((left, right) => Date.parse(right.readAt) - Date.parse(left.readAt))[0]?.entry;
+    const nextUnread = available.find((entry) => !historyByIdentity.has(postIdentity(entry)));
     elements["collection-meta"].textContent = [
       collection.board_id,
       `${collection.entries.length.toLocaleString("ko-KR")}편`,
       unavailable ? `${unavailable.toLocaleString("ko-KR")}편 보존 불가` : "전체 보존",
-    ].join(" · ");
+      `읽음 ${readEntries.length.toLocaleString("ko-KR")}/${available.length.toLocaleString("ko-KR")}`,
+      lastRead ? `최근 ${lastRead.position}편` : null,
+    ].filter(Boolean).join(" · ");
+    elements["collection-continue"].hidden = !nextUnread;
+    elements["collection-continue"].dataset.position = nextUnread?.position ?? "";
+    elements["collection-continue"].textContent = nextUnread
+      ? `이어 읽기 · ${nextUnread.position}편 ${nextUnread.title || "제목 없음"}` : "";
     const fragment = document.createDocumentFragment();
     for (const entry of collection.entries) {
       const item = document.createElement("li");
@@ -941,7 +1108,12 @@ async function openCollectionDetail(collectionId, navigate = true) {
       const title = document.createElement("span");
       title.className = "collection-entry-title";
       title.textContent = entry.title || "제목 없음";
-      button.append(position, title);
+      const state = document.createElement("span");
+      state.className = "collection-entry-state";
+      const read = historyByIdentity.has(postIdentity(entry));
+      state.textContent = read ? "읽음" : entry === nextUnread ? "다음" : "";
+      button.classList.toggle("read", read);
+      button.append(position, title, state);
       item.append(button);
       fragment.append(item);
     }
@@ -1009,7 +1181,9 @@ async function loadCollectionIndex() {
   for (const summary of payload.collections) {
     if (!Number.isInteger(summary?.id) || summary.id <= 0 || typeof summary.board_id !== "string" ||
         typeof summary.kind !== "string" || typeof summary.title !== "string" ||
-        !Number.isInteger(summary.entry_count) || summary.entry_count < 0 || summaries.has(summary.id)) {
+        !Number.isInteger(summary.entry_count) || summary.entry_count < 0 || summaries.has(summary.id) ||
+        (summary.latest_created_at !== null && summary.latest_created_at !== undefined &&
+          (typeof summary.latest_created_at !== "string" || !Number.isFinite(Date.parse(summary.latest_created_at))))) {
       throw new Error("잘못된 컬렉션 요약");
     }
     summaries.set(summary.id, summary);
@@ -1370,6 +1544,31 @@ function updateBookmarkButton() {
   elements["reader-bottom-bookmark"].ariaLabel = elements["bookmark-post"].ariaLabel;
 }
 
+function openBookmarkEditor(summary) {
+  const identity = postIdentity(summary);
+  if (!identity) return;
+  const existing = bookmarks.find((entry) => postIdentity(entry.summary) === identity);
+  editingBookmarkSummary = existing?.summary ?? summary;
+  elements["bookmark-dialog-post"].textContent = editingBookmarkSummary.title || "제목 없음";
+  elements["bookmark-note"].value = existing?.note ?? "";
+  elements["bookmark-tags"].value = (existing?.tags ?? []).join(", ");
+  elements["bookmark-remove"].hidden = !existing;
+  if (!elements["bookmark-dialog"].open) elements["bookmark-dialog"].showModal();
+  requestAnimationFrame(() => elements["bookmark-note"].focus());
+}
+
+function closeBookmarkEditor() {
+  if (elements["bookmark-dialog"].open) elements["bookmark-dialog"].close();
+  editingBookmarkSummary = null;
+}
+
+function renderAfterBookmarkChange() {
+  updateBookmarkButton();
+  if (currentView === "bookmarks") renderCurrentView();
+  else if (currentScope === "collections") renderCollectionResults();
+  else renderResults(renderedResults, elements["result-status"].textContent);
+}
+
 function updateNavigation() {
   const previous = adjacentPost(-1);
   const next = adjacentPost(1);
@@ -1425,9 +1624,18 @@ function focusResult(offset) {
 }
 
 elements["result-list"].addEventListener("click", (event) => {
+  const edit = event.target.closest(".bookmark-edit");
+  if (edit) {
+    const bookmark = bookmarks.find((entry) => postIdentity(entry.summary) === edit.dataset.identity);
+    if (bookmark) openBookmarkEditor(bookmark.summary);
+    return;
+  }
   const button = event.target.closest(".result-item");
   if (button) {
-    if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId));
+    if (button.dataset.collectionId) {
+      persistCatalogState();
+      void openCollectionDetail(Number(button.dataset.collectionId));
+    }
     else {
       persistCatalogState();
       loadPost(renderedResults[Number(button.dataset.index)]);
@@ -1477,7 +1685,11 @@ elements["search-input"].addEventListener("input", () => {
 elements["search-input"].addEventListener("focus", () => {
   if (currentDestination === "library") showDestination("search");
 });
-for (const filter of [elements["board-filter"], elements["mode-filter"], elements["sort-filter"]]) {
+for (const filter of [
+  elements["board-filter"], elements["mode-filter"], elements["sort-filter"],
+  elements["search-target"], elements["search-match"],
+  elements["collection-kind-filter"], elements["collection-read-filter"],
+]) {
   filter.addEventListener("change", () => {
     syncSearchRoute();
     renderCurrentView();
@@ -1521,6 +1733,11 @@ elements["collection-entry-list"].addEventListener("click", async (event) => {
   const entry = collection?.entries[Number(button.dataset.position) - 1];
   if (entry?.object_key) loadPost(entry);
 });
+elements["collection-continue"].addEventListener("click", async () => {
+  const collection = await loadCollectionDetail(Number(elements["collection-entry-list"].dataset.collectionId));
+  const entry = collection?.entries[Number(elements["collection-continue"].dataset.position) - 1];
+  if (entry?.object_key) loadPost(entry);
+});
 elements["collection-back"].addEventListener("click", () => {
   if (history.state?.redstmCollection) history.back();
   else {
@@ -1536,11 +1753,41 @@ elements["bookmark-post"].addEventListener("click", () => {
     ? bookmarks.filter((entry) => !samePost(entry.summary, currentSummary))
     : [{ summary: currentSummary, savedAt: new Date().toISOString() }, ...bookmarks];
   persistUserState();
-  updateBookmarkButton();
-  if (currentView === "bookmarks") renderCurrentView();
-  else if (currentScope === "collections") renderCollectionResults();
-  else renderResults(renderedResults, elements["result-status"].textContent);
+  renderAfterBookmarkChange();
 });
+elements["settings-bookmark-detail"].addEventListener("click", () => openBookmarkEditor(currentSummary));
+elements["bookmark-form"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!editingBookmarkSummary) return;
+  const identity = postIdentity(editingBookmarkSummary);
+  const metadata = sanitizeBookmarkMetadata(
+    elements["bookmark-note"].value,
+    elements["bookmark-tags"].value.split(/[,，]/),
+  );
+  const existing = bookmarks.find((entry) => postIdentity(entry.summary) === identity);
+  const updated = {
+    summary: existing?.summary ?? editingBookmarkSummary,
+    savedAt: existing?.savedAt ?? new Date().toISOString(),
+    ...metadata,
+  };
+  bookmarks = existing
+    ? bookmarks.map((entry) => postIdentity(entry.summary) === identity ? updated : entry)
+    : [updated, ...bookmarks];
+  persistUserState();
+  closeBookmarkEditor();
+  renderAfterBookmarkChange();
+});
+elements["bookmark-remove"].addEventListener("click", () => {
+  const identity = postIdentity(editingBookmarkSummary);
+  bookmarks = bookmarks.filter((entry) => postIdentity(entry.summary) !== identity);
+  persistUserState();
+  closeBookmarkEditor();
+  renderAfterBookmarkChange();
+});
+for (const button of document.querySelectorAll("[data-bookmark-close]")) {
+  button.addEventListener("click", closeBookmarkEditor);
+}
+elements["bookmark-dialog"].addEventListener("cancel", () => { editingBookmarkSummary = null; });
 elements["previous-post"].addEventListener("click", () => {
   const post = adjacentPost(-1);
   if (post) loadPost(post);

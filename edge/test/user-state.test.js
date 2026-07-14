@@ -8,6 +8,7 @@ import {
   migrateLegacyState,
   planImport,
   postIdentity,
+  sanitizeBookmarkMetadata,
   samePost,
 } from "../public/user-state.js";
 
@@ -66,7 +67,9 @@ test("exports only normalized v2 state", () => {
   state.history["write_free21:62068"] = {
     readAt: "2026-07-11T00:00:00Z", progress: 0.42, object_key: summary().object_key,
   };
-  state.bookmarks["write_free21:62068"] = { savedAt: "2026-07-11T01:00:00Z" };
+  state.bookmarks["write_free21:62068"] = {
+    savedAt: "2026-07-11T01:00:00Z", note: "  다시 볼 장면  ", tags: ["마술", "마술", "AA"],
+  };
   state.scroll["write_free21:62068"] = 81;
   state.viewModes["write_free21:62068"] = "prose";
   state.lastCatalogState = { query: "달빛", scrollTop: 120, nested: { object_key: "forbidden" } };
@@ -75,8 +78,31 @@ test("exports only normalized v2 state", () => {
   const payload = JSON.parse(exported);
   assert.equal(payload.schema_version, 2);
   assert.deepEqual(payload.history["write_free21:62068"], { readAt: "2026-07-11T00:00:00Z", progress: 0.42 });
+  assert.deepEqual(payload.bookmarks["write_free21:62068"], {
+    savedAt: "2026-07-11T01:00:00Z", note: "다시 볼 장면", tags: ["마술", "AA"],
+  });
   assert.deepEqual(payload.lastCatalogState, { query: "달빛", scrollTop: 120, nested: {} });
   assert.equal(exported.includes("object_key"), false);
+});
+
+test("bounds bookmark notes and tags at the import boundary", () => {
+  const metadata = sanitizeBookmarkMetadata(` ${"메".repeat(1002)} `, [
+    " 태그 ", "ＴＡＧ", "tag", ...Array.from({ length: 12 }, (_, index) => `분류${index}`), 3,
+  ]);
+  assert.equal(metadata.note.length, 1000);
+  assert.deepEqual(metadata.tags.slice(0, 2), ["태그", "ＴＡＧ"]);
+  assert.equal(metadata.tags.includes("tag"), false);
+  assert.equal(metadata.tags.length, 10);
+
+  const state = planImport(JSON.stringify({
+    schema_version: 2, settings: defaults, history: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    bookmarks: { "write_free21:62068": {
+      savedAt: "2026-07-11T01:00:00Z", note: metadata.note, tags: metadata.tags,
+    } },
+  }), defaults).state;
+  assert.deepEqual(state.bookmarks["write_free21:62068"], {
+    savedAt: "2026-07-11T01:00:00Z", note: metadata.note, tags: metadata.tags,
+  });
 });
 
 test("plans v2 import with counts without applying it", () => {

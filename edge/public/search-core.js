@@ -74,6 +74,8 @@ export function searchPosts(
     category = "",
     mode = "all",
     sort = "latest",
+    target = "all",
+    match = "and",
     limit = 100,
     offset = 0,
   } = {},
@@ -93,6 +95,12 @@ export function searchPosts(
   if (!new Set(["latest", "oldest"]).has(sort)) {
     throw new Error("Unsupported search sort");
   }
+  if (!new Set(["all", "title", "author"]).has(target)) {
+    throw new Error("Unsupported search target");
+  }
+  if (!new Set(["and", "or"]).has(match)) {
+    throw new Error("Unsupported search match");
+  }
   const tokens = normalize(query).trim().split(/\s+/).filter(Boolean);
   const normalizedCategory = normalize(category);
   const posts = [];
@@ -106,7 +114,11 @@ export function searchPosts(
     if (normalizedCategory && index.categories[position] !== normalizedCategory) continue;
     const isAa = index.modes[position];
     if ((mode === "aa" && !isAa) || (mode === "prose" && isAa)) continue;
-    if (tokens.some((token) => !index.terms[position].includes(token))) continue;
+    const searchText = target === "title" ? normalize(row[2]) : target === "author" ? normalize(row[3]) : index.terms[position];
+    const tokenMatches = match === "or"
+      ? tokens.some((token) => searchText.includes(token))
+      : tokens.every((token) => searchText.includes(token));
+    if (tokens.length && !tokenMatches) continue;
     // `total` is the running match index; collect the window [offset, offset + limit).
     if (total >= offset && posts.length < limit) posts.push(result(row, index.hasIsAa));
     total += 1;

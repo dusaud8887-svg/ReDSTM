@@ -6,6 +6,9 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icons/app-icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icons/app-icon-192.png">
     <title>ReDSTM — 개인 장서</title>
     <link rel="stylesheet" href="/app.css">
     <script type="module" src="/app.js"></script>
@@ -82,9 +85,25 @@
             <span class="sr-only">게시판</span>
             <select id="board-filter"><option value="">전체 게시판</option></select>
           </label>
+          <label class="search-target-field">
+            <span class="sr-only">검색 대상</span>
+            <select id="search-target"><option value="all">전체 필드</option><option value="title">제목만</option><option value="author">작성자만</option></select>
+          </label>
+          <label class="search-match-field">
+            <span class="sr-only">검색어 결합</span>
+            <select id="search-match"><option value="and">모든 단어</option><option value="or">하나라도</option></select>
+          </label>
           <label class="mode-field">
             <span class="sr-only">글 형식</span>
             <select id="mode-filter"><option value="all">전체 형식</option><option value="prose">소설·일반</option><option value="aa">AA</option></select>
+          </label>
+          <label class="collection-kind-field" hidden>
+            <span class="sr-only">작품 종류</span>
+            <select id="collection-kind-filter"><option value="all">전체 종류</option><option value="series">연재</option><option value="oneshot">단편 묶음</option></select>
+          </label>
+          <label class="collection-read-field" hidden>
+            <span class="sr-only">작품 읽기 상태</span>
+            <select id="collection-read-filter"><option value="all">전체 읽기 상태</option><option value="unread">안 읽음</option><option value="reading">읽는 중</option><option value="finished">다 읽음</option></select>
           </label>
           <label class="sort-field">
             <span class="sr-only">정렬</span>
@@ -131,6 +150,7 @@
             <p>작품 모음</p>
             <h1 id="collection-title" tabindex="-1"></h1>
             <p id="collection-meta"></p>
+            <button class="collection-continue" id="collection-continue" type="button" hidden></button>
           </header>
           <ol class="collection-entry-list" id="collection-entry-list"></ol>
         </section>
@@ -205,6 +225,7 @@
         <fieldset class="post-settings" id="post-settings-actions" hidden>
           <legend>현재 글</legend>
           <button id="settings-bookmark" type="button" aria-pressed="false">저장</button>
+          <button id="settings-bookmark-detail" type="button">메모·태그</button>
           <a id="settings-source" href="#" target="_blank" rel="noreferrer">원문</a>
           <button id="settings-mode" type="button">AA로 보기</button>
           <button id="settings-mode-reset" type="button" hidden>자동 보기</button>
@@ -238,6 +259,16 @@
           <p id="import-review-summary"></p>
           <div><button id="import-cancel" type="button">취소</button><button id="import-apply" type="button">가져오기 적용</button></div>
         </section>
+      </form>
+    </dialog>
+
+    <dialog id="bookmark-dialog" aria-labelledby="bookmark-dialog-title">
+      <form id="bookmark-form">
+        <header><div><p>이 브라우저에 저장됩니다</p><h2 id="bookmark-dialog-title">저장한 글 메모</h2></div><button class="icon-button" type="button" data-bookmark-close aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <p class="bookmark-dialog-post" id="bookmark-dialog-post"></p>
+        <label>메모<textarea id="bookmark-note" maxlength="1000" rows="6" placeholder="다시 볼 장면이나 감상을 적어 두세요"></textarea></label>
+        <label>태그<input id="bookmark-tags" maxlength="320" type="text" placeholder="쉼표로 구분 (최대 10개)"></label>
+        <div class="bookmark-dialog-actions"><button id="bookmark-remove" type="button">저장 취소</button><span></span><button type="button" data-bookmark-close>닫기</button><button id="bookmark-save" type="submit">저장</button></div>
       </form>
     </dialog>
   </body>

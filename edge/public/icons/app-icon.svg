@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ReDSTM">
+  <rect width="512" height="512" rx="112" fill="#d92d3d"/>
+  <path d="M88 152c58-15 113 0 168 45v230c-51-39-106-54-168-39V152Z" fill="#fff"/>
+  <path d="M424 152c-58-15-113 0-168 45v230c51-39 106-54 168-39V152Z" fill="#fff"/>
+  <path d="M120 198c38-4 73 7 104 30M120 248c38-4 73 7 104 30M120 298c38-4 73 7 104 30M392 198c-38-4-73 7-104 30M392 248c-38-4-73 7-104 30M392 298c-38-4-73 7-104 30" fill="none" stroke="#d92d3d" stroke-linecap="round" stroke-width="14"/>
+  <path d="M256 197v230" stroke="#b42332" stroke-width="12"/>
+</svg>

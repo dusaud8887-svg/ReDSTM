@@ -124,6 +124,11 @@
           <div><span>03</span><h2 id="runs-title">실행 기록</h2></div>
           <p>실패와 일부 완료는 펼쳐서 이유를 확인합니다.</p>
         </header>
+        <div class="run-tools">
+          <label><span class="sr-only">실행 상태</span><select id="run-state-filter"><option value="all">전체 상태</option><option value="warning">경고·일부 완료</option><option value="error">오류·실패</option><option value="succeeded">성공</option></select></label>
+          <label><span class="sr-only">실행 기록 검색</span><input id="run-query" type="search" placeholder="실행 ID·종류·원인 검색" autocomplete="off"></label>
+          <span id="run-filter-status" role="status"></span>
+        </div>
         <div id="runs-list" class="run-list" aria-live="polite"></div>
         <button id="runs-more" class="more-button" type="button" hidden>이전 실행 더 보기</button>
       </section>

@@ -168,6 +168,35 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
   expect(received[1].headers["idempotency-key"]).toMatch(/^cancel-[0-9a-f-]{36}$/);
 });
 
+test("filters only the bounded run history already loaded in the page", async ({ page }) => {
+  const base = { source: "systemd", started_at: now, finished_at: now, changed_posts: 0, failed_posts: 0, boards_ok: 46, boards_failed: 0 };
+  await useOperationsFixture(page, [], { runs: { items: [
+    { ...base, run_id: "scheduled-ok", kind: "scheduled", state: "succeeded" },
+    { ...base, run_id: "scheduled-partial", kind: "scheduled", state: "partial", safe_summary_code: "parse_drift" },
+    { ...base, run_id: "catalog-interrupted", kind: "full-catalog", source: "command", state: "failed", safe_summary_code: "runner_interrupted" },
+  ], next_cursor: "older-page" } });
+  await page.goto("/ops");
+  await expect(page.locator(".run-entry")).toHaveCount(3);
+  await expect(page.locator("#run-filter-status")).toHaveText("3/3개 표시 · 불러온 기록 기준");
+  await expect(page.locator("#runs-more")).toBeVisible();
+
+  await page.locator("#run-state-filter").selectOption("succeeded");
+  await expect(page.locator(".run-entry")).toHaveCount(1);
+  await expect(page.locator("#runs-list")).toContainText("scheduled-ok");
+  await page.locator("#run-state-filter").selectOption("warning");
+  await expect(page.locator(".run-entry")).toHaveCount(1);
+  await expect(page.locator("#runs-list")).toContainText("원본 구조 변경");
+  await page.locator("#run-state-filter").selectOption("error");
+  await expect(page.locator(".run-entry")).toHaveCount(1);
+  await page.locator("#run-query").fill("중단");
+  await expect(page.locator(".run-entry")).toHaveCount(1);
+  await expect(page.locator("#runs-list")).toContainText("수집기 프로세스 중단");
+  await page.locator("#run-query").fill("없는 실행");
+  await expect(page.locator("#runs-list")).toContainText("조건에 맞는 실행 기록이 없습니다");
+  await expect(page.locator("#run-filter-status")).toHaveText("0/3개 표시 · 불러온 기록 기준");
+  await expect(page.locator("#runs-more")).toBeVisible();
+});
+
 test("reuses command intent after response loss and reload", async ({ page }) => {
   const received = [];
   await useOperationsFixture(page, received, { commandFailures: 1 });

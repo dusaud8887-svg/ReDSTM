@@ -20,6 +20,10 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.deepEqual(index.boards, ["aa", "write"]);
   assert.deepEqual(searchPosts(index, { query: "fate 달빛" }).posts.map((post) => post.external_post_id), [3]);
   assert.deepEqual(searchPosts(index, { query: "작가", boardId: "aa" }).posts.map((post) => post.external_post_id), [2]);
+  assert.deepEqual(searchPosts(index, { query: "달빛 작가", match: "or" }).posts.map((post) => post.external_post_id), [3, 2, 1]);
+  assert.deepEqual(searchPosts(index, { query: "달빛 작가", target: "title", match: "or" }).posts.map((post) => post.external_post_id), [3, 2]);
+  assert.deepEqual(searchPosts(index, { query: "작가 나", target: "author" }).posts.map((post) => post.external_post_id), [2]);
+  assert.deepEqual(searchPosts(index, { query: "팬픽", target: "title" }).posts, []);
   assert.deepEqual(searchPosts(index, { limit: 2 }).posts.map((post) => post.external_post_id), [3, 2]);
   assert.deepEqual(searchPosts(index, { limit: 1, offset: 1 }).posts.map((post) => post.external_post_id), [2]);
   assert.deepEqual(searchPosts(index, { sort: "oldest" }).posts.map((post) => post.external_post_id), [1, 2, 3]);
@@ -34,6 +38,8 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.throws(() => searchPosts(index, { offset: -1 }), /offset/);
   assert.throws(() => searchPosts(index, { mode: "unknown" }), /mode/);
   assert.throws(() => searchPosts(index, { sort: "unknown" }), /sort/);
+  assert.throws(() => searchPosts(index, { target: "unknown" }), /target/);
+  assert.throws(() => searchPosts(index, { match: "unknown" }), /match/);
   assert.throws(() => prepareSearch({ ...payload, fields: [] }), /schema/);
 });
 

@@ -69,6 +69,10 @@ dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere
 .section-heading h2 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
 .section-heading p { margin: 0; color: var(--muted); font-size: 12px; }
 .run-list, .board-list { border-top: 1px solid var(--strong); }
+.run-tools { display: grid; grid-template-columns: 160px minmax(220px, 1fr) auto; align-items: center; gap: 8px; margin: -4px 0 14px; }
+.run-tools :is(select, input) { width: 100%; min-height: 42px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--ink); font: inherit; }
+.run-tools :is(select, input):focus { border-color: var(--accent); }
+.run-tools > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
 .run-entry { border-bottom: 1px solid var(--line); }
 .run-entry summary { list-style: none; cursor: pointer; }
 .run-entry summary::-webkit-details-marker { display: none; }
@@ -190,6 +194,8 @@ dialog p:not(.eyebrow) { margin: 0; color: var(--muted); line-height: 1.65; }
   .data-section, .release-section, .control-section { padding: 34px 0; }
   .section-heading { align-items: start; flex-direction: column; gap: 8px; }
   .section-heading p { line-height: 1.5; }
+  .run-tools { grid-template-columns: 1fr 1fr; }
+  .run-tools > span { grid-column: 1 / -1; text-align: left; }
   .run-row { min-height: 78px; grid-template-columns: 88px minmax(0, 1fr) 56px 18px; gap: 8px; }
   .run-row > :nth-child(n+4) { display: none; }
   .run-detail { padding: 0 0 14px; }
