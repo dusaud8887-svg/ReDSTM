@@ -21,6 +21,7 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.deepEqual(searchPosts(index, { query: "fate 달빛" }).posts.map((post) => post.external_post_id), [3]);
   assert.deepEqual(searchPosts(index, { query: "작가", boardId: "aa" }).posts.map((post) => post.external_post_id), [2]);
   assert.deepEqual(searchPosts(index, { limit: 2 }).posts.map((post) => post.external_post_id), [3, 2]);
+  assert.deepEqual(searchPosts(index, { limit: 1, offset: 1 }).posts.map((post) => post.external_post_id), [2]);
   assert.deepEqual(searchPosts(index, { sort: "oldest" }).posts.map((post) => post.external_post_id), [1, 2, 3]);
   assert.deepEqual(searchPosts(index, { category: "팬픽" }).posts.map((post) => post.external_post_id), [3]);
   assert.throws(() => searchPosts(index, { mode: "aa" }), /unavailable/);
@@ -30,6 +31,7 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.equal(findPost(index, "aa", 2)?.title, "달빛 아래");
   assert.equal(findPost(index, "aa", 99), null);
   assert.throws(() => searchPosts(index, { limit: 0 }), /between 1 and 200/);
+  assert.throws(() => searchPosts(index, { offset: -1 }), /offset/);
   assert.throws(() => searchPosts(index, { mode: "unknown" }), /mode/);
   assert.throws(() => searchPosts(index, { sort: "unknown" }), /sort/);
   assert.throws(() => prepareSearch({ ...payload, fields: [] }), /schema/);
@@ -186,9 +188,11 @@ test("worker exposes release metadata, exact totals, and stable identity resolut
   assert.equal(messages.at(-1).publishedAt, "2026-07-12T00:00:00.000Z");
   assert.equal(messages.at(-1).boardMetadata[1].name, "창작");
 
-  await onMessage({ data: { type: "search", id: 2, limit: 1 } });
+  await onMessage({ data: { type: "search", id: 2, limit: 1, offset: 1 } });
   assert.equal(messages.at(-1).posts.length, 1);
+  assert.equal(messages.at(-1).posts[0].external_post_id, 2);
   assert.equal(messages.at(-1).total, 7);
+  assert.equal(messages.at(-1).offset, 1);
 
   await onMessage({
     data: {

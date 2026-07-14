@@ -304,6 +304,10 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 
 ## 7. Collection·이전/다음·끝 화면
 
+- 탐색의 `글/작품` 범위에서 작품 제목·게시판·편수로 찾고 작품 상세 목차를 연다. 하단 navigation은
+  늘리지 않는다.
+- release collection v2는 compact summary index, 게시판별 membership, 64개 detail shard로
+  나눈다. Reader는 현재 게시판 membership과 해당 detail shard만 지연 로드한다.
 - header에 `현재 12 / 48`과 collection title을 표시한다.
 - 이전/다음 card에는 방향, 제목, unavailable 여부를 함께 쓴다.
 - collection이 아닌 글은 board 기준 이전/다음임을 label로 구분한다.

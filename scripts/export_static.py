@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from compression import zstd
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -46,6 +46,7 @@ _SEARCH_FIELDS = [
 _SEARCH_FIELDS_WITH_AA = [*_SEARCH_FIELDS, "is_aa"]
 _COMPRESSION_LEVEL = 15
 _AGGREGATE_COMPRESSION_LEVEL = 6
+_COLLECTION_DETAIL_SHARDS = 64
 _EXPORT_STATE_SCHEMA_VERSION = 1
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_PROJECTION_VERSION = "source-projection-v1"
@@ -676,6 +677,23 @@ def _verify_ref_object(root: Path, ref: object) -> None:
         raise ValueError(f"object hash mismatch: {key}")
 
 
+def _collection_nested_refs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if payload.get("schema_version") == 1 and isinstance(payload.get("collections"), list):
+        return []
+    details = payload.get("detail_shards")
+    memberships = payload.get("memberships")
+    if (
+        payload.get("schema_version") != 2
+        or payload.get("shard_count") != _COLLECTION_DETAIL_SHARDS
+        or not isinstance(payload.get("collections"), list)
+        or not isinstance(details, list)
+        or not isinstance(memberships, list)
+        or any(not isinstance(ref, dict) for ref in [*details, *memberships])
+    ):
+        raise ValueError("invalid collection index")
+    return cast(list[dict[str, Any]], [*details, *memberships])
+
+
 def _hash_query(digest: Any, connection: sqlite3.Connection, label: str, query: str) -> int:
     digest.update(label.encode())
     count = 0
@@ -895,6 +913,9 @@ def _load_base_release(root: Path, release_key: str) -> _BaseRelease:
     collection_ref = manifest.get("collections")
     _verify_ref_object(root, search_ref)
     _verify_ref_object(root, collection_ref)
+    collection_index, _ = _read_ref(root, collection_ref)
+    for nested_ref in _collection_nested_refs(collection_index):
+        _verify_ref_object(root, nested_ref)
     if not isinstance(search_ref, dict) or search_ref.get("post_count") != post_count:
         raise ValueError("base search count does not match boards")
     collection_count = manifest.get("collection_count")
@@ -997,21 +1018,117 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
     if len(search_posts) != len(search_rows) or search_posts != board_posts:
         raise ValueError("search index does not match board manifests")
 
-    collections, _ = _read_ref(root, manifest.get("collections"))
-    collection_rows = collections.get("collections")
+    collection_index, _ = _read_ref(root, manifest.get("collections"))
+    collection_rows = collection_index.get("collections")
     if not isinstance(collection_rows, list):
         raise ValueError("invalid collection index")
+    collection_summaries: dict[int, dict[str, Any]] | None = None
+    membership_rows: dict[tuple[str, int], tuple[int, int]] | None = None
+    if collection_index.get("schema_version") == 2:
+        collection_summaries = {}
+        for summary in collection_rows:
+            if (
+                not isinstance(summary, dict)
+                or type(summary.get("id")) is not int
+                or not isinstance(summary.get("board_id"), str)
+                or not isinstance(summary.get("kind"), str)
+                or not isinstance(summary.get("title"), str)
+                or type(summary.get("entry_count")) is not int
+                or summary["entry_count"] < 0
+                or summary["id"] in collection_summaries
+            ):
+                raise ValueError("invalid collection summary")
+            collection_summaries[summary["id"]] = summary
+        collection_rows = []
+        detail_shards = collection_index.get("detail_shards")
+        memberships = collection_index.get("memberships")
+        _collection_nested_refs(collection_index)
+        assert isinstance(detail_shards, list) and isinstance(memberships, list)
+        seen_shards: set[int] = set()
+        for detail_ref in detail_shards:
+            assert isinstance(detail_ref, dict)
+            detail, _ = _read_ref(root, detail_ref)
+            shard = detail_ref.get("shard")
+            rows = detail.get("collections")
+            if (
+                type(shard) is not int
+                or shard in seen_shards
+                or detail.get("schema_version") != 1
+                or detail.get("shard") != shard
+                or not isinstance(rows, list)
+            ):
+                raise ValueError("invalid collection detail shard")
+            seen_shards.add(shard)
+            collection_rows.extend(rows)
+        membership_rows = {}
+        seen_membership_boards: set[str] = set()
+        for membership_ref in memberships:
+            assert isinstance(membership_ref, dict)
+            membership, _ = _read_ref(root, membership_ref)
+            board_id = membership_ref.get("board_id")
+            members = membership.get("members")
+            if (
+                not isinstance(board_id, str)
+                or board_id in seen_membership_boards
+                or membership.get("schema_version") != 1
+                or membership.get("board_id") != board_id
+                or not isinstance(members, list)
+            ):
+                raise ValueError("invalid collection membership")
+            seen_membership_boards.add(board_id)
+            for member in members:
+                if (
+                    not isinstance(member, list)
+                    or len(member) != 3
+                    or any(type(value) is not int or value <= 0 for value in member)
+                    or (board_id, member[0]) in membership_rows
+                ):
+                    raise ValueError("invalid collection membership row")
+                membership_rows[(board_id, member[0])] = (member[1], member[2])
+    elif collection_index.get("schema_version") != 1:
+        raise ValueError("unsupported collection index")
     entry_count = 0
+    expected_memberships: dict[tuple[str, int], tuple[int, int]] = {}
     for collection in collection_rows:
-        if not isinstance(collection, dict) or not isinstance(collection.get("entries"), list):
+        if (
+            not isinstance(collection, dict)
+            or type(collection.get("id")) is not int
+            or not isinstance(collection.get("board_id"), str)
+            or not isinstance(collection.get("kind"), str)
+            or not isinstance(collection.get("title"), str)
+            or not isinstance(collection.get("entries"), list)
+        ):
             raise ValueError("invalid collection")
-        for entry in collection["entries"]:
-            if not isinstance(entry, dict):
+        summary = collection_summaries.get(collection["id"]) if collection_summaries else None
+        if summary is not None and (
+            summary["board_id"] != collection["board_id"]
+            or summary["kind"] != collection["kind"]
+            or summary["title"] != collection["title"]
+            or summary["entry_count"] != len(collection["entries"])
+        ):
+            raise ValueError("collection summary does not match detail")
+        for position, entry in enumerate(collection["entries"], 1):
+            if (
+                not isinstance(entry, dict)
+                or entry.get("position") != position
+                or not isinstance(entry.get("board_id"), str)
+                or type(entry.get("external_post_id")) is not int
+            ):
                 raise ValueError("invalid collection entry")
             object_key = entry.get("object_key")
             if object_key is not None and object_key not in post_keys:
                 raise ValueError(f"collection references unknown post object: {object_key}")
+            membership_identity = (entry["board_id"], entry["external_post_id"])
+            if membership_identity in expected_memberships:
+                raise ValueError("post belongs to multiple collections")
+            expected_memberships[membership_identity] = (collection["id"], position)
             entry_count += 1
+    if collection_summaries is not None and (
+        len(collection_rows) != len(collection_summaries)
+        or {row["id"] for row in collection_rows} != set(collection_summaries)
+        or membership_rows != expected_memberships
+    ):
+        raise ValueError("collection index does not match detail objects")
 
     expected = {
         "post_count": len(board_posts),
@@ -1235,75 +1352,232 @@ def _changed_tasks(
     return tasks
 
 
-def _stage_collections_object(
+def _collection_entry_rows(
+    connection: sqlite3.Connection, collection_id: int
+) -> Iterator[sqlite3.Row]:
+    return iter(
+        connection.execute(
+            """
+            SELECT ce.position, ce.post_id, ce.source_external_post_id,
+                   ce.title AS entry_title, c.board_id AS collection_board_id,
+                   p.board_id, p.external_post_id,
+                   p.title AS post_title, p.availability, p.latest_version_id
+            FROM collection_entries AS ce
+            JOIN collections AS c ON c.id = ce.collection_id
+            LEFT JOIN posts AS p ON p.id = ce.post_id
+            WHERE ce.collection_id = ?
+            ORDER BY ce.position
+            """,
+            (collection_id,),
+        )
+    )
+
+
+def _collection_entry(
+    row: sqlite3.Row, object_key_for_row: Callable[[sqlite3.Row], str | None]
+) -> dict[str, object | None]:
+    external_post_id = row["external_post_id"] or row["source_external_post_id"]
+    board_id = row["board_id"] or row["collection_board_id"]
+    if not isinstance(board_id, str) or type(external_post_id) is not int:
+        raise ValueError("collection entry has no post identity")
+    object_key = object_key_for_row(row)
+    if row["latest_version_id"] is not None and object_key is None:
+        raise ValueError(
+            f"collection entry is missing a post object: {board_id}/{external_post_id}"
+        )
+    return {
+        "position": int(row["position"]),
+        "board_id": board_id,
+        "external_post_id": external_post_id,
+        "title": row["entry_title"] or row["post_title"],
+        "availability": row["availability"] or "missing",
+        "object_key": object_key,
+    }
+
+
+def _stage_collection_objects(
     connection: sqlite3.Connection,
     writer: _ObjectWriter,
-    post_refs: dict[str, dict[int, _StoredPostRef]],
-) -> tuple[_StagedObject, int, int]:
-    collection_count = 0
-    entry_count = 0
+    object_key_for_row: Callable[[sqlite3.Row], str | None],
+) -> tuple[
+    list[tuple[int, _StagedObject]],
+    list[tuple[str, _StagedObject]],
+    list[dict[str, object]],
+    int,
+    int,
+]:
+    collection_count = int(connection.execute("SELECT COUNT(*) FROM collections").fetchone()[0])
+    entry_count = int(connection.execute("SELECT COUNT(*) FROM collection_entries").fetchone()[0])
+    summaries = [
+        {
+            "id": int(row["id"]),
+            "board_id": str(row["board_id"]),
+            "kind": str(row["kind"]),
+            "title": str(row["title"]),
+            "entry_count": int(row["entry_count"]),
+            "latest_created_at": row["latest_created_at"],
+        }
+        for row in connection.execute(
+            """
+            SELECT c.id, c.board_id, c.kind, c.title, COUNT(ce.position) AS entry_count,
+                   MAX(p.created_at_source) AS latest_created_at
+            FROM collections AS c
+            LEFT JOIN collection_entries AS ce ON ce.collection_id = c.id
+            LEFT JOIN posts AS p ON p.id = ce.post_id
+            GROUP BY c.id
+            ORDER BY c.id
+            """
+        )
+    ]
+    if len(summaries) != collection_count:
+        raise ValueError("collection count changed while staging release")
 
-    def chunks() -> Iterator[bytes]:
-        nonlocal collection_count, entry_count
-        yield b'{"collections":['
-        for collection in connection.execute(
-            "SELECT id, board_id, kind, title FROM collections ORDER BY id"
-        ):
-            if collection_count:
-                yield b","
-            yield b'{"board_id":' + _json_bytes(collection["board_id"])[:-1] + b',"entries":['
-            collection_entries = 0
-            for row in connection.execute(
+    details: list[tuple[int, _StagedObject]] = []
+    for shard in range(_COLLECTION_DETAIL_SHARDS):
+        shard_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM collections WHERE id % ? = ?",
+                (_COLLECTION_DETAIL_SHARDS, shard),
+            ).fetchone()[0]
+        )
+        if not shard_count:
+            continue
+
+        def detail_chunks(shard: int = shard) -> Iterator[bytes]:
+            written = 0
+            yield b'{"collections":['
+            for collection in connection.execute(
                 """
-                SELECT ce.position, ce.source_external_post_id,
-                       ce.title AS entry_title, p.board_id, p.external_post_id,
-                       p.title AS post_title, p.availability, p.latest_version_id
-                FROM collection_entries AS ce
-                LEFT JOIN posts AS p ON p.id = ce.post_id
-                WHERE ce.collection_id = ?
-                ORDER BY ce.position
+                SELECT id, board_id, kind, title
+                FROM collections WHERE id % ? = ? ORDER BY id
                 """,
-                (int(collection["id"]),),
+                (_COLLECTION_DETAIL_SHARDS, shard),
             ):
-                if collection_entries:
+                if written:
                     yield b","
-                stored = (
-                    _base_post_ref(
-                        post_refs,
-                        str(row["board_id"]),
-                        int(row["external_post_id"]),
-                    )
-                    if row["latest_version_id"] is not None
-                    else None
-                )
+                entries = [
+                    _collection_entry(row, object_key_for_row)
+                    for row in _collection_entry_rows(connection, int(collection["id"]))
+                ]
+                if any(entry["position"] != index for index, entry in enumerate(entries, 1)):
+                    raise ValueError("collection positions are not contiguous")
                 yield _json_bytes(
                     {
-                        "position": int(row["position"]),
-                        "board_id": row["board_id"],
-                        "external_post_id": row["external_post_id"]
-                        if row["external_post_id"] is not None
-                        else row["source_external_post_id"],
-                        "title": row["entry_title"] or row["post_title"],
-                        "availability": row["availability"],
-                        "object_key": stored.summary.object_key if stored is not None else None,
+                        "id": int(collection["id"]),
+                        "board_id": str(collection["board_id"]),
+                        "kind": str(collection["kind"]),
+                        "title": str(collection["title"]),
+                        "entries": entries,
                     }
                 )[:-1]
-                collection_entries += 1
-                entry_count += 1
-            yield (
-                b'],"id":'
-                + _json_bytes(int(collection["id"]))[:-1]
-                + b',"kind":'
-                + _json_bytes(str(collection["kind"]))[:-1]
-                + b',"title":'
-                + _json_bytes(str(collection["title"]))[:-1]
-                + b"}"
-            )
-            collection_count += 1
-        yield b'],"schema_version":1}\n'
+                written += 1
+            if written != shard_count:
+                raise ValueError("collection shard changed while staging release")
+            yield b'],"schema_version":1,"shard":' + str(shard).encode() + b"}\n"
 
-    staged = _stage_zstd_object(writer, "collections/all-v2", chunks())
-    return staged, collection_count, entry_count
+        details.append(
+            (
+                shard,
+                _stage_zstd_object(writer, f"collections/details-v2/{shard:02d}", detail_chunks()),
+            )
+        )
+
+    membership_count = 0
+    memberships: list[tuple[str, _StagedObject]] = []
+    board_ids = [
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT DISTINCT c.board_id
+            FROM collections AS c
+            JOIN collection_entries AS ce ON ce.collection_id = c.id
+            ORDER BY c.board_id
+            """
+        )
+    ]
+    for board_id in board_ids:
+
+        def membership_chunks(board_id: str = board_id) -> Iterator[bytes]:
+            nonlocal membership_count
+            written = 0
+            yield b'{"board_id":' + _json_bytes(board_id)[:-1] + b',"members":['
+            for row in connection.execute(
+                """
+                SELECT COALESCE(p.external_post_id, ce.source_external_post_id) AS external_post_id,
+                       c.id AS collection_id, ce.position
+                FROM collections AS c
+                JOIN collection_entries AS ce ON ce.collection_id = c.id
+                LEFT JOIN posts AS p ON p.id = ce.post_id
+                WHERE c.board_id = ?
+                ORDER BY COALESCE(p.external_post_id, ce.source_external_post_id), c.id, ce.position
+                """,
+                (board_id,),
+            ):
+                if written:
+                    yield b","
+                yield _json_bytes(
+                    [
+                        int(row["external_post_id"]),
+                        int(row["collection_id"]),
+                        int(row["position"]),
+                    ]
+                )[:-1]
+                written += 1
+                membership_count += 1
+            yield b'],"schema_version":1}\n'
+
+        memberships.append(
+            (
+                board_id,
+                _stage_zstd_object(
+                    writer, f"collections/membership-v2/{board_id}", membership_chunks()
+                ),
+            )
+        )
+    if membership_count != entry_count:
+        raise ValueError("collection membership count does not match entries")
+    return details, memberships, summaries, collection_count, entry_count
+
+
+def _write_collection_objects(
+    writer: _ObjectWriter,
+    details: list[tuple[int, _StagedObject]],
+    memberships: list[tuple[str, _StagedObject]],
+    summaries: list[dict[str, object]],
+    collection_count: int,
+    entry_count: int,
+) -> dict[str, object]:
+    staged = [item for _key, item in [*details, *memberships]]
+    try:
+        detail_refs = [
+            {"shard": shard, **_write_staged_zstd_object(writer, item)} for shard, item in details
+        ]
+        membership_refs = [
+            {"board_id": board_id, **_write_staged_zstd_object(writer, item)}
+            for board_id, item in memberships
+        ]
+        index = _json_bytes(
+            {
+                "schema_version": 2,
+                "shard_count": _COLLECTION_DETAIL_SHARDS,
+                "collections": summaries,
+                "detail_shards": detail_refs,
+                "memberships": membership_refs,
+            }
+        )
+        return {
+            **_write_zstd_object(
+                writer,
+                "collections/index-v2",
+                index,
+                level=_AGGREGATE_COMPRESSION_LEVEL,
+            ),
+            "collection_count": collection_count,
+            "entry_count": entry_count,
+        }
+    finally:
+        for item in staged:
+            item.path.unlink(missing_ok=True)
 
 
 def _write_projection_release(
@@ -1363,9 +1637,24 @@ def _write_projection_release(
         post_count += board_post_count
 
     staged_search, search_post_count = _stage_search_object(connection, writer, post_refs)
-    staged_collections, collection_count, collection_entry_count = _stage_collections_object(
-        connection, writer, post_refs
-    )
+
+    def collection_object_key(row: sqlite3.Row) -> str | None:
+        if row["latest_version_id"] is None:
+            return None
+        stored = _base_post_ref(
+            post_refs,
+            str(row["board_id"]),
+            int(row["external_post_id"]),
+        )
+        return stored.summary.object_key if stored is not None else None
+
+    (
+        staged_collection_details,
+        staged_collection_memberships,
+        collection_summaries,
+        collection_count,
+        collection_entry_count,
+    ) = _stage_collection_objects(connection, writer, collection_object_key)
 
     counts = {
         "post_count": post_count,
@@ -1397,7 +1686,8 @@ def _write_projection_release(
     staged_objects = [
         *(staged for _board, _post_count, staged in staged_boards),
         staged_search,
-        staged_collections,
+        *(staged for _shard, staged in staged_collection_details),
+        *(staged for _board_id, staged in staged_collection_memberships),
     ]
     post_refs.clear()
     gc.collect()
@@ -1417,11 +1707,14 @@ def _write_projection_release(
             **_write_staged_zstd_object(writer, staged_search),
             "post_count": search_post_count,
         }
-        collection_ref = {
-            **_write_staged_zstd_object(writer, staged_collections),
-            "collection_count": collection_count,
-            "entry_count": collection_entry_count,
-        }
+        collection_ref = _write_collection_objects(
+            writer,
+            staged_collection_details,
+            staged_collection_memberships,
+            collection_summaries,
+            collection_count,
+            collection_entry_count,
+        )
     finally:
         for staged in staged_objects:
             staged.path.unlink(missing_ok=True)
@@ -1657,62 +1950,26 @@ def _full_export_static(
             "post_count": len(ordered_search),
         }
 
-        collections: list[dict[str, object]] = []
-        collection_by_id: dict[int, dict[str, object]] = {}
-        for row in connection.execute(
-            "SELECT id, board_id, kind, title FROM collections ORDER BY id"
-        ):
-            collection: dict[str, object] = {
-                "id": int(row["id"]),
-                "board_id": row["board_id"],
-                "kind": str(row["kind"]),
-                "title": str(row["title"]),
-                "entries": [],
-            }
-            collections.append(collection)
-            collection_by_id[int(row["id"])] = collection
-        collection_entry_count = 0
-        for row in connection.execute(
-            """
-            SELECT ce.collection_id, ce.position, ce.post_id, ce.source_external_post_id,
-                   ce.title AS entry_title, p.board_id, p.external_post_id,
-                   p.title AS post_title, p.availability
-            FROM collection_entries AS ce
-            LEFT JOIN posts AS p ON p.id = ce.post_id
-            ORDER BY ce.collection_id, ce.position
-            """
-        ):
-            post_id = int(row["post_id"]) if row["post_id"] is not None else None
-            entries = cast(
-                list[dict[str, object]],
-                collection_by_id[int(row["collection_id"])]["entries"],
-            )
-            entries.append(
-                {
-                    "position": int(row["position"]),
-                    "board_id": row["board_id"],
-                    "external_post_id": row["external_post_id"]
-                    if row["external_post_id"] is not None
-                    else row["source_external_post_id"],
-                    "title": row["entry_title"] or row["post_title"],
-                    "availability": row["availability"],
-                    "object_key": (
-                        object_key_by_post_id.get(post_id) if post_id is not None else None
-                    ),
-                }
-            )
-            collection_entry_count += 1
-        collection_payload = _json_bytes({"schema_version": 1, "collections": collections})
-        collection_ref = {
-            **_write_zstd_object(
-                writer,
-                "collections/all-v2",
-                collection_payload,
-                level=_AGGREGATE_COMPRESSION_LEVEL,
-            ),
-            "collection_count": len(collections),
-            "entry_count": collection_entry_count,
-        }
+        def collection_object_key(row: sqlite3.Row) -> str | None:
+            if row["latest_version_id"] is None or row["post_id"] is None:
+                return None
+            return object_key_by_post_id.get(int(row["post_id"]))
+
+        (
+            staged_collection_details,
+            staged_collection_memberships,
+            collection_summaries,
+            collection_count,
+            collection_entry_count,
+        ) = _stage_collection_objects(connection, writer, collection_object_key)
+        collection_ref = _write_collection_objects(
+            writer,
+            staged_collection_details,
+            staged_collection_memberships,
+            collection_summaries,
+            collection_count,
+            collection_entry_count,
+        )
         fingerprint = _snapshot_fingerprint(connection)
 
     post_count = len(search_rows)
@@ -1726,7 +1983,7 @@ def _full_export_static(
             "unavailable_post_count": unavailable_post_count,
             "unavailable_comment_count": unavailable_comment_count,
             "board_count": len(board_refs),
-            "collection_count": len(collections),
+            "collection_count": collection_count,
             "collection_entry_count": collection_entry_count,
             "boards": board_refs,
             "search": search_ref,

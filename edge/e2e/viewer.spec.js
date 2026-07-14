@@ -8,6 +8,9 @@ const standaloneHash = "3".repeat(64);
 const firstKey = `posts/board_a/1-${firstHash}.json.zst`;
 const secondKey = `posts/board_a/2-${secondHash}.json.zst`;
 const standaloneKey = `posts/board_a/3-${standaloneHash}.json.zst`;
+const collectionIndexKey = `collections/index-v2-${"4".repeat(64)}.json.zst`;
+const collectionDetailKey = `collections/details-v2/01-${"5".repeat(64)}.json.zst`;
+const collectionMembershipKey = `collections/membership-v2/board_a-${"6".repeat(64)}.json.zst`;
 const aaKey = process.env.REDSTM_AA_KEY || firstKey;
 const proseKey = process.env.REDSTM_PROSE_KEY || secondKey;
 
@@ -50,14 +53,22 @@ function aaPostPayload(id, title) {
   return payload;
 }
 
-async function useCollectionFixture(page, { largeStandalone = false, legacyIndex = false, releaseGate } = {}) {
+async function useCollectionFixture(page, { collectionV2 = false, largeStandalone = false, legacyIndex = false, paginated = false, releaseGate } = {}) {
   const standalone = postPayload(3, "비소속");
   if (largeStandalone) standalone.transfer_padding = "x".repeat(1_100_000);
+  const collection = {
+    id: 1, board_id: "board_a", kind: "series", title: "테스트 연작",
+    entries: [
+      { position: 1, board_id: "board_a", external_post_id: 1, title: "첫째", object_key: firstKey },
+      { position: 2, board_id: "board_a", external_post_id: 99, title: "보존 불가", object_key: null },
+      { position: 3, board_id: "board_a", external_post_id: 2, title: "둘째", object_key: secondKey },
+    ],
+  };
   const payloads = new Map([
     ["release.json", {
       schema_version: 1,
       search: { object_key: "search/e2e.json.zst" },
-      collections: { object_key: "collections/e2e.json.zst" },
+      collections: { object_key: collectionIndexKey },
     }],
     ["search/e2e.json.zst", {
       schema_version: 1,
@@ -66,30 +77,42 @@ async function useCollectionFixture(page, { largeStandalone = false, legacyIndex
         ["board_a", 3, "비소속", "작성자", null, "2026-07-11", standaloneHash, false],
         ["board_a", 2, "둘째", "작성자", null, "2026-07-11", secondHash, false],
         ["board_a", 1, "첫째", "작성자", null, "2026-07-11", firstHash, true],
+        ...(paginated ? Array.from({ length: 100 }, (_, index) => {
+          const id = index + 4;
+          return ["board_a", id, `과거 ${id}`, "작성자", null, "2026-07-10", id.toString(16).padStart(64, "0"), false];
+        }) : []),
       ].map((row) => legacyIndex ? row.slice(0, -1) : row),
     }],
-    ["collections/e2e.json.zst", {
-      schema_version: 1,
-      collections: [{
-        id: 1, board_id: "board_a", kind: "series", title: "테스트 연작",
-        entries: [
-          { position: 1, board_id: "board_a", external_post_id: 1, object_key: firstKey },
-          { position: 2, board_id: "board_a", external_post_id: 99, object_key: null },
-          { position: 3, board_id: "board_a", external_post_id: 2, object_key: secondKey },
-        ],
-      }],
-    }],
+    [collectionIndexKey, collectionV2 ? {
+      schema_version: 2,
+      shard_count: 64,
+      collections: [{ id: 1, board_id: "board_a", kind: "series", title: "테스트 연작", entry_count: 3 }],
+      detail_shards: [{ shard: 1, object_key: collectionDetailKey }],
+      memberships: [{ board_id: "board_a", object_key: collectionMembershipKey }],
+    } : { schema_version: 1, collections: [collection] }],
+    ...(collectionV2 ? [
+      [collectionDetailKey, { schema_version: 1, shard: 1, collections: [collection] }],
+      [collectionMembershipKey, { schema_version: 1, board_id: "board_a", members: [[1, 1, 1], [2, 1, 3], [99, 1, 2]] }],
+    ] : []),
     [firstKey, aaPostPayload(1, "첫째")],
     [secondKey, postPayload(2, "둘째")],
     [standaloneKey, standalone],
   ]);
+  if (paginated) {
+    const id = 103;
+    const hash = id.toString(16).padStart(64, "0");
+    payloads.set(`posts/board_a/${id}-${hash}.json.zst`, postPayload(id, `과거 ${id}`));
+  }
+  const requested = new Set();
   await page.route("**/archive/**", async (route) => {
     const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    requested.add(key);
     const payload = payloads.get(key);
     if (!payload) return route.fulfill({ status: 404, body: "not found" });
     if (key === "release.json" && releaseGate) await releaseGate();
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
+  return requested;
 }
 
 async function usePaginationFixture(page, count) {
@@ -103,14 +126,14 @@ async function usePaginationFixture(page, count) {
     ["release.json", {
       schema_version: 1,
       search: { object_key: "search/e2e.json.zst" },
-      collections: { object_key: "collections/e2e.json.zst" },
+      collections: { object_key: collectionIndexKey },
     }],
     ["search/e2e.json.zst", {
       schema_version: 1,
       fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
       posts,
     }],
-    ["collections/e2e.json.zst", { schema_version: 1, collections: [] }],
+    [collectionIndexKey, { schema_version: 1, collections: [] }],
   ]);
   await page.route("**/archive/**", (route) => {
     const key = new URL(route.request().url()).pathname.slice("/archive/".length);
@@ -266,6 +289,26 @@ test("restores catalog scroll and focused row after Reader Back", async ({ page 
   await expect(page).toHaveURL(/\/search$/);
   await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBe(expectedScroll);
   await expect(page.locator(".result-item:focus .result-title")).toHaveText(title);
+});
+
+test("loads more board posts from the local search index", async ({ page }) => {
+  await useCollectionFixture(page, { paginated: true });
+  await page.goto("/search?board=board_a");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator(".result-item")).toHaveCount(100);
+  await expect(page.locator("#result-status")).toContainText("103건 중 100건");
+  await expect(page.locator("#result-more")).toContainText("3건");
+
+  await page.locator("#result-more").click();
+  await expect(page.locator(".result-item")).toHaveCount(103);
+  await expect(page.locator(".result-item").last()).toContainText("과거 103");
+  await expect(page.locator("#result-more")).toBeHidden();
+
+  await page.locator(".result-item").last().click();
+  await expect(page.locator("#reader-title")).toHaveText("과거 103");
+  await page.goBack();
+  await expect(page.locator(".result-item")).toHaveCount(103);
+  await expect(page.locator(".result-item").last()).toBeFocused();
 });
 
 test("normalizes AA mode on a legacy search index", async ({ page }) => {
@@ -699,6 +742,8 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
   await expect(page.locator(previous)).toBeEnabled();
   await expect(page.locator(next)).toBeDisabled();
+  await expect(page.locator("#end-next")).toBeEnabled();
+  await expect(page.locator("#end-next-title")).toHaveText("작품 목차로 돌아가기");
 
   await page.locator(previous).click();
   await expect(page.locator("#reader-title")).toHaveText("첫째");
@@ -719,6 +764,32 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   await page.locator(next).click();
   await expect(page.locator("#reader-title")).toHaveText("둘째");
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
+});
+
+test("browses the v2 collection catalog and loads only the selected detail shard", async ({ page }) => {
+  const requested = await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/collections");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator('[data-scope="collections"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toBeVisible();
+  expect(requested.has(collectionIndexKey)).toBe(true);
+  expect(requested.has(collectionDetailKey)).toBe(false);
+  expect(requested.has(collectionMembershipKey)).toBe(false);
+
+  await page.locator(".result-item", { hasText: "테스트 연작" }).click();
+  await expect(page).toHaveURL(/\/collections\/1$/);
+  await expect(page.locator("#collection-title")).toHaveText("테스트 연작");
+  await expect(page.locator(".collection-entry")).toHaveCount(3);
+  await expect(page.locator('.collection-entry[data-position="2"]')).toBeDisabled();
+  expect(requested.has(collectionDetailKey)).toBe(true);
+  expect(requested.has(collectionMembershipKey)).toBe(false);
+
+  await page.locator('.collection-entry[data-position="1"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("첫째");
+  await expect(page.locator("#collection-context")).toContainText("테스트 연작 · 1/3");
+  expect(requested.has(collectionMembershipKey)).toBe(true);
+  await page.locator("#collection-context").click();
+  await expect(page.locator("#collection-title")).toHaveText("테스트 연작");
 });
 
 test("distinguishes a missing preserved object", async ({ page }) => {

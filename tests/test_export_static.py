@@ -164,6 +164,16 @@ def _json_zstd(path: Path) -> Any:
     return json.loads(zstd.decompress(path.read_bytes()))
 
 
+def _collection_rows(output: Path, release: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
+    index = _json_zstd(output / release["collections"]["object_key"])
+    if index["schema_version"] == 1:
+        return index, index["collections"]
+    rows: list[Any] = []
+    for ref in index["detail_shards"]:
+        rows.extend(_json_zstd(output / ref["object_key"])["collections"])
+    return index, sorted(rows, key=lambda row: row["id"])
+
+
 def _tree(path: Path) -> dict[str, bytes]:
     return {
         item.relative_to(path).as_posix(): item.read_bytes()
@@ -225,14 +235,24 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     assert release["canonical_schema_version"] == 4
     assert export_static_module._AGGREGATE_COMPRESSION_LEVEL == 6
     assert release["search"]["object_key"].startswith("search/title-author-v2-")
-    assert release["collections"]["object_key"].startswith("collections/all-v2-")
+    assert release["collections"]["object_key"].startswith("collections/index-v2-")
     assert all("/manifest-v2-" in board["object_key"] for board in release["boards"])
     assert [board["board_id"] for board in release["boards"]] == [
         "aa_a01",
         "ss_temp01",
         "write_free21",
     ]
-    for ref in [*release["boards"], release["search"], release["collections"]]:
+    collection_payload, collection_rows = _collection_rows(output, release)
+    nested_collection_refs = [
+        *collection_payload["detail_shards"],
+        *collection_payload["memberships"],
+    ]
+    for ref in [
+        *release["boards"],
+        release["search"],
+        release["collections"],
+        *nested_collection_refs,
+    ]:
         target = output / ref["object_key"]
         assert ref["object_bytes"] == target.stat().st_size
         assert len(ref["object_sha256"]) == 64
@@ -246,8 +266,9 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     assert prose_summary["object_bytes"] == (output / prose_summary["object_key"]).stat().st_size
     assert len(prose_summary["object_sha256"]) == 64
 
-    collection_payload = _json_zstd(output / release["collections"]["object_key"])
-    entries = collection_payload["collections"][0]["entries"]
+    assert collection_payload["schema_version"] == 2
+    assert collection_payload["shard_count"] == 64
+    entries = collection_rows[0]["entries"]
     assert entries[0]["object_key"].startswith("posts/ss_temp01/1-")
     assert entries[1] == {
         "availability": "missing",
@@ -260,7 +281,7 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     assert not list(output.glob("posts/ss_temp01/99-*.json.zst"))
     assert release["unavailable_post_count"] == 1
     assert release["unavailable_comment_count"] == 1
-    assert collection_payload["collections"][1]["entries"] == []
+    assert collection_rows[1]["entries"] == []
 
 
 def test_corrupt_object_rejects_activation_without_changing_pointer(tmp_path: Path) -> None:
@@ -279,6 +300,22 @@ def test_corrupt_object_rejects_activation_without_changing_pointer(tmp_path: Pa
         activate_release(output, str(report["release_key"]))
 
     assert (output / "release.json").read_bytes() == pointer_before
+
+
+def test_corrupt_collection_shard_rejects_activation(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    report = export_static(source, output)
+    release = json.loads((output / "release.json").read_bytes())
+    index, _ = _collection_rows(output, release)
+    detail_path = output / index["detail_shards"][0]["object_key"]
+    corrupted = bytearray(detail_path.read_bytes())
+    corrupted[len(corrupted) // 2] ^= 1
+    detail_path.write_bytes(corrupted)
+
+    with pytest.raises(ValueError, match="object hash mismatch"):
+        activate_release(output, str(report["release_key"]))
 
 
 def test_previous_versioned_release_can_be_activated_for_rollback(tmp_path: Path) -> None:
@@ -557,7 +594,7 @@ def test_projection_releases_base_refs_before_compression(
             fingerprint,
         )
 
-    assert compression_calls == 5
+    assert compression_calls == 7
 
 
 def test_incremental_export_tracks_metadata_prior_versions_and_topology(tmp_path: Path) -> None:
@@ -595,10 +632,9 @@ def test_incremental_export_tracks_metadata_prior_versions_and_topology(tmp_path
     )
     store.finish_run(run_id, status="succeeded", now=_NOW + timedelta(hours=3))
     unavailable = export_static(source, output, incremental_only=True)
-    collection = _json_zstd(
-        output / json.loads((output / "release.json").read_bytes())["collections"]["object_key"]
-    )
-    assert collection["collections"][0]["entries"][0]["availability"] == "missing"
+    release = json.loads((output / "release.json").read_bytes())
+    _, collections = _collection_rows(output, release)
+    assert collections[0]["entries"][0]["availability"] == "missing"
     assert unavailable["changed_posts"] == 0
 
     with connect_archive(source) as connection:

@@ -95,6 +95,7 @@ async function handleMessage({ data }) {
         id,
         posts,
         total,
+        offset: data.offset ?? 0,
         elapsedMs: performance.now() - started,
       });
       return;

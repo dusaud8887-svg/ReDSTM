@@ -148,6 +148,34 @@ def _release_objects(
             if verify_missing_from is not None and post_key not in verify_missing_from:
                 _verify_object_ref(root, post)
             keys.add(post_key)
+    collection_ref = manifest.get("collections")
+    if isinstance(collection_ref, dict):
+        _verify_object_ref(root, collection_ref)
+        compressed = (root / _object_key(collection_ref)).read_bytes()
+        try:
+            payload = zstd.decompress(compressed)
+            collection_index = json.loads(payload)
+        except (zstd.ZstdError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("invalid collection index") from error
+        if collection_ref.get("payload_sha256") != hashlib.sha256(
+            payload
+        ).hexdigest() or not isinstance(collection_index, dict):
+            raise ValueError("invalid collection index")
+        if collection_index.get("schema_version") == 2:
+            details = collection_index.get("detail_shards")
+            memberships = collection_index.get("memberships")
+            if not isinstance(details, list) or not isinstance(memberships, list):
+                raise ValueError("invalid collection index")
+            for nested_ref in [*details, *memberships]:
+                if not isinstance(nested_ref, dict):
+                    raise ValueError("invalid collection object reference")
+                nested_key = _object_key(nested_ref)
+                if nested_key in keys:
+                    raise ValueError("duplicate collection object reference")
+                _verify_object_ref(root, nested_ref)
+                keys.add(nested_key)
+        elif collection_index.get("schema_version") != 1:
+            raise ValueError("unsupported collection index")
     return keys
 
 

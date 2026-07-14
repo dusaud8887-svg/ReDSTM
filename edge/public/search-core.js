@@ -81,8 +81,8 @@ export function searchPosts(
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     throw new Error("Search result limit must be between 1 and 200");
   }
-  if (!Number.isInteger(offset) || offset < 0) {
-    throw new Error("Search result offset must be a non-negative integer");
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error("Search result offset must be a non-negative safe integer");
   }
   if (!new Set(["all", "aa", "prose"]).has(mode)) {
     throw new Error("Unsupported search mode");

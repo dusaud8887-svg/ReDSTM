@@ -68,6 +68,10 @@
           <div><strong id="catalog-title">글 탐색</strong><span id="catalog-subtitle">전체 보존본</span></div>
           <span class="catalog-count" aria-hidden="true">ReDSTM</span>
         </header>
+        <nav class="view-tabs scope-tabs" id="scope-tabs" aria-label="탐색 범위" hidden>
+          <button type="button" class="active" data-scope="posts" aria-pressed="true">글</button>
+          <button type="button" data-scope="collections" aria-pressed="false">작품</button>
+        </nav>
         <div class="catalog-controls">
           <label class="search-field">
             <span class="sr-only">검색</span>
@@ -119,6 +123,18 @@
           </div>
         </section>
 
+        <section class="collection-view" id="collection-view" aria-labelledby="collection-title" hidden>
+          <header class="collection-view-header">
+            <button class="catalog-back" id="collection-back" type="button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg><span>작품 목록</span>
+            </button>
+            <p>작품 모음</p>
+            <h1 id="collection-title" tabindex="-1"></h1>
+            <p id="collection-meta"></p>
+          </header>
+          <ol class="collection-entry-list" id="collection-entry-list"></ol>
+        </section>
+
         <article class="reader" id="reader" hidden>
           <div class="reading-progress" id="reading-progress" role="progressbar" aria-label="읽기 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
           <header class="reader-header">
@@ -128,7 +144,7 @@
             <div class="reader-kicker" id="reader-kicker"></div>
             <h1 id="reader-title" tabindex="-1"></h1>
             <p class="reader-meta" id="reader-meta"></p>
-            <p class="collection-context" id="collection-context" aria-live="polite" hidden></p>
+            <button class="collection-context" id="collection-context" type="button" aria-live="polite" hidden></button>
           </header>
 
           <div class="reader-toolbar" aria-label="읽기 도구">
