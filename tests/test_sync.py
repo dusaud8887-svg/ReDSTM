@@ -899,6 +899,37 @@ def test_failed_detail_records_retry_without_error_text(tmp_path: Path) -> None:
     assert _capture_failure_codes(path, run_id) == ["network_error"]
 
 
+def test_capture_failure_codes_ignores_a_listing_error_resolved_by_retry(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync")
+    url = "https://www.typemoon.net/write_free21?page=2"
+    captured_at = datetime(2026, 7, 11, tzinfo=UTC)
+
+    store.record_listing(
+        run_id,
+        url=url,
+        fetched_at=captured_at,
+        http_status=200,
+        raw_sha256="a" * 64,
+        warc_file="retry.warc.gz",
+        warc_record_id="<urn:uuid:retry>",
+        error_code="network_error",
+    )
+    store.record_listing(
+        run_id,
+        url=url,
+        fetched_at=captured_at,
+        http_status=200,
+        raw_sha256="b" * 64,
+        warc_file="recovered.warc.gz",
+        warc_record_id="<urn:uuid:recovered>",
+    )
+
+    assert _capture_failure_codes(path, run_id) == []
+
+
 def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)

@@ -44,8 +44,11 @@ def _capture_failure_codes(archive: Path, run_id: str) -> list[str]:
         return [
             str(row[0])
             for row in connection.execute(
-                "SELECT DISTINCT error_code FROM captures "
-                "WHERE run_id = ? AND error_code IS NOT NULL ORDER BY error_code",
+                "SELECT DISTINCT capture.error_code FROM captures AS capture "
+                "WHERE capture.run_id = ? AND capture.error_code IS NOT NULL "
+                "AND capture.id = (SELECT MAX(newer.id) FROM captures AS newer "
+                "WHERE newer.run_id = capture.run_id AND newer.url = capture.url) "
+                "ORDER BY capture.error_code",
                 (run_id,),
             )
         ]
