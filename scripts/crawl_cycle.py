@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -229,6 +230,11 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 status = "partial"
                 stop_reason = "schedule_paused"
                 break
+            disk_stop_bytes = int(getattr(args, "disk_stop_bytes", 0))
+            if disk_stop_bytes and shutil.disk_usage(args.archive).free < disk_stop_bytes:
+                status = "partial"
+                stop_reason = "disk_low"
+                break
             now = time.monotonic()
             remaining_seconds = (
                 args.max_seconds - (now - started_at) if args.max_seconds > 0 else None
@@ -337,7 +343,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         boards_ok = sum(item["status"] == "succeeded" for item in results)
         if stop_reason != "schedule_paused":
             notify_dead_man(ok, os.environ.get("REDSTM_CYCLE_HEALTHCHECK_URL", ""))
-        return {
+        report = {
             "ok": ok,
             "cycle_id": cycle_id,
             "status": status,
@@ -351,6 +357,9 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "stop_reason": stop_reason,
             "boards": results,
         }
+        if stop_reason == "disk_low":
+            report["safe_code"] = "disk_low"
+        return report
     finally:
         locks.close()
 
@@ -370,12 +379,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--listing-only", action="store_true")
     parser.add_argument("--inventory-since", help=argparse.SUPPRESS)
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--disk-stop-bytes", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.max_pages is None:
         args.max_pages = REDSTM_INVENTORY_MAX_PAGES if args.inventory else REDSTM_CYCLE_MAX_PAGES
     if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:
         parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
+    if args.disk_stop_bytes < 0:
+        parser.error("disk-stop-bytes must not be negative")
     if args.listing_only and not args.inventory:
         parser.error("listing-only requires inventory mode")
     if args.inventory_since is not None:

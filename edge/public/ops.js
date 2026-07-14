@@ -28,6 +28,7 @@ export const safeCodeLabels = {
   run_failed: "실행 실패", run_stale: "실행 종료 신호 누락", runner_failed: "수집기 내부 실패",
   runner_interrupted: "수집기 프로세스 중단 · 진행분은 보존됨",
   full_catalog_no_progress: "전체 목차 진행 없음 · 원본 응답 확인 필요",
+  disk_low: "저장 공간 안전 하한 도달 · 진행분 보존 후 수집 중단",
   auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",
   site_unreachable: "원본 연결 실패", rate_limited: "원본 속도 제한",
   export_failed: "Reader 내보내기 실패", publish_failed: "Reader 반영 실패",
@@ -520,12 +521,12 @@ function boardRow(board) {
   const collectionState = board.collection_enabled ? "자동 수집 대상" : "수집 안 함";
   const inventoryDone = inventoryComplete(board);
   const inventory = !board.inventory_pass_started_at
-    ? "최초 전체수집 대기"
+    ? "전체 목차 확인 대기"
     : inventoryDone
-    ? `최초 전체수집 완료 · ${time(board.last_inventory_at)}`
+    ? `전체 목차 확인 완료 · ${time(board.last_inventory_at)}`
     : board.inventory_next_page > 1
-    ? `최초 전체수집 중 · ${number(board.inventory_next_page - 1)}쪽까지 확인`
-    : "최초 전체수집 대기";
+    ? `전체 목차 수집 중 · ${number(board.inventory_next_page - 1)}쪽까지 확인 · 중단 시 다음 쪽부터 재개`
+    : "이번 전체 목차 수집 대기";
   identity.append(
     node("strong", "", boardLabel),
     node("small", "", identityLine),

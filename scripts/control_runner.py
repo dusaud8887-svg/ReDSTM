@@ -77,6 +77,7 @@ _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SNAPSHOT_TIME_BUDGET_SECONDS = 30
 _LIVE_SNAPSHOT_INTERVAL_SECONDS = 5 * 60
 _DEFAULT_DISK_LOW_BYTES = 40 * 1024**3
+_DEFAULT_DISK_STOP_BYTES = 20 * 1024**3
 _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS = _DAILY_INTERVAL_SECONDS
 _DEFAULT_TOKEN_EXPIRING_SECONDS = _DAILY_INTERVAL_SECONDS
 _DEFAULT_PUBLISH_STALE_SECONDS = _DAILY_INTERVAL_SECONDS
@@ -219,6 +220,7 @@ class RunnerProfile:
     runner_id: str
     runner_version: str
     disk_low_bytes: int = _DEFAULT_DISK_LOW_BYTES
+    disk_stop_bytes: int = _DEFAULT_DISK_STOP_BYTES
     control_rejection_warning_seconds: int = _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS
     token_expires_at: datetime | None = None
     token_expiring_seconds: int = _DEFAULT_TOKEN_EXPIRING_SECONDS
@@ -230,6 +232,7 @@ class ControlRunner:
         if (
             min(
                 profile.disk_low_bytes,
+                profile.disk_stop_bytes,
                 profile.control_rejection_warning_seconds,
                 profile.token_expiring_seconds,
                 profile.publish_stale_seconds,
@@ -237,6 +240,12 @@ class ControlRunner:
             < 0
         ):
             raise ValueError("warning thresholds cannot be negative")
+        if (
+            profile.disk_low_bytes
+            and profile.disk_stop_bytes
+            and profile.disk_stop_bytes >= profile.disk_low_bytes
+        ):
+            raise ValueError("disk stop threshold must be lower than the warning threshold")
         if profile.token_expires_at is not None and profile.token_expires_at.utcoffset() is None:
             raise ValueError("token expiry must include a timezone")
         self.profile = profile
@@ -252,6 +261,12 @@ class ControlRunner:
             and isinstance(live_inventory.get("run_id"), str)
             and isinstance(live_inventory.get("board_id"), str)
             else None
+        )
+
+    def _disk_stop_reached(self) -> bool:
+        return bool(
+            self.profile.disk_stop_bytes
+            and shutil.disk_usage(self.profile.state_dir).free < self.profile.disk_stop_bytes
         )
 
     def run_once(self) -> dict[str, Any]:
@@ -652,6 +667,14 @@ class ControlRunner:
         reconcile_attempt: int = 0,
         pending_recovery_checked: bool = False,
     ) -> dict[str, Any]:
+        crawl_actions = {"sync-now", "full-catalog", "full-content", "retry-batch"}
+        if action in crawl_actions and self._disk_stop_reached():
+            return {
+                "ok": False,
+                "status": "failed",
+                "safe_code": "disk_low",
+                "stop_reason": "disk_low",
+            }
         command_reports = self.profile.report_dir / "commands"
         command_reports.mkdir(parents=True, exist_ok=True)
         report_path = command_reports / f"{report_id}.json"
@@ -677,7 +700,14 @@ class ControlRunner:
             pause_file = self.profile.state_dir / (
                 "schedule.paused" if command_id is None else _CURRENT_RUN_PAUSED
             )
-            command.extend(("--pause-file", str(pause_file)))
+            command.extend(
+                (
+                    "--pause-file",
+                    str(pause_file),
+                    "--disk-stop-bytes",
+                    str(self.profile.disk_stop_bytes),
+                )
+            )
             if board_id:
                 command.extend(("--board", board_id))
             if action == "full-catalog":
@@ -694,6 +724,16 @@ class ControlRunner:
             previous_signature: tuple[int, int] | None = None
             crawl_step = "full-catalog" if action == "full-catalog" else "crawling"
             while True:
+                if reports and self._disk_stop_reached():
+                    combined = self._combined_collection_report(reports)
+                    combined.update(
+                        ok=False,
+                        status="partial",
+                        safe_code="disk_low",
+                        stop_reason="disk_low",
+                        inventory_pass_complete=False,
+                    )
+                    return combined
                 report = self._execute_report(
                     command, report_path, run_id, crawl_step, command_id=command_id
                 )
@@ -788,6 +828,15 @@ class ControlRunner:
             previous_remaining: int | None = None
             recovery_step = "full-content" if action == "full-content" else "recovery"
             while True:
+                if reports and self._disk_stop_reached():
+                    combined = self._combined_collection_report(reports)
+                    combined.update(
+                        ok=False,
+                        status="partial",
+                        safe_code="disk_low",
+                        stop_reason="disk_low",
+                    )
+                    return combined
                 report = self._execute_report(
                     command, report_path, run_id, recovery_step, command_id=command_id
                 )
@@ -2099,6 +2148,11 @@ def _parse_args() -> argparse.Namespace:
         default=os.environ.get("REDSTM_DISK_LOW_BYTES", str(_DEFAULT_DISK_LOW_BYTES)),
     )
     parser.add_argument(
+        "--disk-stop-bytes",
+        type=_nonnegative_integer,
+        default=os.environ.get("REDSTM_DISK_STOP_BYTES", str(_DEFAULT_DISK_STOP_BYTES)),
+    )
+    parser.add_argument(
         "--control-rejection-warning-seconds",
         type=_nonnegative_integer,
         default=os.environ.get(
@@ -2140,6 +2194,7 @@ def main() -> int:
         runner_id=args.runner_id,
         runner_version=args.runner_version,
         disk_low_bytes=args.disk_low_bytes,
+        disk_stop_bytes=args.disk_stop_bytes,
         control_rejection_warning_seconds=args.control_rejection_warning_seconds,
         token_expires_at=args.token_expires_at,
         token_expiring_seconds=args.token_expiring_seconds,

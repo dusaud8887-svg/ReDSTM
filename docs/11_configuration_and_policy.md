@@ -88,6 +88,7 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_ACCESS_CLIENT_SECRET` | `access.env` | production Operations 연결 | 예 | Oracle control client |
 | `REDSTM_ACCESS_TOKEN_EXPIRES_AT` | `access.env` | token expiry warning 사용 시 | 아니오 | Oracle heartbeat |
 | `REDSTM_DISK_LOW_BYTES` | `access.env` optional | 40GiB 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
+| `REDSTM_DISK_STOP_BYTES` | `access.env` optional | 20GiB 기본 수집 hard floor 변경 시 | 아니오 | Oracle control runner |
 | `REDSTM_CONTROL_REJECTION_WARNING_SECONDS` | `access.env` optional | permanent control rejection 경고 기간 변경 시; 기본 24시간 | 아니오 | Oracle heartbeat |
 | `REDSTM_TOKEN_EXPIRING_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
 | `REDSTM_PUBLISH_STALE_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
@@ -147,6 +148,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | systemd | wall-clock policy | `TimeoutStartSec=infinity`; 수동 full command는 내부 양수 chunk/checkpoint로 지속 | service unit + runner |
 | systemd | service memory/tasks hard stop | 700MiB / 64 | service unit |
 | runner warning | disk/control/token/publish | 40GiB / rejection 24시간 / 만료 24시간 전 / pending 24시간 | `scripts.control_runner` CLI/env |
+| runner hard stop | 새 crawl/장기 chunk 시작 전 disk floor | 20GiB; checkpoint 보존 `disk_low` 종료 | `scripts.control_runner` CLI/env |
 | control client | response body max | 128KiB | `scripts.control_client` |
 | control client | retry delay / Retry-After cap | 2·5·15초 / 60초 | `scripts.control_client` named constants |
 | control client | unavailable cooldown / connect / total timeout | 60초 / 5초 / 15초 | `scripts.control_client` named constants |
@@ -177,6 +179,10 @@ oldest-first로 진전시키는 audit 시작값이다. 실제 quota와 oldest la
 
 warning threshold의 `0`은 해당 warning을 끈다. 동시에 여러 조건이 참이면
 `disk_low → control_rejected → token_expiring → publish_stale` 순서로 하나만 전송한다.
+disk hard floor의 `0`도 중단을 끄며, 활성화할 때는 warning보다 반드시 낮아야 한다. 기본값은
+40GiB에서 먼저 경고하고 20GiB 미만에서 새 crawl child를 시작하지 않는 두 단계다. 며칠 걸리는
+전체 목차·본문은 child 경계에서도 다시 확인해 현재 SQLite/WARC transaction을 자르지 않고 다음
+bounded chunk 전에 `disk_low` partial로 끝내며 pass marker와 cursor를 보존한다.
 401/403/429와 release mismatch 409는 복구 가능한 control 단절로 outbox에 남긴다. 그 외 permanent
 control 4xx의 원래 server code는 local `control_rejections` evidence에만 남기고 API에는 generic
 `control_rejected`만 보낸다. terminal command report는 결과를 유지한 채

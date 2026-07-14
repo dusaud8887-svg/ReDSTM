@@ -100,6 +100,10 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
   처리량을 높이면서 request start rate 상한은 유지할 수 있다.
 - 하지만 현재 실서버는 full-catalog 중 세 게시판 연속 network failure로 breaker가 동작했다. 이때
   concurrency를 먼저 올리면 timeout 동시 누적과 장애 오판만 늘어난다.
+- 2026-07-14 최근 inventory worker 3개의 실측은 444초/5 capture, 1,565초/6 capture,
+  1,166초/10 capture였다. 이는 raw retry request 수가 아니라 canonical에 남은 terminal capture 기준
+  약 0.23~0.68건/분이다. 합계 21 capture 중 9건은 잘린 응답 계열 `network_error`, 429는 0이었다.
+  현재 병목은 politeness delay보다 원본의 장시간 streaming/불완전 응답이므로 동시성을 유지한다.
 
 ### 목차와 본문 동시 실행
 
@@ -131,8 +135,9 @@ process는 이 실험으로도 목표 처리량을 못 얻고 원본의 429/time
   authenticated crawl→delta publish/readback→rollback rehearsal 성공 gate가 남아 있다.
 - breaker는 실패 확산을 막지만 수동 full pass를 자동으로 며칠 동안 재요청하지 않는다. partial과
   checkpoint는 보존되나 operator가 같은 command를 다시 실행해야 한다.
-- disk low는 현재 warning이다. canonical/WARC 파손 전에 수집을 멈추는 별도 hard floor를 후속
-  운영 정책으로 정해야 한다.
+- disk는 40GiB warning과 20GiB hard floor로 분리됐다. hard floor는 transaction 중간에 process를
+  죽이지 않고 새 crawl 및 장기 작업의 다음 bounded child 앞에서 적용하므로, 현재 child가 쓰는
+  최대 분량은 20GiB reserve 안에 흡수해야 한다.
 - dashboard에는 최근 처리량, request latency p50/p95, timeout/429 비율, 현재 in-flight 수가 없다.
   concurrency 조정 전 이 지표가 먼저 필요하다.
 
@@ -230,6 +235,10 @@ process는 이 실험으로도 목표 처리량을 못 얻고 원본의 429/time
    상태로 합치지 않는다.
 4. **UI truthfulness** — running board와 pause safe code를 별도 표시하고 자동 cycle이 실제로 하는
    latest+delta publish만 설명한다.
+5. **disk fail-closed** — 40GiB 경고와 별도인 20GiB hard floor에서 새 crawl과 다음 bounded child를
+   시작하지 않는다. 전체 목차·본문 checkpoint는 보존하고 Operations에는 `disk_low`로 표시한다.
+6. **재수집 checkpoint 문구** — board 진행 문구를 “최초”로 고정하지 않고 전체 목차 pass와
+   다음 page 재개를 명시한다.
 
 ### P0: 운영 전에 필요
 
@@ -245,11 +254,9 @@ process는 이 실험으로도 목표 처리량을 못 얻고 원본의 429/time
 1. dashboard에 request/min, latency p50/p95, timeout/429 ratio, in-flight를 추가한다.
 2. 20~30분 canary에서 global/domain/detail concurrency 2를 시험하되 10초 시작 간격은 유지한다.
    timeout/429/parse drift가 하나라도 악화되면 즉시 1로 복귀한다.
-3. disk free hard floor를 정해 새 crawl claim 전에 fail-closed한다. warning threshold와 hard stop을
-   같은 값으로 쓰지 않는다.
-4. 수동 full pass가 breaker partial로 끝났을 때 다음 재개 가능 시각과 checkpoint board/page를
+3. 수동 full pass가 breaker partial로 끝났을 때 다음 재개 가능 시각과 checkpoint board/page를
    Operations에 명시한다. 자동 무한 재시도는 추가하지 않는다.
-5. parse-empty/quality failure에 response 길이, title/content selector 결과, visible text 길이 같은
+4. parse-empty/quality failure에 response 길이, title/content selector 결과, visible text 길이 같은
    bounded diagnostics를 추가하되 본문·cookie·raw exception은 D1/journal로 보내지 않는다.
 
 ### P2: 필요가 입증될 때만
@@ -284,4 +291,3 @@ process는 이 실험으로도 목표 처리량을 못 얻고 원본의 429/time
 5. 20~30분 canary 동안 request start 간격, latency, frontier transition, WARC와 SQLite 무결성이
    기준을 만족한다.
 6. 24시간 뒤 stale runner/publish, disk, dead/retry 증가가 Operations에서 설명 가능하다.
-

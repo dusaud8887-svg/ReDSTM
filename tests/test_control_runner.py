@@ -82,6 +82,7 @@ def _profile(tmp_path: Path) -> RunnerProfile:
         remote="r2:redstm-archive",
         runner_id="oracle-primary",
         runner_version="git-test",
+        disk_stop_bytes=0,
     )
 
 
@@ -250,6 +251,14 @@ def test_heartbeat_warning_producers_use_configured_thresholds(tmp_path: Path) -
     assert runner._safe_warning(99, now) == "publish_stale"
 
 
+def test_disk_hard_floor_must_stay_below_the_warning_threshold(tmp_path: Path) -> None:
+    runner, store = _runner(tmp_path, Api([]))
+    profile = replace(runner.profile, disk_low_bytes=100, disk_stop_bytes=100)
+
+    with pytest.raises(ValueError, match="disk stop threshold"):
+        ControlRunner(profile, runner.client, store)
+
+
 def test_recent_permanent_control_rejection_becomes_a_generic_warning(tmp_path: Path) -> None:
     runner, store = _runner(tmp_path, Api([]))
     now = datetime(2026, 7, 12, tzinfo=UTC)
@@ -271,6 +280,7 @@ def test_warning_thresholds_load_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("REDSTM_DISK_LOW_BYTES", "123")
+    monkeypatch.setenv("REDSTM_DISK_STOP_BYTES", "45")
     monkeypatch.setenv("REDSTM_CONTROL_REJECTION_WARNING_SECONDS", "234")
     monkeypatch.setenv("REDSTM_ACCESS_TOKEN_EXPIRES_AT", "2026-07-13T00:00:00Z")
     monkeypatch.setenv("REDSTM_TOKEN_EXPIRING_SECONDS", "456")
@@ -280,6 +290,7 @@ def test_warning_thresholds_load_from_environment(
     args = _parse_args()
 
     assert args.disk_low_bytes == 123
+    assert args.disk_stop_bytes == 45
     assert args.control_rejection_warning_seconds == 234
     assert args.token_expires_at == datetime(2026, 7, 13, tzinfo=UTC)
     assert args.token_expiring_seconds == 456
@@ -1445,6 +1456,62 @@ def test_execute_report_does_not_reuse_a_previous_cycle_report(
     assert not report_path.exists()
 
 
+@pytest.mark.parametrize("action", ["sync-now", "full-catalog", "full-content", "retry-batch"])
+def test_new_crawl_fails_closed_below_the_disk_hard_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    runner.profile = replace(runner.profile, disk_stop_bytes=2**63 - 1)
+    monkeypatch.setattr(
+        runner,
+        "_execute_report",
+        lambda *_args, **_kwargs: pytest.fail("disk stop must run before a crawl child"),
+    )
+
+    report = runner._execute_action(action, "disk-low", "disk-low", command_id="manual")
+
+    assert report == {
+        "ok": False,
+        "status": "failed",
+        "safe_code": "disk_low",
+        "stop_reason": "disk_low",
+    }
+    assert not (runner.profile.state_dir / "inventory.started").exists()
+    assert not (runner.profile.state_dir / "full-content.started").exists()
+
+
+def test_long_inventory_stops_between_bounded_children_when_disk_becomes_low(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    checks = iter((False, True))
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        with connect_archive(runner.profile.archive) as connection:
+            connection.execute("UPDATE boards SET inventory_next_page = 5")
+        return {
+            "ok": False,
+            "status": "partial",
+            "boards": [{"board_id": "aa", "status": "partial"}],
+        }
+
+    monkeypatch.setattr(runner, "_disk_stop_reached", lambda: next(checks))
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-catalog", "disk-mid-pass", "disk-mid-pass", command_id="manual"
+    )
+
+    assert calls == 1
+    assert report["status"] == "partial"
+    assert report["safe_code"] == "disk_low"
+    assert report["stop_reason"] == "disk_low"
+    assert (runner.profile.state_dir / "inventory.started").exists()
+
+
 def test_retry_batch_runs_each_cycle_even_with_a_legacy_completion_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1760,6 +1827,7 @@ def test_scheduled_run_only_collects_latest_and_publishes(
         "scripts.release_smoke",
     ]
     assert "--inventory" not in commands[0]
+    assert commands[0][commands[0].index("--disk-stop-bytes") + 1] == "0"
     assert all("scripts.recover_queue" not in command for command in commands)
 
 

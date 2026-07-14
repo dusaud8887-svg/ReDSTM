@@ -35,6 +35,10 @@ test("renders every bounded export and publish recovery outcome", () => {
   ]) assert.ok(safeCodeLabels[code]);
 });
 
+test("renders a disk hard-stop as an operator-safe outcome", () => {
+  assert.ok(safeCodeLabels.disk_low);
+});
+
 test("orders board attention lexicographically even with large counters", () => {
   const ordered = [
     { board_id: "pending", pending: Number.MAX_SAFE_INTEGER },

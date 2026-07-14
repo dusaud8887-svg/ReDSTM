@@ -152,6 +152,37 @@ def test_cycle_stops_at_board_boundary_when_time_budget_expires(
     assert report["stop_reason"] == "time_budget"
 
 
+def test_cycle_stops_at_a_board_boundary_when_disk_reaches_the_hard_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    args.disk_stop_bytes = 100
+    commands: list[list[str]] = []
+    free_bytes = iter((101, 99))
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=next(free_bytes)),
+    )
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        _output_path(command).write_text(
+            json.dumps({"ok": True, "status": "succeeded", "outcomes": {}}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert len(commands) == 1
+    assert report["status"] == "partial"
+    assert report["safe_code"] == "disk_low"
+    assert report["stop_reason"] == "disk_low"
+
+
 def test_cycle_honors_pause_before_session_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

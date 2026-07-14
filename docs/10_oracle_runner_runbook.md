@@ -145,6 +145,9 @@ R2 writer key와 Access service token은 별도 credential file로만
   `/srv/redstm/state/control.lock`을 공유한다. installer는 active run을 중단하지 않고 mutation 전에
   `redstm_install_not_started`로 끝난다.
 - crawler는 `CONCURRENT_REQUESTS=1`, domain/detail concurrency 1, fixed start delay 10초를 유지한다.
+- disk는 40GiB 미만에서 경고하고 20GiB 미만에서는 새 crawl 또는 장기 작업의 다음 bounded child를
+  시작하지 않는다. `disk_low`로 끝난 전체 목차·본문은 공간 확보 뒤 같은 명령으로 checkpoint부터
+  재개한다.
 - systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 control timer가
   checkpointed full-catalog/full-content command를 같은 run으로 재개한다. 짧은 증분 작업은 durable
   frontier를 보존하고 실패를 명시 보고한 뒤 다음 요청/예약 실행에서 복구한다.
@@ -480,6 +483,7 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | systemd | schedule run | oneshot `TimeoutStartSec=infinity` | 느린 최신 수집을 강제 종료하지 않음 |
 | control | D1/Worker HTTP | connect 5초/total 15초, backoff 2/5/15초 최대 3회 | [08 §5.4](08_operations_control_plane.md) |
 | warning | disk/control/token/publish | 40GiB / rejection 24시간 / 만료 24시간 전 / 최초 pending 24시간 | CLI/env override, 한 heartbeat에는 최고 우선순위 1개 |
+| hard stop | crawl disk floor | 20GiB, warning보다 낮아야 함 | 새 crawl과 다음 bounded child 전에 fail-closed; full pass checkpoint 보존 |
 
 AutoThrottle은 감속 전용이다. Scrapy는 `DOWNLOAD_DELAY`를 하한으로 존중하므로 10초보다
 빨라질 수 없고, 느린 응답에서는 최대 60초까지 간격을 넓힌다.
