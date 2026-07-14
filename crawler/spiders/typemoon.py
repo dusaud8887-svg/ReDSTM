@@ -506,7 +506,10 @@ class TypeMoonSpider(scrapy.Spider):
     ) -> scrapy.Request:
         headers: dict[str, str] | None = None
         if session is not None:
-            headers = {"User-Agent": session.user_agent}
+            # The origin streams chunked listing responses and can leave keep-alive
+            # connections open after the page body. A per-page close lets Scrapy
+            # receive the completed response instead of waiting for that idle socket.
+            headers = {"User-Agent": session.user_agent, "Connection": "close"}
             # Paging deeper into a board is natural navigation from the previous page; the
             # first page of a board has no in-site Referer, matching a fresh visit.
             if referer is not None:
