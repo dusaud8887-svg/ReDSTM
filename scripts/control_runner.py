@@ -320,7 +320,10 @@ class ControlRunner:
             try:
                 report = self._execute_action(action, run_id, run_id)
                 action_state, safe_code, payload = self._result(action, report)
-            except OSError, RuntimeError, ValueError:
+            except OSError, RuntimeError, ValueError, sqlite3.Error:
+                # sqlite3.Error covers a canonical archive held by another process
+                # (orphaned crawl child, backup/export); crashing here would leave the
+                # run unreported instead of closing it as a runner failure.
                 report = {}
                 action_state = "failed"
                 safe_code = "runner_failed"
@@ -398,6 +401,14 @@ class ControlRunner:
         return self._resume(record)
 
     def _reconcile_source_boards(self) -> None:
+        # Board registration is idempotent housekeeping; a briefly locked archive must
+        # not crash the poll (which would also skip the heartbeat for this tick).
+        try:
+            self._reconcile_source_boards_once()
+        except sqlite3.Error:
+            return
+
+    def _reconcile_source_boards_once(self) -> None:
         if not self.profile.archive.is_file():
             return
         board_ids = {
@@ -547,7 +558,7 @@ class ControlRunner:
             finish_payload["counters"] = _sum_collection_counters(
                 finish_payload["counters"], progress_offset
             )
-        except OSError, RuntimeError, ValueError:
+        except OSError, RuntimeError, ValueError, sqlite3.Error:
             state = "failed"
             safe_code = "runner_failed"
             finish_payload = self._finish_payload(state, safe_code, progress_offset)

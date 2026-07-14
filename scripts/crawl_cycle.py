@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -393,7 +394,7 @@ def main() -> int:
     args = _parse_args()
     try:
         report = run_cycle(args)
-    except (OSError, RuntimeError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
         report = {"ok": False, "error": type(error).__name__, "message": str(error)}
     if args.output is not None:
         _write_report(args.output, report)

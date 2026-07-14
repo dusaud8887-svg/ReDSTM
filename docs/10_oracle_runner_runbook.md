@@ -151,8 +151,14 @@ R2 writer key와 Access service token은 별도 credential file로만
 - `MemoryMax=700M` cgroup 아래에서 kernel이 자식 process(주로 Scrapy worker)를 OOM kill해도
   `OOMPolicy=continue`로 runner 본체는 살아남아 해당 board를 실패로 보고하고 command를 정상
   종결한다. runner 자체가 죽으면 다음 poll이 command를 `runner_interrupted`로 닫으며 `/ops` 실행
-  기록에 counters `미보고`로 보인다. `미보고`가 보이면 reboot/배포/OOM 순으로
-  `journalctl -u redstm-control.service`와 `dmesg | grep -i oom`을 확인한다.
+  기록에 counters `미보고`로 보인다. `미보고`가 보이면 reboot/배포/OOM/archive lock 순으로
+  `journalctl -u redstm-control.service`, `dmesg | grep -i oom`, journal의 `database is locked`,
+  잔존 crawl process(`pgrep -f 'scripts\.(sync|crawl_cycle|recover_queue)'`)를 확인한다.
+- canonical archive는 `journal_mode=DELETE`(reader가 writer를 막음)에 busy timeout 5초라, 고아
+  crawl child나 backup/export가 archive를 잡고 있으면 command 시작 단계의 board UPDATE가 sqlite
+  오류로 끝날 수 있다. 예전 빌드는 이때 unhandled 오류로 죽어 checkpoint 없는 `미보고`를
+  남겼고, 현재 빌드는 sqlite 오류를 `runner_failed`로 보고하고 command를 종결한다. `/ops` 증상은
+  항상 배포된 빌드의 동작이므로 repo 수정은 release deploy 뒤에만 반영된다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -271,7 +272,7 @@ def main() -> int:
     args = _parse_args()
     try:
         report = run_sync(args)
-    except (OSError, RuntimeError, SessionRefreshError, ValueError) as error:
+    except (OSError, RuntimeError, SessionRefreshError, ValueError, sqlite3.Error) as error:
         report = {
             "ok": False,
             "error": type(error).__name__,

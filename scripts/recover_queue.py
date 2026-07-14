@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -288,7 +289,7 @@ def main() -> int:
     args = _parse_args()
     try:
         report = run_recovery(args)
-    except (OSError, RuntimeError, SessionRefreshError, ValueError) as error:
+    except (OSError, RuntimeError, SessionRefreshError, ValueError, sqlite3.Error) as error:
         report = {"ok": False, "error": type(error).__name__, "message": str(error)}
         if args.output is not None:
             _write_report(args.output, report)

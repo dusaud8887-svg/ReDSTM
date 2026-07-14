@@ -586,6 +586,32 @@ def test_interrupted_full_action_without_an_open_checkpoint_is_not_reexecuted(
     assert finish["safe_summary_code"] == "runner_interrupted"
 
 
+def test_locked_archive_during_command_start_reports_runner_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A canonical archive held by another process (orphaned crawl child, backup) used to
+    # crash the runner before the full-catalog checkpoint existed, leaving the command
+    # "running" and later closed as runner_interrupted with unreported counters.
+    command = _command("full-catalog")
+    api = Api([])
+    runner, store = _runner(tmp_path, api)
+    store.record_claim(command["command_id"], command["action"])
+
+    def locked(*_args: object, **_kwargs: object) -> str:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(runner, "_ensure_inventory_pass_started", locked)
+
+    report = runner.run_once()
+
+    assert report["status"] == "failed"
+    row = store.command(command["command_id"])
+    assert row is not None and row["state"] == "failed"
+    finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
+    assert finish["state"] == "failed"
+    assert finish["safe_summary_code"] == "runner_failed"
+
+
 def test_permanent_terminal_rejection_does_not_block_the_next_local_command(
     tmp_path: Path,
 ) -> None:
