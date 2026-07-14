@@ -29,7 +29,7 @@ const runnerStates = new Set(["idle", "running", "degraded", "failed", "paused"]
 const runKinds = new Set(["scheduled", "manual-sync", "retry", "publish"]);
 const runSources = new Set(["systemd", "command"]);
 const terminalStates = new Set(["succeeded", "partial", "failed"]);
-const boardOutcomes = new Set(["succeeded", "partial", "failed"]);
+const boardOutcomes = new Set(["running", "succeeded", "partial", "failed"]);
 const commandRunKinds = new Map([
   ["sync-now", "manual-sync"],
   ["full-catalog", "manual-sync"],

@@ -41,9 +41,11 @@ test("orders board attention lexicographically even with large counters", () => 
     { board_id: "retry", retry: 1 },
     { board_id: "dead", dead: 1 },
     { board_id: "warning", warning_code: "parse_drift" },
+    { board_id: "running", last_outcome: "running" },
   ].sort(compareBoardPriority);
 
   assert.deepEqual(ordered.map((board) => board.board_id), [
+    "running",
     "warning",
     "dead",
     "retry",

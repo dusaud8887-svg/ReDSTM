@@ -394,8 +394,9 @@ Remote command와 무관하게 systemd가 실행한다.
 | 전체 board 목차 | 수동 `full-catalog`만; 첫 page부터 끝까지 다시 수집 |
 | 전체 게시글 본문 | 수동 `full-content`만; 성공분을 포함해 전부 다시 수집 |
 
-Operations schedule toggle은 최종 제품에서도 직접 timer file을 편집하지 않는다. pause는
-pause-after-current marker로 다음 automatic start를 보류하고 resume-schedule만 marker를 해제한다.
+Operations schedule toggle은 최종 제품에서도 직접 timer file을 편집하지 않는다.
+pause-after-current는 진행 중 collection에 협력적 stop marker를 전달하고 다음 automatic start도
+보류한다. resume-schedule은 두 marker를 해제한다.
 운영 목표 상태는 자동 enabled지만, 웹의 `일시정지 해제`는 비활성 systemd timer를 켜지 않는다.
 
 각 6시간 cycle은 최신 page incremental과 변경분 게시만 수행한다. 직전 기준 게시글이 발견된 page 뒤
@@ -524,8 +525,11 @@ Runs/Releases ledger에서 별도로 확인한다.
 - `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,
   authenticated release smoke를 실행한다. 실제 delta가 없으면 exporter/publisher가 검증된 no-op으로
   끝나며, 실패 시 기존 marker가 있으면 지우지 않고 다음 6시간 cycle에서 다시 reconcile한다.
-- `pause-after-current`: UI에서는 `자동 수집 끄기`다. 현재 request/transaction을 끝내고 이후 schedule을 막는다. 수동 작업은 막지 않는다.
-- `resume-schedule`: UI에서는 `자동 수집 켜기`다. pause marker만 해제한다. 즉시 crawl하거나
+- `pause-after-current`: UI에서는 `수집 일시정지`다. 진행 중 collection은 안전한 지점에서 끝내고
+  이후 schedule도 막는다. 전체 목차·본문은 다시 실행하면 기존 checkpoint에서 이어지며, 새 수동
+  작업 자체는 막지 않는다.
+- `resume-schedule`: UI에서는 `자동 수집 켜기`다. schedule/current-run pause marker를
+  해제한다. 즉시 crawl하거나
   disabled systemd timer를 enable하지 않는다.
 - 전체 목차·본문 버튼은 장기 실행 경고와 선택 게시판 범위를 확인한 뒤 요청한다.
 - pause/resume은 상호 배타적이다. stale/not_enrolled runner가 claim해야 하는 action은 disabled reason을

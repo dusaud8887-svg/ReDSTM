@@ -87,7 +87,9 @@ _CALENDAR_PATTERN = re.compile(
 )
 _INVENTORY_STARTED = "inventory.started"
 _INVENTORY_COMPLETED = "inventory.completed"
+_LIVE_INVENTORY = "inventory.live"
 _FULL_CONTENT_STARTED = "full-content.started"
+_CURRENT_RUN_PAUSED = "current-run.paused"
 # The legacy import is the baseline catalog. Source boards added after that snapshot are
 # registered explicitly once a baseline-only board proves this is a TypeMoon archive.
 _SOURCE_BOARD_ADDITIONS = (("write_drawing", "창작그림", "creation", "write_nirvana"),)
@@ -243,6 +245,14 @@ class ControlRunner:
         self._progress_sequences: dict[str, itertools.count[int]] = {}
         self.profile.state_dir.mkdir(parents=True, exist_ok=True)
         self.profile.report_dir.mkdir(parents=True, exist_ok=True)
+        live_inventory = self._marker_payload(self.profile.state_dir / _LIVE_INVENTORY)
+        self._live_inventory = (
+            (str(live_inventory["run_id"]), str(live_inventory["board_id"]))
+            if live_inventory is not None
+            and isinstance(live_inventory.get("run_id"), str)
+            and isinstance(live_inventory.get("board_id"), str)
+            else None
+        )
 
     def run_once(self) -> dict[str, Any]:
         lock = FileLock(self.profile.state_dir / "control.lock", timeout=0)
@@ -491,11 +501,13 @@ class ControlRunner:
             return self._resume(self.store.command(command_id) or record)
         marker = self.profile.state_dir / "schedule.paused"
         if action == "pause-after-current":
-            partial = marker.with_suffix(".partial")
-            partial.write_text(f"paused_at={_timestamp()}\n", encoding="utf-8")
-            os.replace(partial, marker)
+            for target in (marker, self.profile.state_dir / _CURRENT_RUN_PAUSED):
+                partial = target.with_suffix(".partial")
+                partial.write_text(f"paused_at={_timestamp()}\n", encoding="utf-8")
+                os.replace(partial, target)
         else:
             marker.unlink(missing_ok=True)
+            (self.profile.state_dir / _CURRENT_RUN_PAUSED).unlink(missing_ok=True)
         safe_code = _MARKER_CODES[action]
         payload = {
             "runner_id": self.profile.runner_id,
@@ -546,6 +558,8 @@ class ControlRunner:
                 not isinstance(board_id, str) or re.fullmatch(r"[a-z0-9_]{1,64}", board_id) is None
             ):
                 raise ValueError("command board id is invalid")
+            if not resuming:
+                (self.profile.state_dir / _CURRENT_RUN_PAUSED).unlink(missing_ok=True)
             report = self._execute_action(
                 action,
                 command_id,
@@ -595,7 +609,10 @@ class ControlRunner:
                         }
                         for item in board_ids
                     ]
-                }
+                },
+                last_outcome=(
+                    "partial" if report.get("stop_reason") == "schedule_paused" else None
+                ),
             )
         self._event(
             run_id,
@@ -657,8 +674,10 @@ class ControlRunner:
                 "--output",
                 str(report_path),
             ]
-            if command_id is None:
-                command.extend(("--pause-file", str(self.profile.state_dir / "schedule.paused")))
+            pause_file = self.profile.state_dir / (
+                "schedule.paused" if command_id is None else _CURRENT_RUN_PAUSED
+            )
+            command.extend(("--pause-file", str(pause_file)))
             if board_id:
                 command.extend(("--board", board_id))
             if action == "full-catalog":
@@ -679,6 +698,8 @@ class ControlRunner:
                     command, report_path, run_id, crawl_step, command_id=command_id
                 )
                 reports.append(report)
+                if report.get("stop_reason") == "schedule_paused":
+                    return self._combined_collection_report(reports)
                 if action != "full-catalog":
                     return report
                 self._board_summaries(report)
@@ -746,6 +767,10 @@ class ControlRunner:
                 "--output",
                 str(report_path),
             ]
+            pause_file = self.profile.state_dir / (
+                "schedule.paused" if command_id is None else _CURRENT_RUN_PAUSED
+            )
+            command.extend(("--pause-file", str(pause_file)))
             if board_id:
                 command.extend(("--board", board_id))
             if action == "full-content":
@@ -767,6 +792,8 @@ class ControlRunner:
                     command, report_path, run_id, recovery_step, command_id=command_id
                 )
                 reports.append(report)
+                if report.get("stop_reason") == "schedule_paused":
+                    return self._combined_collection_report(reports)
                 progress = _sum_collection_counters(
                     _collection_counters(self._combined_collection_report(reports)),
                     progress_offset,
@@ -1527,11 +1554,12 @@ class ControlRunner:
             (_WARNING_CODES[code] for code in failure_codes if code in _WARNING_CODES),
             None,
         )
-        default_code = (
-            _SUCCESS_CODES[action]
-            if state == "succeeded"
-            else warning_code or _STATUS_CODES.get(raw_status, "run_failed")
-        )
+        if report.get("stop_reason") == "schedule_paused":
+            default_code = "schedule_paused"
+        elif state == "succeeded":
+            default_code = _SUCCESS_CODES[action]
+        else:
+            default_code = warning_code or _STATUS_CODES.get(raw_status, "run_failed")
         safe_code = str(report.get("safe_code") or default_code)
         if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", safe_code) is None:
             safe_code = "run_failed"
@@ -1615,7 +1643,13 @@ class ControlRunner:
             f"event-{run_id}-{sequence}",
         )
 
-    def _board_summaries(self, report: dict[str, Any]) -> None:
+    def _board_summaries(
+        self,
+        report: dict[str, Any],
+        *,
+        last_outcome: str | None = None,
+        include_failures: bool = True,
+    ) -> None:
         boards = report.get("boards")
         if not isinstance(boards, list) or not self.profile.archive.is_file():
             return
@@ -1666,11 +1700,14 @@ class ControlRunner:
                     "board_name": str(board["name"]),
                     "group_name": board["group_name"],
                     "last_scanned_at": _timestamp(),
-                    "last_outcome": "succeeded"
-                    if status == "succeeded"
-                    else "partial"
-                    if outcomes
-                    else "failed",
+                    "last_outcome": last_outcome
+                    or (
+                        "succeeded"
+                        if status == "succeeded"
+                        else "partial"
+                        if outcomes
+                        else "failed"
+                    ),
                     "counters": {
                         "discovered": _integer(item_data.get("scheduled_posts")),
                         "changed": _integer(outcomes.get("stored")),
@@ -1695,7 +1732,8 @@ class ControlRunner:
                     payload,
                     f"board-{uuid4().hex}",
                 )
-                self._frontier_failures(connection, board_id)
+                if include_failures:
+                    self._frontier_failures(connection, board_id)
 
     def _frontier_failures(self, connection: sqlite3.Connection, board_id: str) -> None:
         rows = connection.execute(
@@ -1736,6 +1774,8 @@ class ControlRunner:
         if not self.profile.archive.is_file():
             return
         inventory_started_at = self._latest_inventory_pass_started_at()
+        active_inventory: tuple[str, str] | None = None
+        finished_inventory: tuple[str, dict[str, Any]] | None = None
         try:
             with archive_transaction(self.profile.archive, read_only=True) as connection:
                 deadline = time.monotonic() + _SNAPSHOT_TIME_BUDGET_SECONDS
@@ -1773,8 +1813,83 @@ class ControlRunner:
                     """,
                     (inventory_started_at, inventory_started_at),
                 ).fetchone()
+                active_run = connection.execute(
+                    "SELECT run_id FROM crawl_runs "
+                    "WHERE kind = 'inventory' AND status = 'running' "
+                    "ORDER BY started_at DESC LIMIT 1"
+                ).fetchone()
+                if active_run is not None:
+                    capture = connection.execute(
+                        "SELECT url FROM captures WHERE run_id = ? AND entity_type = 'listing' "
+                        "ORDER BY id DESC LIMIT 1",
+                        (active_run["run_id"],),
+                    ).fetchone()
+                    if capture is not None:
+                        match = re.fullmatch(
+                            r"https://www\.typemoon\.net/([a-z0-9_]+)(?:\?.*)?",
+                            str(capture["url"]),
+                        )
+                        if match is not None:
+                            active_inventory = (str(active_run["run_id"]), match.group(1))
+                if self._live_inventory is not None and self._live_inventory != active_inventory:
+                    previous_run_id, previous_board_id = self._live_inventory
+                    previous = connection.execute(
+                        "SELECT status, discovered, summary_json FROM crawl_runs WHERE run_id = ?",
+                        (previous_run_id,),
+                    ).fetchone()
+                    if previous is not None and str(previous["status"]) != "running":
+                        try:
+                            summary = json.loads(str(previous["summary_json"]))
+                        except ValueError:
+                            summary = {}
+                        if not isinstance(summary, dict):
+                            summary = {}
+                        finished_inventory = (
+                            previous_board_id,
+                            {
+                                "status": str(previous["status"]),
+                                "scheduled_posts": int(previous["discovered"]),
+                                "outcomes": summary.get("outcomes", {}),
+                                "failures": summary.get("failures", []),
+                            },
+                        )
         except sqlite3.Error:
             return
+        if finished_inventory is not None:
+            board_id, item = finished_inventory
+            outcome = str(item["status"])
+            self._board_summaries(
+                {"boards": [{"board_id": board_id, **item}]},
+                last_outcome=outcome if outcome in {"succeeded", "partial", "failed"} else "failed",
+            )
+        if active_inventory is not None:
+            self._board_summaries(
+                {
+                    "boards": [
+                        {
+                            "board_id": active_inventory[1],
+                            "status": "running",
+                            "scheduled_posts": 0,
+                            "outcomes": {},
+                            "failures": [],
+                        }
+                    ]
+                },
+                last_outcome="running",
+                include_failures=False,
+            )
+        self._live_inventory = active_inventory
+        live_marker = self.profile.state_dir / _LIVE_INVENTORY
+        try:
+            if active_inventory is None:
+                live_marker.unlink(missing_ok=True)
+            else:
+                self._write_inventory_marker(
+                    live_marker,
+                    {"run_id": active_inventory[0], "board_id": active_inventory[1]},
+                )
+        except OSError:
+            pass
         counters = {
             "outline_only": outline_only,
             "frontier_pending": frontier.get("pending", 0),

@@ -313,6 +313,68 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
     assert board["last_inventory_at"] == "2026-07-12T01:02:03Z"
 
 
+def test_archive_snapshot_reports_and_finalizes_the_live_inventory_board(tmp_path: Path) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "INSERT INTO crawl_runs (run_id, kind, status, started_at) "
+            "VALUES ('inventory-aa', 'inventory', 'running', '2026-07-12T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO captures (run_id, url, entity_type, fetched_at, http_status, outcome) "
+            "VALUES ('inventory-aa', 'https://www.typemoon.net/aa?page=4', 'listing', "
+            "'2026-07-12T00:01:00Z', 200, 'stored')"
+        )
+
+    runner._archive_snapshot_event("outer", 1)
+    assert (runner.profile.state_dir / "inventory.live").is_file()
+    runner = ControlRunner(runner.profile, runner.client, runner.store)
+
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "UPDATE crawl_runs SET status = 'succeeded', finished_at = ?, discovered = 40, "
+            "summary_json = ? WHERE run_id = 'inventory-aa'",
+            ("2026-07-12T00:02:00Z", json.dumps({"outcomes": {"stored": 40}})),
+        )
+        connection.execute(
+            "INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at) "
+            "VALUES ('second', 'Second', 'https://source.invalid/second', 'now', 'now')"
+        )
+        connection.execute(
+            "INSERT INTO crawl_runs (run_id, kind, status, started_at) "
+            "VALUES ('inventory-second', 'inventory', 'running', '2026-07-12T00:03:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO captures (run_id, url, entity_type, fetched_at, http_status, outcome) "
+            "VALUES ('inventory-second', 'https://www.typemoon.net/second', 'listing', "
+            "'2026-07-12T00:04:00Z', 200, 'stored')"
+        )
+
+    runner._archive_snapshot_event("outer", 2)
+
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "UPDATE crawl_runs SET status = 'partial', finished_at = ?, summary_json = ? "
+            "WHERE run_id = 'inventory-second'",
+            ("2026-07-12T00:05:00Z", json.dumps({"failures": ["listing_parse_failed"]})),
+        )
+    runner._archive_snapshot_event("outer", 3)
+    assert not (runner.profile.state_dir / "inventory.live").exists()
+
+    statuses = [
+        (payload["board_id"], payload["last_outcome"])
+        for path, payload in api.calls
+        if path.endswith("/boards/status")
+    ]
+    assert statuses == [
+        ("aa", "running"),
+        ("aa", "succeeded"),
+        ("second", "running"),
+        ("second", "partial"),
+    ]
+
+
 def test_runner_registers_a_current_board_missing_from_the_legacy_catalog(tmp_path: Path) -> None:
     runner, _store = _runner(tmp_path, Api([]))
     with connect_archive(runner.profile.archive) as connection:
@@ -1425,7 +1487,36 @@ def test_full_content_refetches_every_post_for_one_board(
     assert command[command.index("--full-content-max-rowid") + 1] == "0"
     assert command[command.index("--board") + 1] == "aa"
     assert command[command.index("--max-posts") + 1] == str(REDSTM_FULL_CONTENT_MAX_POSTS)
-    assert "--pause-file" not in command
+    assert Path(command[command.index("--pause-file") + 1]).name == "current-run.paused"
+
+
+@pytest.mark.parametrize("action", ["full-catalog", "full-content", "retry-batch"])
+def test_long_collection_returns_immediately_after_a_cooperative_pause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": False,
+            "status": "partial",
+            "stop_reason": "schedule_paused",
+            "selected_posts": 0,
+            "full_content_remaining": 1,
+            "boards": [],
+        }
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(action, "paused", "paused", command_id="manual")
+
+    assert calls == 1
+    assert report["status"] == "partial"
+    assert report["stop_reason"] == "schedule_paused"
+    assert runner._result(action, report)[1] == "schedule_paused"
 
 
 def test_full_content_checkpoint_survives_a_partial_batch(
@@ -1935,10 +2026,11 @@ def test_running_process_claims_pause_marker(
 
     class Process:
         def __init__(self, arguments: list[str], **_kwargs: object) -> None:
-            assert "--pause-file" not in arguments
-            output = Path(arguments[arguments.index("--output") + 1])
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(
+            self.pause_file = Path(arguments[arguments.index("--pause-file") + 1])
+            assert self.pause_file.name == "current-run.paused"
+            self.output = Path(arguments[arguments.index("--output") + 1])
+            self.output.parent.mkdir(parents=True, exist_ok=True)
+            self.output.write_text(
                 json.dumps(
                     {
                         "ok": True,
@@ -1954,12 +2046,28 @@ def test_running_process_claims_pause_marker(
             self.waits += 1
             if self.waits == 1:
                 raise subprocess.TimeoutExpired("crawl", timeout)
-            return 0
+            assert self.pause_file.is_file()
+            self.output.write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "status": "partial",
+                        "stop_reason": "schedule_paused",
+                        "boards": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return 2
 
     monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
 
-    assert runner.run_once()["status"] == "succeeded"
+    report = runner.run_once()
+
+    assert report["status"] == "partial"
+    assert report["ok"] is True
     assert (runner.profile.state_dir / "schedule.paused").is_file()
+    assert (runner.profile.state_dir / "current-run.paused").is_file()
     pause = store.command(pause_command["command_id"])
     assert pause is not None and pause["state"] == "succeeded"
     marker_claim = next(
@@ -1968,6 +2076,10 @@ def test_running_process_claims_pause_marker(
         if path.endswith("/commands/claim") and payload.get("command_kind") == "marker"
     )
     assert marker_claim["runner_id"] == "oracle-primary"
+    finish = next(
+        payload for path, payload in api.calls if "/runs/" in path and path.endswith("/finish")
+    )
+    assert finish["safe_summary_code"] == "schedule_paused"
     assert any(
         payload["events"][0]["sequence"] >= 1000
         for path, payload in api.calls

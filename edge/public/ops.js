@@ -76,7 +76,7 @@ const commandCopy = {
   "full-content": ["전체 게시글 본문 다시 수집", "선택 범위에서 발견된 모든 글을 성공 여부와 관계없이 다시 수집합니다. 장기간 실행될 수 있습니다."],
   "retry-batch": ["본문 대기 재시도", "처리 시각이 된 모든 대기 또는 재시도 항목을 우선순위대로 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
-  "pause-after-current": ["자동 수집 끄기", "진행 중 요청과 저장은 끝낸 뒤 다음 예약 실행을 통과시키지 않습니다. 수동 전체수집은 계속 사용할 수 있습니다."],
+  "pause-after-current": ["수집 일시정지", "진행 중 수집은 안전한 지점에서 멈추고 다음 자동 실행도 막습니다. 수동 전체수집은 다시 실행하면 체크포인트부터 이어집니다."],
   "resume-schedule": ["자동 수집 켜기", "다음 예약 시각부터 최신 글 자동 수집을 허용합니다."],
 };
 
@@ -200,7 +200,7 @@ function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot
     if (pendingActions.has(action)) reason = "요청을 보내는 중입니다.";
     else if (unavailable) { disabled = true; reason = "수집기가 다시 연결된 뒤 요청할 수 있습니다."; }
     else if (maintenance) { disabled = true; reason = "보관소 무결성 점검이 끝난 뒤 요청할 수 있습니다."; }
-    else if (running && action !== "pause-after-current") { disabled = true; reason = "현재 작업 중에는 이후 예약만 일시정지할 수 있습니다."; }
+    else if (running && action !== "pause-after-current") { disabled = true; reason = "현재 작업 중에는 수집 일시정지만 요청할 수 있습니다."; }
     else if (paused && action === "pause-after-current") { disabled = true; reason = "자동 수집이 이미 꺼져 있습니다."; }
     else if (!paused && action === "resume-schedule") { disabled = true; reason = "일시정지 상태에서만 사용할 수 있습니다."; }
     else if (!scheduleEnabled && !running && action === "pause-after-current") { disabled = true; reason = "자동 예약이 이미 꺼져 있습니다."; }
@@ -349,7 +349,7 @@ function renderOverview(data) {
   const reasons = {
     on: runner?.state === "running"
       ? "예약된 보존 작업을 수행하고 있습니다. Reader는 현재 활성 보존본으로 계속 사용할 수 있습니다."
-      : "6시간마다 최신 페이지를 확인하고, 최초 전체수집과 본문 대기열을 자동으로 이어갑니다.",
+      : "6시간마다 최신 페이지를 확인하고, 변경분이 있으면 검증 후 Reader에 반영합니다.",
     delayed: nextOverdue
       ? "다음 자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다. 수집기와 Oracle timer를 확인하세요."
       : "마지막 자동 실행이 7시간보다 오래됐습니다. 다음 실행 시각과 수집기 기록을 확인하세요.",
@@ -487,12 +487,14 @@ function boardNeedsAttention(board) {
 
 export function compareBoardPriority(left, right) {
   const leftPriority = [
+    Number(left.last_outcome === "running"),
     Number(Boolean(left.warning_code)),
     Number(left.dead ?? 0),
     Number(left.retry ?? 0),
     Number(left.pending ?? 0),
   ];
   const rightPriority = [
+    Number(right.last_outcome === "running"),
     Number(Boolean(right.warning_code)),
     Number(right.dead ?? 0),
     Number(right.retry ?? 0),

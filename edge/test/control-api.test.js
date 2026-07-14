@@ -1453,7 +1453,7 @@ test("upserts monotonic bounded board status", async () => {
         board_name: "AA 게시판",
         group_name: "aa",
         last_scanned_at: "2026-07-12T04:00:00Z",
-        last_outcome: "partial",
+        last_outcome: "running",
         counters: {
           discovered: 10, changed: 2, pending: 3, running: 1, retry: 1, done: 20, dead: 0,
         },
@@ -1475,7 +1475,7 @@ test("upserts monotonic bounded board status", async () => {
   assert.match(sql, /board_status\.last_scanned_at > \?/);
   assert.match(sql, /excluded\.last_scanned_at >= board_status\.last_scanned_at/);
   assert.deepEqual(parameters.slice(0, 5), [
-    "aa", "AA 게시판", "aa", "2026-07-12T04:00:00.000Z", "partial",
+    "aa", "AA 게시판", "aa", "2026-07-12T04:00:00.000Z", "running",
   ]);
   assert.equal(parameters[8], 1);
   assert.equal(parameters[10], 20);
