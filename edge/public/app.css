@@ -142,12 +142,14 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   grid-column: 2;
   min-width: 0;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  /* Trailing auto row holds the load-more button inside the clipped container so the
+     result list stays the single scrolling region above it. */
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   border-right: 1px solid var(--line);
   background: var(--surface);
 }
-body.saved-open .catalog { grid-template-rows: auto auto auto auto minmax(0, 1fr); }
+body.saved-open .catalog { grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; }
 .catalog-heading { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; }
 .catalog-heading > div { display: grid; gap: 2px; }
 .catalog-heading strong { font-size: 20px; font-weight: 720; letter-spacing: -.025em; }
@@ -185,6 +187,13 @@ body.saved-open .catalog { grid-template-rows: auto auto auto auto minmax(0, 1fr
 .result-badges span { padding: 2px 5px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--muted); font-size: 9px; font-weight: 680; line-height: 1.2; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 4px 9px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .result-board { color: var(--muted); font-weight: 650; }
+.result-more {
+  width: 100%; min-height: 46px; padding: 12px 14px; border: 0; border-top: 1px solid var(--line);
+  background: var(--surface); color: var(--accent); font-size: 13px; font-weight: 640;
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.result-more:hover:not(:disabled) { background: var(--page); }
+.result-more:disabled { color: var(--muted); cursor: default; }
 
 .reader-pane { grid-column: 3; position: relative; min-width: 0; overflow: auto; overscroll-behavior-y: contain; background: var(--page); }
 .reader-pane[aria-busy="true"]::before { content: ""; position: sticky; top: 0; z-index: 12; display: block; width: 28%; height: 2px; background: var(--accent); animation: loading-line 1s ease-in-out infinite alternate; }

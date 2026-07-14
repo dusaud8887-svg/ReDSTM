@@ -198,7 +198,9 @@ Home 데이터 소스는 다음으로 고정한다. capture 시각은 export하�
 - row의 AA 상태는 search index에 `is_aa` 필드가 있는 release에서만 표시하고 없는 release에서는
   추측하지 않는다
 - board filter label은 release `boards[]`의 `name`/`group_name`이 있으면 사용, 없으면 `board_id`
-- result 100건 render cap, 전체 count는 정확히 표시
+- result는 한 번에 100건씩 render하고 전체 count는 정확히 표시한다. 남은 결과가 있으면 목록 하단
+  "더 보기" 버튼으로 다음 100건을 이어 붙인다(스크롤·이미 로드된 행·reader 앞뒤 글 인접성 유지).
+  `searchPosts`의 `offset` 창으로 구현하며 board filter/query/정렬과 함께 동작한다
 - 0건일 때 query와 filter를 유지하고 각각 해제 가능
 - keyboard: /, arrows, Enter, Escape
 - mobile에서 filter를 숨기지 않고 sheet로 이동

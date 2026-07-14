@@ -75,10 +75,14 @@ export function searchPosts(
     mode = "all",
     sort = "latest",
     limit = 100,
+    offset = 0,
   } = {},
 ) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     throw new Error("Search result limit must be between 1 and 200");
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error("Search result offset must be a non-negative integer");
   }
   if (!new Set(["all", "aa", "prose"]).has(mode)) {
     throw new Error("Unsupported search mode");
@@ -103,8 +107,9 @@ export function searchPosts(
     const isAa = index.modes[position];
     if ((mode === "aa" && !isAa) || (mode === "prose" && isAa)) continue;
     if (tokens.some((token) => !index.terms[position].includes(token))) continue;
+    // `total` is the running match index; collect the window [offset, offset + limit).
+    if (total >= offset && posts.length < limit) posts.push(result(row, index.hasIsAa));
     total += 1;
-    if (posts.length < limit) posts.push(result(row, index.hasIsAa));
   }
   return { posts, total };
 }

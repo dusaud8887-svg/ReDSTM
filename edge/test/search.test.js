@@ -35,6 +35,30 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.throws(() => prepareSearch({ ...payload, fields: [] }), /schema/);
 });
 
+test("paginates matches with a stable offset window over a constant total", () => {
+  const index = prepareSearch(payload);
+
+  const first = searchPosts(index, { limit: 2, offset: 0 });
+  assert.deepEqual(first.posts.map((post) => post.external_post_id), [3, 2]);
+  assert.equal(first.total, 3);
+
+  const second = searchPosts(index, { limit: 2, offset: 2 });
+  assert.deepEqual(second.posts.map((post) => post.external_post_id), [1]);
+  assert.equal(second.total, 3);
+
+  // Offset past the end yields no rows but still reports the full match count.
+  const beyond = searchPosts(index, { limit: 2, offset: 3 });
+  assert.deepEqual(beyond.posts, []);
+  assert.equal(beyond.total, 3);
+
+  // Offset respects filters (aa board has a single match).
+  assert.deepEqual(searchPosts(index, { boardId: "aa", offset: 1 }).posts, []);
+  assert.equal(searchPosts(index, { boardId: "aa", offset: 1 }).total, 1);
+
+  assert.throws(() => searchPosts(index, { offset: -1 }), /offset/);
+  assert.throws(() => searchPosts(index, { offset: 1.5 }), /offset/);
+});
+
 test("accepts is_aa appended to the search tuple", () => {
   const extended = prepareSearch({
     ...payload,

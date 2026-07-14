@@ -50,7 +50,8 @@
 - duplicate command와 실제 crawl outage의 Operations 상태 증거
 - Operations local 의미 계약의 production 재검증과 duplicate/outage 상태 증거
 - 최대 20~30분 집중 canary의 idle/running/degraded/stale/failed 상태 증거
-- cross-tab user-state 충돌 처리, collection 목차 sheet와 100건 초과 탐색은 실사용 증거 뒤 P1
+- 100건 초과 탐색은 목록 하단 "더 보기"(offset 페이지네이션)로 구현했다. cross-tab user-state
+  충돌 처리와 collection 목차 sheet는 실사용 증거 뒤 P1
 
 문서의 완료 상태는 behavior baseline과 live visual acceptance를 분리한다.
 

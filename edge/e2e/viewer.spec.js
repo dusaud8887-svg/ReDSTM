@@ -92,6 +92,34 @@ async function useCollectionFixture(page, { largeStandalone = false, legacyIndex
   });
 }
 
+async function usePaginationFixture(page, count) {
+  // Only the search index needs the rows; list entries never fetch a post body, so a large
+  // board can be exercised without a payload per post.
+  const posts = Array.from({ length: count }, (_, index) => {
+    const id = count - index; // newest first, matching the default latest sort
+    return ["board_a", id, `글 ${id}`, "작성자", null, "2026-07-11", String(id).padStart(64, "0"), false];
+  });
+  const payloads = new Map([
+    ["release.json", {
+      schema_version: 1,
+      search: { object_key: "search/e2e.json.zst" },
+      collections: { object_key: "collections/e2e.json.zst" },
+    }],
+    ["search/e2e.json.zst", {
+      schema_version: 1,
+      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
+      posts,
+    }],
+    ["collections/e2e.json.zst", { schema_version: 1, collections: [] }],
+  ]);
+  await page.route("**/archive/**", (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const payload = payloads.get(key);
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+}
+
 async function useAccessExpiredFixture(page) {
   await page.route("**/archive/**", (route) => route.fulfill({ status: 403, body: "expired" }));
 }
@@ -125,6 +153,26 @@ test("shows a row skeleton until the archive index is ready", async ({ page }) =
   releaseResponse();
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#result-list")).not.toHaveClass(/loading/);
+});
+
+test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {
+  await usePaginationFixture(page, 150);
+  await page.goto("/search");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+
+  const items = page.locator(".result-item");
+  await expect(items).toHaveCount(100);
+  const more = page.locator("#result-more");
+  await expect(more).toBeVisible();
+  await expect(more).toContainText("남은 50");
+
+  await more.click();
+
+  await expect(items).toHaveCount(150);
+  await expect(more).toBeHidden();
+  // The already-loaded first page is kept and the next page is appended after it.
+  await expect(items.first().locator(".result-title")).toHaveText("글 150");
+  await expect(items.last().locator(".result-title")).toHaveText("글 1");
 });
 
 test("keeps the settings route symmetric", async ({ page }) => {

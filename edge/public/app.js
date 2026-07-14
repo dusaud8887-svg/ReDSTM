@@ -40,9 +40,12 @@ const elements = Object.fromEntries(
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-bookmark", "reader-bottom-next", "reader-bottom-settings",
     "post-settings-actions", "settings-bookmark", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
     "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
+    "result-more",
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
+
+const RESULT_PAGE_SIZE = 100;
 
 let userState = loadUserState();
 let settings;
@@ -60,6 +63,8 @@ let currentView = "all";
 let currentDestination = "library";
 let messageId = 0;
 let searchRequestId = 0;
+let resultTotal = 0;
+let searchAppend = false;
 let scrollTimer;
 let searchTimer;
 let postController;
@@ -637,15 +642,22 @@ function handleWorkerMessage({ data }) {
     return;
   }
   if (data.type === "results" && data.id === searchRequestId && currentView === "all") {
-    renderResults(data.posts, `${data.total.toLocaleString("ko-KR")}건 · ${data.elapsedMs.toFixed(1)}ms`);
+    resultTotal = data.total;
+    if (searchAppend) appendResults(data.posts);
+    else renderResults(data.posts, `${data.total.toLocaleString("ko-KR")}건 · ${data.elapsedMs.toFixed(1)}ms`);
   }
 }
 
-function requestSearch() {
+function requestSearch(offset = 0) {
   currentView = "all";
   updateTabs();
   const id = ++messageId;
   searchRequestId = id;
+  searchAppend = offset > 0;
+  if (searchAppend) {
+    elements["result-more"].disabled = true;
+    elements["result-more"].textContent = "불러오는 중…";
+  }
   searchWorker.postMessage({
     type: "search",
     id,
@@ -653,8 +665,27 @@ function requestSearch() {
     boardId: elements["board-filter"].value,
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
-    limit: 100,
+    limit: RESULT_PAGE_SIZE,
+    offset,
   });
+}
+
+function loadMoreResults() {
+  if (currentView !== "all" || renderedResults.length >= resultTotal) return;
+  requestSearch(renderedResults.length);
+}
+
+function updateLoadMore() {
+  const more = elements["result-more"];
+  const remaining = currentView === "all" ? resultTotal - renderedResults.length : 0;
+  if (remaining > 0) {
+    more.hidden = false;
+    more.disabled = false;
+    more.textContent = `더 보기 · 남은 ${remaining.toLocaleString("ko-KR")}건`;
+  } else {
+    more.hidden = true;
+    more.disabled = true;
+  }
 }
 
 function localResults(entries) {
@@ -676,55 +707,76 @@ function renderCurrentView() {
   renderResults(posts, `${label} ${posts.length}건 · 이 브라우저`);
 }
 
+function resultItemElement(post, index, readIdentities, savedIdentities) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "result-item";
+  button.dataset.index = index;
+  button.classList.toggle("active", samePost(post, currentSummary));
+  const title = document.createElement("strong");
+  title.className = "result-title";
+  title.textContent = post.title || "제목 없음";
+  const titleLine = document.createElement("span");
+  titleLine.className = "result-title-line";
+  const badges = document.createElement("span");
+  badges.className = "result-badges";
+  const identity = postIdentity(post);
+  for (const [visible, label] of [
+    [post.is_aa === true, "AA"], [savedIdentities.has(identity), "저장"], [readIdentities.has(identity), "읽음"],
+  ]) {
+    if (!visible) continue;
+    const badge = document.createElement("span");
+    badge.textContent = label;
+    badges.append(badge);
+  }
+  titleLine.append(title);
+  if (badges.childElementCount) titleLine.append(badges);
+  const meta = document.createElement("span");
+  meta.className = "result-meta";
+  for (const [text, className] of [
+    [post.board_id, "result-board"], [post.author || "작성자 없음", ""], [post.created_at_raw || "날짜 없음", ""],
+  ]) {
+    const part = document.createElement("span");
+    part.className = className;
+    part.textContent = text;
+    meta.append(part);
+  }
+  button.append(titleLine, meta);
+  item.append(button);
+  return item;
+}
+
+function stateIdentities() {
+  return {
+    read: new Set(historyEntries.map((entry) => postIdentity(entry.summary)).filter(Boolean)),
+    saved: new Set(bookmarks.map((entry) => postIdentity(entry.summary)).filter(Boolean)),
+  };
+}
+
 function renderResults(posts, status) {
   renderedResults = posts;
   elements["result-status"].textContent = status;
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
-  const readIdentities = new Set(historyEntries.map((entry) => postIdentity(entry.summary)).filter(Boolean));
-  const savedIdentities = new Set(bookmarks.map((entry) => postIdentity(entry.summary)).filter(Boolean));
+  const { read, saved } = stateIdentities();
   const fragment = document.createDocumentFragment();
-  posts.forEach((post, index) => {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "result-item";
-    button.dataset.index = index;
-    button.classList.toggle("active", samePost(post, currentSummary));
-    const title = document.createElement("strong");
-    title.className = "result-title";
-    title.textContent = post.title || "제목 없음";
-    const titleLine = document.createElement("span");
-    titleLine.className = "result-title-line";
-    const badges = document.createElement("span");
-    badges.className = "result-badges";
-    const identity = postIdentity(post);
-    for (const [visible, label] of [
-      [post.is_aa === true, "AA"], [savedIdentities.has(identity), "저장"], [readIdentities.has(identity), "읽음"],
-    ]) {
-      if (!visible) continue;
-      const badge = document.createElement("span");
-      badge.textContent = label;
-      badges.append(badge);
-    }
-    titleLine.append(title);
-    if (badges.childElementCount) titleLine.append(badges);
-    const meta = document.createElement("span");
-    meta.className = "result-meta";
-    for (const [text, className] of [
-      [post.board_id, "result-board"], [post.author || "작성자 없음", ""], [post.created_at_raw || "날짜 없음", ""],
-    ]) {
-      const part = document.createElement("span");
-      part.className = className;
-      part.textContent = text;
-      meta.append(part);
-    }
-    button.append(titleLine, meta);
-    item.append(button);
-    fragment.append(item);
-  });
+  posts.forEach((post, index) => fragment.append(resultItemElement(post, index, read, saved)));
   elements["result-list"].append(fragment);
+  updateLoadMore();
   restoreCatalogPosition();
+}
+
+// Append the next page in place so paging deeper keeps the already-loaded rows, the reader's
+// prev/next-post adjacency, and the current scroll position instead of resetting the list.
+function appendResults(posts) {
+  const { read, saved } = stateIdentities();
+  const fragment = document.createDocumentFragment();
+  const base = renderedResults.length;
+  posts.forEach((post, index) => fragment.append(resultItemElement(post, base + index, read, saved)));
+  elements["result-list"].append(fragment);
+  renderedResults = renderedResults.concat(posts);
+  updateLoadMore();
 }
 
 async function loadCollections() {
@@ -1124,6 +1176,7 @@ for (const filter of [elements["board-filter"], elements["mode-filter"], element
     renderCurrentView();
   });
 }
+elements["result-more"].addEventListener("click", loadMoreResults);
 for (const tab of document.querySelectorAll("[data-view]")) {
   tab.addEventListener("click", () => {
     currentView = tab.dataset.view;
