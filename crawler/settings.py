@@ -8,7 +8,22 @@ NEWSPIDER_MODULE = "crawler.spiders"
 # Disabling this also removes the per-process robots fetch, which stalled for minutes
 # during origin degradation before any listing request could start.
 ROBOTSTXT_OBEY = False
-USER_AGENT = "ReDSTM/0.1 (+personal archival tool; single user)"
+# The archive requests the same pages a logged-in member sees in a browser, so it presents
+# a browser footprint rather than a self-identifying bot token, which gnuboard/Apache WAFs
+# and rate limiters commonly filter. Login and crawl share this exact string (crawl_cycle
+# passes USER_AGENT into the session handshake) so the whole footprint stays consistent.
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+# Browser-consistent negotiation headers. Accept-Encoding is intentionally left to Scrapy's
+# HttpCompressionMiddleware so it advertises exactly what it can decode.
+REDSTM_ACCEPT = (
+    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+    "image/avif,image/webp,image/apng,*/*;q=0.8"
+)
+REDSTM_ACCEPT_LANGUAGE = "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+DEFAULT_REQUEST_HEADERS = {"Accept": REDSTM_ACCEPT, "Accept-Language": REDSTM_ACCEPT_LANGUAGE}
 CONCURRENT_REQUESTS = 1
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
 DOWNLOAD_DELAY = 10.0

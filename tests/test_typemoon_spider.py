@@ -43,6 +43,15 @@ def test_policy_settings_and_urls_are_conservative() -> None:
     assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 1
     assert settings.RETRY_TIMES == 2
     assert settings.RETRY_HTTP_CODES == [408, 500, 502, 503, 504, 522, 524]
+
+
+def test_request_footprint_matches_a_browser_member() -> None:
+    # A consistent browser footprint (real UA + negotiation headers) is the primary
+    # anti-blocking measure; a self-identifying bot token is the first thing WAFs filter.
+    assert settings.USER_AGENT.startswith("Mozilla/5.0") and "Chrome/" in settings.USER_AGENT
+    assert settings.DEFAULT_REQUEST_HEADERS["Accept"].startswith("text/html")
+    assert settings.DEFAULT_REQUEST_HEADERS["Accept-Language"].startswith("ko-KR")
+    assert "Accept-Encoding" not in settings.DEFAULT_REQUEST_HEADERS
     assert TypeMoonSpider.listing_url("write_free21") == "https://www.typemoon.net/write_free21"
     assert TypeMoonSpider.listing_url("write_free21", page=2).endswith("?page=2")
     with pytest.raises(ValueError):
@@ -310,6 +319,57 @@ def test_login_form_structure_is_auth_failure_without_phrase_match() -> None:
     item = list(TypeMoonSpider().parse_detail(response))[0]
     assert item["outcome"] == "fetch_failed"
     assert item["warnings"] == ["auth_required"]
+
+
+def test_listing_pagination_carries_previous_page_as_referer() -> None:
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    session = SessionExport((), now, now + timedelta(hours=1), "member-agent")
+    spider = TypeMoonSpider()
+
+    first = spider.listing_request("write_free21", page=1, session=session)
+    assert b"Referer" not in first.headers
+
+    paged = spider.listing_request(
+        "write_free21",
+        page=2,
+        session=session,
+        referer="https://www.typemoon.net/write_free21",
+    )
+    assert paged.headers["Referer"] == b"https://www.typemoon.net/write_free21"
+    assert paged.headers["User-Agent"] == b"member-agent"
+
+
+def test_anti_bot_interstitial_detail_backs_off_as_network_failure() -> None:
+    url = "https://www.typemoon.net/write_free21/62068"
+    response = HtmlResponse(
+        url=url,
+        headers={"Server": "cloudflare"},
+        body=b"<html><body>Attention Required! | Cloudflare</body></html>",
+        encoding="utf-8",
+        request=Request(url=url),
+    )
+
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+
+    assert item["outcome"] == "fetch_failed"
+    assert item["error_code"] == "network_error"
+    assert item["warnings"] == ["source_blocked"]
+
+
+def test_anti_bot_interstitial_listing_trips_network_breaker_not_parse_drift() -> None:
+    url = "https://www.typemoon.net/write_free21"
+    response = HtmlResponse(
+        url=url,
+        body="<html><body>비정상적인 접근이 차단되었습니다.</body></html>".encode(),
+        encoding="utf-8",
+        request=Request(url=url),
+    )
+
+    assert list(TypeMoonSpider().parse_listing(response)) == []
+    assert TypeMoonSpider().failure_codes == set()  # fresh spider is unaffected
+    spider = TypeMoonSpider()
+    list(spider.parse_listing(response))
+    assert spider.failure_codes == {"network_error"}
 
 
 def test_root_aa_class_alone_does_not_force_aa_mode() -> None:

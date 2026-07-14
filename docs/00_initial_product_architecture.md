@@ -1043,6 +1043,15 @@ storage_error
 - listing/detail timeout은 180/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
   10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
   보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
+- 요청 발자국(footprint)은 로그인한 회원의 브라우저와 일관되게 맞춘다: 자기식별 봇 token 대신 실제
+  브라우저 `USER_AGENT`, `Accept`/`Accept-Language`(`DEFAULT_REQUEST_HEADERS`, `Accept-Encoding`은
+  Scrapy 압축 middleware가 관리), page 이동·상세 진입에 자연스러운 `Referer` 체인을 쓴다. 로그인
+  handshake(`crawler.session`)도 같은 UA와 negotiation header를 보낸다. 이는 gnuboard/Apache WAF나
+  rate limiter가 봇 token을 우선 차단하는 것을 피하기 위한 것이고, 인증 회원이 브라우저로 보는 것과
+  같은 페이지를 같은 발자국으로 받는다. 요청 간격 10초·동시성 1은 그대로 유지한다.
+- 봇 차단·challenge interstitial(Cloudflare/WAF)이 게시글/목록 자리에 오면 parse drift가 아니라
+  `network_error`로 분류해 site-wide backoff breaker를 태우고 frontier attempt를 보존한다. 이 판정은
+  기대 구조가 이미 없는 응답에서만 하므로 그 문구를 인용한 정상 글에는 영향이 없다.
 - `DOWNLOAD_FAIL_ON_DATALOSS=False`는 잘린 응답을 정상 parse하기 위한 fallback이 아니다. WARC가
   raw response를 보존한 뒤 listing은 같은 URL을 기존 총 3회 예산 안에서 다시 받고, 모두 잘렸을
   때만 coverage 갱신 없이 다음 cycle로 넘긴다. detail은 `network_error` retry로 닫는다. 설명되지

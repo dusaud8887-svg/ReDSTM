@@ -118,9 +118,11 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 현재 crawler는 global/domain/detail concurrency 1과 요청 시작 간 10초 고정 delay를 유지한다.
 robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTXT_OBEY=False`), 10초 간격은
-원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. listing/detail timeout은 180초로 같고, 원본
-outage에서는 cycle/recovery 모두 `site_unreachable`로 조기 종료하며 그 run의 network attempt를
-보존한다. Oracle canonical live는 schema v3이고
+원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. 요청은 로그인 회원의 브라우저와 일관된 발자국
+(실제 브라우저 UA, `Accept`/`Accept-Language`, page·detail `Referer` 체인; 로그인 handshake도 동일)을
+보내 WAF/rate limiter의 봇 차단을 피하고, 봇 차단·challenge 페이지가 오면 parse drift가 아니라
+`network_error`로 backoff한다. listing/detail timeout은 180초로 같고, 원본 outage에서는 cycle/recovery
+모두 `site_unreachable`로 조기 종료하며 그 run의 network attempt를 보존한다. Oracle canonical live는 schema v3이고
 repository target은 listing 댓글 기대값과 마지막 증분 게시글을 함께 보존하는 additive schema v4다.
 자동 모드는 최신 page incremental만 6시간마다 실행한다. 이전 기준 게시글이 나온 page 뒤 2 page를
 더 확인하고, 이미 다른 cycle이 실행 중이면 새 cycle은 `busy`로 통과한다. 전체 목차와 전체 본문은

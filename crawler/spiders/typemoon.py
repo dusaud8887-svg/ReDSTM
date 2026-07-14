@@ -57,6 +57,26 @@ _ABSENT_PHRASES = (
     "없는 게시물",
     "이미 삭제",
 )
+# WAF / anti-bot interstitial markers. When a request that should return a post or listing
+# instead returns one of these (a challenge or block page), it is treated as a transport
+# failure (network_error) so the site-wide backoff breaker fires and attempts are preserved,
+# rather than filing it as parse drift or a normal empty page. These are only consulted when
+# the expected structure is already missing, so a real post quoting the words is unaffected.
+_BLOCK_PHRASES = (
+    "cf-browser-verification",
+    "checking your browser",
+    "attention required",
+    "cloudflare",
+    "ray id",
+    "access denied",
+    "잠시 후 다시",
+    "접근이 차단",
+    "차단되었습니다",
+    "비정상적인 접근",
+    "보안정책",
+    "보안 정책",
+    "too many requests",
+)
 _CONTENT_SELECTORS = (
     "div.wr-content",
     ".board-view-con-mobile.view-content",
@@ -206,6 +226,15 @@ def _looks_restricted(response: scrapy.http.HtmlResponse) -> bool:
 def _looks_absent(response: scrapy.http.HtmlResponse) -> bool:
     visible_text = " ".join(response.css("body ::text").getall())
     return any(phrase in visible_text for phrase in _ABSENT_PHRASES)
+
+
+def _looks_blocked(response: scrapy.http.HtmlResponse) -> bool:
+    # A Cloudflare/WAF layer in front of the origin's own Apache is a strong block signal.
+    server = (response.headers.get("Server") or b"").decode("latin-1", "ignore").casefold()
+    if "cloudflare" in server or response.headers.get("cf-ray") is not None:
+        return True
+    visible_text = " ".join(response.css("body ::text").getall()).casefold()
+    return any(phrase in visible_text for phrase in _BLOCK_PHRASES)
 
 
 def _is_aa(board_id: str, category: str | None, content: Selector) -> bool:
@@ -421,7 +450,9 @@ class TypeMoonSpider(scrapy.Spider):
             callback=self.parse_detail,
             errback=self.detail_error if self.store is not None else None,
             cookies=session.as_scrapy_cookies(),
-            headers={"User-Agent": session.user_agent},
+            # A member reaches a post by clicking it from the board listing, so the detail
+            # request carries the board page as its Referer to match that navigation.
+            headers={"User-Agent": session.user_agent, "Referer": self.listing_url(board_id)},
             meta={
                 "cookiejar": 1,
                 "redstm_capture": True,
@@ -466,14 +497,26 @@ class TypeMoonSpider(scrapy.Spider):
         return error_code
 
     def listing_request(
-        self, board_id: str, *, page: int = 1, session: SessionExport | None = None
+        self,
+        board_id: str,
+        *,
+        page: int = 1,
+        session: SessionExport | None = None,
+        referer: str | None = None,
     ) -> scrapy.Request:
+        headers: dict[str, str] | None = None
+        if session is not None:
+            headers = {"User-Agent": session.user_agent}
+            # Paging deeper into a board is natural navigation from the previous page; the
+            # first page of a board has no in-site Referer, matching a fresh visit.
+            if referer is not None:
+                headers["Referer"] = referer
         return scrapy.Request(
             self.listing_url(board_id, page=page),
             callback=self.parse_listing,
             errback=self.listing_error if self.store is not None else None,
             cookies=session.as_scrapy_cookies() if session is not None else None,
-            headers={"User-Agent": session.user_agent} if session is not None else None,
+            headers=headers,
             meta={
                 "cookiejar": 1,
                 "redstm_capture": True,
@@ -573,6 +616,16 @@ class TypeMoonSpider(scrapy.Spider):
             self._halted = True
             self.logger.error(
                 "TypeMoon listing session is no longer authenticated: %s", response.url
+            )
+            return
+        if not response.css("tbody") and _looks_blocked(response):
+            # An anti-bot interstitial instead of the board table: classify as a network
+            # failure so the cycle's site-wide breaker fires and attempts are preserved,
+            # not as parse drift against the listing parser.
+            self.failure_codes.add("network_error")
+            self._halted = True
+            self.logger.error(
+                "TypeMoon listing appears blocked by an interstitial: %s", response.url
             )
             return
         if not response.css("tbody"):
@@ -720,7 +773,10 @@ class TypeMoonSpider(scrapy.Spider):
             and not self._stop_requested()
         ):
             yield self.listing_request(
-                self.start_board_id or "", page=page + 1, session=self.session
+                self.start_board_id or "",
+                page=page + 1,
+                session=self.session,
+                referer=response.url,
             )
         yield from self._next_detail_requests()
 
@@ -881,6 +937,19 @@ class TypeMoonSpider(scrapy.Spider):
             return
         title = _first_text(response, _TITLE_SELECTORS)
         content = _content_root(response)
+        if content is None and _looks_blocked(response):
+            # An anti-bot interstitial where a post body should be: back off the whole site
+            # (network breaker) rather than filing parse drift against the detail parser.
+            yield CapturedPostItem(
+                board_id=board_id,
+                external_post_id=external_post_id,
+                canonical_url=canonical_url,
+                outcome="fetch_failed",
+                error_code="network_error",
+                warnings=["source_blocked"],
+                **capture_metadata,
+            )
+            return
         if content is None and _has_login_form(response):
             yield CapturedPostItem(
                 board_id=board_id,

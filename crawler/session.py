@@ -18,6 +18,8 @@ from filelock import FileLock, Timeout
 from parsel import Selector
 
 from crawler.settings import (
+    REDSTM_ACCEPT,
+    REDSTM_ACCEPT_LANGUAGE,
     REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECONDS,
     REDSTM_SESSION_HTML_MAX_BYTES,
     REDSTM_SESSION_LIFETIME_SECONDS,
@@ -41,6 +43,19 @@ _LOGIN_PAGE_URL = f"{_BASE_URL}bbs/login.php"
 _LOGIN_CHECK_URL = f"{_BASE_URL}bbs/login_check.php"
 _SESSION_LIFETIME = timedelta(seconds=REDSTM_SESSION_LIFETIME_SECONDS)
 _AUTO_LOGIN_MIN_INTERVAL = timedelta(seconds=REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECONDS)
+
+
+def _handshake_headers(user_agent: str, **extra: str) -> dict[str, str]:
+    # The session handshake is where a WAF first sees the client, so it presents the same
+    # browser negotiation headers the Scrapy crawl uses (see crawler.settings). Connection
+    # stays close because these are short one-shot urllib exchanges.
+    return {
+        "User-Agent": user_agent,
+        "Accept": REDSTM_ACCEPT,
+        "Accept-Language": REDSTM_ACCEPT_LANGUAGE,
+        "Connection": "close",
+        **extra,
+    }
 
 
 class SessionRefreshError(RuntimeError):
@@ -242,10 +257,7 @@ def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool
     try:
         home_html = _read_html(
             opener.open(
-                Request(
-                    _BASE_URL,
-                    headers={"User-Agent": session.user_agent, "Connection": "close"},
-                ),
+                Request(_BASE_URL, headers=_handshake_headers(session.user_agent)),
                 timeout=timeout,
             ),
             complete=_has_auth_marker,
@@ -278,10 +290,7 @@ def refresh_session_export(
     try:
         login_html = _read_html(
             opener.open(
-                Request(
-                    _LOGIN_PAGE_URL,
-                    headers={"User-Agent": user_agent, "Connection": "close"},
-                ),
+                Request(_LOGIN_PAGE_URL, headers=_handshake_headers(user_agent)),
                 timeout=timeout,
             ),
             complete=_has_login_form,
@@ -300,20 +309,14 @@ def refresh_session_export(
         request = Request(
             action,
             data=urlencode(fields).encode("utf-8"),
-            headers={
-                "User-Agent": user_agent,
-                "Referer": _LOGIN_PAGE_URL,
-                "Origin": _BASE_URL.rstrip("/"),
-                "Connection": "close",
-            },
+            headers=_handshake_headers(
+                user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
+            ),
         )
         opener.open(request, timeout=timeout).close()
         home_html = _read_html(
             opener.open(
-                Request(
-                    _BASE_URL,
-                    headers={"User-Agent": user_agent, "Connection": "close"},
-                ),
+                Request(_BASE_URL, headers=_handshake_headers(user_agent, Referer=_LOGIN_PAGE_URL)),
                 timeout=timeout,
             ),
             complete=_has_auth_marker,

@@ -61,6 +61,7 @@ def test_valid_session_builds_captured_detail_request_without_repr_leak(tmp_path
     assert isinstance(request.cookies, list)
     assert request.cookies[0]["value"] == "cookie-secret"
     assert request.headers["User-Agent"] == b"ReDSTM-test/1.0"
+    assert request.headers["Referer"] == b"https://www.typemoon.net/write_free21"
     assert b"Cookie" not in request.headers
     assert request.meta["cookiejar"] == 1
     assert request.meta["redstm_capture"] is True
