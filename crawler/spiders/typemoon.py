@@ -455,8 +455,7 @@ class TypeMoonSpider(scrapy.Spider):
         """
         if self.impersonate_browser:
             cookies: Any = {
-                str(cookie["name"]): str(cookie["value"])
-                for cookie in session.as_scrapy_cookies()
+                str(cookie["name"]): str(cookie["value"]) for cookie in session.as_scrapy_cookies()
             }
             headers = {"Accept-Language": REDSTM_ACCEPT_LANGUAGE, "Sec-Fetch-Site": sec_fetch_site}
             if referer is not None:

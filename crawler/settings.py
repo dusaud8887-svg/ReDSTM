@@ -66,9 +66,7 @@ COOKIES_ENABLED = True
 TELNETCONSOLE_ENABLED = False
 LOG_LEVEL = "INFO"
 
-DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {
-    "crawler.middlewares.WarcCaptureMiddleware": 595
-}
+DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {"crawler.middlewares.WarcCaptureMiddleware": 595}
 ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}
 
 # Optional TLS/JA3 fingerprint impersonation (off unless REDSTM_IMPERSONATE_BROWSER is set).

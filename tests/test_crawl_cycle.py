@@ -83,8 +83,7 @@ def test_inventory_cycle_with_full_coverage_reports_success(
     args.inventory_since = "2026-07-12T00:00:00Z"
     with connect_archive(args.archive) as connection:
         connection.execute(
-            "UPDATE boards SET inventory_next_page = 1, "
-            "last_inventory_at = '2026-07-13T00:00:00Z'"
+            "UPDATE boards SET inventory_next_page = 1, last_inventory_at = '2026-07-13T00:00:00Z'"
         )
 
     def refuse(*_args: object, **_kwargs: object) -> None:
