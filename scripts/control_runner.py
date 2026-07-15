@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -101,6 +102,13 @@ _PROGRESS_EVENT_SEQUENCE_BASE = 1000
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _is_archive_locked(error: BaseException) -> bool:
+    # journal_mode=DELETE means any long reader/writer (orphaned crawl child, backup,
+    # export) surfaces here as OperationalError("database is locked") after the busy
+    # timeout; the distinct safe code separates it from real runner defects on /ops.
+    return isinstance(error, sqlite3.OperationalError) and "lock" in str(error).casefold()
 
 
 def _normalized_timestamp(value: object) -> str | None:
@@ -345,14 +353,15 @@ class ControlRunner:
             try:
                 report = self._execute_action(action, run_id, run_id)
                 action_state, safe_code, payload = self._result(action, report)
-            except OSError, RuntimeError, ValueError, sqlite3.Error:
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
                 # sqlite3.Error covers a canonical archive held by another process
                 # (orphaned crawl child, backup/export); crashing here would leave the
                 # run unreported instead of closing it as a runner failure.
                 report = {}
                 action_state = "failed"
-                safe_code = "runner_failed"
-                payload = self._finish_payload("failed", "runner_failed")
+                safe_code = "archive_locked" if _is_archive_locked(error) else "runner_failed"
+                self._write_command_diagnostics(run_id, action, error)
+                payload = self._finish_payload("failed", safe_code)
             if action == "sync-now":
                 crawl_status = str(report.get("status", "failed"))
             if report.get("stop_reason") == "schedule_paused":
@@ -587,9 +596,10 @@ class ControlRunner:
             finish_payload["counters"] = _sum_collection_counters(
                 finish_payload["counters"], progress_offset
             )
-        except OSError, RuntimeError, ValueError, sqlite3.Error:
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
             state = "failed"
-            safe_code = "runner_failed"
+            safe_code = "archive_locked" if _is_archive_locked(error) else "runner_failed"
+            self._write_command_diagnostics(command_id, action, error)
             finish_payload = self._finish_payload(state, safe_code, progress_offset)
         terminal = self.store.finish_command(
             command_id,
@@ -1267,10 +1277,11 @@ class ControlRunner:
         marker = self.profile.state_dir / _INVENTORY_STARTED
         payload = self._marker_payload(marker)
         existing = self._inventory_marker_time(marker, "started_at")
-        if payload is not None and existing is not None:
-            if payload.get("board_id") != board_id:
-                raise RuntimeError("an inventory pass with a different scope is active")
+        if payload is not None and existing is not None and payload.get("board_id") == board_id:
             return existing.isoformat(timespec="seconds").replace("+00:00", "Z")
+        # A checkpoint with another scope belongs to an earlier interrupted command whose
+        # own record is already closed; the freshly requested scope supersedes it. Commands
+        # are serialized behind control.lock, so this never clobbers an active pass.
         started_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
         with archive_transaction(self.profile.archive) as connection:
             where = "board_id = ? AND is_enabled = 1" if board_id else "is_enabled = 1"
@@ -1318,13 +1329,16 @@ class ControlRunner:
             started_at = payload.get("started_at")
             max_rowid = payload.get("max_rowid")
             if (
-                payload.get("board_id") != board_id
-                or not isinstance(started_at, str)
-                or type(max_rowid) is not int
-                or max_rowid < 0
+                payload.get("board_id") == board_id
+                and isinstance(started_at, str)
+                and type(max_rowid) is int
+                and max_rowid >= 0
             ):
-                raise RuntimeError("full-content checkpoint is invalid or has another scope")
-            return started_at, max_rowid
+                return started_at, max_rowid
+            # An invalid or differently scoped checkpoint belongs to an earlier
+            # interrupted command whose record is already closed; the freshly requested
+            # scope starts its own pass instead of wedging every future full-content
+            # command behind the stale marker.
         with archive_transaction(self.profile.archive, read_only=True) as connection:
             board_filter = " WHERE board_id = ?" if board_id is not None else ""
             parameters = (board_id,) if board_id is not None else ()
@@ -1484,6 +1498,23 @@ class ControlRunner:
             ValueError,
             sqlite3.Error,
         ):
+            return
+
+    def _write_command_diagnostics(
+        self, command_id: str, action: str, error: BaseException
+    ) -> None:
+        # Local triage only, never uploaded: /ops carries safe codes exclusively, which
+        # left runner_failed commands undiagnosable without journald access. The trace
+        # contains paths and exception text, not page bodies, cookies, or credentials.
+        try:
+            directory = self.profile.report_dir / "commands"
+            directory.mkdir(parents=True, exist_ok=True)
+            trace = "".join(traceback.format_exception(error))
+            (directory / f"{command_id}.error.txt").write_text(
+                f"{_timestamp()} {action}\n{trace[-8192:]}",
+                encoding="utf-8",
+            )
+        except OSError:
             return
 
     @staticmethod

@@ -328,7 +328,7 @@ def test_listing_pagination_carries_previous_page_as_referer() -> None:
 
     first = spider.listing_request("write_free21", page=1, session=session)
     assert b"Referer" not in first.headers
-    assert first.headers["Connection"] == b"close"
+    assert b"Connection" not in first.headers
 
     paged = spider.listing_request(
         "write_free21",
@@ -338,7 +338,7 @@ def test_listing_pagination_carries_previous_page_as_referer() -> None:
     )
     assert paged.headers["Referer"] == b"https://www.typemoon.net/write_free21"
     assert paged.headers["User-Agent"] == b"member-agent"
-    assert paged.headers["Connection"] == b"close"
+    assert b"Connection" not in paged.headers
 
 
 def test_anti_bot_interstitial_detail_backs_off_as_network_failure() -> None:

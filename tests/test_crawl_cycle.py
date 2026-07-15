@@ -73,6 +73,34 @@ def test_inventory_prioritizes_in_progress_and_skips_boards_completed_in_this_pa
     assert _boards(args.archive, inventory=True, inventory_since=started_at) == ["b", "c"]
 
 
+def test_inventory_cycle_with_full_coverage_reports_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A resumed full-catalog can find every board already covered since the pass epoch;
+    # an empty cycle is completion, not "no enabled boards".
+    args = _args(tmp_path)
+    args.inventory = True
+    args.inventory_since = "2026-07-12T00:00:00Z"
+    with connect_archive(args.archive) as connection:
+        connection.execute(
+            "UPDATE boards SET inventory_next_page = 1, "
+            "last_inventory_at = '2026-07-13T00:00:00Z'"
+        )
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("no worker may run when inventory coverage is complete")
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", refuse)
+
+    report = run_cycle(args)
+
+    assert report["ok"] is True
+    assert report["status"] == "succeeded"
+    assert report["inventory_coverage_complete"] is True
+    assert report["boards"] == []
+    assert report["changed_posts"] == 0
+
+
 def test_cycle_runs_enabled_boards_sequentially(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

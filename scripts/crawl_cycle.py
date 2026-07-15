@@ -190,6 +190,32 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         inventory_since=getattr(args, "inventory_since", None),
     )
     if not boards:
+        inventory_since = getattr(args, "inventory_since", None)
+        if (
+            args.inventory
+            and inventory_since is not None
+            and _boards(args.archive, board_id=getattr(args, "board", None), inventory=True)
+        ):
+            # Every enabled board is already covered since the pass epoch: a resumed
+            # full-catalog whose previous cycle finished the last board. Nothing left
+            # to fetch is completion, not failure — report success so the runner can
+            # close the pass checkpoint.
+            return {
+                "ok": True,
+                "cycle_id": f"cycle-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
+                f"{uuid.uuid4().hex[:8]}",
+                "status": "succeeded",
+                "board_count": 0,
+                "completed_boards": 0,
+                "changed_posts": 0,
+                "failed_posts": 0,
+                "boards_ok": 0,
+                "boards_failed": 0,
+                "preserved_attempts": 0,
+                "stop_reason": None,
+                "boards": [],
+                "inventory_coverage_complete": True,
+            }
         raise ValueError("canonical archive has no enabled boards")
 
     locks = ExitStack()
@@ -407,7 +433,19 @@ def main() -> int:
     try:
         report = run_cycle(args)
     except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
-        report = {"ok": False, "error": type(error).__name__, "message": str(error)}
+        report = {
+            "ok": False,
+            "status": "failed",
+            "error": type(error).__name__,
+            "message": str(error),
+        }
+        # Contention over the canonical archive (another cycle/sync holding the file
+        # lock, or sqlite's own busy lock) gets a distinct safe code so /ops explains
+        # the failure instead of showing a generic one.
+        held = isinstance(error, RuntimeError) and "another crawl cycle" in str(error)
+        busy = isinstance(error, sqlite3.OperationalError) and "lock" in str(error).casefold()
+        if held or busy:
+            report["safe_code"] = "archive_locked"
     if args.output is not None:
         _write_report(args.output, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

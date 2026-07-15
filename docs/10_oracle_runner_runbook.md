@@ -160,8 +160,10 @@ R2 writer key와 Access service token은 별도 credential file로만
 - canonical archive는 `journal_mode=DELETE`(reader가 writer를 막음)에 busy timeout 5초라, 고아
   crawl child나 backup/export가 archive를 잡고 있으면 command 시작 단계의 board UPDATE가 sqlite
   오류로 끝날 수 있다. 예전 빌드는 이때 unhandled 오류로 죽어 checkpoint 없는 `미보고`를
-  남겼고, 현재 빌드는 sqlite 오류를 `runner_failed`로 보고하고 command를 종결한다. `/ops` 증상은
-  항상 배포된 빌드의 동작이므로 repo 수정은 release deploy 뒤에만 반영된다.
+  남겼고, 현재 빌드는 sqlite lock 오류와 crawl file lock 충돌을 `archive_locked`로, 그 외
+  내부 오류를 `runner_failed`로 보고하고 command를 종결한다. 두 경우 모두 원인 traceback이
+  `<report-dir>/commands/<command-id>.error.txt`(local 전용, 본문/cookie 없음)에 남는다.
+  `/ops` 증상은 항상 배포된 빌드의 동작이므로 repo 수정은 release deploy 뒤에만 반영된다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.

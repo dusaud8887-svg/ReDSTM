@@ -27,6 +27,7 @@ export const safeCodeLabels = {
   scheduled_failed: "예약 실행 실패", run_partial: "일부 항목 미완료",
   run_failed: "실행 실패", run_stale: "실행 종료 신호 누락", runner_failed: "수집기 내부 실패",
   runner_interrupted: "수집기 프로세스 중단 · 진행분은 보존됨",
+  archive_locked: "보관소 파일이 다른 작업에 잠김 · 이전 수집/백업 프로세스 종료 후 재시도",
   full_catalog_no_progress: "전체 목차 진행 없음 · 원본 응답 확인 필요",
   disk_low: "저장 공간 안전 하한 도달 · 진행분 보존 후 수집 중단",
   auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",

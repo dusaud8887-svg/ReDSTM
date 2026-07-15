@@ -659,7 +659,7 @@ def test_interrupted_full_action_without_an_open_checkpoint_is_not_reexecuted(
     assert finish["safe_summary_code"] == "runner_interrupted"
 
 
-def test_locked_archive_during_command_start_reports_runner_failed(
+def test_locked_archive_during_command_start_reports_archive_locked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A canonical archive held by another process (orphaned crawl child, backup) used to
@@ -682,7 +682,9 @@ def test_locked_archive_during_command_start_reports_runner_failed(
     assert row is not None and row["state"] == "failed"
     finish = next(payload for path, payload in api.calls if path.endswith("/finish"))
     assert finish["state"] == "failed"
-    assert finish["safe_summary_code"] == "runner_failed"
+    assert finish["safe_summary_code"] == "archive_locked"
+    diagnostics = runner.profile.report_dir / "commands" / f"{command['command_id']}.error.txt"
+    assert "database is locked" in diagnostics.read_text(encoding="utf-8")
 
 
 def test_permanent_terminal_rejection_does_not_block_the_next_local_command(
@@ -2028,6 +2030,46 @@ def test_full_catalog_refetches_even_after_a_completed_pass(
     assert not (runner.profile.state_dir / "inventory.started").exists()
     assert "--inventory" in commands[0] and "--listing-only" in commands[0]
     assert commands[0][commands[0].index("--inventory-since") + 1] == started_at
+
+
+def test_full_catalog_supersedes_a_stale_checkpoint_with_another_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A board-scoped pass that was interrupted leaves inventory.started behind; a new
+    # full-scope command must start its own pass instead of failing forever behind the
+    # stale marker.
+    runner, _store = _runner(tmp_path, Api([]))
+    runner._write_inventory_marker(
+        runner.profile.state_dir / "inventory.started",
+        {"started_at": "2026-07-12T00:00:00Z", "board_id": "aa"},
+    )
+    commands: list[list[str]] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        started_at = runner._latest_inventory_pass_started_at()
+        assert started_at is not None
+        with connect_archive(runner.profile.archive) as connection:
+            connection.execute(
+                "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ?",
+                (started_at,),
+            )
+        return {"ok": True, "status": "succeeded", "boards": []}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-catalog", "inventory-scope", "inventory-scope", command_id="manual"
+    )
+
+    assert report["safe_code"] == "full_catalog_succeeded"
+    assert len(commands) == 1
+    new_epoch = commands[0][commands[0].index("--inventory-since") + 1]
+    assert new_epoch != "2026-07-12T00:00:00Z"
+    completed = json.loads(
+        (runner.profile.state_dir / "inventory.completed").read_text(encoding="utf-8")
+    )
+    assert completed["board_id"] is None
 
 
 def test_scheduled_run_does_not_start_manual_full_content_recovery(
