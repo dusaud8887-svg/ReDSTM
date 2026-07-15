@@ -275,6 +275,8 @@ GitHub star는 채택 점수가 아니라 후보 발견 신호로만 사용했�
 | [WhiteNoise](https://github.com/evansd/whitenoise) | 약 2.8k, Django 4.2~6.0/Python 3.14 지원 | Worker Static Assets 채택으로 제외 |
 | [Browsertrix Crawler](https://github.com/webrecorder/browsertrix-crawler) / [ReplayWeb.page](https://github.com/webrecorder/replayweb.page) | 약 1.1k / 1.0k, Webrecorder 보존 도구 | 긴급 WACZ capture와 P1 replay에 선택 사용 |
 | [`warcio`](https://github.com/webrecorder/warcio) / [`nh3`](https://github.com/messense/nh3) | 약 459 / 384지만 책임이 좁고 2026 release 존재 | star보다 표준 구현·보안 책임을 우선해 채택 |
+| [`curl_cffi`](https://github.com/lexiforest/curl_cffi) / [`scrapy-impersonate`](https://github.com/jxlil/scrapy-impersonate) | libcurl-impersonate 바인딩과 Scrapy download handler, 2026에도 활발 | header 계층으로 부족할 때만 TLS/JA3 지문 정합에 선택 채택(기본 off, `impersonate` extra); Python `httpx`는 JA3를 안 풀어 제외 |
+| [`dateparser`](https://github.com/scrapinghub/dateparser) | 약 2.9k, 다국어·상대날짜 파서 | gnuboard source 날짜의 한국어 상대표현 정규화에 relative-time 파서만 제한 채택; 절대 포맷은 결정론적 strptime 유지 |
 
 community 조사는 결정을 보조했다.
 

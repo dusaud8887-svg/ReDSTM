@@ -27,6 +27,9 @@ migration·타당성 증거는 `docs/done/`에 둔다.
 - Git
 - Docker는 container 검증 시에만 필요
 
+TLS/JA3 지문 impersonation(기본 off, `REDSTM_IMPERSONATE_BROWSER` 설정 시 활성)은 optional
+의존성이라 필요할 때만 `uv sync --extra impersonate`로 curl_cffi/scrapy-impersonate를 설치한다.
+
 ```powershell
 uv sync --frozen
 uv run pytest
@@ -84,8 +87,12 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 포함:
 
 - Scrapy 기반 TypeMoon listing/detail/restricted/comment parser와 live session refresh
+- 로그인 회원 브라우저 발자국(real UA·client hints·`Sec-Fetch-*`·`Referer` 체인)과 선택적
+  curl_cffi TLS/JA3 impersonation(crawl·로그인 핸드셰이크 공통, `REDSTM_IMPERSONATE_BROWSER`)
+- source 날짜 정규화(결정론적 절대 포맷 + gnuboard 2자리 연도 + base-anchored 단축형 + dateparser
+  한국어 상대표현; 원문 보존)
 - cookie/auth header를 제외하는 pre-decompression WARC capture
-- SQLite frontier lease와 interrupted recovery
+- WAL journal(reader가 crawl writer를 막지 않음)의 canonical SQLite와 frontier lease/interrupted recovery
 - canonical SQLite schema, resumable legacy import와 verification command
 - `.partial` atomic close/1GiB rotation WARC
 - raw hash/WARC capture ledger, atomic frontier transition과 authenticated sync
