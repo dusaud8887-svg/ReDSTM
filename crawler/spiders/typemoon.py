@@ -15,6 +15,7 @@ from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
 from crawler.settings import (
+    REDSTM_ACCEPT_LANGUAGE,
     REDSTM_CIRCUIT_BREAKER_FAILURES,
     REDSTM_DETAIL_CONCURRENCY,
     REDSTM_FRONTIER_LEASE_SECONDS,
@@ -350,11 +351,15 @@ class TypeMoonSpider(scrapy.Spider):
         overlap_pages: int = REDSTM_INCREMENTAL_OVERLAP_PAGES,
         detail_concurrency: int = REDSTM_DETAIL_CONCURRENCY,
         pause_file: str | Path | None = None,
+        impersonate_browser: str = "",
     ) -> None:
         super().__init__()
         if board_id is not None and not _BOARD_ID_PATTERN.fullmatch(board_id):
             raise ValueError(f"invalid TypeMoon board id: {board_id!r}")
         self.start_board_id = board_id
+        # Empty unless TLS impersonation is enabled; when set (e.g. "chrome131") curl_cffi's
+        # download handler owns the fingerprint and each request carries meta["impersonate"].
+        self.impersonate_browser = str(impersonate_browser)
         self.archive_path = Path(archive_path) if archive_path is not None else None
         self.run_id = run_id
         self.session = session
@@ -433,6 +438,35 @@ class TypeMoonSpider(scrapy.Spider):
             raise ValueError("external_post_id must be positive")
         return f"{_BASE_URL}/{board_id}/{external_post_id}"
 
+    def _footprint(
+        self,
+        session: SessionExport,
+        *,
+        sec_fetch_site: str,
+        referer: str | None,
+    ) -> tuple[Any, dict[str, str], dict[str, str]]:
+        """Cookies, headers, and extra meta for a request under the active footprint mode.
+
+        Under TLS impersonation curl_cffi supplies the UA and client hints, so the request
+        only carries navigation context (Referer, Sec-Fetch-Site, member Accept-Language) and
+        the session cookies as a flat name->value map (curl_cffi's Scrapy bridge mangles the
+        verbose cookie format). Otherwise it is the plain HTTP/1.1 footprint: explicit UA and
+        the verbose cookie list Scrapy's CookiesMiddleware expects.
+        """
+        if self.impersonate_browser:
+            cookies: Any = {
+                str(cookie["name"]): str(cookie["value"])
+                for cookie in session.as_scrapy_cookies()
+            }
+            headers = {"Accept-Language": REDSTM_ACCEPT_LANGUAGE, "Sec-Fetch-Site": sec_fetch_site}
+            if referer is not None:
+                headers["Referer"] = referer
+            return cookies, headers, {"impersonate": self.impersonate_browser}
+        headers = {"User-Agent": session.user_agent, "Sec-Fetch-Site": sec_fetch_site}
+        if referer is not None:
+            headers["Referer"] = referer
+        return session.as_scrapy_cookies(), headers, {}
+
     def detail_request(
         self,
         board_id: str,
@@ -445,23 +479,22 @@ class TypeMoonSpider(scrapy.Spider):
             type(expected_comment_count) is not int or expected_comment_count < 0
         ):
             raise ValueError("expected_comment_count must be a non-negative integer or None")
+        # A member reaches a post by clicking it from the board listing, so the detail request
+        # carries the board page as its Referer and Sec-Fetch-Site: same-origin.
+        cookies, headers, extra_meta = self._footprint(
+            session, sec_fetch_site="same-origin", referer=self.listing_url(board_id)
+        )
         return scrapy.Request(
             self.detail_url(board_id, external_post_id),
             callback=self.parse_detail,
             errback=self.detail_error if self.store is not None else None,
-            cookies=session.as_scrapy_cookies(),
-            # A member reaches a post by clicking it from the board listing, so the detail
-            # request carries the board page as its Referer and Sec-Fetch-Site: same-origin
-            # to match that in-site navigation.
-            headers={
-                "User-Agent": session.user_agent,
-                "Referer": self.listing_url(board_id),
-                "Sec-Fetch-Site": "same-origin",
-            },
+            cookies=cookies,
+            headers=headers,
             meta={
                 "cookiejar": 1,
                 "redstm_capture": True,
                 "expected_comment_count": expected_comment_count,
+                **extra_meta,
             },
         )
 
@@ -509,32 +542,34 @@ class TypeMoonSpider(scrapy.Spider):
         session: SessionExport | None = None,
         referer: str | None = None,
     ) -> scrapy.Request:
+        # Keep-alive is part of the browser footprint: browsers never send "Connection: close"
+        # while navigating, so emitting it undoes the blocking mitigation and forces a fresh
+        # TLS handshake per page against an already-slow origin. A finished chunked body
+        # completes the response regardless of whether the socket stays open afterwards.
+        #
+        # Paging deeper into a board is natural navigation from the previous page; the first
+        # page has no in-site Referer, matching a fresh visit, and Sec-Fetch-Site tracks that:
+        # "none" for a typed/fresh visit, "same-origin" when following a page link.
+        cookies: Any = None
         headers: dict[str, str] | None = None
+        extra_meta: dict[str, str] = {}
         if session is not None:
-            # Keep-alive is part of the browser footprint: browsers never send
-            # "Connection: close" while navigating, so emitting it undoes the
-            # blocking mitigation and forces a fresh TLS handshake per page against
-            # an already-slow origin. A finished chunked body completes the response
-            # regardless of whether the socket stays open afterwards.
-            headers = {"User-Agent": session.user_agent}
-            # Paging deeper into a board is natural navigation from the previous page; the
-            # first page of a board has no in-site Referer, matching a fresh visit. Sec-Fetch-Site
-            # tracks that: "none" for a typed/fresh visit, "same-origin" when following a page link.
-            if referer is not None:
-                headers["Referer"] = referer
-                headers["Sec-Fetch-Site"] = "same-origin"
-            else:
-                headers["Sec-Fetch-Site"] = "none"
+            cookies, headers, extra_meta = self._footprint(
+                session,
+                sec_fetch_site="same-origin" if referer is not None else "none",
+                referer=referer,
+            )
         return scrapy.Request(
             self.listing_url(board_id, page=page),
             callback=self.parse_listing,
             errback=self.listing_error if self.store is not None else None,
-            cookies=session.as_scrapy_cookies() if session is not None else None,
+            cookies=cookies,
             headers=headers,
             meta={
                 "cookiejar": 1,
                 "redstm_capture": True,
                 "download_timeout": REDSTM_LISTING_TIMEOUT_SECONDS,
+                **extra_meta,
             },
         )
 
@@ -1069,6 +1104,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
         detail_concurrency: int = REDSTM_DETAIL_CONCURRENCY,
         pause_file: str | Path | None = None,
+        impersonate_browser: str = "",
     ) -> None:
         self._candidates = iter(candidates)
         super().__init__(
@@ -1078,6 +1114,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
             lease_seconds=lease_seconds,
             detail_concurrency=detail_concurrency,
             pause_file=pause_file,
+            impersonate_browser=impersonate_browser,
         )
 
     async def start(self) -> AsyncIterator[scrapy.Request]:

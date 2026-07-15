@@ -15,7 +15,27 @@ _DATE_FORMATS = (
     "%Y-%m-%d %H:%M",
     "%Y.%m.%d",
     "%Y-%m-%d",
+    # gnuboard themes routinely render a 2-digit year. Python's %y maps 00-68 to
+    # 2000-2068, which covers every realistic TypeMoon post date, so these are parsed
+    # deterministically and correctly rather than left unresolved (or mis-parsed by a
+    # general natural-language parser, which reads "26-..." as the year 1926).
+    "%y.%m.%d %H:%M:%S",
+    "%y.%m.%d %H:%M",
+    "%y-%m-%d %H:%M:%S",
+    "%y-%m-%d %H:%M",
+    "%y.%m.%d",
+    "%y-%m-%d",
 )
+# Year-less short forms (listings and comments) resolved against the capture time.
+_MONTH_DAY_FORMATS = (
+    "%m-%d %H:%M:%S",
+    "%m-%d %H:%M",
+    "%m.%d %H:%M:%S",
+    "%m.%d %H:%M",
+    "%m-%d",
+    "%m.%d",
+)
+_TIME_ONLY_FORMATS = ("%H:%M:%S", "%H:%M")
 _EMPTY_COMMENT = re.compile(r"comment (\d+) is empty after sanitizing")
 _EMPTY_LEGACY_COMMENT = "<p>[Unavailable legacy comment]</p>"
 
@@ -92,23 +112,86 @@ def normalize_legacy_post(item: dict[str, Any]) -> tuple[NormalizedPost, int]:
             replacements += 1
 
 
-def normalize_source_timestamp(value: object) -> str | None:
+def _parse_absolute(rendered: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(rendered)
+    except ValueError:
+        pass
+    for date_format in _DATE_FORMATS:
+        try:
+            return datetime.strptime(rendered, date_format)
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_base_anchored(rendered: str, base: datetime) -> datetime | None:
+    base_kst = base.astimezone(_KST)
+    for date_format in _MONTH_DAY_FORMATS:
+        try:
+            # Parse with the capture year prepended rather than a year-less format: the
+            # latter defaults to 1900 and, on 3.14+, warns about ambiguous leap days.
+            partial = datetime.strptime(f"{base_kst.year} {rendered}", f"%Y {date_format}")
+        except ValueError:
+            continue
+        candidate = partial.replace(tzinfo=_KST)
+        # A short "MM-DD" carries no year: it belongs to the capture year unless that would
+        # place it in the future (a one-day skew tolerance absorbs clock drift), in which
+        # case it is last year's post shown without a year rollover.
+        if candidate > base_kst + timedelta(days=1):
+            candidate = candidate.replace(year=base_kst.year - 1)
+        return candidate
+    for time_format in _TIME_ONLY_FORMATS:
+        try:
+            partial = datetime.strptime(rendered, time_format)
+        except ValueError:
+            continue
+        return base_kst.replace(
+            hour=partial.hour, minute=partial.minute, second=partial.second, microsecond=0
+        )
+    return None
+
+
+def _parse_relative(rendered: str, base: datetime | None) -> datetime | None:
+    # dateparser is heavy to import and only needed for the natural-language remainder, so it
+    # is loaded lazily. It is restricted to the relative-time parser: that reliably resolves
+    # Korean expressions like "3일 전"/"어제"/"2시간 전" while never mis-reading an absolute
+    # short date (a general parse turns "26-07-15" into 1926), which the deterministic passes
+    # above already handle correctly. A missing dependency degrades gracefully — relative
+    # dates stay unresolved (the raw value is always preserved) rather than crashing a crawl.
+    try:
+        import dateparser  # type: ignore[import-untyped]
+    except ImportError:
+        return None
+
+    settings: dict[str, object] = {
+        "TIMEZONE": "Asia/Seoul",
+        "RETURN_AS_TIMEZONE_AWARE": True,
+        "PREFER_DATES_FROM": "past",
+        "PARSERS": ["relative-time"],
+    }
+    if base is not None:
+        settings["RELATIVE_BASE"] = base.astimezone(_KST)
+    return dateparser.parse(rendered, languages=["ko", "en"], settings=settings)
+
+
+def normalize_source_timestamp(value: object, *, base: datetime | None = None) -> str | None:
+    """Normalize a source date string to a UTC ISO timestamp.
+
+    ``base`` is the capture time used to anchor year-less ("MM-DD", "14:30") and relative
+    ("3일 전") forms; absolute values ignore it, so callers without a meaningful base still
+    resolve the common gnuboard formats deterministically.
+    """
     if value is None:
         return None
     rendered = str(value).strip()
     if not rendered:
         return None
-    try:
-        parsed = datetime.fromisoformat(rendered)
-    except ValueError:
-        parsed = None
+    parsed = _parse_absolute(rendered)
+    if parsed is None and base is not None:
+        parsed = _parse_base_anchored(rendered, base)
     if parsed is None:
-        for date_format in _DATE_FORMATS:
-            try:
-                parsed = datetime.strptime(rendered, date_format)
-                break
-            except ValueError:
-                continue
+        parsed = _parse_relative(rendered, base)
     if parsed is None:
         return None
     if parsed.tzinfo is None:

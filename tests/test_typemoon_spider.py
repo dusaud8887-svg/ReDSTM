@@ -10,7 +10,7 @@ from scrapy.http import HtmlResponse, Request, Response
 from crawler import settings
 from crawler.items import CapturedPostItem
 from crawler.pipelines import normalize_captured_post
-from crawler.session import SessionExport
+from crawler.session import SessionCookie, SessionExport
 from crawler.spiders.typemoon import TypeMoonSpider, _retry_after, parse_post_ref
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "typemoon"
@@ -43,6 +43,38 @@ def test_policy_settings_and_urls_are_conservative() -> None:
     assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 1
     assert settings.RETRY_TIMES == 2
     assert settings.RETRY_HTTP_CODES == [408, 500, 502, 503, 504, 522, 524]
+    # Impersonation is off by default: the static header footprint stands, no curl handler.
+    assert settings.REDSTM_IMPERSONATE_BROWSER == ""
+    assert "sec-ch-ua" in settings.DEFAULT_REQUEST_HEADERS
+    assert not hasattr(settings, "DOWNLOAD_HANDLERS") or "scrapy_impersonate" not in str(
+        settings.DOWNLOAD_HANDLERS
+    )
+
+
+def test_impersonation_env_gates_the_curl_download_handler_and_stands_down_static_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    monkeypatch.setenv("REDSTM_IMPERSONATE_BROWSER", "chrome131")
+    try:
+        reloaded = importlib.reload(settings)
+        assert reloaded.REDSTM_IMPERSONATE_BROWSER == "chrome131"
+        assert reloaded.DOWNLOAD_HANDLERS["https"] == (
+            "scrapy_impersonate.ImpersonateDownloadHandler"
+        )
+        assert reloaded.TWISTED_REACTOR.endswith("AsyncioSelectorReactor")
+        # curl_cffi owns the fingerprint, so the static hints and Scrapy UA middleware stand down.
+        assert reloaded.DEFAULT_REQUEST_HEADERS == {}
+        assert (
+            reloaded.DOWNLOADER_MIDDLEWARES[
+                "scrapy.downloadermiddlewares.useragent.UserAgentMiddleware"
+            ]
+            is None
+        )
+    finally:
+        monkeypatch.delenv("REDSTM_IMPERSONATE_BROWSER", raising=False)
+        importlib.reload(settings)
 
 
 def test_request_footprint_matches_a_browser_member() -> None:
@@ -354,6 +386,32 @@ def test_listing_pagination_carries_previous_page_as_referer() -> None:
     assert b"Connection" not in paged.headers
     # Following a page link is same-origin navigation.
     assert paged.headers["Sec-Fetch-Site"] == b"same-origin"
+
+
+def test_impersonate_mode_defers_the_fingerprint_to_curl_and_flattens_cookies() -> None:
+    now = datetime(2026, 7, 11, tzinfo=UTC)
+    cookies = (
+        SessionCookie("PHPSESSID", "secret", ".typemoon.net", "/", True, True),
+        SessionCookie("adult_view", "1", ".typemoon.net", "/", False, False),
+    )
+    session = SessionExport(cookies, now, now + timedelta(hours=1), "member-agent")
+    spider = TypeMoonSpider(impersonate_browser="chrome131")
+
+    detail = spider.detail_request("write_free21", 62068, session)
+    # curl_cffi owns the UA/client hints, so no UA header leaks to contradict the profile.
+    assert b"User-Agent" not in detail.headers
+    assert detail.meta["impersonate"] == "chrome131"
+    assert detail.headers["Sec-Fetch-Site"] == b"same-origin"
+    assert detail.headers["Referer"] == b"https://www.typemoon.net/write_free21"
+    # Cookies must be a flat name->value map; the verbose Scrapy form is mangled by the
+    # curl_cffi bridge into "name=PHPSESSID; value=secret; ..." and breaks auth.
+    assert detail.cookies == {"PHPSESSID": "secret", "adult_view": "1"}
+
+    first = spider.listing_request("write_free21", page=1, session=session)
+    assert first.meta["impersonate"] == "chrome131"
+    assert first.headers["Sec-Fetch-Site"] == b"none"
+    assert b"User-Agent" not in first.headers
+    assert first.cookies == {"PHPSESSID": "secret", "adult_view": "1"}
 
 
 def test_anti_bot_interstitial_detail_backs_off_as_network_failure() -> None:

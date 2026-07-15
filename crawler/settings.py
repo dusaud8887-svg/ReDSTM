@@ -1,3 +1,5 @@
+from crawler.footprint import impersonate_target
+
 BOT_NAME = "redstm"
 
 SPIDER_MODULES = ["crawler.spiders"]
@@ -64,8 +66,28 @@ COOKIES_ENABLED = True
 TELNETCONSOLE_ENABLED = False
 LOG_LEVEL = "INFO"
 
-DOWNLOADER_MIDDLEWARES = {"crawler.middlewares.WarcCaptureMiddleware": 595}
+DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {
+    "crawler.middlewares.WarcCaptureMiddleware": 595
+}
 ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}
+
+# Optional TLS/JA3 fingerprint impersonation (off unless REDSTM_IMPERSONATE_BROWSER is set).
+# When enabled, curl_cffi's download handler serves requests carrying meta["impersonate"];
+# it owns the full browser fingerprint, so the static header footprint is stood down to avoid
+# contradicting the impersonated profile (e.g. our Windows client hints under a macOS Chrome
+# TLS profile), and Scrapy's UserAgentMiddleware is disabled so curl_cffi supplies the UA.
+REDSTM_IMPERSONATE_BROWSER = impersonate_target()
+if REDSTM_IMPERSONATE_BROWSER:
+    TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+    DOWNLOAD_HANDLERS = {
+        "http": "scrapy_impersonate.ImpersonateDownloadHandler",
+        "https": "scrapy_impersonate.ImpersonateDownloadHandler",
+    }
+    DEFAULT_REQUEST_HEADERS = {}
+    DOWNLOADER_MIDDLEWARES = {
+        **DOWNLOADER_MIDDLEWARES,
+        "scrapy.downloadermiddlewares.useragent.UserAgentMiddleware": None,
+    }
 REDSTM_WARC_PATH = ".data/warc/capture.warc.gz"
 REDSTM_WARC_MAX_BYTES = 1 << 30
 REDSTM_FRONTIER_LEASE_SECONDS = 900

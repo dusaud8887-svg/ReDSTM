@@ -44,6 +44,12 @@ def test_resume_partial_verifies_without_recopying(tmp_path: Path) -> None:
     snapshot = tmp_path / "snapshot.sqlite"
     manifest = tmp_path / "snapshot.manifest.json"
     initialize_archive(source)
+    # A real resumable partial is produced by the WAL-aware backup API. This test fabricates
+    # one with a raw file copy, so it must first fold the WAL back into the main file —
+    # copying a live WAL database's main file alone would miss the still-uncheckpointed
+    # schema writes and fail verification.
+    with connect_archive(source) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     partial = snapshot.with_name(f"{snapshot.name}.partial")
     shutil.copyfile(source, partial)
 

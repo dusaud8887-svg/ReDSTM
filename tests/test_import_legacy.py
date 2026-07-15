@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from crawler.archive import connect_archive, decompress_body
 from scripts.import_legacy import import_legacy, normalize_source_timestamp
+from scripts.legacy_common import _KST
 from scripts.verify_migration import verify_migration
 
 
@@ -94,6 +96,44 @@ def test_normalize_source_timestamp_accepts_legacy_dot_and_dash_formats() -> Non
     assert normalize_source_timestamp("2026.07.01 10:30") == "2026-07-01T01:30:00+00:00"
     assert normalize_source_timestamp("2026-07-02 11:40") == "2026-07-02T02:40:00+00:00"
     assert normalize_source_timestamp("not-a-date") is None
+
+
+def test_normalize_source_timestamp_resolves_two_digit_year_gnuboard_dates() -> None:
+    # gnuboard's 2-digit year was previously unparseable (dropped to NULL); %y maps it into
+    # the 2000s deterministically, and never mis-reads "26" as the year 1926.
+    assert normalize_source_timestamp("26-07-15 14:30:05") == "2026-07-15T05:30:05+00:00"
+    assert normalize_source_timestamp("24.01.02 09:10") == "2024-01-02T00:10:00+00:00"
+    assert normalize_source_timestamp("26-07-15") == "2026-07-14T15:00:00+00:00"
+
+
+def test_normalize_source_timestamp_anchors_year_less_and_time_only_forms_to_base() -> None:
+    base = datetime(2026, 7, 15, 14, 30, tzinfo=_KST)
+    # "MM-DD" earlier in the capture year stays in that year...
+    assert normalize_source_timestamp("07-10 09:00", base=base) == "2026-07-10T00:00:00+00:00"
+    # ...but a month past the capture date rolled over from the previous year.
+    assert normalize_source_timestamp("12-31 23:00", base=base) == "2025-12-31T14:00:00+00:00"
+    # Time-only comment stamps resolve to the capture day.
+    assert normalize_source_timestamp("09:05", base=base) == "2026-07-15T00:05:00+00:00"
+    # Without a base, year-less forms cannot be anchored and stay unresolved.
+    assert normalize_source_timestamp("07-10 09:00") is None
+
+
+def test_normalize_source_timestamp_resolves_korean_relative_expressions() -> None:
+    base = datetime(2026, 7, 15, 14, 30, tzinfo=_KST)
+    assert normalize_source_timestamp("어제", base=base) == "2026-07-14T05:30:00+00:00"
+    assert normalize_source_timestamp("3일 전", base=base) == "2026-07-12T05:30:00+00:00"
+    assert normalize_source_timestamp("2시간 전", base=base) == "2026-07-15T03:30:00+00:00"
+    # A relative expression with no base still parses against the current moment (non-None),
+    # and genuine junk stays None.
+    assert normalize_source_timestamp("정체불명", base=base) is None
+
+
+def test_normalize_source_timestamp_output_is_unchanged_for_existing_absolute_formats() -> None:
+    # The deterministic fast path must be byte-identical to the pre-dateparser behavior so a
+    # re-crawl does not rewrite every post's created_at_source (and churn projections).
+    base = datetime(2026, 7, 15, 14, 30, tzinfo=_KST)
+    for value in ("2026.07.01 10:30", "2026-07-02 11:40", "2026-07-03"):
+        assert normalize_source_timestamp(value) == normalize_source_timestamp(value, base=base)
 
 
 def test_import_legacy_is_idempotent_and_preserves_composite_identity(tmp_path: Path) -> None:

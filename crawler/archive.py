@@ -286,6 +286,14 @@ def connect_archive(path: str | Path, *, read_only: bool = False) -> sqlite3.Con
         connection.execute("PRAGMA query_only = ON")
     else:
         connection = sqlite3.connect(archive_path, timeout=5)
+        # WAL lets readers (runner poll, backup, export) run concurrently with the crawl
+        # writer instead of blocking on it — the source of the archive_locked contention.
+        # journal_mode is a persistent header property, so a legacy DELETE archive converts
+        # itself the first time any writer connects; on an already-WAL archive this is a
+        # cheap, lock-free no-op. synchronous=NORMAL is the standard, crash-safe WAL pairing
+        # (it is per-connection and must be set on every write connection, not just at init).
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
@@ -311,8 +319,12 @@ def initialize_archive(path: str | Path) -> None:
     archive_path = Path(path).expanduser().resolve()
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with connect_archive(archive_path) as connection:
-        connection.execute("PRAGMA journal_mode = DELETE")
-        connection.execute("PRAGMA synchronous = FULL")
+        # connect_archive already put the connection in WAL/synchronous=NORMAL, which also
+        # converts a legacy DELETE archive in place. Confirm the persistent mode took so a
+        # brand-new archive is never left in rollback-journal mode.
+        journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        if journal_mode != "wal":
+            raise RuntimeError(f"archive journal mode is {journal_mode!r}, expected 'wal'")
         application_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         tables = {

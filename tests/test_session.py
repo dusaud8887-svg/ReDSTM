@@ -241,6 +241,49 @@ def test_refresh_session_submits_once_and_writes_loadable_export(
     assert load_session_export(path, now=now).cookies[0].name == "PHPSESSID"
 
 
+def test_refresh_over_impersonation_logs_in_and_extracts_cookies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # When impersonation is enabled the handshake runs through curl_cffi instead of urllib;
+    # it must still complete the login flow and extract the server-issued session cookie.
+    pytest.importorskip("curl_cffi")
+    monkeypatch.setenv("REDSTM_IMPERSONATE_BROWSER", "chrome131")
+    path = tmp_path / "private" / "session.json"
+    now = datetime(2026, 7, 11, 12, tzinfo=UTC)
+
+    with _login_server(monkeypatch) as (state, _):
+        session = refresh_session_export(
+            path,
+            user_id="member",
+            password="correct",
+            user_agent="ReDSTM-test/1.0",
+            now=now,
+        )
+
+    assert state["post_count"] == 1
+    assert {cookie.name for cookie in session.cookies} == {"PHPSESSID", "adult_view"}
+    assert next(c.value for c in session.cookies if c.name == "PHPSESSID") == "secret"
+    assert load_session_export(path, now=now).cookies[0].name == "PHPSESSID"
+
+
+def test_validate_over_impersonation_detects_the_logout_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("curl_cffi")
+    monkeypatch.setenv("REDSTM_IMPERSONATE_BROWSER", "chrome131")
+    now = datetime(2026, 7, 11, 12, tzinfo=UTC)
+    with _login_server(monkeypatch) as (_state, _):
+        refresh_session_export(
+            tmp_path / "session.json",
+            user_id="member",
+            password="correct",
+            user_agent="ReDSTM-test/1.0",
+            now=now,
+        )
+        validated = validate_session_export(tmp_path / "session.json", now=now)
+    assert next(c.value for c in validated.cookies if c.name == "PHPSESSID") == "secret"
+
+
 def test_expired_export_is_validated_before_form_login(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

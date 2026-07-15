@@ -17,6 +17,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 from filelock import FileLock, Timeout
 from parsel import Selector
 
+from crawler.footprint import impersonate_target
 from crawler.settings import (
     REDSTM_ACCEPT,
     REDSTM_ACCEPT_LANGUAGE,
@@ -237,7 +238,21 @@ def _reserve_automatic_login(path: Path, now: datetime) -> None:
         raise AutomaticLoginThrottleError("automatic login is already in progress") from error
 
 
-def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool:
+def _impersonate_headers(user_agent: str, **extra: str) -> dict[str, str]:
+    # Under impersonation curl_cffi supplies the coherent UA + client-hint set, so the
+    # handshake only adds the Korean member Accept-Language and any navigation context
+    # (Referer/Origin). The stored user_agent is unused on the wire in this mode.
+    return {"Accept-Language": REDSTM_ACCEPT_LANGUAGE, **extra}
+
+
+def _seed_impersonate_cookies(client: object, session: SessionExport) -> None:
+    for cookie in session.cookies:
+        client.cookies.set(  # type: ignore[attr-defined]
+            cookie.name, cookie.value, domain=cookie.domain, path=cookie.path
+        )
+
+
+def _urllib_home_html(session: SessionExport, *, timeout: float) -> str:
     cookie_jar = CookieJar()
     for cookie in session.cookies:
         cookie_jar.set_cookie(
@@ -262,17 +277,117 @@ def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool
             )
         )
     opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    return _read_html(
+        opener.open(
+            Request(_BASE_URL, headers=_handshake_headers(session.user_agent)),
+            timeout=timeout,
+        ),
+        complete=_has_auth_marker,
+    )
+
+
+def _impersonate_home_html(session: SessionExport, *, timeout: float, target: str) -> str:
+    from curl_cffi import requests as cffi_requests
+
+    # target is an operator-configured curl_cffi profile name (validated at runtime), not one
+    # of curl_cffi's statically-known Literal values.
+    with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
+        _seed_impersonate_cookies(client, session)
+        response = client.get(
+            _BASE_URL, headers=_impersonate_headers(session.user_agent), timeout=timeout
+        )
+        return str(response.text)
+
+
+def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool:
+    target = impersonate_target()
     try:
-        home_html = _read_html(
-            opener.open(
-                Request(_BASE_URL, headers=_handshake_headers(session.user_agent)),
-                timeout=timeout,
-            ),
-            complete=_has_auth_marker,
+        # curl_cffi's CurlError subclasses OSError, so one handler covers both transports.
+        home_html = (
+            _impersonate_home_html(session, timeout=timeout, target=target)
+            if target
+            else _urllib_home_html(session, timeout=timeout)
         )
     except (HTTPError, URLError, OSError) as error:
         raise SessionNetworkError("TypeMoon session validation request failed") from error
     return _has_logout_link(home_html)
+
+
+def _login_fields(login_html: str, user_id: str, password: str) -> dict[str, str]:
+    form = _login_form(login_html)
+    action = urljoin(_LOGIN_PAGE_URL, form.attrib.get("action", ""))
+    if action != _LOGIN_CHECK_URL:
+        raise SessionRefreshError("TypeMoon login form action is not recognized")
+    fields = {
+        name: value
+        for node in form.css("input[type=hidden][name]")
+        if (name := node.attrib.get("name")) and (value := node.attrib.get("value")) is not None
+    }
+    fields.update({"mb_id": user_id, "mb_password": password, "auto_login": "1"})
+    return fields
+
+
+def _urllib_login(
+    user_id: str, password: str, user_agent: str, *, timeout: float
+) -> tuple[CookieJar, str]:
+    cookie_jar = CookieJar()
+    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    login_html = _read_html(
+        opener.open(
+            Request(_LOGIN_PAGE_URL, headers=_handshake_headers(user_agent)),
+            timeout=timeout,
+        ),
+        complete=_has_login_form,
+    )
+    fields = _login_fields(login_html, user_id, password)
+    request = Request(
+        _LOGIN_CHECK_URL,
+        data=urlencode(fields).encode("utf-8"),
+        headers=_handshake_headers(
+            user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
+        ),
+    )
+    opener.open(request, timeout=timeout).close()
+    home_html = _read_html(
+        opener.open(
+            Request(_BASE_URL, headers=_handshake_headers(user_agent, Referer=_LOGIN_PAGE_URL)),
+            timeout=timeout,
+        ),
+        complete=_has_auth_marker,
+    )
+    return cookie_jar, home_html
+
+
+def _impersonate_login(
+    user_id: str, password: str, user_agent: str, *, timeout: float, target: str
+) -> tuple[CookieJar, str]:
+    from curl_cffi import requests as cffi_requests
+
+    with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
+        login_html = str(
+            client.get(
+                _LOGIN_PAGE_URL, headers=_impersonate_headers(user_agent), timeout=timeout
+            ).text
+        )
+        fields = _login_fields(login_html, user_id, password)
+        client.post(
+            _LOGIN_CHECK_URL,
+            data=fields,
+            headers=_impersonate_headers(
+                user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
+            ),
+            timeout=timeout,
+        )
+        home_html = str(
+            client.get(
+                _BASE_URL,
+                headers=_impersonate_headers(user_agent, Referer=_LOGIN_PAGE_URL),
+                timeout=timeout,
+            ).text
+        )
+        # curl_cffi exposes a standard http.cookiejar.CookieJar, so the caller's cookie
+        # extraction is identical to the urllib path.
+        return client.cookies.jar, home_html
 
 
 def refresh_session_export(
@@ -293,41 +408,15 @@ def refresh_session_export(
     if created_at.tzinfo is None:
         raise SessionRefreshError("current time must include a timezone")
 
-    cookie_jar = CookieJar()
-    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    target = impersonate_target()
     try:
-        login_html = _read_html(
-            opener.open(
-                Request(_LOGIN_PAGE_URL, headers=_handshake_headers(user_agent)),
-                timeout=timeout,
-            ),
-            complete=_has_login_form,
-        )
-        form = _login_form(login_html)
-        action = urljoin(_LOGIN_PAGE_URL, form.attrib.get("action", ""))
-        if action != _LOGIN_CHECK_URL:
-            raise SessionRefreshError("TypeMoon login form action is not recognized")
-
-        fields = {
-            name: value
-            for node in form.css("input[type=hidden][name]")
-            if (name := node.attrib.get("name")) and (value := node.attrib.get("value")) is not None
-        }
-        fields.update({"mb_id": user_id, "mb_password": password, "auto_login": "1"})
-        request = Request(
-            action,
-            data=urlencode(fields).encode("utf-8"),
-            headers=_handshake_headers(
-                user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
-            ),
-        )
-        opener.open(request, timeout=timeout).close()
-        home_html = _read_html(
-            opener.open(
-                Request(_BASE_URL, headers=_handshake_headers(user_agent, Referer=_LOGIN_PAGE_URL)),
-                timeout=timeout,
-            ),
-            complete=_has_auth_marker,
+        # curl_cffi's CurlError subclasses OSError, so one handler covers both transports;
+        # SessionRefreshError (a bad login form) must propagate as an auth failure, not a
+        # network failure, exactly as in the urllib path.
+        cookie_jar, home_html = (
+            _impersonate_login(user_id, password, user_agent, timeout=timeout, target=target)
+            if target
+            else _urllib_login(user_id, password, user_agent, timeout=timeout)
         )
     except SessionRefreshError:
         raise

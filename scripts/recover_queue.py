@@ -17,6 +17,7 @@ from crawler.session import SessionExport, SessionRefreshError, ensure_session_e
 from crawler.settings import (
     REDSTM_CAPPED_RETRY_ERROR_CODES,
     REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_IMPERSONATE_BROWSER,
     REDSTM_RECOVERY_MAX_POSTS,
     REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
     REDSTM_SESSION_PREFLIGHT_TIMEOUT_SECONDS,
@@ -168,6 +169,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 session=session,
                 lease_seconds=args.lease_seconds,
                 pause_file=pause_file,
+                impersonate_browser=REDSTM_IMPERSONATE_BROWSER,
             )
             process.start(stop_after_crawl=True)
             spider = crawler.spider

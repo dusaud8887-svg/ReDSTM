@@ -17,6 +17,7 @@ from crawler.archive import connect_archive, require_archive_schema
 from crawler.session import SessionRefreshError, ensure_session_export, load_session_export
 from crawler.settings import (
     REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_IMPERSONATE_BROWSER,
     REDSTM_SYNC_MAX_PAGES,
     REDSTM_SYNC_MAX_POSTS,
     USER_AGENT,
@@ -155,6 +156,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 else int(board["incremental_anchor_post_id"])
             ),
             pause_file=pause_file,
+            impersonate_browser=REDSTM_IMPERSONATE_BROWSER,
         )
         process.start(stop_after_crawl=True)
 

@@ -136,7 +136,7 @@ class ArchiveStore:
         ):
             raise ValueError("captured post has fewer comments than the listing advertised")
         captured_at_text = _timestamp(captured_at)
-        created_at_source = normalize_source_timestamp(post.created_at_raw)
+        created_at_source = normalize_source_timestamp(post.created_at_raw, base=captured_at)
         with archive_transaction(self.path) as connection:
             self._require_running_run(connection, run_id)
             connection.execute("BEGIN IMMEDIATE")
@@ -288,7 +288,7 @@ class ArchiveStore:
                 existing_post is None or existing_post["latest_version_id"] != version_id
             )
             if version_changed:
-                self._replace_comments(connection, post_id, post)
+                self._replace_comments(connection, post_id, post, captured_at=captured_at)
                 connection.execute(
                     "UPDATE posts SET latest_version_id = ? WHERE id = ?",
                     (version_id, post_id),
@@ -516,7 +516,11 @@ class ArchiveStore:
 
     @staticmethod
     def _replace_comments(
-        connection: sqlite3.Connection, post_id: int, post: NormalizedPost
+        connection: sqlite3.Connection,
+        post_id: int,
+        post: NormalizedPost,
+        *,
+        captured_at: datetime,
     ) -> None:
         connection.execute("DELETE FROM comments WHERE post_id = ?", (post_id,))
         connection.executemany(
@@ -534,7 +538,9 @@ class ArchiveStore:
                     comment.author,
                     comment.content_html,
                     comment.content_text,
-                    normalize_source_timestamp(comment.created_at_raw),
+                    # Comment dates are frequently relative/year-less ("3분 전", "07-15
+                    # 14:30"); anchor them to the capture time.
+                    normalize_source_timestamp(comment.created_at_raw, base=captured_at),
                     comment.created_at_raw,
                     comment.parent_position,
                     comment.depth,

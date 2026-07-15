@@ -5,16 +5,28 @@ description = "Personal TypeMoon archive and reader"
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "Scrapy>=2.17.0,<2.18",
+    "dateparser>=1.4.1,<2",
     "filelock>=3.20,<4",
     "nh3>=0.3.6,<0.4",
     "warcio>=1.8.1,<2",
 ]
 
+[project.optional-dependencies]
+# TLS/JA3 fingerprint impersonation, enabled only when REDSTM_IMPERSONATE_BROWSER is set.
+# curl_cffi ships a compiled libcurl-impersonate; keep it out of the base install so the
+# default HTTP/1.1 footprint carries no native dependency.
+impersonate = [
+    "curl_cffi>=0.13,<1",
+    "scrapy-impersonate>=1.7,<2",
+]
+
 [dependency-groups]
 dev = [
+    "curl_cffi>=0.13,<1",
     "mypy>=1.19,<2",
     "pytest>=9,<10",
     "ruff>=0.15.21,<0.16",
+    "scrapy-impersonate>=1.7,<2",
 ]
 
 [tool.uv]

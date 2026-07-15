@@ -78,7 +78,7 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
     }
 
     with connect_archive(path) as connection:
-        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
         assert (
@@ -98,6 +98,48 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
                 "(board_id, external_post_id, url, expected_comment_count) "
                 "VALUES ('ss_temp01', 1, 'https://www.typemoon.net/ss_temp01/1', -1)"
             )
+
+
+def test_legacy_delete_archive_converts_to_wal_on_first_write_connect(tmp_path: Path) -> None:
+    # An archive created before the WAL rollout is in DELETE mode; opening it for writing
+    # must convert it in place (journal_mode is a persistent header property).
+    path = tmp_path / "archive.sqlite"
+    legacy = sqlite3.connect(path)
+    legacy.execute("PRAGMA journal_mode = DELETE")
+    legacy.execute("CREATE TABLE probe (value INTEGER)")
+    legacy.commit()
+    legacy.close()
+    assert sqlite3.connect(path).execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+
+    with connect_archive(path) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+    # The conversion persists for later independent openers, including read-only readers.
+    with connect_archive(path, read_only=True) as reader:
+        assert reader.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_wal_reader_sees_committed_rows_while_a_writer_holds_an_open_transaction(
+    tmp_path: Path,
+) -> None:
+    # The whole point of WAL: a read-only opener (runner poll, backup, export) must not
+    # block on, nor be blocked by, an in-flight crawl write transaction.
+    path = tmp_path / "archive.sqlite"
+    initialize_archive(path)
+    writer = connect_archive(path)
+    try:
+        _board(writer, "aa")
+        writer.commit()
+        writer.execute("BEGIN IMMEDIATE")
+        _board(writer, "bb")  # uncommitted
+        with connect_archive(path, read_only=True) as reader:
+            boards = {
+                str(row[0])
+                for row in reader.execute("SELECT board_id FROM boards ORDER BY board_id")
+            }
+        assert boards == {"aa"}
+    finally:
+        writer.close()
 
 
 def test_schema_v4_backfills_frontier_comment_expectation(

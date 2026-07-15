@@ -229,11 +229,19 @@ retry로 남기고 다음 detail을 계속하며 5회 실패 뒤 dead로 분리�
 anti-blocking 발자국은 실제 로그인 회원 브라우저를 모사한다: Chrome `USER_AGENT`와 정합하는
 UA client hints(`sec-ch-ua*`), fetch-metadata 헤더(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`),
 `Referer`↔`Sec-Fetch-Site` 체인을 crawl 요청과 로그인 핸드셰이크에 동일하게 싣는다(Chrome UA가
-이 저엔트로피 힌트 없이 오면 흔한 봇 판정 근거가 된다). 남은 한계는 **TLS/JA3 지문**이다:
-Scrapy+OpenSSL의 cipher/확장 순서는 Chrome과 달라 TLS 계층 지문은 브라우저와 완전히 일치하지
-않는다(HTTP/1.1 사용도 마찬가지). 요청 헤더 계층 차단이 아닌 TLS 지문 차단이 관측되면 그때
-utls/curl_cffi 같은 지문 정합 클라이언트 도입을 검토한다 — 현재는 origin이 헤더 계층에서
-필터한다는 전제로 헤더 발자국만 정합한다. client hint 값은 `USER_AGENT` major 버전과 함께 갱신한다.
+이 저엔트로피 힌트 없이 오면 흔한 봇 판정 근거가 된다). client hint 값은 `USER_AGENT` major 버전과
+함께 갱신한다.
+
+**TLS/JA3 지문 impersonation (기본 off).** 헤더 계층만으로 부족해 origin이 TLS 지문으로 차단하는
+정황이 보이면 `REDSTM_IMPERSONATE_BROWSER`(예: `chrome131`)를 설정해 curl_cffi 기반 impersonation을
+켠다. 켜지면 crawl은 `scrapy-impersonate` 다운로드 핸들러로, 로그인 핸드셰이크는 curl_cffi로 나가며
+curl_cffi가 TLS/JA3·HTTP2·UA·client hint를 **일관되게 소유**한다(그래서 이 모드에선 정적 헤더
+발자국과 Scrapy UserAgentMiddleware는 내려두고, 세션 쿠키는 flat `name=value` 맵으로 전달한다 —
+verbose 형식은 curl_cffi 브리지가 뭉갠다). 활성화 전제: (1) `uv sync --extra impersonate`로 optional
+의존성(curl_cffi 컴파일 wheel + scrapy-impersonate) 설치, (2) 인증 origin 대상 canary — 이 경로는
+CI에서 실제 origin 검증이 불가하므로 반드시 소규모 board로 로그인·수집 성공을 확인한 뒤 전체 적용,
+(3) `REDSTM_IMPERSONATE_BROWSER`의 Chrome 버전을 `USER_AGENT`와 함께 갱신. 되돌리기는 env 변수
+제거뿐이며 그 즉시 기존 HTTP/1.1 + 헤더 발자국 경로로 복귀한다.
 
 cycle은 `.cycle.lock`과 `.sync.lock`을 끝까지 함께 소유해 standalone writer가 board 사이에 끼어들지
 못한다. non-HTML/invalid URL/pipeline exception의 terminal lease transition도 local 회귀로 고정했다.
