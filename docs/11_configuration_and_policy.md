@@ -126,7 +126,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | request | concurrency | global/domain 1 | `crawler/settings.py` |
 | request | delay/AutoThrottle | 10초 하한, 60초 상한 | `crawler/settings.py` |
 | request | robots | 미준수(`ROBOTSTXT_OBEY=False`, 2026-07-14 사용자 결정; 10초 간격은 유지) | `crawler/settings.py` |
-| request | 발자국 | 브라우저 `USER_AGENT`, `Accept`/`Accept-Language`(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer` 체인 | `crawler/settings.py` + `crawler/spiders/typemoon.py` |
+| request | 발자국 | 브라우저 `USER_AGENT`, `Accept`/`Accept-Language`, UA client hints(`sec-ch-ua*`)와 fetch-metadata(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`) 헤더(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer`와 `Sec-Fetch-Site` 체인, 로그인 핸드셰이크도 동일 헤더 | `crawler/settings.py` + `crawler/spiders/typemoon.py` + `crawler/session.py` |
 | request | listing/detail timeout | 180초 / 180초 | `crawler/settings.py` |
 | request | retry | 최초 포함 총 3회 | `crawler/settings.py` |
 | response | warning/max | 8MiB / 64MiB | `crawler/settings.py` |

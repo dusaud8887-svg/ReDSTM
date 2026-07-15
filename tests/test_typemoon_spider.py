@@ -49,9 +49,20 @@ def test_request_footprint_matches_a_browser_member() -> None:
     # A consistent browser footprint (real UA + negotiation headers) is the primary
     # anti-blocking measure; a self-identifying bot token is the first thing WAFs filter.
     assert settings.USER_AGENT.startswith("Mozilla/5.0") and "Chrome/" in settings.USER_AGENT
-    assert settings.DEFAULT_REQUEST_HEADERS["Accept"].startswith("text/html")
-    assert settings.DEFAULT_REQUEST_HEADERS["Accept-Language"].startswith("ko-KR")
-    assert "Accept-Encoding" not in settings.DEFAULT_REQUEST_HEADERS
+    headers = settings.DEFAULT_REQUEST_HEADERS
+    assert headers["Accept"].startswith("text/html")
+    assert headers["Accept-Language"].startswith("ko-KR")
+    assert "Accept-Encoding" not in headers
+    # A Chrome UA that omits its client hints and fetch-metadata headers is a common bot
+    # tell; the footprint carries them, and the client-hint major version tracks the UA.
+    assert 'v="131"' in headers["sec-ch-ua"] and "Chrome/131" in settings.USER_AGENT
+    assert headers["sec-ch-ua-mobile"] == "?0"
+    assert headers["sec-ch-ua-platform"] == '"Windows"'
+    assert headers["Upgrade-Insecure-Requests"] == "1"
+    assert headers["Sec-Fetch-Dest"] == "document"
+    assert headers["Sec-Fetch-Mode"] == "navigate"
+    # Sec-Fetch-Site is request-specific and set per request, not globally.
+    assert "Sec-Fetch-Site" not in headers
     assert TypeMoonSpider.listing_url("write_free21") == "https://www.typemoon.net/write_free21"
     assert TypeMoonSpider.listing_url("write_free21", page=2).endswith("?page=2")
     with pytest.raises(ValueError):
@@ -329,6 +340,8 @@ def test_listing_pagination_carries_previous_page_as_referer() -> None:
     first = spider.listing_request("write_free21", page=1, session=session)
     assert b"Referer" not in first.headers
     assert b"Connection" not in first.headers
+    # A typed/fresh visit to the first board page has no in-site origin.
+    assert first.headers["Sec-Fetch-Site"] == b"none"
 
     paged = spider.listing_request(
         "write_free21",
@@ -339,6 +352,8 @@ def test_listing_pagination_carries_previous_page_as_referer() -> None:
     assert paged.headers["Referer"] == b"https://www.typemoon.net/write_free21"
     assert paged.headers["User-Agent"] == b"member-agent"
     assert b"Connection" not in paged.headers
+    # Following a page link is same-origin navigation.
+    assert paged.headers["Sec-Fetch-Site"] == b"same-origin"
 
 
 def test_anti_bot_interstitial_detail_backs_off_as_network_failure() -> None:

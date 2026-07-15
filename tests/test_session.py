@@ -62,9 +62,26 @@ def test_valid_session_builds_captured_detail_request_without_repr_leak(tmp_path
     assert request.cookies[0]["value"] == "cookie-secret"
     assert request.headers["User-Agent"] == b"ReDSTM-test/1.0"
     assert request.headers["Referer"] == b"https://www.typemoon.net/write_free21"
+    assert request.headers["Sec-Fetch-Site"] == b"same-origin"
     assert b"Cookie" not in request.headers
     assert request.meta["cookiejar"] == 1
     assert request.meta["redstm_capture"] is True
+
+
+def test_handshake_headers_present_a_consistent_browser_footprint() -> None:
+    # The login handshake is the first request a WAF sees; it must carry the same UA client
+    # hints and fetch-metadata headers as the crawl, with Sec-Fetch-Site mirroring Referer.
+    fresh = session_module._handshake_headers("ReDSTM-test/1.0")
+    assert fresh["Sec-Fetch-Site"] == "none"
+    assert fresh["sec-ch-ua-platform"] == '"Windows"'
+    assert fresh["Upgrade-Insecure-Requests"] == "1"
+    assert fresh["Sec-Fetch-Mode"] == "navigate"
+    assert fresh["Connection"] == "close"
+
+    in_site = session_module._handshake_headers(
+        "ReDSTM-test/1.0", Referer="https://www.typemoon.net/bbs/login.php"
+    )
+    assert in_site["Sec-Fetch-Site"] == "same-origin"
 
 
 def test_loaded_session_carries_the_adult_permission_cookie(tmp_path: Path) -> None:

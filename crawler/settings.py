@@ -23,7 +23,29 @@ REDSTM_ACCEPT = (
     "image/avif,image/webp,image/apng,*/*;q=0.8"
 )
 REDSTM_ACCEPT_LANGUAGE = "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
-DEFAULT_REQUEST_HEADERS = {"Accept": REDSTM_ACCEPT, "Accept-Language": REDSTM_ACCEPT_LANGUAGE}
+# User-Agent Client Hints matching the Chrome 131 USER_AGENT above. A modern Chrome UA that
+# arrives without these low-entropy hints is a common bot tell for WAFs, so login and crawl
+# send the same set. Kept in lockstep with USER_AGENT's major version.
+REDSTM_CLIENT_HINT_HEADERS = {
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+}
+# Fetch-metadata headers a real browser attaches to a top-level page navigation. Sec-Fetch-Site
+# is request-specific (none for a fresh visit, same-origin when following an in-site link) and
+# is set per request; the rest are constant for document navigations.
+REDSTM_NAVIGATION_HEADERS = {
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-User": "?1",
+}
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": REDSTM_ACCEPT,
+    "Accept-Language": REDSTM_ACCEPT_LANGUAGE,
+    **REDSTM_CLIENT_HINT_HEADERS,
+    **REDSTM_NAVIGATION_HEADERS,
+}
 CONCURRENT_REQUESTS = 1
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
 DOWNLOAD_DELAY = 10.0

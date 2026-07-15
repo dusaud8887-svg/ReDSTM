@@ -451,8 +451,13 @@ class TypeMoonSpider(scrapy.Spider):
             errback=self.detail_error if self.store is not None else None,
             cookies=session.as_scrapy_cookies(),
             # A member reaches a post by clicking it from the board listing, so the detail
-            # request carries the board page as its Referer to match that navigation.
-            headers={"User-Agent": session.user_agent, "Referer": self.listing_url(board_id)},
+            # request carries the board page as its Referer and Sec-Fetch-Site: same-origin
+            # to match that in-site navigation.
+            headers={
+                "User-Agent": session.user_agent,
+                "Referer": self.listing_url(board_id),
+                "Sec-Fetch-Site": "same-origin",
+            },
             meta={
                 "cookiejar": 1,
                 "redstm_capture": True,
@@ -513,9 +518,13 @@ class TypeMoonSpider(scrapy.Spider):
             # regardless of whether the socket stays open afterwards.
             headers = {"User-Agent": session.user_agent}
             # Paging deeper into a board is natural navigation from the previous page; the
-            # first page of a board has no in-site Referer, matching a fresh visit.
+            # first page of a board has no in-site Referer, matching a fresh visit. Sec-Fetch-Site
+            # tracks that: "none" for a typed/fresh visit, "same-origin" when following a page link.
             if referer is not None:
                 headers["Referer"] = referer
+                headers["Sec-Fetch-Site"] = "same-origin"
+            else:
+                headers["Sec-Fetch-Site"] = "none"
         return scrapy.Request(
             self.listing_url(board_id, page=page),
             callback=self.parse_listing,

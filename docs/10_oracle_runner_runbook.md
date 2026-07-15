@@ -226,6 +226,15 @@ retry로 남기고 다음 detail을 계속하며 5회 실패 뒤 dead로 분리�
 적용하고 실패 포함 자동 로그인 시도는 atomic marker+nonblocking lock으로
 30분에 1회로 제한한다. login/logout 표식 조기 판정은 오래된 서버의 비정상 TLS EOF를 기다리지 않는다.
 
+anti-blocking 발자국은 실제 로그인 회원 브라우저를 모사한다: Chrome `USER_AGENT`와 정합하는
+UA client hints(`sec-ch-ua*`), fetch-metadata 헤더(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`),
+`Referer`↔`Sec-Fetch-Site` 체인을 crawl 요청과 로그인 핸드셰이크에 동일하게 싣는다(Chrome UA가
+이 저엔트로피 힌트 없이 오면 흔한 봇 판정 근거가 된다). 남은 한계는 **TLS/JA3 지문**이다:
+Scrapy+OpenSSL의 cipher/확장 순서는 Chrome과 달라 TLS 계층 지문은 브라우저와 완전히 일치하지
+않는다(HTTP/1.1 사용도 마찬가지). 요청 헤더 계층 차단이 아닌 TLS 지문 차단이 관측되면 그때
+utls/curl_cffi 같은 지문 정합 클라이언트 도입을 검토한다 — 현재는 origin이 헤더 계층에서
+필터한다는 전제로 헤더 발자국만 정합한다. client hint 값은 `USER_AGENT` major 버전과 함께 갱신한다.
+
 cycle은 `.cycle.lock`과 `.sync.lock`을 끝까지 함께 소유해 standalone writer가 board 사이에 끼어들지
 못한다. non-HTML/invalid URL/pipeline exception의 terminal lease transition도 local 회귀로 고정했다.
 schedule 활성화 뒤 실제 느린 서버에서 systemd hard-timeout 상호작용을 canary로 관찰한다. 해결은 board

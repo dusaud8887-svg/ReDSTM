@@ -21,6 +21,8 @@ from crawler.settings import (
     REDSTM_ACCEPT,
     REDSTM_ACCEPT_LANGUAGE,
     REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECONDS,
+    REDSTM_CLIENT_HINT_HEADERS,
+    REDSTM_NAVIGATION_HEADERS,
     REDSTM_SESSION_HTML_MAX_BYTES,
     REDSTM_SESSION_LIFETIME_SECONDS,
     REDSTM_SESSION_TIMEOUT_SECONDS,
@@ -47,12 +49,18 @@ _AUTO_LOGIN_MIN_INTERVAL = timedelta(seconds=REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECO
 
 def _handshake_headers(user_agent: str, **extra: str) -> dict[str, str]:
     # The session handshake is where a WAF first sees the client, so it presents the same
-    # browser negotiation headers the Scrapy crawl uses (see crawler.settings). Connection
-    # stays close because these are short one-shot urllib exchanges.
+    # browser footprint the Scrapy crawl uses (see crawler.settings): negotiation headers,
+    # UA client hints, and fetch-metadata headers. Sec-Fetch-Site mirrors the crawl's
+    # Referer logic — "none" for the typed login-page visit, "same-origin" once an in-site
+    # Referer is set (the login POST and the post-login home fetch). Connection stays close
+    # because these are short one-shot urllib exchanges.
     return {
         "User-Agent": user_agent,
         "Accept": REDSTM_ACCEPT,
         "Accept-Language": REDSTM_ACCEPT_LANGUAGE,
+        **REDSTM_CLIENT_HINT_HEADERS,
+        **REDSTM_NAVIGATION_HEADERS,
+        "Sec-Fetch-Site": "same-origin" if "Referer" in extra else "none",
         "Connection": "close",
         **extra,
     }
