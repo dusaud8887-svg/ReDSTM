@@ -18,6 +18,7 @@ from crawler.settings import (
     REDSTM_ACCEPT_LANGUAGE,
     REDSTM_CIRCUIT_BREAKER_FAILURES,
     REDSTM_DETAIL_CONCURRENCY,
+    REDSTM_DETAIL_TIMEOUT_SECONDS,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_INCREMENTAL_OVERLAP_PAGES,
     REDSTM_LISTING_OVERLAP_UNCHANGED,
@@ -493,6 +494,8 @@ class TypeMoonSpider(scrapy.Spider):
                 "cookiejar": 1,
                 "redstm_capture": True,
                 "expected_comment_count": expected_comment_count,
+                # AA bodies regularly need multi-minute streaming; listing timeout is too tight.
+                "download_timeout": REDSTM_DETAIL_TIMEOUT_SECONDS,
                 **extra_meta,
             },
         )

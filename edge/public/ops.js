@@ -62,7 +62,7 @@ export const safeCodeLabels = {
 const warningLabels = {
   auth_failed: "원본 인증을 확인해야 합니다.", parse_drift: "원본 구조 변경이 감지됐습니다.",
   rate_limited: "원본 서버의 속도 제한으로 감속했습니다.",
-  site_unreachable: "원본 서버에 도달하지 못했거나 응답이 완결되지 않았습니다.",
+  site_unreachable: "원본 서버가 느리거나 응답이 끊겼습니다. 전체 목차는 체크포인트부터 자동으로 이어 재시도합니다.",
   disk_low: "Oracle 저장 공간이 부족합니다.",
   control_rejected: "운영 상태 전달이 영구 거절됐습니다. 배포 호환성을 확인해야 합니다.",
   token_expiring: "수집기 인증 갱신이 필요합니다.",
@@ -74,7 +74,7 @@ const warningLabels = {
 const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
 const commandCopy = {
   "sync-now": ["증분 수집 지금 실행", "등록된 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판에서 제목·주소·목록을 처음부터 다시 확인합니다. 본문은 수집하지 않으며 며칠 이상 걸릴 수 있습니다."],
+  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판에서 제목·주소·목록을 확인합니다. 본문은 수집하지 않으며, 중간에 끊겨도 게시판·페이지 체크포인트부터 이어집니다. 원본이 느리면 며칠 걸릴 수 있습니다."],
   "full-content": ["전체 게시글 본문 다시 수집", "선택 범위에서 발견된 모든 글을 성공 여부와 관계없이 다시 수집합니다. 장기간 실행될 수 있습니다."],
   "retry-batch": ["본문 대기 재시도", "처리 시각이 된 모든 대기 또는 재시도 항목을 우선순위대로 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
@@ -241,6 +241,14 @@ function runCountersReported(run) {
       .some((value) => Number.isFinite(value) && value > 0);
 }
 
+function isInventoryFocusedRun(run, activeStep = null) {
+  const step = activeStep || run?.latest_event?.step;
+  return step === "full-catalog" || step === "inventory" ||
+    run?.safe_summary_code === "full_catalog_succeeded" ||
+    run?.safe_summary_code === "full_catalog_no_progress" ||
+    run?.safe_summary_code === "inventory_succeeded";
+}
+
 function runLabel(run, activeStep = null) {
   const action = run?.source === "command" ? activeStep || run.latest_event?.step : null;
   return stepLabels[action] || labels[run?.kind] || run?.kind;
@@ -303,6 +311,8 @@ function renderIssue(issue) {
     ? `이후 자동 실행이 성공했습니다${recent.recovered_at ? ` · 정상화 ${time(recent.recovered_at)}` : ""}.`
     : recent.safe_summary_code === "runner_interrupted"
     ? "같은 작업을 다시 요청하면 저장된 체크포인트부터 이어갑니다. 실행 기록과 Oracle 여유 공간을 확인하세요."
+    : recent.safe_summary_code === "site_unreachable"
+    ? "원본이 다시 응답하면 같은 전체 목차·수집 명령을 요청하세요. 게시판 페이지 진행분은 보존되어 이어서 갑니다."
     : "남은 항목은 다음 자동 실행에서 재시도하며, 반복 실패는 사람 확인 필요로 분리됩니다.";
   byId("issue-time").textContent = `${age(recent.finished_at || recent.started_at)} · ${time(recent.finished_at || recent.started_at)}`;
   byId("issue-kind").textContent = labels[recent.kind] || recent.kind;
@@ -421,12 +431,23 @@ function renderOverview(data) {
     ? `${sourceLabels[shown.source] || shown.source || "출처 미보고"} · ${active ? `시작 ${time(shown.started_at)} · ${telemetryReported ? `중간 집계 ${time(active.latest_event.recorded_at)}` : "중간 집계 대기"}` : `완료 ${time(shown.finished_at)}`}`
     : "수집기 실행 기록이 아직 보고되지 않았습니다.";
   byId("latest-start").textContent = time(shown?.started_at);
+  const inventoryFocus = isInventoryFocusedRun(shown, active ? runner?.active_step : null);
+  byId("latest-changed-label").textContent = inventoryFocus ? "본문 저장" : "본문 변경";
+  byId("latest-failed-label").textContent = inventoryFocus ? "목록 실패" : "항목 실패";
+  byId("latest-boards-label").textContent = inventoryFocus ? "게시판 처리" : "게시판";
   byId("latest-changed").textContent = shown && (!active || progressReported) && shownCountersReported ? number(shown.changed_posts) : active || !shown ? "—" : "미보고";
   byId("latest-failed").textContent = shown && (!active || progressReported) && shownCountersReported ? number(shown.failed_posts) : active || !shown ? "—" : "미보고";
   const boardsReported = Number.isFinite(shown?.boards_ok) && Number.isFinite(shown?.boards_failed);
   byId("latest-boards").textContent = boardsReported && (!active || progressReported) && shownCountersReported
     ? `${shown.boards_ok}/${shown.boards_ok + shown.boards_failed}`
     : active || !shown ? "—" : "미보고";
+  if (shown && inventoryFocus && shownCountersReported && Number(shown.changed_posts || 0) === 0) {
+    const base = byId("active-reason").textContent;
+    if (base && !base.includes("목차만")) {
+      byId("active-reason").textContent =
+        `${base} · 목차만 확인하므로 본문 저장 0은 정상입니다`;
+    }
+  }
   renderIssue(data.recent_issue);
   renderArchiveSnapshot(data.archive_snapshot);
   lastRunner = runner;
@@ -444,12 +465,22 @@ function runRow(run) {
   const identity = node("div", "run-id");
   identity.append(node("strong", "", runLabel(run)), node("small", "", shortId(run.run_id)));
   const countersReported = runCountersReported(run);
+  const inventoryFocus = isInventoryFocusedRun(run);
   const changed = node("div", "run-metric");
-  changed.append(node("strong", "", countersReported ? run.changed_posts : "미보고"), node("small", "", "변경"));
+  changed.append(
+    node("strong", "", countersReported ? run.changed_posts : "미보고"),
+    node("small", "", inventoryFocus ? "본문" : "변경"),
+  );
   const failed = node("div", "run-metric");
-  failed.append(node("strong", "", countersReported ? run.failed_posts : "미보고"), node("small", "", "실패"));
+  failed.append(
+    node("strong", "", countersReported ? run.failed_posts : "미보고"),
+    node("small", "", inventoryFocus ? "목록실패" : "실패"),
+  );
   const boards = node("div", "run-metric");
-  boards.append(node("strong", "", countersReported ? `${run.boards_ok}/${run.boards_ok + run.boards_failed}` : "미보고"), node("small", "", "게시판"));
+  boards.append(
+    node("strong", "", countersReported ? `${run.boards_ok}/${run.boards_ok + run.boards_failed}` : "미보고"),
+    node("small", "", "게시판"),
+  );
   const started = node("div", "run-metric");
   started.append(node("strong", "", age(run.started_at)), node("small", "", time(run.started_at)));
   summary.append(state, identity, changed, failed, boards, started);

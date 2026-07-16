@@ -1972,7 +1972,7 @@ def test_full_catalog_resumes_after_transient_site_unreachable(
     )
 
     assert calls == 2
-    assert sleeps == [60]
+    assert sleeps == [90]
     assert report["status"] == "succeeded"
     assert report["safe_code"] == "full_catalog_succeeded"
 

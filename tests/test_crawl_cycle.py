@@ -137,7 +137,7 @@ def test_cycle_runs_enabled_boards_sequentially(
     budgets = [int(command[command.index("--max-seconds") + 1]) for command in commands]
     assert all(1 <= budget <= 14_400 for budget in budgets)
     assert budgets == sorted(budgets, reverse=True)
-    assert timeouts == [budget + 60 for budget in budgets]
+    assert timeouts == [budget + 120 for budget in budgets]
     assert report["changed_posts"] == 4
     assert report["failed_posts"] == 0
     assert report["boards_ok"] == 4
@@ -313,7 +313,7 @@ def test_cycle_preflight_stops_before_boards(
     report = run_cycle(args)
 
     assert report["status"] == status
-    assert calls == (2 if isinstance(error, SessionNetworkError) else 1)
+    assert calls == (3 if isinstance(error, SessionNetworkError) else 1)
 
 
 def test_cycle_preserves_network_classification_when_login_retry_is_throttled(

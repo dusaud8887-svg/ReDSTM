@@ -337,7 +337,7 @@ def test_session_validation_stops_after_logout_marker_before_broken_eof(
     class HangingOpener:
         def open(self, request: object, timeout: float) -> HangingResponse:
             assert request.get_header("Connection") == "close"  # type: ignore[attr-defined]
-            assert timeout == 30
+            assert timeout == 60.0
             return response
 
     monkeypatch.setattr(session_module, "build_opener", lambda *handlers: HangingOpener())

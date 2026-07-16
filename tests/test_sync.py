@@ -742,7 +742,8 @@ def test_listing_dataloss_retries_without_advancing_inventory_coverage(tmp_path:
     assert spider.next_inventory_page == 3
     assert spider.inventory_completed is False
 
-    for retry_number in (2, 3):
+    # First attempt already used retry_times=0→1; RETRY_TIMES=3 allows retries 1..3.
+    for retry_number in (2, 3, 4):
         retry.meta.update(
             {
                 "raw_sha256": str(retry_number) * 64,
@@ -758,9 +759,9 @@ def test_listing_dataloss_retries_without_advancing_inventory_coverage(tmp_path:
             flags=["dataloss"],
         )
         outputs = list(spider.parse_listing(retried_response))
-        if retry_number == 2:
+        if retry_number < 4:
             [retry] = outputs
-            assert retry.meta["retry_times"] == 2
+            assert retry.meta["retry_times"] == retry_number
         else:
             assert outputs == []
 
@@ -785,6 +786,7 @@ def test_listing_dataloss_retries_without_advancing_inventory_coverage(tmp_path:
                 ("d", "listing.warc.gz", "<urn:uuid:dataloss-listing>"),
                 ("2", "listing-2.warc.gz", "<urn:uuid:dataloss-listing-2>"),
                 ("3", "listing-3.warc.gz", "<urn:uuid:dataloss-listing-3>"),
+                ("4", "listing-4.warc.gz", "<urn:uuid:dataloss-listing-4>"),
             )
         ]
 
@@ -930,7 +932,7 @@ def test_capture_failure_codes_ignores_a_listing_error_resolved_by_retry(tmp_pat
     assert _capture_failure_codes(path, run_id) == []
 
 
-def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
+def test_sync_claims_up_to_detail_concurrency_leases(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
     run_id = ArchiveStore(path).start_run("sync")
@@ -939,7 +941,8 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
         archive_path=path,
         run_id=run_id,
         session=_session(),
-        max_posts=2,
+        max_posts=3,
+        detail_concurrency=2,
     )
     url = "https://www.typemoon.net/write_free21"
     response = HtmlResponse(
@@ -951,6 +954,8 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
             <span class='subject'>one</span></a></td></tr>
           <tr><td class='td-subj-wrap'><a href='/write_free21/2'>
             <span class='subject'>two</span></a></td></tr>
+          <tr><td class='td-subj-wrap'><a href='/write_free21/3'>
+            <span class='subject'>three</span></a></td></tr>
         </tbody></table>
         """,
         encoding="utf-8",
@@ -958,8 +963,8 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
 
     requests = _detail_requests(list(spider.parse_listing(response)))
 
-    assert len(requests) == 1
-    assert requests[0].meta["expected_comment_count"] == 0
+    assert len(requests) == 2
+    assert {request.meta["expected_comment_count"] for request in requests} == {0}
     with connect_archive(path, read_only=True) as connection:
         assert [
             tuple(row)
@@ -969,7 +974,8 @@ def test_sync_claims_only_one_detail_lease_at_a_time(tmp_path: Path) -> None:
             )
         ] == [
             (1, "https://www.typemoon.net/write_free21/1", "running", 0),
-            (2, "https://www.typemoon.net/write_free21/2", "pending", 0),
+            (2, "https://www.typemoon.net/write_free21/2", "running", 0),
+            (3, "https://www.typemoon.net/write_free21/3", "pending", 0),
         ]
 
 
@@ -1272,6 +1278,25 @@ def test_listing_login_form_stops_as_auth_failure() -> None:
     assert spider.failure_codes == {"auth_required"}
 
 
+def test_concurrent_requests_env_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    import crawler.settings as settings_module
+
+    monkeypatch.setenv("REDSTM_CONCURRENT_REQUESTS", "3")
+    reloaded = importlib.reload(settings_module)
+    assert reloaded.CONCURRENT_REQUESTS == 3
+    assert reloaded.REDSTM_DETAIL_CONCURRENCY == 3
+    monkeypatch.setenv("REDSTM_CONCURRENT_REQUESTS", "99")
+    reloaded = importlib.reload(settings_module)
+    assert reloaded.CONCURRENT_REQUESTS == 3
+    monkeypatch.setenv("REDSTM_CONCURRENT_REQUESTS", "0")
+    reloaded = importlib.reload(settings_module)
+    assert reloaded.CONCURRENT_REQUESTS == 1
+    monkeypatch.delenv("REDSTM_CONCURRENT_REQUESTS", raising=False)
+    importlib.reload(settings_module)
+
+
 def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1279,16 +1304,21 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     archive.touch()
     assert crawler_settings.DOWNLOAD_DELAY == 10.0
     assert crawler_settings.AUTOTHROTTLE_ENABLED is True
-    assert crawler_settings.AUTOTHROTTLE_MAX_DELAY == 60.0
+    assert crawler_settings.AUTOTHROTTLE_MAX_DELAY == 120.0
     assert crawler_settings.DOWNLOAD_MAXSIZE == 64 << 20
-    assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 900
+    assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 2400
     assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
-    assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 180
-    assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 180
-    assert "download_timeout" not in TypeMoonSpider().detail_request("write", 1, _session()).meta
+    assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
+    assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 420
+    assert crawler_settings.REDSTM_CONCURRENT_REQUESTS == 2
+    assert crawler_settings.REDSTM_DETAIL_CONCURRENCY == 2
+    assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 240
+    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["download_timeout"] == 420
     project = _project_settings()
-    assert project.getint("CONCURRENT_REQUESTS") == 1
+    assert project.getint("CONCURRENT_REQUESTS") == 2
+    assert project.getint("CONCURRENT_REQUESTS_PER_DOMAIN") == 2
     assert project.getfloat("DOWNLOAD_DELAY") == 10
+    assert project.getint("RETRY_TIMES") == 3
     assert project.getdict("DOWNLOADER_MIDDLEWARES") == {
         "crawler.middlewares.WarcCaptureMiddleware": 595
     }
@@ -1299,7 +1329,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     )
 
     monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
-    assert parse_sync_args().lease_seconds == 900
+    assert parse_sync_args().lease_seconds == 2400
     assert parse_sync_args().max_seconds is None
     assert parse_sync_args().session_prevalidated is False
     assert parse_sync_args().parent_lock_held is False
@@ -1313,7 +1343,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     )
     assert parse_sync_args().parent_lock_held is True
     monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
-    assert parse_recovery_args().lease_seconds == 900
+    assert parse_recovery_args().lease_seconds == 2400
 
 
 def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:

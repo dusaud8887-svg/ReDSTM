@@ -123,7 +123,9 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
 
-현재 crawler는 global/domain/detail concurrency 1과 요청 시작 간 10초 고정 delay를 유지한다.
+현재 crawler는 global/domain/detail concurrency 2(환경변수 `REDSTM_CONCURRENT_REQUESTS`로 1–3)와
+요청 시작 간 10초 고정 delay를 유지한다. 두 번째 요청은 첫 요청이 아직 스트리밍 중이어도 delay 뒤에
+시작되며 동시 burst가 아니다.
 robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTXT_OBEY=False`), 10초 간격은
 원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. 요청은 로그인 회원의 브라우저와 일관된 발자국
 (실제 브라우저 UA, `Accept`/`Accept-Language`, page·detail `Referer` 체인; 로그인 handshake도 동일)을

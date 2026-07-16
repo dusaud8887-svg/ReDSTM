@@ -38,11 +38,14 @@ def test_policy_settings_and_urls_are_conservative() -> None:
     # honors the origin's published Crawl-delay through the fixed DOWNLOAD_DELAY.
     assert settings.ROBOTSTXT_OBEY is False
     assert settings.DOWNLOAD_DELAY == 10.0
-    assert settings.DOWNLOAD_TIMEOUT == 180
+    assert settings.DOWNLOAD_TIMEOUT == 420
+    assert settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
+    assert settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 420
     assert settings.RANDOMIZE_DOWNLOAD_DELAY is False
-    assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 1
-    assert settings.RETRY_TIMES == 2
-    assert settings.RETRY_HTTP_CODES == [408, 500, 502, 503, 504, 522, 524]
+    assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 2
+    assert settings.REDSTM_DETAIL_CONCURRENCY == 2
+    assert settings.RETRY_TIMES == 3
+    assert settings.RETRY_HTTP_CODES == [408, 500, 502, 503, 504, 520, 522, 524]
     # Impersonation is off by default: the static header footprint stands, no curl handler.
     assert settings.REDSTM_IMPERSONATE_BROWSER == ""
     assert "sec-ch-ua" in settings.DEFAULT_REQUEST_HEADERS
@@ -87,7 +90,7 @@ def test_request_footprint_matches_a_browser_member() -> None:
     assert "Accept-Encoding" not in headers
     # A Chrome UA that omits its client hints and fetch-metadata headers is a common bot
     # tell; the footprint carries them, and the client-hint major version tracks the UA.
-    assert 'v="131"' in headers["sec-ch-ua"] and "Chrome/131" in settings.USER_AGENT
+    assert 'v="138"' in headers["sec-ch-ua"] and "Chrome/138" in settings.USER_AGENT
     assert headers["sec-ch-ua-mobile"] == "?0"
     assert headers["sec-ch-ua-platform"] == '"Windows"'
     assert headers["Upgrade-Insecure-Requests"] == "1"
