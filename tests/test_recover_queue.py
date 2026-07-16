@@ -126,8 +126,11 @@ def test_recovery_prefers_outline_only_posts(tmp_path: Path) -> None:
     with connect_archive(archive) as connection:
         connection.execute(
             """
-            INSERT INTO boards (board_id, name, group_name, canonical_url, first_seen_at, last_seen_at)
-            VALUES ('aa_a01', 'AA', 'aa', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            INSERT INTO boards (
+                board_id, name, group_name, canonical_url, first_seen_at, last_seen_at
+            ) VALUES (
+                'aa_a01', 'AA', 'aa', 'https://www.typemoon.net/aa_a01', 'now', 'now'
+            )
             """
         )
         connection.execute(
@@ -156,7 +159,10 @@ def test_recovery_prefers_outline_only_posts(tmp_path: Path) -> None:
             """
             UPDATE posts SET latest_version_id = (
                 SELECT id FROM post_versions
-                WHERE post_id = (SELECT id FROM posts WHERE board_id='aa_a01' AND external_post_id=1)
+                WHERE post_id = (
+                    SELECT id FROM posts
+                    WHERE board_id='aa_a01' AND external_post_id=1
+                )
             )
             WHERE board_id='aa_a01' AND external_post_id=1
             """
