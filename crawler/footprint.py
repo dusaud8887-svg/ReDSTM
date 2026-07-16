@@ -8,11 +8,12 @@ import os
 # keep their HTTP/1.1 request-header footprint (real Chrome UA, client hints, Sec-Fetch
 # metadata) and Python's default OpenSSL TLS stack.
 #
-# When set to a curl_cffi target such as "chrome131", curl_cffi owns a *coherent* Chrome
+# When set to a curl_cffi target such as "chrome150", curl_cffi owns a *coherent* Chrome
 # fingerprint — TLS/JA3 and HTTP/2 settings as well as the UA and client hints — for both the
 # login handshake (crawler.session) and the Scrapy crawl (scrapy-impersonate download
 # handler). That closes the residual TLS-layer fingerprint gap the header footprint alone
-# cannot, and keeps login and crawl identical at every layer.
+# cannot, and keeps login and crawl identical at every layer. Prefer a target major that
+# matches crawler.settings.USER_AGENT when enabling.
 #
 # It is gated behind a flag (and an optional dependency extra) because the impersonated
 # fingerprint cannot be verified against the authenticated origin from CI: enabling it swaps

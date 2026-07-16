@@ -90,7 +90,7 @@ def test_request_footprint_matches_a_browser_member() -> None:
     assert "Accept-Encoding" not in headers
     # A Chrome UA that omits its client hints and fetch-metadata headers is a common bot
     # tell; the footprint carries them, and the client-hint major version tracks the UA.
-    assert 'v="138"' in headers["sec-ch-ua"] and "Chrome/138" in settings.USER_AGENT
+    assert 'v="150"' in headers["sec-ch-ua"] and "Chrome/150" in settings.USER_AGENT
     assert headers["sec-ch-ua-mobile"] == "?0"
     assert headers["sec-ch-ua-platform"] == '"Windows"'
     assert headers["Upgrade-Insecure-Requests"] == "1"

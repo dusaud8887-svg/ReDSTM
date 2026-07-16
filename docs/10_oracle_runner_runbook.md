@@ -233,7 +233,7 @@ UA client hints(`sec-ch-ua*`), fetch-metadata 헤더(`Sec-Fetch-*`, `Upgrade-Ins
 함께 갱신한다.
 
 **TLS/JA3 지문 impersonation (기본 off).** 헤더 계층만으로 부족해 origin이 TLS 지문으로 차단하는
-정황이 보이면 `REDSTM_IMPERSONATE_BROWSER`(예: `chrome131`)를 설정해 curl_cffi 기반 impersonation을
+정황이 보이면 `REDSTM_IMPERSONATE_BROWSER`(예: `chrome150`)를 설정해 curl_cffi 기반 impersonation을
 켠다. 켜지면 crawl은 `scrapy-impersonate` 다운로드 핸들러로, 로그인 핸드셰이크는 curl_cffi로 나가며
 curl_cffi가 TLS/JA3·HTTP2·UA·client hint를 **일관되게 소유**한다(그래서 이 모드에선 정적 헤더
 발자국과 Scrapy UserAgentMiddleware는 내려두고, 세션 쿠키는 flat `name=value` 맵으로 전달한다 —

@@ -126,7 +126,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | request | concurrency | global/domain/detail 2 (env `REDSTM_CONCURRENT_REQUESTS` 1–3); 요청 시작은 10초 간격으로 stagger, 동시 burst 아님 | `crawler/settings.py` |
 | request | delay/AutoThrottle | 10초 하한, 120초 상한; 원본 저속 시 간격만 늘림 | `crawler/settings.py` |
 | request | robots | 미준수(`ROBOTSTXT_OBEY=False`, 2026-07-14 사용자 결정; 10초 간격은 유지) | `crawler/settings.py` |
-| request | 발자국 | 브라우저 `USER_AGENT`(Chrome 138), `Accept`/`Accept-Language`, UA client hints(`sec-ch-ua*`)와 fetch-metadata(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`) 헤더(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer`와 `Sec-Fetch-Site` 체인, 로그인 핸드셰이크도 동일 헤더 | `crawler/settings.py` + `crawler/spiders/typemoon.py` + `crawler/session.py` |
+| request | 발자국 | 브라우저 `USER_AGENT`(Chrome 150), `Accept`/`Accept-Language`, UA client hints(`sec-ch-ua*`)와 fetch-metadata(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`) 헤더(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer`와 `Sec-Fetch-Site` 체인, 로그인 핸드셰이크도 동일 헤더 | `crawler/settings.py` + `crawler/spiders/typemoon.py` + `crawler/session.py` |
 | request | TLS 지문 impersonation | 기본 off; `REDSTM_IMPERSONATE_BROWSER` 설정 시 curl_cffi/scrapy-impersonate로 crawl·로그인 모두 Chrome TLS/JA3 정합(optional `impersonate` extra 필요, canary 후 활성) | `crawler/footprint.py` + `crawler/settings.py` + `crawler/session.py` |
 | request | listing/detail timeout | 240초 / 420초 (AA 대형 본문, 장기 dribble) | `crawler/settings.py` |
 | request | retry | 최초 포함 총 4회 (`RETRY_TIMES=3`) | `crawler/settings.py` |

@@ -28,10 +28,10 @@ def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
 # during origin degradation before any listing request could start.
 ROBOTSTXT_OBEY = False
 # Keep major version in lockstep with REDSTM_CLIENT_HINT_HEADERS below.
-# 138 is a current-generation Chrome major for mid-2026; outdated majors are a bot tell.
+# 150 is Chrome stable as of 2026-07 (released ~2026-06-30); outdated majors are a bot tell.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 # Browser-consistent negotiation headers. Accept-Encoding is intentionally left to Scrapy's
 # HttpCompressionMiddleware so it advertises exactly what it can decode.
@@ -41,7 +41,7 @@ REDSTM_ACCEPT = (
 )
 REDSTM_ACCEPT_LANGUAGE = "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
 REDSTM_CLIENT_HINT_HEADERS = {
-    "sec-ch-ua": '"Google Chrome";v="138", "Chromium";v="138", "Not_A Brand";v="24"',
+    "sec-ch-ua": '"Google Chrome";v="150", "Chromium";v="150", "Not_A Brand";v="24"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
 }

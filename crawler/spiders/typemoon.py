@@ -358,7 +358,7 @@ class TypeMoonSpider(scrapy.Spider):
         if board_id is not None and not _BOARD_ID_PATTERN.fullmatch(board_id):
             raise ValueError(f"invalid TypeMoon board id: {board_id!r}")
         self.start_board_id = board_id
-        # Empty unless TLS impersonation is enabled; when set (e.g. "chrome131") curl_cffi's
+        # Empty unless TLS impersonation is enabled; when set (e.g. "chrome150") curl_cffi's
         # download handler owns the fingerprint and each request carries meta["impersonate"].
         self.impersonate_browser = str(impersonate_browser)
         self.archive_path = Path(archive_path) if archive_path is not None else None
