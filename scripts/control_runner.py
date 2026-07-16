@@ -795,6 +795,13 @@ class ControlRunner:
                     return self._combined_collection_report(
                         reports, safe_code="full_catalog_succeeded"
                     )
+                # Ops-bounded catalog (max_seconds set) is one inventory cycle only. The
+                # multi-cycle while-loop is for multi-hour unattended passes; reusing the
+                # per-cycle budget as a loop would run for days despite the operator cap.
+                if max_seconds is not None:
+                    combined = self._combined_collection_report(reports)
+                    combined["inventory_pass_complete"] = False
+                    return combined
                 status = str(report.get("status", "failed"))
                 if status == "auth_failed" and not auth_retried:
                     # The next cycle's preflight performs a throttled re-login; one retry
