@@ -190,13 +190,10 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 connection.execute(
                     """
                     UPDATE boards SET inventory_next_page = ?,
-                        last_inventory_at = CASE
-                            WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                            ELSE last_inventory_at
-                        END
+                        last_inventory_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
                     WHERE board_id = ?
                     """,
-                    (inventory_next_page, inventory_completed, args.board),
+                    (inventory_next_page, args.board),
                 )
         elif listing_completed:
             if latest_post_id is not None and (

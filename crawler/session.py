@@ -26,6 +26,7 @@ from crawler.settings import (
     REDSTM_NAVIGATION_HEADERS,
     REDSTM_SESSION_HTML_MAX_BYTES,
     REDSTM_SESSION_LIFETIME_SECONDS,
+    REDSTM_SESSION_REVALIDATE_SECONDS,
     REDSTM_SESSION_TIMEOUT_SECONDS,
 )
 
@@ -169,6 +170,7 @@ def ensure_session_export(
     if current.tzinfo is None:
         raise SessionRefreshError("current time must include a timezone")
     desired = user_agent.strip()
+    usable: SessionExport | None = None
     try:
         session = validate_session_export(path, now=current, timeout=timeout)
     except SessionNetworkError:
@@ -179,15 +181,27 @@ def ensure_session_export(
         # Cookies can outlive a USER_AGENT bump. Reusing a still-valid session with a stale
         # Chrome major undoes footprint upgrades until the next forced re-login — rewrite the
         # export in place so crawl and handshake headers match the current product settings.
-        if session.user_agent == desired:
+        if session.user_agent != desired:
+            bare = tuple(cookie for cookie in session.cookies if cookie.name != _ADULT_COOKIE_NAME)
+            updated = SessionExport(bare, session.created_at, session.expires_at, desired)
+            _write_session_export(Path(path), updated)
+            session = SessionExport(
+                _with_adult_permission(bare), session.created_at, session.expires_at, desired
+            )
+        remaining = (session.expires_at - current).total_seconds()
+        # Export timestamps are a local lifetime, not server cookie death. Past expires_at
+        # we still reuse when online validation succeeds. Inside the revalidate window we
+        # proactively re-login so multi-hour catalog/recovery does not mid-pass expire.
+        if remaining > REDSTM_SESSION_REVALIDATE_SECONDS or remaining <= 0:
             return session
-        bare = tuple(cookie for cookie in session.cookies if cookie.name != _ADULT_COOKIE_NAME)
-        updated = SessionExport(bare, session.created_at, session.expires_at, desired)
-        _write_session_export(Path(path), updated)
-        return SessionExport(
-            _with_adult_permission(bare), session.created_at, session.expires_at, desired
-        )
-    _reserve_automatic_login(Path(path), current)
+        usable = session
+    try:
+        _reserve_automatic_login(Path(path), current)
+    except AutomaticLoginThrottleError:
+        # Near-expiry refresh lost the throttle race; keep the still-authenticated export.
+        if usable is not None:
+            return usable
+        raise
     return refresh_session_export(
         path,
         user_id=user_id,

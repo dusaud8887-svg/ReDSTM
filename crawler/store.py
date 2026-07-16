@@ -409,21 +409,23 @@ class ArchiveStore:
     def checkpoint_inventory_page(
         self, board_id: str, *, next_page: int, completed: bool = False
     ) -> None:
-        """Persist inventory cursor mid-board so a later timeout/OOM keeps page progress."""
+        """Persist inventory cursor mid-board so a later timeout/OOM keeps page progress.
+
+        last_inventory_at advances on every successful page checkpoint (not only board
+        completion) so ops telemetry and inventory-since coverage reflect live progress.
+        """
         if next_page < 1:
             raise ValueError("inventory next_page must be >= 1")
         with archive_transaction(self.path) as connection:
             connection.execute(
                 """
                 UPDATE boards SET inventory_next_page = ?,
-                    last_inventory_at = CASE
-                        WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                        ELSE last_inventory_at
-                    END
+                    last_inventory_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
                 WHERE board_id = ?
                 """,
-                (next_page, completed, board_id),
+                (next_page, board_id),
             )
+        _ = completed  # board-complete flag kept for callers; timestamp always advances
 
     def record_listing(
         self,

@@ -277,9 +277,11 @@ def test_cycle_bounds_hung_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     report = run_cycle(args)
 
-    assert report["status"] == "partial"
+    # Three consecutive board hangs trip the outage breaker; earlier boards stay partial.
+    assert report["status"] == "site_unreachable"
     assert report["stop_reason"] == "worker_timeout"
-    assert report["boards"][0]["failures"] == ["runner_timeout"]
+    assert len(report["boards"]) == 3
+    assert all(board["failures"] == ["runner_timeout"] for board in report["boards"])
 
 
 @pytest.mark.parametrize(
@@ -544,8 +546,17 @@ def test_cycle_continues_parse_failure_but_stops_auth(
         return SimpleNamespace(returncode=2)
 
     monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+    # Initial preflight succeeds; mid-cycle re-login after auth_required fails.
+    preflight_calls = {"n": 0}
+
+    def preflight(_session: object) -> str | None:
+        preflight_calls["n"] += 1
+        return None if preflight_calls["n"] == 1 else "auth_failed"
+
+    monkeypatch.setattr("scripts.crawl_cycle._preflight", preflight)
 
     report = run_cycle(args)
 
     assert report["status"] == "auth_failed"
+    assert report["stop_reason"] == "session_revalidation"
     assert len(commands) == 2

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs
 
 import pytest
@@ -316,6 +317,67 @@ def test_expired_export_is_validated_before_form_login(
     assert state["post_count"] == 1
     assert session.cookies[0].value == "secret"
     assert validated == session
+
+
+def test_ensure_session_refreshes_when_export_near_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long cycles need a fresh export lifetime before the local expires_at window elapses."""
+    path = _session_file(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["expires_at"] = "2026-07-11T12:20:00+00:00"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    refreshed_at = datetime(2026, 7, 11, 12, 5, tzinfo=UTC)
+    calls = {"refresh": 0}
+
+    class Headers:
+        def get_content_charset(self) -> str:
+            return "utf-8"
+
+    class Response:
+        headers = Headers()
+
+        def read(self, _size: int) -> bytes:
+            return b"<a href='/bbs/logout.php'>logout</a>"
+
+    monkeypatch.setattr(
+        session_module,
+        "build_opener",
+        lambda *handlers: SimpleNamespace(open=lambda *a, **k: Response()),
+    )
+
+    def fake_refresh(*args: object, **kwargs: object) -> session_module.SessionExport:
+        calls["refresh"] += 1
+        now = kwargs["now"]
+        assert isinstance(now, datetime)
+        from crawler.session import SessionCookie, SessionExport
+
+        export = SessionExport(
+            (SessionCookie("PHPSESSID", "fresh-secret", ".typemoon.net", "/", True, True),),
+            now,
+            refreshed_at + session_module._SESSION_LIFETIME,
+            "ReDSTM-test/1.0",
+        )
+        session_module._write_session_export(path, export)
+        return session_module.SessionExport(
+            session_module._with_adult_permission(export.cookies),
+            export.created_at,
+            export.expires_at,
+            export.user_agent,
+        )
+
+    monkeypatch.setattr(session_module, "refresh_session_export", fake_refresh)
+    monkeypatch.setattr(session_module, "_reserve_automatic_login", lambda *a, **k: None)
+    # 12:00 with expires 12:20 is inside the 30-minute revalidate window.
+    session = ensure_session_export(
+        path,
+        user_id="member",
+        password="correct",
+        user_agent="ReDSTM-test/1.0",
+        now=datetime(2026, 7, 11, 12, 0, tzinfo=UTC),
+    )
+    assert calls["refresh"] == 1
+    assert session.expires_at == refreshed_at + session_module._SESSION_LIFETIME
 
 
 def test_ensure_session_rewrites_stale_user_agent_without_relogin(

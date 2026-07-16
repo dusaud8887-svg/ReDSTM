@@ -295,8 +295,9 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                     ),
                 )
             except subprocess.TimeoutExpired:
+                # One board hung past the worker budget: record and continue so the rest of
+                # the cycle still advances. Durable cursors keep progress for this board.
                 status = "partial"
-                stop_reason = "worker_timeout"
                 results.append(
                     {
                         "board_id": board_id,
@@ -306,19 +307,29 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                         "failures": ["runner_timeout"],
                     }
                 )
-                break
+                consecutive_network_failures += 1
+                if consecutive_network_failures >= REDSTM_CIRCUIT_BREAKER_FAILURES:
+                    status = "site_unreachable"
+                    stop_reason = "worker_timeout"
+                    break
+                continue
             if not report_path.is_file():
-                status = "runner_failed"
+                status = "partial"
                 results.append(
                     {
                         "board_id": board_id,
-                        "status": status,
+                        "status": "failed",
                         "scheduled_posts": 0,
                         "outcomes": {},
                         "failures": ["runner_failed"],
                     }
                 )
-                break
+                consecutive_network_failures += 1
+                if consecutive_network_failures >= REDSTM_CIRCUIT_BREAKER_FAILURES:
+                    status = "runner_failed"
+                    stop_reason = "missing_report"
+                    break
+                continue
             report = json.loads(report_path.read_text(encoding="utf-8"))
             failures = set(report.get("failures", ()))
             board_status = str(report.get("status", "failed"))
@@ -337,8 +348,16 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 stop_reason = "schedule_paused"
                 break
             if "auth_required" in failures or report.get("error") == "SessionRefreshError":
-                status = "auth_failed"
-                break
+                # One re-login attempt mid-cycle, then continue other boards if refresh works.
+                preflight = _preflight(args.session)
+                if preflight is not None:
+                    status = "auth_failed" if preflight == "auth_failed" else preflight
+                    stop_reason = "session_revalidation"
+                    break
+                session_validated_at = time.monotonic()
+                status = "partial"
+                consecutive_network_failures = 0
+                continue
             network_failure = bool(failures & _NETWORK_FAILURES)
             if network_failure and isinstance(report.get("run_id"), str):
                 network_run_ids.append(report["run_id"])
