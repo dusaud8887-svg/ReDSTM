@@ -158,9 +158,7 @@ def _installed_next_scheduled_at(timer_path: Path, now: datetime | None = None) 
     return _next_scheduled_at(on_calendar, now)
 
 
-def _optional_positive_int(
-    value: object, *, name: str, maximum: int
-) -> int | None:
+def _optional_positive_int(value: object, *, name: str, maximum: int) -> int | None:
     """Parse optional positive command args; omit when absent, reject bad shapes."""
     if value is None:
         return None
