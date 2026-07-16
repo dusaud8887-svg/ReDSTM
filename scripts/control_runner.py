@@ -158,6 +158,19 @@ def _installed_next_scheduled_at(timer_path: Path, now: datetime | None = None) 
     return _next_scheduled_at(on_calendar, now)
 
 
+def _optional_positive_int(
+    value: object, *, name: str, maximum: int
+) -> int | None:
+    """Parse optional positive command args; omit when absent, reject bad shapes."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"command {name} must be a positive integer")
+    if value < 1 or value > maximum:
+        raise ValueError(f"command {name} is out of range")
+    return value
+
+
 def _integer(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
@@ -575,6 +588,8 @@ class ControlRunner:
             self._event(run_id, 0, action, "running")
         report: dict[str, Any] = {}
         board_id = None
+        max_seconds: int | None = None
+        max_posts: int | None = None
         try:
             raw_args = record.get("args")
             if not isinstance(raw_args, dict):
@@ -584,6 +599,12 @@ class ControlRunner:
                 not isinstance(board_id, str) or re.fullmatch(r"[a-z0-9_]{1,64}", board_id) is None
             ):
                 raise ValueError("command board id is invalid")
+            max_seconds = _optional_positive_int(
+                raw_args.get("max_seconds"), name="max_seconds", maximum=24 * 60 * 60
+            )
+            max_posts = _optional_positive_int(
+                raw_args.get("max_posts"), name="max_posts", maximum=500
+            )
             if not resuming:
                 (self.profile.state_dir / _CURRENT_RUN_PAUSED).unlink(missing_ok=True)
             report = self._execute_action(
@@ -592,6 +613,8 @@ class ControlRunner:
                 run_id,
                 command_id=command_id,
                 board_id=board_id,
+                max_seconds=max_seconds,
+                max_posts=max_posts,
                 progress_offset=progress_offset,
             )
             state, safe_code, finish_payload = self._result(action, report)
@@ -675,6 +698,8 @@ class ControlRunner:
         *,
         command_id: str | None = None,
         board_id: str | None = None,
+        max_seconds: int | None = None,
+        max_posts: int | None = None,
         progress_offset: dict[str, int] | None = None,
         reconcile_attempt: int = 0,
         pending_recovery_checked: bool = False,
@@ -722,6 +747,10 @@ class ControlRunner:
             )
             if board_id:
                 command.extend(("--board", board_id))
+            if max_seconds is not None:
+                command.extend(("--max-seconds", str(max_seconds)))
+            if max_posts is not None:
+                command.extend(("--max-posts", str(max_posts)))
             if action == "full-catalog":
                 command.extend(
                     (
@@ -814,6 +843,15 @@ class ControlRunner:
                 if action == "full-content"
                 else None
             )
+            recovery_max_posts = (
+                max_posts
+                if max_posts is not None
+                else (
+                    REDSTM_FULL_CONTENT_MAX_POSTS
+                    if action == "full-content"
+                    else REDSTM_RECOVERY_MAX_POSTS
+                )
+            )
             command = [
                 sys.executable,
                 "-m",
@@ -825,11 +863,7 @@ class ControlRunner:
                 "--warc-dir",
                 str(self.profile.warc_dir),
                 "--max-posts",
-                str(
-                    REDSTM_FULL_CONTENT_MAX_POSTS
-                    if action == "full-content"
-                    else REDSTM_RECOVERY_MAX_POSTS
-                ),
+                str(recovery_max_posts),
                 "--output",
                 str(report_path),
             ]
@@ -837,6 +871,8 @@ class ControlRunner:
                 "schedule.paused" if command_id is None else _CURRENT_RUN_PAUSED
             )
             command.extend(("--pause-file", str(pause_file)))
+            if max_seconds is not None:
+                command.extend(("--max-seconds", str(max_seconds)))
             if board_id:
                 command.extend(("--board", board_id))
             if action == "full-content":
