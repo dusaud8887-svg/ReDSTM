@@ -119,6 +119,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         if board is None:
             raise ValueError("board is missing or disabled in the canonical archive")
 
+        inventory_start_page = int(board["inventory_next_page"]) if args.inventory else 1
         session = (
             load_session_export(session_path, allow_expired=True)
             if args.session_prevalidated
@@ -145,7 +146,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             run_id=run_id,
             session=session,
             max_pages=args.max_pages,
-            start_page=int(board["inventory_next_page"]) if args.inventory else 1,
+            start_page=inventory_start_page,
             max_posts=args.max_posts,
             lease_seconds=args.lease_seconds,
             inventory=args.inventory,
@@ -169,13 +170,21 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             failures = sorted({*failures, "sync_time_budget"})
         outcomes = _capture_summary(archive, run_id)
         paused = bool(getattr(spider, "paused", False))
-        inventory_next_page = int(getattr(spider, "next_inventory_page", 1))
+        inventory_next_page = int(getattr(spider, "next_inventory_page", inventory_start_page))
         inventory_completed = bool(getattr(spider, "inventory_completed", False))
         listing_completed = bool(getattr(spider, "listing_completed", False))
         latest_post_id = getattr(spider, "latest_post_id", None)
         if not args.inventory and not paused and not listing_completed:
             failures = sorted({*failures, "listing_boundary_incomplete"})
         status = "partial" if paused else _run_status(outcomes, discovered, failures)
+        # Listing-only inventory records no post outcomes. Page cursor advance is real progress
+        # and must not collapse to a hard "failed" that trips the cycle's outage breaker.
+        if (
+            args.inventory
+            and status == "failed"
+            and (inventory_completed or inventory_next_page > inventory_start_page)
+        ):
+            status = "partial"
         if args.inventory:
             with connect_archive(archive) as connection:
                 connection.execute(
@@ -228,6 +237,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             "outcomes": outcomes,
             "failures": failures,
             "interrupted_runs": interrupted_runs,
+            "inventory_start_page": inventory_start_page if args.inventory else None,
             "inventory_next_page": inventory_next_page if args.inventory else None,
             "listing_completed": listing_completed,
             "latest_post_id": latest_post_id,

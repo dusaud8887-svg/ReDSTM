@@ -1877,6 +1877,7 @@ def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
     api = Api([])
     runner, _store = _runner(tmp_path, api)
     calls = 0
+    sleeps: list[float] = []
 
     def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
         nonlocal calls
@@ -1905,12 +1906,15 @@ def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
         }
 
     monkeypatch.setattr(runner, "_execute_report", execute)
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr("scripts.control_runner.REDSTM_FULL_CATALOG_OUTAGE_RETRIES", 0)
 
     report = runner._execute_action(
         "full-catalog", "inventory-fail", "inventory-fail", command_id="manual"
     )
 
     assert calls == 2
+    assert sleeps == []
     assert report["status"] == "site_unreachable"
     assert report["inventory_pass_complete"] is False
     assert report["changed_posts"] == 9
@@ -1931,6 +1935,46 @@ def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
     assert {
         name: snapshots[-1]["counters"][name] for name in expected_progress
     } == expected_progress
+
+
+def test_full_catalog_resumes_after_transient_site_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls = 0
+    sleeps: list[float] = []
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "ok": False,
+                "status": "site_unreachable",
+                "changed_posts": 0,
+                "failed_posts": 0,
+                "boards": [{"board_id": "aa", "status": "failed"}],
+            }
+        started_at = runner._latest_inventory_pass_started_at()
+        assert started_at is not None
+        with connect_archive(runner.profile.archive) as connection:
+            connection.execute(
+                "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ?",
+                (started_at,),
+            )
+        return {"ok": True, "status": "succeeded", "boards": []}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    report = runner._execute_action(
+        "full-catalog", "inventory-outage", "inventory-outage", command_id="manual"
+    )
+
+    assert calls == 2
+    assert sleeps == [60]
+    assert report["status"] == "succeeded"
+    assert report["safe_code"] == "full_catalog_succeeded"
 
 
 def test_full_catalog_retries_once_after_session_expiry(

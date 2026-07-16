@@ -25,6 +25,8 @@ from crawler.archive import archive_transaction
 from crawler.settings import (
     REDSTM_EXPORT_MAX_CHANGED_POSTS,
     REDSTM_EXPORT_WORKERS,
+    REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS,
+    REDSTM_FULL_CATALOG_OUTAGE_RETRIES,
     REDSTM_FULL_CONTENT_MAX_POSTS,
     REDSTM_RECOVERY_MAX_POSTS,
 )
@@ -731,6 +733,7 @@ class ControlRunner:
                 )
             reports: list[dict[str, Any]] = []
             auth_retried = False
+            outage_retries = 0
             previous_signature: tuple[int, int] | None = None
             crawl_step = "full-catalog" if action == "full-catalog" else "crawling"
             while True:
@@ -771,6 +774,16 @@ class ControlRunner:
                     # covers routine session expiry during a multi-hour pass.
                     auth_retried = True
                     continue
+                outage_budget = REDSTM_FULL_CATALOG_OUTAGE_RETRIES
+                if status == "site_unreachable" and outage_retries < outage_budget:
+                    # Origin dribble/outage is intermittent. Closing the whole pass on the first
+                    # zero-progress streak wastes hours of earlier board progress; wait and resume
+                    # from durable inventory_next_page cursors instead.
+                    backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+                    delay = backoff[min(outage_retries, len(backoff) - 1)]
+                    outage_retries += 1
+                    time.sleep(delay)
+                    continue
                 if status in {
                     "auth_failed",
                     "site_unreachable",
@@ -792,6 +805,9 @@ class ControlRunner:
                     )
                     return combined
                 previous_signature = signature
+                # Page progress after an outage resets the outage budget so a later multi-hour
+                # dribble still gets the full retry allowance.
+                outage_retries = 0
         if action in {"full-content", "retry-batch"}:
             full_content_checkpoint = (
                 self._ensure_full_content_pass_started(board_id)

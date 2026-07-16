@@ -381,6 +381,85 @@ def test_cycle_breaks_after_three_network_boards(
     assert len(commands) == 3
 
 
+def test_inventory_cycle_does_not_trip_outage_when_boards_advance_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production full-catalog often crawls tens of pages then times out on a later one.
+
+    That must stay partial so the next boards still run, not site_unreachable after three
+    progress-making boards.
+    """
+    args = _args(tmp_path)
+    args.inventory = True
+    commands: list[list[str]] = []
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        index = len(commands)
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "partial",
+                    "run_id": f"run-{index}",
+                    "scheduled_posts": 0,
+                    "failures": ["listing_fetch_failed", "network_error"],
+                    "inventory_start_page": index,
+                    "inventory_next_page": index + 5,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=2)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert report["status"] == "partial"
+    assert len(commands) == 4
+    assert report["completed_boards"] == 4
+
+
+def test_inventory_cycle_still_trips_outage_on_zero_progress_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    args.inventory = True
+    commands: list[list[str]] = []
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.FrontierStore.preserve_network_attempts",
+        lambda self, run_ids: len(run_ids),
+    )
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "failed",
+                    "run_id": f"run-{len(commands)}",
+                    "scheduled_posts": 0,
+                    "failures": ["listing_fetch_failed"],
+                    "inventory_start_page": 4,
+                    "inventory_next_page": 4,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=2)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert report["status"] == "site_unreachable"
+    assert len(commands) == 3
+
+
 def test_cycle_breaks_after_three_rate_limited_boards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

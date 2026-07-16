@@ -807,6 +807,14 @@ class TypeMoonSpider(scrapy.Spider):
         if self.inventory and not page_warning:
             self.next_inventory_page = page + 1 if inventory_rows else 1
             self.inventory_completed = not inventory_rows
+            # Checkpoint after each good page: multi-hour inventory boards otherwise lose
+            # tens of pages when the origin dribbles out on a later request.
+            if self.store is not None and self.start_board_id:
+                self.store.checkpoint_inventory_page(
+                    self.start_board_id,
+                    next_page=self.next_inventory_page,
+                    completed=self.inventory_completed,
+                )
         if not self.inventory and not self._listing_warning:
             self.listing_completed = not inventory_rows or (
                 self._boundary_page is not None and page >= self._boundary_page

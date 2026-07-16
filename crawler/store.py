@@ -406,6 +406,25 @@ class ArchiveStore:
                 )
             return cursor.lastrowid
 
+    def checkpoint_inventory_page(
+        self, board_id: str, *, next_page: int, completed: bool = False
+    ) -> None:
+        """Persist inventory cursor mid-board so a later timeout/OOM keeps page progress."""
+        if next_page < 1:
+            raise ValueError("inventory next_page must be >= 1")
+        with archive_transaction(self.path) as connection:
+            connection.execute(
+                """
+                UPDATE boards SET inventory_next_page = ?,
+                    last_inventory_at = CASE
+                        WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                        ELSE last_inventory_at
+                    END
+                WHERE board_id = ?
+                """,
+                (next_page, completed, board_id),
+            )
+
     def record_listing(
         self,
         run_id: str,

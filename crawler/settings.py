@@ -103,6 +103,11 @@ REDSTM_DETAIL_CONCURRENCY = 1
 REDSTM_CIRCUIT_BREAKER_FAILURES = 3
 REDSTM_PARSE_BREAKER_FAILURES = 3
 REDSTM_RETRY_AFTER_MAX_SECONDS = 24 * 60 * 60
+# Full-catalog inventory spans many boards and multi-hour dribble windows. After a true
+# site_unreachable cycle (no page progress on consecutive boards), the control runner waits
+# and resumes the same pass instead of closing the command as failed on the first outage.
+REDSTM_FULL_CATALOG_OUTAGE_RETRIES = 6
+REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS = (60, 120, 180, 300, 300, 300)
 
 REDSTM_SESSION_TIMEOUT_SECONDS = 30.0
 REDSTM_SESSION_PREFLIGHT_ATTEMPTS = 2

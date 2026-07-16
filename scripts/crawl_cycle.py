@@ -342,9 +342,23 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             network_failure = bool(failures & _NETWORK_FAILURES)
             if network_failure and isinstance(report.get("run_id"), str):
                 network_run_ids.append(report["run_id"])
-            consecutive_network_failures = (
-                consecutive_network_failures + 1 if network_failure else 0
-            )
+            # Inventory full-catalog often advances many listing pages before a later dribble
+            # timeout. Counting that board as a pure outage aborts the pass after three boards
+            # that each made real cursor progress. Only zero-progress network boards feed the
+            # site_unreachable breaker; page advance resets the streak.
+            inventory_progress = False
+            if args.inventory:
+                start_page = report.get("inventory_start_page")
+                next_page = report.get("inventory_next_page")
+                inventory_progress = (
+                    type(start_page) is int
+                    and type(next_page) is int
+                    and (next_page > start_page or bool(report.get("listing_completed")))
+                )
+            if network_failure and not inventory_progress:
+                consecutive_network_failures += 1
+            else:
+                consecutive_network_failures = 0
             if consecutive_network_failures >= REDSTM_CIRCUIT_BREAKER_FAILURES:
                 status = "site_unreachable"
                 preserved_attempts = FrontierStore(args.archive).preserve_network_attempts(
