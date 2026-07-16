@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from crawler.archive import SCHEMA_VERSION, connect_archive
+from crawler.archive import SCHEMA_VERSION, compress_body, connect_archive
 from crawler.frontier import FrontierLease, FrontierStore, transition_lease
 
 
@@ -257,12 +257,67 @@ def test_missing_listing_category_preserves_detail_category_match(tmp_path: Path
                       'title', 'detail-only', 'now', 'now', 2)
             """
         )
+        connection.execute(
+            """
+            INSERT INTO post_versions (
+                post_id, content_sha256, raw_sha256, parser_version, capture_origin,
+                body_html_zstd, body_text_zstd, comments_sha256, captured_at
+            ) VALUES (
+                (SELECT id FROM posts WHERE board_id = 'write_free21' AND external_post_id = 1),
+                ?, ?, 'test', 'live', ?, ?, ?, 'now'
+            )
+            """,
+            (
+                "a" * 64,
+                "b" * 64,
+                compress_body("<p>body</p>"),
+                compress_body("body"),
+                "c" * 64,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE posts SET latest_version_id = (
+                SELECT id FROM post_versions
+                WHERE post_id = (SELECT id FROM posts
+                                 WHERE board_id = 'write_free21' AND external_post_id = 1)
+            )
+            WHERE board_id = 'write_free21' AND external_post_id = 1
+            """
+        )
 
     assert store.listing_is_unchanged(
         "write_free21", 1, title="title", category=None, comment_count=2
     )
     assert not store.listing_is_unchanged(
         "write_free21", 1, title="title", category="changed", comment_count=2
+    )
+
+
+def test_outline_only_discovered_post_is_not_unchanged(tmp_path: Path) -> None:
+    """Inventory rows without a body version must still schedule detail capture."""
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    with connect_archive(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('ss_19', '19금팬픽', 'https://www.typemoon.net/ss_19', 'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title, category,
+                first_seen_at, last_seen_at, comment_count, availability
+            ) VALUES ('ss_19', 190034, 'https://www.typemoon.net/ss_19/190034',
+                      'title', '팬픽', 'now', 'now', 0, 'unknown')
+            """
+        )
+
+    assert not store.listing_is_unchanged(
+        "ss_19", 190034, title="title", category="팬픽", comment_count=0
     )
 
 

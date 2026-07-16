@@ -13,7 +13,7 @@ from scrapy import Request
 from scrapy.http import HtmlResponse, Response
 
 from crawler import settings as crawler_settings
-from crawler.archive import connect_archive, initialize_archive
+from crawler.archive import compress_body, connect_archive, initialize_archive
 from crawler.archive_pipeline import ArchivePipeline
 from crawler.frontier import FrontierStore
 from crawler.items import CapturedPostItem, DiscoveredPostItem
@@ -43,6 +43,37 @@ def _session() -> SessionExport:
         now + timedelta(hours=4),
         "ReDSTM-test/1.0",
     )
+
+
+def _attach_body_versions(connection, board_id: str = "write_free21") -> None:
+    """Mark outline posts as body-captured so listing_is_unchanged can return True."""
+    rows = connection.execute(
+        """
+        SELECT id FROM posts
+        WHERE board_id = ? AND latest_version_id IS NULL
+        """,
+        (board_id,),
+    ).fetchall()
+    html = compress_body("<p>body</p>")
+    text = compress_body("body")
+    for index, (post_id,) in enumerate(rows):
+        cursor = connection.execute(
+            """
+            INSERT INTO post_versions (
+                post_id, content_sha256, parser_version, capture_origin,
+                body_html_zstd, body_text_zstd, comments_sha256, captured_at
+            ) VALUES (?, ?, 'test', 'live', ?, ?, ?, 'now')
+            """,
+            (post_id, f"{index:064x}", html, text, f"{index + 1:064x}"),
+        )
+        connection.execute(
+            """
+            UPDATE posts
+            SET latest_version_id = ?, availability = 'available'
+            WHERE id = ?
+            """,
+            (cursor.lastrowid, post_id),
+        )
 
 
 def _initialize(path: Path) -> None:
@@ -265,6 +296,7 @@ def test_incremental_anchor_requires_configured_overlap_page(tmp_path: Path) -> 
                 (99, "https://www.typemoon.net/write_free21/99", "older"),
             ],
         )
+        _attach_body_versions(connection)
         connection.execute(
             "UPDATE boards SET incremental_anchor_post_id = 100 WHERE board_id = 'write_free21'"
         )
@@ -340,6 +372,7 @@ def test_exact_anchor_disables_unchanged_streak_fallback(
                 for post_id in (3, 2, 1)
             ],
         )
+        _attach_body_versions(connection)
     frontier = FrontierStore(path)
     for post_id in (3, 2, 1):
         frontier.seed(
@@ -526,6 +559,7 @@ def test_overlap_boundary_scans_two_extra_listing_pages(tmp_path: Path) -> None:
                 for post_id in range(1, 21)
             ],
         )
+        _attach_body_versions(connection)
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
         f"<span class='subject'>post {post_id}</span></a></td></tr>"
@@ -585,6 +619,7 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
                 for post_id in range(1, 21)
             ],
         )
+        _attach_body_versions(connection)
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
         f"<span class='subject'>post {post_id}</span></a></td></tr>"

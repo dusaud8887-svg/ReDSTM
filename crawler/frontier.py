@@ -180,10 +180,17 @@ class FrontierStore:
         category: str | None,
         comment_count: int,
     ) -> bool:
+        """True only when listing metadata matches an already body-captured post.
+
+        Inventory seeds outline rows (title/comment only, latest_version_id NULL). Those
+        must not count as unchanged or sync never schedules the detail capture that fills
+        the body — a live adult-board canary hit this after inventory left 45 outline-only
+        ss_19 posts pending forever.
+        """
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT title, category, comment_count
+                SELECT title, category, comment_count, latest_version_id
                 FROM posts
                 WHERE board_id = ? AND external_post_id = ?
                 """,
@@ -191,6 +198,7 @@ class FrontierStore:
             ).fetchone()
         return bool(
             row is not None
+            and row["latest_version_id"] is not None
             and row["title"] == title
             and (category is None or row["category"] == category)
             and row["comment_count"] == comment_count
