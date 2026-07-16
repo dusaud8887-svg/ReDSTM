@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from argparse import Namespace
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -45,7 +46,7 @@ def _session() -> SessionExport:
     )
 
 
-def _attach_body_versions(connection, board_id: str = "write_free21") -> None:
+def _attach_body_versions(connection: sqlite3.Connection, board_id: str = "write_free21") -> None:
     """Mark outline posts as body-captured so listing_is_unchanged can return True."""
     rows = connection.execute(
         """
