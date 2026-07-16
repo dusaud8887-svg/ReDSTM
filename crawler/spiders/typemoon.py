@@ -28,6 +28,7 @@ from crawler.settings import (
     REDSTM_SYNC_MAX_PAGES,
     REDSTM_SYNC_MAX_POSTS,
     RETRY_TIMES,
+    USER_AGENT,
 )
 from crawler.store import ArchiveStore
 
@@ -462,7 +463,9 @@ class TypeMoonSpider(scrapy.Spider):
             if referer is not None:
                 headers["Referer"] = referer
             return cookies, headers, {"impersonate": self.impersonate_browser}
-        headers = {"User-Agent": session.user_agent, "Sec-Fetch-Site": sec_fetch_site}
+        # Prefer the current settings USER_AGENT over a stale value persisted in the session
+        # export so a product footprint bump takes effect without waiting for re-login.
+        headers = {"User-Agent": USER_AGENT, "Sec-Fetch-Site": sec_fetch_site}
         if referer is not None:
             headers["Referer"] = referer
         return session.as_scrapy_cookies(), headers, {}

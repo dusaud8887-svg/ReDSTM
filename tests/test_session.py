@@ -60,7 +60,10 @@ def test_valid_session_builds_captured_detail_request_without_repr_leak(tmp_path
     assert request.url == "https://www.typemoon.net/write_free21/62068"
     assert isinstance(request.cookies, list)
     assert request.cookies[0]["value"] == "cookie-secret"
-    assert request.headers["User-Agent"] == b"ReDSTM-test/1.0"
+    # Crawl requests use the product USER_AGENT footprint, not a stale session-export string.
+    from crawler.settings import USER_AGENT
+
+    assert request.headers["User-Agent"] == USER_AGENT.encode()
     assert request.headers["Referer"] == b"https://www.typemoon.net/write_free21"
     assert request.headers["Sec-Fetch-Site"] == b"same-origin"
     assert b"Cookie" not in request.headers
@@ -313,6 +316,40 @@ def test_expired_export_is_validated_before_form_login(
     assert state["post_count"] == 1
     assert session.cookies[0].value == "secret"
     assert validated == session
+
+
+def test_ensure_session_rewrites_stale_user_agent_without_relogin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A still-valid session must not pin crawl traffic to an obsolete Chrome major."""
+
+    class Headers:
+        def get_content_charset(self) -> str:
+            return "utf-8"
+
+    class Response:
+        headers = Headers()
+
+        def read(self, _size: int) -> bytes:
+            return b"<a href='/bbs/logout.php'>logout</a>"
+
+    class Opener:
+        def open(self, request: object, timeout: float) -> Response:
+            return Response()
+
+    path = _session_file(tmp_path)
+    monkeypatch.setattr(session_module, "build_opener", lambda *handlers: Opener())
+    session = ensure_session_export(
+        path,
+        user_id="member",
+        password="unused",
+        user_agent="Mozilla/5.0 Chrome/150.0.0.0",
+        now=datetime(2026, 7, 11, 12, tzinfo=UTC),
+    )
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert session.user_agent == "Mozilla/5.0 Chrome/150.0.0.0"
+    assert stored["user_agent"] == "Mozilla/5.0 Chrome/150.0.0.0"
+    assert stored["cookies"][0]["value"] == "cookie-secret"
 
 
 def test_session_validation_stops_after_logout_marker_before_broken_eof(

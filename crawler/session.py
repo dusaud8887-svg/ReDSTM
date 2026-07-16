@@ -168,12 +168,25 @@ def ensure_session_export(
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
         raise SessionRefreshError("current time must include a timezone")
+    desired = user_agent.strip()
     try:
-        return validate_session_export(path, now=current, timeout=timeout)
+        session = validate_session_export(path, now=current, timeout=timeout)
     except SessionNetworkError:
         raise
     except OSError, SessionRefreshError, ValueError:
         pass
+    else:
+        # Cookies can outlive a USER_AGENT bump. Reusing a still-valid session with a stale
+        # Chrome major undoes footprint upgrades until the next forced re-login — rewrite the
+        # export in place so crawl and handshake headers match the current product settings.
+        if session.user_agent == desired:
+            return session
+        bare = tuple(cookie for cookie in session.cookies if cookie.name != _ADULT_COOKIE_NAME)
+        updated = SessionExport(bare, session.created_at, session.expires_at, desired)
+        _write_session_export(Path(path), updated)
+        return SessionExport(
+            _with_adult_permission(bare), session.created_at, session.expires_at, desired
+        )
     _reserve_automatic_login(Path(path), current)
     return refresh_session_export(
         path,

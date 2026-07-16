@@ -2124,9 +2124,35 @@ class ControlRunner:
                         ORDER BY last_attempt_at DESC LIMIT 1
                         """
                     ).fetchone()
-                if active is not None:
-                    payload["active_board_id"] = str(active["board_id"])
-                    payload["active_post_id"] = int(active["external_post_id"])
+                    if active is not None:
+                        payload["active_board_id"] = str(active["board_id"])
+                        payload["active_post_id"] = int(active["external_post_id"])
+                    else:
+                        # full-catalog --listing-only never claims frontier detail leases, so
+                        # the only live board signal is the inventory run's latest listing URL.
+                        inventory = connection.execute(
+                            """
+                            SELECT run_id FROM crawl_runs
+                            WHERE kind = 'inventory' AND status = 'running'
+                            ORDER BY started_at DESC LIMIT 1
+                            """
+                        ).fetchone()
+                        if inventory is not None:
+                            capture = connection.execute(
+                                """
+                                SELECT url FROM captures
+                                WHERE run_id = ? AND entity_type = 'listing'
+                                ORDER BY id DESC LIMIT 1
+                                """,
+                                (inventory["run_id"],),
+                            ).fetchone()
+                            if capture is not None:
+                                match = re.fullmatch(
+                                    r"https://www\.typemoon\.net/([a-z0-9_]+)(?:\?.*)?",
+                                    str(capture["url"]),
+                                )
+                                if match is not None:
+                                    payload["active_board_id"] = match.group(1)
             except sqlite3.Error:
                 pass
         if run_id is not None:

@@ -385,7 +385,7 @@ def test_listing_pagination_carries_previous_page_as_referer() -> None:
         referer="https://www.typemoon.net/write_free21",
     )
     assert paged.headers["Referer"] == b"https://www.typemoon.net/write_free21"
-    assert paged.headers["User-Agent"] == b"member-agent"
+    assert paged.headers["User-Agent"] == settings.USER_AGENT.encode()
     assert b"Connection" not in paged.headers
     # Following a page link is same-origin navigation.
     assert paged.headers["Sec-Fetch-Site"] == b"same-origin"
