@@ -19,6 +19,7 @@ from crawler.settings import (
     REDSTM_CIRCUIT_BREAKER_FAILURES,
     REDSTM_DETAIL_CONCURRENCY,
     REDSTM_DETAIL_TIMEOUT_SECONDS,
+    REDSTM_NETWORK_BREAKER_FAILURES,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_INCREMENTAL_OVERLAP_PAGES,
     REDSTM_LISTING_OVERLAP_UNCHANGED,
@@ -925,16 +926,18 @@ class TypeMoonSpider(scrapy.Spider):
         if error_code == "network_error":
             self._consecutive_network_errors += 1
             self._consecutive_rate_limits = 0
+            threshold = REDSTM_NETWORK_BREAKER_FAILURES
+            streak = self._consecutive_network_errors
         elif error_code == "rate_limited":
             self._consecutive_rate_limits += 1
             self._consecutive_network_errors = 0
+            threshold = REDSTM_CIRCUIT_BREAKER_FAILURES
+            streak = self._consecutive_rate_limits
         else:
             self._consecutive_network_errors = 0
             self._consecutive_rate_limits = 0
-        if (
-            max(self._consecutive_network_errors, self._consecutive_rate_limits)
-            >= REDSTM_CIRCUIT_BREAKER_FAILURES
-        ):
+            return False
+        if streak >= threshold:
             assert error_code is not None
             self.failure_codes.add(error_code)
             self._halted = True

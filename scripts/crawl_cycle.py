@@ -355,7 +355,10 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                     and type(next_page) is int
                     and (next_page > start_page or bool(report.get("listing_completed")))
                 )
-            if network_failure and not inventory_progress:
+            # Boards that stored detail bodies (or advanced inventory pages) still made
+            # progress despite transport noise — do not feed the site-wide outage breaker.
+            stored_progress = int(outcomes.get("stored", 0) or 0) > 0
+            if network_failure and not inventory_progress and not stored_progress:
                 consecutive_network_failures += 1
             else:
                 consecutive_network_failures = 0

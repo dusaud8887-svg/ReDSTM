@@ -292,15 +292,22 @@ class FrontierStore:
             group_order_sql = " ".join(
                 f"WHEN ? THEN {rank}" for rank, _group in enumerate(REDSTM_RECOVERY_GROUP_ORDER)
             )
+            # Prefer outline-only posts (no body version yet): inventory seeds leave
+            # latest_version_id NULL while pending rows with bodies are lower priority.
             rows = connection.execute(
                 f"""
                 SELECT frontier.board_id, frontier.external_post_id
                 FROM crawl_frontier AS frontier
                 LEFT JOIN boards AS board ON board.board_id = frontier.board_id
+                LEFT JOIN posts AS post
+                  ON post.board_id = frontier.board_id
+                 AND post.external_post_id = frontier.external_post_id
                 WHERE frontier.state IN ('pending', 'retry')
                   AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
                   {board_clause}
                 ORDER BY
+                    CASE WHEN post.latest_version_id IS NULL THEN 0 ELSE 1 END,
+                    CASE WHEN frontier.state = 'retry' THEN 0 ELSE 1 END,
                     CASE board.group_name
                         {group_order_sql}
                         ELSE 3

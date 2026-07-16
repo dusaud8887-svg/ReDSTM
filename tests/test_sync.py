@@ -1061,21 +1061,22 @@ def test_sync_stops_current_board_on_auth_response(tmp_path: Path) -> None:
     assert list(spider.parse_listing(listing.replace(url=f"{listing_url}?page=2"))) == []
 
 
-def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
+def test_sync_stops_after_consecutive_network_failures(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
+    needed = 5  # REDSTM_NETWORK_BREAKER_FAILURES
     spider = TypeMoonSpider(
         board_id="write_free21",
         archive_path=path,
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
-        max_posts=4,
+        max_posts=needed + 1,
         detail_concurrency=1,
     )
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
         f"<span class='subject'>{post_id}</span></a></td></tr>"
-        for post_id in range(1, 5)
+        for post_id in range(1, needed + 2)
     )
     url = "https://www.typemoon.net/write_free21"
     listing = HtmlResponse(
@@ -1086,13 +1087,15 @@ def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
     )
     [request] = _detail_requests(list(spider.parse_listing(listing)))
 
-    for expected_remaining in (1, 1, 0):
+    for attempt in range(needed):
         outputs = list(
             spider._sync_error(SimpleNamespace(request=request, value=OSError("offline")))
         )
-        assert len(outputs) == expected_remaining
-        if outputs:
+        if attempt < needed - 1:
+            assert len(outputs) == 1
             request = outputs[0]
+        else:
+            assert outputs == []
 
     assert spider.failure_codes == {"network_error"}
     assert list(spider.parse_listing(listing.replace(url=f"{url}?page=2"))) == []
@@ -1101,19 +1104,20 @@ def test_sync_stops_after_three_network_failures(tmp_path: Path) -> None:
 def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
+    needed = 5  # REDSTM_NETWORK_BREAKER_FAILURES
     run_id = ArchiveStore(path).start_run("sync")
     spider = TypeMoonSpider(
         board_id="write_free21",
         archive_path=path,
         run_id=run_id,
         session=_session(),
-        max_posts=4,
+        max_posts=needed + 1,
         detail_concurrency=1,
     )
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
         f"<span class='subject'>{post_id}</span></a></td></tr>"
-        for post_id in range(1, 5)
+        for post_id in range(1, needed + 2)
     )
     url = "https://www.typemoon.net/write_free21"
     listing = HtmlResponse(
@@ -1124,7 +1128,7 @@ def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Pat
     )
     [request] = _detail_requests(list(spider.parse_listing(listing)))
 
-    for attempt in range(3):
+    for attempt in range(needed):
         response = HtmlResponse(
             request.url,
             request=request,
@@ -1138,7 +1142,7 @@ def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Pat
         assert item["error_code"] == "network_error"
         ArchivePipeline(path, run_id).process_item(item)
         requests = [item for item in outputs if isinstance(item, Request)]
-        if attempt < 2:
+        if attempt < needed - 1:
             [request] = requests
         else:
             assert requests == []
@@ -1152,13 +1156,20 @@ def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Pat
                 "WHERE run_id = ? AND entity_type = 'post' ORDER BY id",
                 (run_id,),
             )
-        ] == [("fetch_failed", "network_error")] * 3
+        ] == [("fetch_failed", "network_error")] * needed
         assert [
             tuple(row)
             for row in connection.execute(
                 "SELECT external_post_id, state FROM crawl_frontier ORDER BY external_post_id"
             )
-        ] == [(1, "retry"), (2, "retry"), (3, "retry"), (4, "pending")]
+        ] == [
+            (1, "retry"),
+            (2, "retry"),
+            (3, "retry"),
+            (4, "retry"),
+            (5, "retry"),
+            (6, "pending"),
+        ]
     assert spider.failure_codes == {"network_error"}
 
 

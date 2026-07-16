@@ -138,7 +138,11 @@ REDSTM_LISTING_OVERLAP_UNCHANGED = 20
 REDSTM_INCREMENTAL_OVERLAP_PAGES = 2
 # Match Scrapy download slots so recovery/detail in-flight never exceeds concurrency.
 REDSTM_DETAIL_CONCURRENCY = REDSTM_CONCURRENT_REQUESTS
+# Rate-limit and parse breakers stay tight. Network dribble on this origin often produces
+# 3–4 consecutive timeouts then recovers; halting a whole recovery/sync batch at 3 wastes
+# the remaining candidates that would still store successfully.
 REDSTM_CIRCUIT_BREAKER_FAILURES = 3
+REDSTM_NETWORK_BREAKER_FAILURES = 5
 REDSTM_PARSE_BREAKER_FAILURES = 3
 REDSTM_RETRY_AFTER_MAX_SECONDS = 24 * 60 * 60
 # Full-catalog inventory spans many boards and multi-hour dribble windows. After a true

@@ -199,11 +199,12 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         elif "auth_required" in spider_failures:
             status = "auth_failed"
         elif "network_error" in spider_failures:
-            # The consecutive-network breaker halted the run: classify it as an origin
-            # outage like crawl_cycle does, and give the attempts burned by this run
-            # back so a long outage cannot push entries toward dead.
-            status = "site_unreachable"
+            # Breaker fired on consecutive transport failures. Preserve attempts so a long
+            # outage cannot push entries toward dead. When some posts still stored, keep the
+            # batch partial so ops/retry continues instead of treating the whole run as a
+            # hard outage that looks like total failure.
             preserved_attempts = frontier.preserve_network_attempts([run_id])
+            status = "partial" if int(outcomes.get("stored", 0) or 0) > 0 else "site_unreachable"
         elif "rate_limited" in spider_failures:
             status = "rate_limited"
         else:

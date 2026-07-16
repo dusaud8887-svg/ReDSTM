@@ -118,6 +118,56 @@ def test_recovery_priority_bound_and_idempotent_transition(tmp_path: Path) -> No
     assert frontier.recovery_candidates(limit=1, now=_NOW) == [("write_free21", 62068)]
 
 
+def test_recovery_prefers_outline_only_posts(tmp_path: Path) -> None:
+    from crawler.archive import compress_body
+
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, group_name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'aa', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title,
+                first_seen_at, last_seen_at, comment_count
+            ) VALUES
+              ('aa_a01', 1, 'https://www.typemoon.net/aa_a01/1', 'has-body', 'now', 'now', 0),
+              ('aa_a01', 2, 'https://www.typemoon.net/aa_a01/2', 'outline', 'now', 'now', 0)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO post_versions (
+                post_id, content_sha256, parser_version, capture_origin,
+                body_html_zstd, body_text_zstd, comments_sha256, captured_at
+            ) VALUES (
+                (SELECT id FROM posts WHERE board_id='aa_a01' AND external_post_id=1),
+                ?, 'test', 'live', ?, ?, ?, 'now'
+            )
+            """,
+            ("a" * 64, compress_body("<p>body</p>"), compress_body("body"), "c" * 64),
+        )
+        connection.execute(
+            """
+            UPDATE posts SET latest_version_id = (
+                SELECT id FROM post_versions
+                WHERE post_id = (SELECT id FROM posts WHERE board_id='aa_a01' AND external_post_id=1)
+            )
+            WHERE board_id='aa_a01' AND external_post_id=1
+            """
+        )
+    frontier = FrontierStore(archive)
+    frontier.seed("aa_a01", 1, "https://www.typemoon.net/aa_a01/1")
+    frontier.seed("aa_a01", 2, "https://www.typemoon.net/aa_a01/2")
+
+    assert frontier.recovery_candidates(limit=1, now=_NOW) == [("aa_a01", 2)]
+
+
 def test_recovery_uses_free_slots_for_oldest_stale_details(
     tmp_path: Path,
 ) -> None:
@@ -299,7 +349,7 @@ def test_recovery_cli_limits_dead_requeue(monkeypatch: pytest.MonkeyPatch, tmp_p
 @pytest.mark.parametrize(
     ("status", "failure_code"), [(None, "network_error"), (429, "rate_limited")]
 )
-def test_recovery_stops_after_three_consecutive_site_failures(
+def test_recovery_stops_after_consecutive_site_failures(
     tmp_path: Path, status: int | None, failure_code: str
 ) -> None:
     archive = tmp_path / "archive.sqlite"
@@ -312,7 +362,9 @@ def test_recovery_stops_after_three_consecutive_site_failures(
             """
         )
     frontier = FrontierStore(archive)
-    for external_post_id in range(1, 5):
+    # Network breaker is 5; rate-limit breaker stays at 3.
+    needed = 5 if failure_code == "network_error" else 3
+    for external_post_id in range(1, needed + 2):
         frontier.seed(
             "aa_a01",
             external_post_id,
@@ -320,7 +372,7 @@ def test_recovery_stops_after_three_consecutive_site_failures(
         )
     run_id = ArchiveStore(archive).start_run("retry")
     spider = TypeMoonRecoverySpider(
-        candidates=[("aa_a01", external_post_id) for external_post_id in range(1, 5)],
+        candidates=[("aa_a01", external_post_id) for external_post_id in range(1, needed + 2)],
         archive_path=archive,
         run_id=run_id,
         session=_session(),
@@ -329,19 +381,19 @@ def test_recovery_stops_after_three_consecutive_site_failures(
     )
     [request] = asyncio.run(_collect_start(spider))
 
-    for attempt in range(3):
+    for attempt in range(needed):
         value: object = OSError("offline")
         if status is not None:
             value = SimpleNamespace(
                 response=HtmlResponse(request.url, request=request, status=status)
             )
         next_requests = list(spider._recovery_error(SimpleNamespace(request=request, value=value)))
-        if attempt < 2:
+        if attempt < needed - 1:
             [request] = next_requests
         else:
             assert next_requests == []
 
-    assert spider.scheduled_posts == 3
+    assert spider.scheduled_posts == needed
     assert spider.failure_codes == {failure_code}
 
 

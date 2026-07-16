@@ -341,6 +341,41 @@ def test_cycle_preserves_network_classification_when_login_retry_is_throttled(
     assert report["status"] == "site_unreachable"
 
 
+def test_sync_cycle_does_not_trip_outage_when_boards_store_posts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detail timeouts with successful stores must not abort remaining boards."""
+    args = _args(tmp_path)
+    commands: list[list[str]] = []
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "partial",
+                    "run_id": f"run-{len(commands)}",
+                    "scheduled_posts": 5,
+                    "outcomes": {"stored": 2, "fetch_failed": 3},
+                    "failures": ["network_error"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=2)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+
+    report = run_cycle(args)
+
+    assert report["status"] == "partial"
+    assert len(commands) == 4
+    assert report["completed_boards"] == 4
+    assert report["changed_posts"] == 8
+
+
 def test_cycle_breaks_after_three_network_boards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
