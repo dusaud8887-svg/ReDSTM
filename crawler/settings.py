@@ -147,9 +147,15 @@ REDSTM_PARSE_BREAKER_FAILURES = 3
 REDSTM_RETRY_AFTER_MAX_SECONDS = 24 * 60 * 60
 # Full-catalog inventory spans many boards and multi-hour dribble windows. After a true
 # site_unreachable cycle (no page progress on consecutive boards), the control runner waits
-# and resumes the same pass instead of closing the command as failed on the first outage.
-REDSTM_FULL_CATALOG_OUTAGE_RETRIES = 8
+# and resumes the same pass instead of closing the command. Backoff table is reused forever
+# (last entry caps the delay); the pass marker is never abandoned for origin outage alone.
 REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS = (90, 180, 300, 300, 420, 420, 600, 600)
+# Identical inventory cursor signatures in a row before full_catalog_no_progress. Origin
+# outage uses the outage backoff path and does not consume this budget.
+REDSTM_FULL_CATALOG_STUCK_CYCLES = 5
+# One re-fetch of the same listing page after row-level parse warnings before accepting
+# good rows and advancing (row skips are counted either way).
+REDSTM_LISTING_PAGE_WARNING_RETRIES = 1
 
 # Session: origin login form can also dribble; preflight is more patient than form POST.
 REDSTM_SESSION_TIMEOUT_SECONDS = 60.0
@@ -164,9 +170,10 @@ REDSTM_SESSION_HTML_MAX_BYTES = 8 << 20
 REDSTM_SYNC_MAX_PAGES = 3
 REDSTM_SYNC_MAX_POSTS = 20
 REDSTM_CYCLE_MAX_PAGES = 3
-# Inventory (full-catalog) passes walk every page of every board; a larger per-worker
-# page budget amortizes Scrapy process startup without changing request pacing.
-REDSTM_INVENTORY_MAX_PAGES = 40
+# Inventory (full-catalog) page budget per Scrapy worker. 0 means unlimited pages so a
+# board is cut only by cycle max_seconds / pause / disk — not by an arbitrary page cap.
+# Request start delay stays DOWNLOAD_DELAY regardless of this value.
+REDSTM_INVENTORY_MAX_PAGES = 0
 REDSTM_CYCLE_MAX_POSTS = 20
 REDSTM_CYCLE_TIME_BUDGET_SECONDS = 4 * 60 * 60
 # Child Scrapy process grace after CLOSESPIDER_TIMEOUT so long AA finishes can close cleanly.

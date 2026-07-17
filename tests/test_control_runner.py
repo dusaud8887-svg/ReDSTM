@@ -1895,27 +1895,38 @@ def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
                 "boards": [{"board_id": "aa", "status": "succeeded"}],
                 "outcomes": {"stored": 7},
             }
+        if calls == 2:
+            # Origin outage keeps the pass alive (auto-continue) instead of closing.
+            return {
+                "ok": False,
+                "status": "site_unreachable",
+                "changed_posts": 2,
+                "failed_posts": 0,
+                "boards": [{"board_id": "aa", "status": "failed"}],
+                "outcomes": {"stored": 2},
+                "failures": ["network_error"],
+            }
+        # Internal runner failure is terminal but earlier cycle counters remain combined.
         return {
             "ok": False,
-            "status": "site_unreachable",
-            "changed_posts": 2,
+            "status": "runner_failed",
+            "changed_posts": 0,
             "failed_posts": 0,
             "boards": [{"board_id": "aa", "status": "failed"}],
-            "outcomes": {"stored": 2},
-            "failures": ["network_error"],
+            "outcomes": {},
+            "failures": ["runner_failed"],
         }
 
     monkeypatch.setattr(runner, "_execute_report", execute)
     monkeypatch.setattr("scripts.control_runner.time.sleep", lambda seconds: sleeps.append(seconds))
-    monkeypatch.setattr("scripts.control_runner.REDSTM_FULL_CATALOG_OUTAGE_RETRIES", 0)
 
     report = runner._execute_action(
         "full-catalog", "inventory-fail", "inventory-fail", command_id="manual"
     )
 
-    assert calls == 2
-    assert sleeps == []
-    assert report["status"] == "site_unreachable"
+    assert calls == 3
+    assert sleeps == [90]
+    assert report["status"] == "runner_failed"
     assert report["inventory_pass_complete"] is False
     assert report["changed_posts"] == 9
     assert report["failed_posts"] == 1
@@ -1947,7 +1958,8 @@ def test_full_catalog_resumes_after_transient_site_unreachable(
     def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
         nonlocal calls
         calls += 1
-        if calls == 1:
+        if calls <= 3:
+            # Outage no longer exhausts a fixed budget and abandons the pass.
             return {
                 "ok": False,
                 "status": "site_unreachable",
@@ -1971,10 +1983,12 @@ def test_full_catalog_resumes_after_transient_site_unreachable(
         "full-catalog", "inventory-outage", "inventory-outage", command_id="manual"
     )
 
-    assert calls == 2
-    assert sleeps == [90]
+    assert calls == 4
+    assert sleeps == [90, 180, 300]
     assert report["status"] == "succeeded"
     assert report["safe_code"] == "full_catalog_succeeded"
+    assert report["inventory_completed_boards"] >= 1
+    assert report["inventory_pass_complete"] is True
 
 
 def test_full_catalog_retries_once_after_session_expiry(
@@ -2011,8 +2025,11 @@ def test_full_catalog_retries_once_after_session_expiry(
 def test_full_catalog_aborts_when_inventory_makes_no_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from crawler.settings import REDSTM_FULL_CATALOG_STUCK_CYCLES
+
     runner, _store = _runner(tmp_path, Api([]))
     calls = 0
+    sleeps: list[float] = []
 
     def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
         nonlocal calls
@@ -2020,15 +2037,20 @@ def test_full_catalog_aborts_when_inventory_makes_no_progress(
         return {"ok": False, "status": "partial", "boards": []}
 
     monkeypatch.setattr(runner, "_execute_report", execute)
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda seconds: sleeps.append(seconds))
 
     report = runner._execute_action(
         "full-catalog", "inventory-stuck", "inventory-stuck", command_id="manual"
     )
 
-    assert calls == 2
+    # First cycle establishes the signature; STUCK_CYCLES identical follow-ups fail the pass.
+    # Sleep happens on stuck cycles 1..STUCK-1; the final identical cycle fails without sleep.
+    assert calls == REDSTM_FULL_CATALOG_STUCK_CYCLES + 1
+    assert len(sleeps) == REDSTM_FULL_CATALOG_STUCK_CYCLES - 1
     assert report["status"] == "failed"
     assert report["safe_code"] == "full_catalog_no_progress"
     assert report["inventory_pass_complete"] is False
+    assert report["inventory_total_boards"] >= 1
 
 
 def test_heartbeat_survives_local_telemetry_failures(

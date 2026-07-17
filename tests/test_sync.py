@@ -643,10 +643,17 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
         max_pages=2,
     )
 
-    requests = _listing_requests(list(spider.parse_listing(response)))
+    # First sight of unparseable rows re-fetches the same page once.
+    [retry_request] = _listing_requests(list(spider.parse_listing(response)))
+    assert retry_request.url == url
+    assert retry_request.meta["listing_page_retries"] == 1
+    assert spider.failure_codes == set()
 
+    retried = response.replace(request=retry_request)
+    requests = _listing_requests(list(spider.parse_listing(retried)))
     assert [request.url for request in requests] == [f"{url}?page=2"]
     assert "listing_parse_failed" in spider.failure_codes
+    assert spider.listing_row_skipped == 1
 
     inventory = TypeMoonSpider(
         board_id="write_free21",
@@ -658,9 +665,15 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
         start_page=3,
     )
     inventory_response = response.replace(url=f"{url}?page=3")
-    inventory_requests = _listing_requests(list(inventory.parse_listing(inventory_response)))
-    assert inventory_requests == []
+    [inventory_retry] = _listing_requests(list(inventory.parse_listing(inventory_response)))
+    assert inventory_retry.meta["listing_page_retries"] == 1
     assert inventory.next_inventory_page == 3
+    inventory_retried = inventory_response.replace(request=inventory_retry)
+    inventory_requests = _listing_requests(list(inventory.parse_listing(inventory_retried)))
+    # Good rows keep inventory advancing after the warning retry.
+    assert [request.url for request in inventory_requests] == [f"{url}?page=4"]
+    assert inventory.next_inventory_page == 4
+    assert inventory.listing_row_skipped == 1
 
 
 def test_inventory_completes_on_a_notice_only_terminal_page(tmp_path: Path) -> None:
@@ -850,10 +863,17 @@ def test_malformed_listing_comment_count_is_not_synthesized_as_zero(tmp_path: Pa
         encoding="utf-8",
     )
 
-    assert list(spider.parse_listing(response)) == []
+    [retry] = list(spider.parse_listing(response))
+    assert isinstance(retry, Request)
+    assert retry.meta["listing_page_retries"] == 1
+    assert spider.failure_codes == set()
+    assert spider.next_inventory_page == 4
+
+    assert list(spider.parse_listing(response.replace(request=retry))) == []
     assert spider.failure_codes == {"listing_parse_failed"}
     assert spider.next_inventory_page == 4
     assert spider.inventory_completed is False
+    assert spider.listing_row_skipped == 1
 
 
 def test_listing_removes_source_page_query_before_seeding_frontier(tmp_path: Path) -> None:

@@ -210,6 +210,9 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                     """,
                     (latest_post_id, args.board),
                 )
+        listing_row_skipped = (
+            int(getattr(spider, "listing_row_skipped", 0)) if spider is not None else 0
+        )
         store.finish_run(
             run_id,
             status=status,
@@ -219,7 +222,9 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 "failures": failures,
                 "interrupted_runs": interrupted_runs,
                 "inventory_next_page": inventory_next_page if args.inventory else None,
+                "inventory_completed": inventory_completed if args.inventory else None,
                 "listing_completed": listing_completed,
+                "listing_row_skipped": listing_row_skipped,
                 "latest_post_id": latest_post_id,
             },
         )
@@ -236,7 +241,9 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             "interrupted_runs": interrupted_runs,
             "inventory_start_page": inventory_start_page if args.inventory else None,
             "inventory_next_page": inventory_next_page if args.inventory else None,
+            "inventory_completed": inventory_completed if args.inventory else None,
             "listing_completed": listing_completed,
+            "listing_row_skipped": listing_row_skipped,
             "latest_post_id": latest_post_id,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
@@ -270,11 +277,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--parent-lock-held", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    limits = [args.max_pages, args.max_posts]
-    if args.max_seconds is not None:
-        limits.append(args.max_seconds)
-    if min(limits) < 1 or args.lease_seconds < 1:
-        parser.error("max limits and lease-seconds must be positive")
+    # Inventory allows --max-pages 0 (unlimited; parent cycle time budget cuts the worker).
+    page_ok = args.max_pages >= 0 if args.inventory else args.max_pages >= 1
+    if not page_ok or args.max_posts < 1 or args.lease_seconds < 1:
+        parser.error(
+            "max-posts and lease-seconds must be positive; "
+            "max-pages must be positive (or 0 for unlimited inventory)"
+        )
+    if args.max_seconds is not None and args.max_seconds < 1:
+        parser.error("max-seconds must be positive")
     if args.listing_only and not args.inventory:
         parser.error("listing-only requires inventory mode")
     return args

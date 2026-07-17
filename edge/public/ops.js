@@ -28,10 +28,11 @@ export const safeCodeLabels = {
   run_failed: "실행 실패", run_stale: "실행 종료 신호 누락", runner_failed: "수집기 내부 실패",
   runner_interrupted: "수집기 프로세스 중단 · 진행분은 보존됨",
   archive_locked: "보관소 파일이 다른 작업에 잠김 · 이전 수집/백업 프로세스 종료 후 재시도",
-  full_catalog_no_progress: "전체 목차 진행 없음 · 원본 응답 확인 필요",
+  full_catalog_no_progress: "전체 목차 커서 정체 · 원본·파서 확인 후 같은 명령으로 이어서 재시도",
   disk_low: "저장 공간 안전 하한 도달 · 진행분 보존 후 수집 중단",
   auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",
-  site_unreachable: "원본 연결 실패", rate_limited: "원본 속도 제한",
+  site_unreachable: "원본 연결 실패 · 전체 목차는 체크포인트 유지 후 자동 재개",
+  rate_limited: "원본 속도 제한",
   export_failed: "Reader 내보내기 실패", publish_failed: "Reader 반영 실패",
   incremental_base_invalid: "Reader 증분 기준 보존본 검증 실패",
   incremental_bootstrap_required: "Reader 증분 상태 초기화 필요",
@@ -74,7 +75,7 @@ const warningLabels = {
 const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
 const commandCopy = {
   "sync-now": ["증분 수집 지금 실행", "등록된 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판에서 제목·주소·목록을 확인합니다. 본문은 수집하지 않으며, 중간에 끊겨도 게시판·페이지 체크포인트부터 이어집니다. 원본이 느리면 며칠 걸릴 수 있습니다."],
+  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판에서 제목·주소·목록을 첫 페이지부터 끝까지 확인합니다. 본문은 수집하지 않습니다. 진행 중 게시판은 끝날 때까지 이어서 처리하고, 원본 장애·일시정지도 체크포인트(게시판·페이지)를 보존한 채 같은 작업을 자동으로 재개합니다. 이미 요청한 전체 목차가 작업 중이면 새 요청 대신 그 실행 기록을 여세요. 원본이 느리면 며칠 걸릴 수 있습니다."],
   "full-content": ["전체 게시글 본문 다시 수집", "선택 범위에서 발견된 모든 글을 성공 여부와 관계없이 다시 수집합니다. 장기간 실행될 수 있습니다."],
   "retry-batch": ["본문 대기 재시도", "처리 시각이 된 모든 대기 또는 재시도 항목을 우선순위대로 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],

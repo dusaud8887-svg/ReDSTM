@@ -52,8 +52,20 @@ def test_inventory_prioritizes_in_progress_and_skips_boards_completed_in_this_pa
     started_at = "2026-07-12T00:00:00Z"
     with connect_archive(args.archive) as connection:
         connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('e', 'e', 'https://www.typemoon.net/e', 'now', 'now')
+            """
+        )
+        # Two in-progress boards: more recently checkpointed 'e' should stick before 'a'.
+        connection.execute(
             "UPDATE boards SET inventory_next_page = 4, last_inventory_at = ? WHERE board_id = 'a'",
             (started_at,),
+        )
+        connection.execute(
+            "UPDATE boards SET inventory_next_page = 12, last_inventory_at = ?"
+            " WHERE board_id = 'e'",
+            ("2026-07-12T02:00:00Z",),
         )
         connection.execute("UPDATE boards SET last_inventory_at = NULL WHERE board_id = 'b'")
         connection.execute(
@@ -63,12 +75,21 @@ def test_inventory_prioritizes_in_progress_and_skips_boards_completed_in_this_pa
             "UPDATE boards SET last_inventory_at = '2026-07-12T01:00:00Z' WHERE board_id = 'd'"
         )
 
-    assert _boards(args.archive, inventory=True, inventory_since=started_at) == ["a", "b", "c"]
+    assert _boards(args.archive, inventory=True, inventory_since=started_at) == [
+        "e",
+        "a",
+        "b",
+        "c",
+    ]
 
     with connect_archive(args.archive) as connection:
         connection.execute(
             "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ? WHERE board_id = 'a'",
             (started_at,),
+        )
+        connection.execute(
+            "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ? WHERE board_id = 'e'",
+            ("2026-07-12T02:00:00Z",),
         )
     assert _boards(args.archive, inventory=True, inventory_since=started_at) == ["b", "c"]
 
@@ -416,6 +437,41 @@ def test_cycle_breaks_after_three_network_boards(
     assert report["preserved_attempts"] == 7
     assert preserved == [["run-1", "run-2", "run-3"]]
     assert len(commands) == 3
+
+
+def test_inventory_cycle_treats_board_completion_as_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Completing a board resets next_page to 1; that must not look like zero progress."""
+    args = _args(tmp_path)
+    args.inventory = True
+    args.board = "a"
+    commands: list[list[str]] = []
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *a, **k: None)
+
+    def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "status": "partial",
+                    "scheduled_posts": 0,
+                    "outcomes": {},
+                    "failures": ["listing_fetch_failed", "network_error"],
+                    "inventory_start_page": 40,
+                    "inventory_next_page": 1,
+                    "inventory_completed": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", fake_run)
+
+    report = run_cycle(args)
+    assert report["status"] != "site_unreachable"
+    assert len(commands) == 1
 
 
 def test_inventory_cycle_does_not_trip_outage_when_boards_advance_pages(

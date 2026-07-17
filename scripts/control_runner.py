@@ -26,7 +26,7 @@ from crawler.settings import (
     REDSTM_EXPORT_MAX_CHANGED_POSTS,
     REDSTM_EXPORT_WORKERS,
     REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS,
-    REDSTM_FULL_CATALOG_OUTAGE_RETRIES,
+    REDSTM_FULL_CATALOG_STUCK_CYCLES,
     REDSTM_FULL_CONTENT_MAX_POSTS,
     REDSTM_RECOVERY_MAX_POSTS,
 )
@@ -761,6 +761,7 @@ class ControlRunner:
             reports: list[dict[str, Any]] = []
             auth_retried = False
             outage_retries = 0
+            stuck_cycles = 0
             previous_signature: tuple[int, int] | None = None
             crawl_step = "full-catalog" if action == "full-catalog" else "crawling"
             while True:
@@ -773,13 +774,22 @@ class ControlRunner:
                         stop_reason="disk_low",
                         inventory_pass_complete=False,
                     )
-                    return combined
+                    return self._with_inventory_coverage(
+                        combined, str(inventory_started_at), board_id
+                    )
                 report = self._execute_report(
                     command, report_path, run_id, crawl_step, command_id=command_id
                 )
                 reports.append(report)
+                # Multi-day outage auto-continue must not retain every cycle report in memory.
+                if len(reports) > 16:
+                    reports[:] = [self._combined_collection_report(reports)]
                 if report.get("stop_reason") == "schedule_paused":
-                    return self._combined_collection_report(reports)
+                    return self._with_inventory_coverage(
+                        self._combined_collection_report(reports),
+                        str(inventory_started_at),
+                        board_id,
+                    )
                 if action != "full-catalog":
                     return report
                 self._board_summaries(report)
@@ -792,8 +802,12 @@ class ControlRunner:
                 self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id), progress)
                 if self._inventory_pass_complete(str(inventory_started_at), board_id):
                     self._complete_inventory_pass(str(inventory_started_at), board_id)
-                    return self._combined_collection_report(
-                        reports, safe_code="full_catalog_succeeded"
+                    return self._with_inventory_coverage(
+                        self._combined_collection_report(
+                            reports, safe_code="full_catalog_succeeded"
+                        ),
+                        str(inventory_started_at),
+                        board_id,
                     )
                 # Ops-bounded catalog (max_seconds set) is one inventory cycle only. The
                 # multi-cycle while-loop is for multi-hour unattended passes; reusing the
@@ -801,46 +815,51 @@ class ControlRunner:
                 if max_seconds is not None:
                     combined = self._combined_collection_report(reports)
                     combined["inventory_pass_complete"] = False
-                    return combined
+                    return self._with_inventory_coverage(
+                        combined, str(inventory_started_at), board_id
+                    )
                 status = str(report.get("status", "failed"))
+                backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
                 if status == "auth_failed" and not auth_retried:
-                    # The next cycle's preflight performs a throttled re-login; one retry
+                    # The next cycle's preflight performs a throttled re-login; one free retry
                     # covers routine session expiry during a multi-hour pass.
                     auth_retried = True
                     continue
-                outage_budget = REDSTM_FULL_CATALOG_OUTAGE_RETRIES
-                if status == "site_unreachable" and outage_retries < outage_budget:
-                    # Origin dribble/outage is intermittent. Closing the whole pass on the first
-                    # zero-progress streak wastes hours of earlier board progress; wait and resume
-                    # from durable inventory_next_page cursors instead.
-                    backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+                # Origin outage / rate limit / residual auth failure: keep the pass marker and
+                # durable inventory_next_page cursors; wait and resume indefinitely. Closing the
+                # command would force an operator re-click despite recoverable progress.
+                if status in {"site_unreachable", "rate_limited", "auth_failed"}:
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
                     time.sleep(delay)
                     continue
-                if status in {
-                    "auth_failed",
-                    "site_unreachable",
-                    "rate_limited",
-                    "runner_failed",
-                    "failed",
-                }:
+                if status in {"runner_failed", "failed"}:
                     combined = self._combined_collection_report(reports)
                     combined["inventory_pass_complete"] = False
-                    return combined
+                    return self._with_inventory_coverage(
+                        combined, str(inventory_started_at), board_id
+                    )
                 signature = self._inventory_progress_signature(board_id)
                 if signature is not None and signature == previous_signature:
-                    combined = self._combined_collection_report(reports)
-                    combined.update(
-                        ok=False,
-                        status="failed",
-                        safe_code="full_catalog_no_progress",
-                        inventory_pass_complete=False,
-                    )
-                    return combined
+                    stuck_cycles += 1
+                    if stuck_cycles >= REDSTM_FULL_CATALOG_STUCK_CYCLES:
+                        combined = self._combined_collection_report(reports)
+                        combined.update(
+                            ok=False,
+                            status="failed",
+                            safe_code="full_catalog_no_progress",
+                            inventory_pass_complete=False,
+                        )
+                        return self._with_inventory_coverage(
+                            combined, str(inventory_started_at), board_id
+                        )
+                    delay = backoff[min(stuck_cycles - 1, len(backoff) - 1)]
+                    time.sleep(delay)
+                    continue
                 previous_signature = signature
+                stuck_cycles = 0
                 # Page progress after an outage resets the outage budget so a later multi-hour
-                # dribble still gets the full retry allowance.
+                # dribble still gets the full stepped backoff curve.
                 outage_retries = 0
         if action in {"full-content", "retry-batch"}:
             full_content_checkpoint = (
@@ -1329,6 +1348,57 @@ class ControlRunner:
                 parameters,
             ).fetchone()
         return bool(row and int(row["total"]) > 0 and int(row["incomplete"] or 0) == 0)
+
+    def _inventory_coverage_snapshot(
+        self, started_at: str, board_id: str | None = None
+    ) -> dict[str, int]:
+        if not self.profile.archive.is_file():
+            return {
+                "inventory_total_boards": 0,
+                "inventory_completed_boards": 0,
+                "inventory_in_progress_boards": 0,
+                "inventory_pending_boards": 0,
+            }
+        with archive_transaction(self.profile.archive, read_only=True) as connection:
+            board_filter = " AND board_id = ?" if board_id is not None else ""
+            parameters: tuple[object, ...] = (started_at,)
+            if board_id is not None:
+                parameters += (board_id,)
+            row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS total,
+                    COALESCE(SUM(
+                        last_inventory_at IS NOT NULL
+                        AND julianday(last_inventory_at) IS NOT NULL
+                        AND julianday(last_inventory_at) >= julianday(?)
+                        AND inventory_next_page = 1
+                    ), 0) AS completed,
+                    COALESCE(SUM(inventory_next_page > 1), 0) AS in_progress
+                FROM boards WHERE is_enabled = 1{board_filter}
+                """,
+                parameters,
+            ).fetchone()
+        total = int(row["total"] or 0) if row is not None else 0
+        completed = int(row["completed"] or 0) if row is not None else 0
+        in_progress = int(row["in_progress"] or 0) if row is not None else 0
+        return {
+            "inventory_total_boards": total,
+            "inventory_completed_boards": completed,
+            "inventory_in_progress_boards": in_progress,
+            "inventory_pending_boards": max(total - completed - in_progress, 0),
+        }
+
+    def _with_inventory_coverage(
+        self,
+        report: dict[str, Any],
+        started_at: str,
+        board_id: str | None = None,
+    ) -> dict[str, Any]:
+        report = dict(report)
+        report.update(self._inventory_coverage_snapshot(started_at, board_id))
+        if "inventory_pass_complete" not in report:
+            report["inventory_pass_complete"] = self._inventory_pass_complete(started_at, board_id)
+        return report
 
     def _ensure_inventory_pass_started(self, board_id: str | None = None) -> str:
         marker = self.profile.state_dir / _INVENTORY_STARTED

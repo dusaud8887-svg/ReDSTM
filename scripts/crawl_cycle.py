@@ -69,9 +69,14 @@ def _boards(
     inventory_since: str | None = None,
 ) -> list[str]:
     with connect_archive(archive, read_only=True) as connection:
+        # Stickiness: finish in-progress boards (next_page > 1) before starting fresh ones.
+        # Among in-progress, most recently checkpointed first so the active board continues.
+        # Among not-yet-done page-1 boards, oldest / never-touched first for fairness.
         order = (
-            "(inventory_next_page = 1), COALESCE(last_inventory_at, ''), "
-            "inventory_next_page, board_id"
+            "CASE WHEN inventory_next_page > 1 THEN 0 ELSE 1 END, "
+            "CASE WHEN inventory_next_page > 1 THEN last_inventory_at END DESC, "
+            "CASE WHEN inventory_next_page = 1 THEN COALESCE(last_inventory_at, '') END ASC, "
+            "board_id"
             if inventory
             else "board_id"
         )
@@ -96,6 +101,44 @@ def _boards(
                 parameters,
             )
         ]
+
+
+def _inventory_pass_coverage(
+    archive: Path,
+    started_at: str,
+    *,
+    board_id: str | None = None,
+) -> dict[str, int]:
+    """Pass-level board coverage for inventory reports (completed / in progress / pending)."""
+    with connect_archive(archive, read_only=True) as connection:
+        board_filter = " AND board_id = ?" if board_id is not None else ""
+        parameters: tuple[object, ...] = (started_at,)
+        if board_id is not None:
+            parameters += (board_id,)
+        row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS total,
+                COALESCE(SUM(
+                    last_inventory_at IS NOT NULL
+                    AND julianday(last_inventory_at) IS NOT NULL
+                    AND julianday(last_inventory_at) >= julianday(?)
+                    AND inventory_next_page = 1
+                ), 0) AS completed,
+                COALESCE(SUM(inventory_next_page > 1), 0) AS in_progress
+            FROM boards WHERE is_enabled = 1{board_filter}
+            """,
+            parameters,
+        ).fetchone()
+    total = int(row[0] or 0) if row is not None else 0
+    completed = int(row[1] or 0) if row is not None else 0
+    in_progress = int(row[2] or 0) if row is not None else 0
+    pending = max(total - completed - in_progress, 0)
+    return {
+        "inventory_total_boards": total,
+        "inventory_completed_boards": completed,
+        "inventory_in_progress_boards": in_progress,
+        "inventory_pending_boards": pending,
+    }
 
 
 def _session_status(validate: Callable[[], object]) -> str | None:
@@ -334,15 +377,24 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             failures = set(report.get("failures", ()))
             board_status = str(report.get("status", "failed"))
             outcomes = _outcome_counts(report)
-            results.append(
-                {
-                    "board_id": board_id,
-                    "status": board_status,
-                    "scheduled_posts": int(report.get("scheduled_posts", 0)),
-                    "outcomes": outcomes,
-                    "failures": sorted(failures),
-                }
-            )
+            board_result: dict[str, Any] = {
+                "board_id": board_id,
+                "status": board_status,
+                "scheduled_posts": int(report.get("scheduled_posts", 0)),
+                "outcomes": outcomes,
+                "failures": sorted(failures),
+            }
+            if args.inventory:
+                for key in (
+                    "inventory_start_page",
+                    "inventory_next_page",
+                    "inventory_completed",
+                    "listing_completed",
+                    "listing_row_skipped",
+                ):
+                    if key in report:
+                        board_result[key] = report[key]
+            results.append(board_result)
             if report.get("stop_reason") == "schedule_paused":
                 status = "partial"
                 stop_reason = "schedule_paused"
@@ -369,10 +421,10 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             if args.inventory:
                 start_page = report.get("inventory_start_page")
                 next_page = report.get("inventory_next_page")
-                inventory_progress = (
-                    type(start_page) is int
-                    and type(next_page) is int
-                    and (next_page > start_page or bool(report.get("listing_completed")))
+                # Board completion resets next_page to 1 (often << start_page). That is real
+                # progress and must not feed the site-wide outage breaker.
+                inventory_progress = bool(report.get("inventory_completed")) or (
+                    type(start_page) is int and type(next_page) is int and next_page > start_page
                 )
             # Boards that stored detail bodies (or advanced inventory pages) still made
             # progress despite transport noise — do not feed the site-wide outage breaker.
@@ -419,6 +471,24 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "stop_reason": stop_reason,
             "boards": results,
         }
+        if args.inventory:
+            report["inventory_boards_completed_this_cycle"] = sum(
+                1 for item in results if item.get("inventory_completed") is True
+            )
+            report["listing_row_skipped"] = sum(
+                int(item["listing_row_skipped"])
+                for item in results
+                if type(item.get("listing_row_skipped")) is int
+            )
+            inventory_since = getattr(args, "inventory_since", None)
+            if inventory_since is not None:
+                report.update(
+                    _inventory_pass_coverage(
+                        args.archive,
+                        inventory_since,
+                        board_id=getattr(args, "board", None),
+                    )
+                )
         if stop_reason == "disk_low":
             report["safe_code"] = "disk_low"
         return report
@@ -446,8 +516,13 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.max_pages is None:
         args.max_pages = REDSTM_INVENTORY_MAX_PAGES if args.inventory else REDSTM_CYCLE_MAX_PAGES
-    if min(args.max_pages, args.max_posts, args.max_seconds, args.lease_seconds) < 1:
-        parser.error("max-pages, max-posts, max-seconds, and lease-seconds must be positive")
+    # Inventory allows max_pages=0 (unlimited); non-inventory still requires a positive cap.
+    page_ok = args.max_pages >= 0 if args.inventory else args.max_pages >= 1
+    if not page_ok or min(args.max_posts, args.max_seconds, args.lease_seconds) < 1:
+        parser.error(
+            "max-posts, max-seconds, and lease-seconds must be positive; "
+            "max-pages must be positive (or 0 for unlimited inventory)"
+        )
     if args.disk_stop_bytes < 0:
         parser.error("disk-stop-bytes must not be negative")
     if args.listing_only and not args.inventory:

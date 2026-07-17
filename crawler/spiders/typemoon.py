@@ -22,6 +22,7 @@ from crawler.settings import (
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_INCREMENTAL_OVERLAP_PAGES,
     REDSTM_LISTING_OVERLAP_UNCHANGED,
+    REDSTM_LISTING_PAGE_WARNING_RETRIES,
     REDSTM_LISTING_TIMEOUT_SECONDS,
     REDSTM_NETWORK_BREAKER_FAILURES,
     REDSTM_PARSE_BREAKER_FAILURES,
@@ -376,15 +377,17 @@ class TypeMoonSpider(scrapy.Spider):
         self.overlap_pages = int(overlap_pages)
         self.detail_concurrency = int(detail_concurrency)
         self.pause_file = Path(pause_file) if pause_file is not None else None
+        # max_pages may be 0 in inventory mode (unlimited; cycle time budget cuts the run).
         if (
-            min(
-                self.max_pages,
+            self.max_pages < 0
+            or min(
                 self.start_page,
                 self.max_posts,
                 self.lease_seconds,
                 self.detail_concurrency,
             )
             < 1
+            or (self.max_pages < 1 and not self.inventory)
             or self.overlap_pages < 0
             or (self.anchor_post_id is not None and self.anchor_post_id < 1)
         ):
@@ -411,6 +414,7 @@ class TypeMoonSpider(scrapy.Spider):
         self.inventory_completed = False
         self.latest_post_id: int | None = None
         self.listing_completed = False
+        self.listing_row_skipped = 0
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
         if self.start_board_id is None:
@@ -707,15 +711,18 @@ class TypeMoonSpider(scrapy.Spider):
             return
         discovered: list[DiscoveredPostItem] = []
         page_warning = False
+        row_skipped = 0
         for row in rows:
             link = row.css(".td-subj-wrap a::attr(href)").get()
             if not link:
                 page_warning = True
+                row_skipped += 1
                 continue
             source_url = response.urljoin(link)
             post_ref = parse_post_ref(source_url)
             if post_ref is None:
                 page_warning = True
+                row_skipped += 1
                 self.logger.warning("Skipping unrecognized TypeMoon post URL: %s", source_url)
                 continue
             board_id, external_post_id = post_ref
@@ -723,6 +730,7 @@ class TypeMoonSpider(scrapy.Spider):
             title = _first_text(row, (".td-subj-wrap .subject::text", ".td-subj-wrap strong::text"))
             if not title:
                 page_warning = True
+                row_skipped += 1
                 self.logger.warning("Skipping TypeMoon row without title: %s", canonical_url)
                 continue
             raw_comment_count = row.css(".td-comment::text").get()
@@ -731,6 +739,7 @@ class TypeMoonSpider(scrapy.Spider):
                 comment_count = 0 if raw_comment_count is None else _integer(raw_comment_count)
             except ValueError:
                 page_warning = True
+                row_skipped += 1
                 self.logger.warning(
                     "Skipping TypeMoon row with malformed comment count: %s", canonical_url
                 )
@@ -751,9 +760,36 @@ class TypeMoonSpider(scrapy.Spider):
             )
             discovered.append(item)
 
-        self._listing_warning = self._listing_warning or page_warning
         if page_warning:
+            warning_retries = response.meta.get("listing_page_retries", 0)
+            request = response.request
+            if (
+                request is not None
+                and type(warning_retries) is int
+                and warning_retries < REDSTM_LISTING_PAGE_WARNING_RETRIES
+            ):
+                retry = request.copy()
+                retry.dont_filter = True
+                retry.meta["listing_page_retries"] = warning_retries + 1
+                for name in ("raw_sha256", "warc_file", "warc_record_id", "warc_reused"):
+                    retry.meta.pop(name, None)
+                self.logger.warning(
+                    "TypeMoon listing had unparseable rows; retrying page %s/%s: %s",
+                    warning_retries + 1,
+                    REDSTM_LISTING_PAGE_WARNING_RETRIES,
+                    response.url,
+                )
+                yield retry
+                return
+            self.listing_row_skipped += row_skipped
             self.failure_codes.add("listing_parse_failed")
+            self.logger.warning(
+                "TypeMoon listing kept %s good row(s) and skipped %s unparseable row(s): %s",
+                len(discovered),
+                row_skipped,
+                response.url,
+            )
+        self._listing_warning = self._listing_warning or page_warning
         regular_items = [item for item in discovered if not item["is_notice"]]
         if page == 1 and regular_items:
             self.latest_post_id = int(regular_items[0]["external_post_id"])
@@ -811,12 +847,23 @@ class TypeMoonSpider(scrapy.Spider):
             yield item
 
         inventory_rows = regular_items
-        if self.inventory and not page_warning:
-            self.next_inventory_page = page + 1 if inventory_rows else 1
-            self.inventory_completed = not inventory_rows
-            # Checkpoint after each good page: multi-hour inventory boards otherwise lose
-            # tens of pages when the origin dribbles out on a later request.
-            if self.store is not None and self.start_board_id:
+        # After page-warning retry is exhausted, still checkpoint/advance when at least one
+        # regular row parsed. All-bad pages (no good rows, not explicit empty) stay frozen so
+        # we never treat a broken listing as the board end.
+        page_accepts_progress = not page_warning or bool(inventory_rows) or explicit_empty
+        if self.inventory and page_accepts_progress:
+            if inventory_rows:
+                self.next_inventory_page = page + 1
+                self.inventory_completed = False
+            elif explicit_empty or not page_warning:
+                # Empty regular listing (notice-only or explicit empty) ends the board.
+                self.next_inventory_page = 1
+                self.inventory_completed = True
+            if (
+                self.store is not None
+                and self.start_board_id
+                and (inventory_rows or self.inventory_completed)
+            ):
                 self.store.checkpoint_inventory_page(
                     self.start_board_id,
                     next_page=self.next_inventory_page,
@@ -826,12 +873,12 @@ class TypeMoonSpider(scrapy.Spider):
             self.listing_completed = not inventory_rows or (
                 self._boundary_page is not None and page >= self._boundary_page
             )
+        page_budget_open = self.max_pages < 1 or page < self.start_page + self.max_pages - 1
         if (
             self.frontier is not None
             and self.session is not None
-            and page < self.start_page + self.max_pages - 1
+            and page_budget_open
             and (not self.inventory or bool(inventory_rows))
-            and (not self.inventory or not page_warning)
             and (self.inventory or not self.listing_completed)
             and not self._stop_requested()
         ):
