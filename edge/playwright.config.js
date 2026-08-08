@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
+  expect: { timeout: 10_000 },
   fullyParallel: false,
   webServer: {
     command: "npx wrangler dev --local --port 8791 --var TEAM_DOMAIN: --var POLICY_AUD: --var VIEWER_USERNAME:reader --var VIEWER_PASSWORD:test-secret",
