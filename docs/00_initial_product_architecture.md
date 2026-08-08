@@ -545,7 +545,7 @@ Oracle은 idle일 때 60초 간격으로 D1 command를 conditional claim하고 r
 
 ### 6.5 version 정책
 
-- 2026-07 구현 기준은 Python 3.14, Scrapy 2.17.x, Node 22+, Wrangler 4.110.0이다.
+- 2026-08 구현 기준은 Python 3.14, Scrapy 2.17.x, Node 22+, Wrangler 4.120.0이다.
 - Python dependency는 `uv.lock`, edge 개발 dependency는 `edge/package-lock.json`에 exact pin한다.
 - production Worker runtime dependency는 Access JWT 검증용 `jose` 하나이며 build tool은 Wrangler다.
 - browser code는 표준 API만 사용하며 frontend framework, router, global state library를 넣지 않는다.

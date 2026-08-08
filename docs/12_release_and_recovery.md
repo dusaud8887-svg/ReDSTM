@@ -136,7 +136,7 @@ CI에는 production Cloudflare/Oracle/TypeMoon credential을 넣지 않는다. C
 
 ## 5. Workstation 준비
 
-필수 도구는 Git, uv 0.11.28, Python 3.14, Node 22 이상, npm, Google Chrome, Wrangler 4.110.0이다. Cloudflare에는
+필수 도구는 Git, uv 0.11.28, Python 3.14, Node 22 이상, npm, Google Chrome, Wrangler 4.120.0이다. Cloudflare에는
 Wrangler deploy/D1 권한이 있어야 하고 machine smoke에는 다음 값이 process environment에 있어야 한다.
 
 ```text
