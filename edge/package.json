@@ -16,10 +16,10 @@
     "check:d1-remote": "node scripts/check-d1-remote-integrity.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.1",
+    "@playwright/test": "1.62.1",
     "wrangler": "4.120.0"
   },
   "dependencies": {
-    "jose": "^6.2.3"
+    "jose": "^6.2.8"
   }
 }

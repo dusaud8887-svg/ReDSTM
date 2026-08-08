@@ -2232,9 +2232,10 @@ class ControlRunner:
                     active = connection.execute(
                         """
                         SELECT board_id, external_post_id FROM crawl_frontier
-                        WHERE state = 'running'
+                        WHERE state = 'running' AND julianday(lease_expires_at) > julianday(?)
                         ORDER BY last_attempt_at DESC LIMIT 1
-                        """
+                        """,
+                        (_timestamp(),),
                     ).fetchone()
                     if active is not None:
                         payload["active_board_id"] = str(active["board_id"])

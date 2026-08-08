@@ -2066,6 +2066,40 @@ def test_heartbeat_survives_local_telemetry_failures(
     runner._heartbeat("running", run_id="run-1", step="crawling", command_id=str(uuid4()))
 
 
+def test_heartbeat_ignores_an_expired_frontier_lease_for_live_inventory(
+    tmp_path: Path,
+) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "INSERT INTO crawl_runs (run_id, kind, status, started_at) "
+            "VALUES ('inventory-aa', 'inventory', 'running', '2026-07-12T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO captures (run_id, url, entity_type, fetched_at, http_status, outcome) "
+            "VALUES ('inventory-aa', 'https://www.typemoon.net/aa?page=4', 'listing', "
+            "'2026-07-12T00:01:00Z', 200, 'stored')"
+        )
+        connection.execute(
+            """
+            INSERT INTO crawl_frontier (
+                board_id, external_post_id, url, state, last_attempt_at,
+                lease_token, lease_expires_at
+            ) VALUES (
+                'stale', 1, 'https://source.invalid/stale/1', 'running',
+                '2026-07-11T00:00:00Z', 'expired-lease', '2026-07-11T00:40:00Z'
+            )
+            """
+        )
+
+    runner._heartbeat("running", run_id="run-1", step="full-catalog")
+
+    heartbeat = next(payload for path, payload in api.calls if path.endswith("/heartbeat"))
+    assert heartbeat["active_board_id"] == "aa"
+    assert "active_post_id" not in heartbeat
+
+
 def test_full_catalog_refetches_even_after_a_completed_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
