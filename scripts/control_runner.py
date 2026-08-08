@@ -125,6 +125,11 @@ def _normalized_timestamp(value: object) -> str | None:
     return parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _frontier_error_code(value: object) -> str:
+    code = str(value or "unknown_error")
+    return code if re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", code) else "legacy_error"
+
+
 def _next_scheduled_at(on_calendar: str, now: datetime | None = None) -> str | None:
     # ponytail: this deliberately accepts one fixed UTC-slot calendar. If the unit grows
     # ranges or multiple calendars, read NextElapseUSecRealtime through systemd D-Bus instead.
@@ -1967,7 +1972,7 @@ class ControlRunner:
                         {
                             "external_post_id": int(row["external_post_id"]),
                             "attempts": int(row["attempts"]),
-                            "error_code": str(row["last_error_code"] or "unknown_error"),
+                            "error_code": _frontier_error_code(row["last_error_code"]),
                             "last_attempt_at": _normalized_timestamp(row["last_attempt_at"]),
                         }
                         for row in batch

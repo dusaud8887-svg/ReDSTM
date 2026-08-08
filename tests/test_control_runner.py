@@ -2100,6 +2100,27 @@ def test_heartbeat_ignores_an_expired_frontier_lease_for_live_inventory(
     assert "active_post_id" not in heartbeat
 
 
+def test_frontier_failure_telemetry_bounds_a_legacy_error_message(tmp_path: Path) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawl_frontier (
+                board_id, external_post_id, url, state, attempts,
+                last_error_code, last_attempt_at
+            ) VALUES (
+                'aa', 1, 'https://source.invalid/aa/1', 'dead', 1,
+                'request failed: https://source.invalid/aa/1', '2026-07-12T00:00:00Z'
+            )
+            """
+        )
+        runner._frontier_failures(connection, "aa")
+
+    payload = next(payload for path, payload in api.calls if path.endswith("/frontier-failures"))
+    assert payload["items"][0]["error_code"] == "legacy_error"
+
+
 def test_full_catalog_refetches_even_after_a_completed_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
