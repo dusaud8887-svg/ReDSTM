@@ -52,6 +52,10 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
     assert claimed["state"] == "claimed"
     assert store.begin_command(command_id, run_id="run-1", now=_NOW) is True
     assert store.begin_command(command_id, run_id="run-2", now=_NOW) is False
+    touched_at = _NOW + timedelta(seconds=30)
+    assert store.touch_command(command_id, now=touched_at) is True
+    touched = store.command(command_id)
+    assert touched is not None and touched["updated_at"] == "2026-07-12T00:00:30.000Z"
 
     progress = {
         "changed_posts": 7,
@@ -80,6 +84,7 @@ def test_command_ledger_blocks_replay_after_execution_starts(tmp_path: Path) -> 
     }
     assert store.record_claim(command_id, "sync-now")["state"] == "succeeded"
     assert store.begin_command(command_id) is False
+    assert store.touch_command(command_id) is False
     assert [row["command_id"] for row in store.pending_commands()] == [command_id]
     store.mark_reported(command_id, now=_NOW)
     store.mark_reported(command_id, now=_NOW)

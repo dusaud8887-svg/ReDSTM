@@ -2199,9 +2199,17 @@ def test_running_process_claims_pause_marker(
     pause_command = _command("pause-after-current")
     api = Api([process_command, pause_command])
     runner, store = _runner(tmp_path, api)
+    touches: list[str] = []
+
+    def touch(command_id: str) -> bool:
+        touches.append(command_id)
+        return True
+
+    monkeypatch.setattr(store, "touch_command", touch)
 
     class Process:
-        def __init__(self, arguments: list[str], **_kwargs: object) -> None:
+        def __init__(self, arguments: list[str], **kwargs: object) -> None:
+            assert "stderr" not in kwargs
             self.pause_file = Path(arguments[arguments.index("--pause-file") + 1])
             assert self.pause_file.name == "current-run.paused"
             self.output = Path(arguments[arguments.index("--output") + 1])
@@ -2242,6 +2250,7 @@ def test_running_process_claims_pause_marker(
 
     assert report["status"] == "partial"
     assert report["ok"] is True
+    assert touches == [process_command["command_id"]]
     assert (runner.profile.state_dir / "schedule.paused").is_file()
     assert (runner.profile.state_dir / "current-run.paused").is_file()
     pause = store.command(pause_command["command_id"])

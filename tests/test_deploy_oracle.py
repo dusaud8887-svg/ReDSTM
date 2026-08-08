@@ -869,6 +869,8 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "EnvironmentFile=-/etc/redstm/access.env" in service
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in service
     assert "Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf" in schedule_service
+    assert "Type=exec" in service
+    assert "Type=exec" in schedule_service
     assert "ProtectSystem=strict" in service
     assert "TimeoutStartSec=infinity" in service
     assert "TimeoutStartSec=infinity" in schedule_service

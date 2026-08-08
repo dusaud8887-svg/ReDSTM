@@ -1583,7 +1583,6 @@ class ControlRunner:
                 cwd=Path(__file__).resolve().parents[1],
                 stdin=subprocess.DEVNULL,
                 stdout=output,
-                stderr=subprocess.DEVNULL,
             )
             while True:
                 try:
@@ -1592,6 +1591,8 @@ class ControlRunner:
                     return return_code
                 except subprocess.TimeoutExpired:
                     self._claim_marker()
+                    if command_id is not None:
+                        self.store.touch_command(command_id)
                     self._heartbeat("running", run_id=run_id, step=step, command_id=command_id)
                     now = time.monotonic()
                     if (

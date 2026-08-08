@@ -253,6 +253,17 @@ class ControlStore:
             updated = result.rowcount == 1
         return updated
 
+    def touch_command(self, command_id: str, *, now: datetime | None = None) -> bool:
+        with self._transaction() as connection:
+            result = connection.execute(
+                """
+                UPDATE command_ledger SET updated_at = ?
+                WHERE command_id = ? AND state = 'running'
+                """,
+                (_timestamp(now), command_id),
+            )
+            return result.rowcount == 1
+
     def finish_command(
         self,
         command_id: str,
