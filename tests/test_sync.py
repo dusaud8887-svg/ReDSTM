@@ -243,6 +243,69 @@ def test_prevalidated_worker_loads_an_authenticated_expired_export(
         )
 
 
+def test_failed_inventory_page_does_not_stamp_board_as_covered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    with connect_archive(path) as connection:
+        connection.execute(
+            "UPDATE boards SET last_inventory_at = '2026-07-11T00:00:00Z' "
+            "WHERE board_id = 'write_free21'"
+        )
+
+    spider = SimpleNamespace(
+        scheduled_posts=0,
+        failure_codes={"network_error"},
+        paused=False,
+        next_inventory_page=1,
+        inventory_completed=False,
+        listing_completed=False,
+        latest_post_id=None,
+    )
+
+    class FakeProcess:
+        def __init__(self, _settings: object) -> None:
+            self.crawler = SimpleNamespace(spider=spider, stats=None)
+
+        def create_crawler(self, _spider_type: object) -> object:
+            return self.crawler
+
+        def crawl(self, _crawler: object, **_kwargs: object) -> None:
+            return None
+
+        def start(self, *, stop_after_crawl: bool) -> None:
+            assert stop_after_crawl is True
+
+    monkeypatch.setattr("scripts.sync.CrawlerProcess", FakeProcess)
+    monkeypatch.setattr("scripts.sync.ensure_session_export", lambda *_a, **_k: _session())
+
+    report = run_sync(
+        Namespace(
+            archive=path,
+            board="write_free21",
+            session=tmp_path / "session.json",
+            session_prevalidated=False,
+            warc_dir=tmp_path / "warc",
+            pause_file=None,
+            parent_lock_held=True,
+            inventory=True,
+            max_seconds=60,
+            max_pages=1,
+            max_posts=20,
+            lease_seconds=60,
+        )
+    )
+
+    assert report["status"] == "failed"
+    with connect_archive(path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT inventory_next_page, last_inventory_at FROM boards "
+            "WHERE board_id = 'write_free21'"
+        ).fetchone()
+    assert tuple(row) == (1, "2026-07-11T00:00:00Z")
+
+
 def test_listing_metadata_change_reopens_known_post(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)

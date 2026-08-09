@@ -185,7 +185,9 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             and (inventory_completed or inventory_next_page > inventory_start_page)
         ):
             status = "partial"
-        if args.inventory:
+        # A failed first page leaves the cursor at 1. Do not stamp that board as
+        # covered; the next full-catalog pass must retry it from page 1.
+        if args.inventory and (inventory_completed or inventory_next_page > inventory_start_page):
             with connect_archive(archive) as connection:
                 connection.execute(
                     """
