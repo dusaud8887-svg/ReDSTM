@@ -783,8 +783,9 @@ class TypeMoonSpider(scrapy.Spider):
                 return
             self.listing_row_skipped += row_skipped
             self.failure_codes.add("listing_parse_failed")
-            self.logger.warning(
-                "TypeMoon listing kept %s good row(s) and skipped %s unparseable row(s): %s",
+            self.logger.error(
+                "TypeMoon listing kept %s good row(s) and skipped %s unparseable row(s); "
+                "page cursor remains frozen for retry: %s",
                 len(discovered),
                 row_skipped,
                 response.url,
@@ -847,10 +848,10 @@ class TypeMoonSpider(scrapy.Spider):
             yield item
 
         inventory_rows = regular_items
-        # After page-warning retry is exhausted, still checkpoint/advance when at least one
-        # regular row parsed. All-bad pages (no good rows, not explicit empty) stay frozen so
-        # we never treat a broken listing as the board end.
-        page_accepts_progress = not page_warning or bool(inventory_rows) or explicit_empty
+        # A partially parsed page is not a safe checkpoint: advancing here would silently
+        # skip rows that the parser could not identify. Good rows remain durable, while the
+        # same page is retried on the next command.
+        page_accepts_progress = not page_warning or explicit_empty
         if self.inventory and page_accepts_progress:
             if inventory_rows:
                 self.next_inventory_page = page + 1
@@ -878,6 +879,7 @@ class TypeMoonSpider(scrapy.Spider):
             self.frontier is not None
             and self.session is not None
             and page_budget_open
+            and page_accepts_progress
             and (not self.inventory or bool(inventory_rows))
             and (self.inventory or not self.listing_completed)
             and not self._stop_requested()

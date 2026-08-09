@@ -107,7 +107,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
 - R2 baseline upload/check/pointer와 authenticated data smoke/rollback
 - Access user/service role을 분리한 remote `/ops`, D1 heartbeat와 fixed command marker/outbox/expiry canary
-- 6시간 최신 글 증분 수집과 수동 전체 목차·전체 본문 재수집
+- 6시간 최신 글 증분 수집과 목차 완료 후 본문까지 이어지는 전체 재수집
 - AA -> 창작 -> 팬픽 우선의 설정 기반 순차 recovery chunk
 - stable post identity user-state export/import와 vendored Saitamaar font
 - 홈/탐색/보관함 mobile-first Reader, 소설/AA filter, direct save와 Operations 상호 진입
@@ -134,8 +134,8 @@ robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTX
 모두 `site_unreachable`로 조기 종료하며 그 run의 network attempt를 보존한다. Oracle canonical live는 schema v3이고
 repository target은 listing 댓글 기대값과 마지막 증분 게시글을 함께 보존하는 additive schema v4다.
 자동 모드는 최신 page incremental만 6시간마다 실행한다. 이전 기준 게시글이 나온 page 뒤 2 page를
-더 확인하고, 이미 다른 cycle이 실행 중이면 새 cycle은 `busy`로 통과한다. 전체 목차와 전체 본문은
-Operations의 명시적 수동 작업이며, 기존 성공분도 건너뛰지 않는다. 게시글 하나가 실패해도 다음 글로
+더 확인하고, 이미 다른 cycle이 실행 중이면 새 cycle은 `busy`로 통과한다. 전체 재수집은
+Operations의 명시적 수동 작업이며, 목차를 끝낸 뒤 같은 작업에서 본문·댓글까지 이어가고 기존 성공분도 건너뛰지 않는다. 게시글 하나가 실패해도 다음 글로
 진행하고 capped 오류가 5회 실패한 항목만 최종 실패 목록으로 분리한다. 수동 full 작업은 20/100건의
 양수 chunk와 영속 checkpoint로 전체 범위를 이어 가며 상세 요청은 한 번에 1개만 처리한다.
 network·session·revisit 정책은 `crawler/settings.py`, secret은 environment가 source

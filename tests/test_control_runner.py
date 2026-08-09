@@ -1627,6 +1627,88 @@ def test_full_content_checkpoint_survives_a_partial_batch(
         )
 
 
+def test_full_content_does_not_report_success_after_item_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "INSERT INTO crawl_frontier (board_id, external_post_id, url) "
+            "VALUES ('aa', 1, 'https://source.invalid/aa/1')"
+        )
+
+    monkeypatch.setattr(
+        runner,
+        "_execute_report",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "status": "partial",
+            "failed_posts": 1,
+            "outcomes": {"fetch_failed": 1},
+            "failures": ["network_error"],
+            "full_content_remaining": 0,
+        },
+    )
+
+    report = runner._execute_action(
+        "full-content", "full-failed", "full-failed", command_id="manual", board_id="aa"
+    )
+
+    assert report["status"] == "partial"
+    assert report["ok"] is False
+    assert report["full_content_complete"] is False
+    assert not (runner.profile.state_dir / "full-content.started").exists()
+
+
+def test_full_catalog_continues_into_full_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "INSERT INTO crawl_frontier (board_id, external_post_id, url) "
+            "VALUES ('aa', 1, 'https://source.invalid/aa/1')"
+        )
+    modules: list[str] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        module = command[command.index("-m") + 1]
+        modules.append(module)
+        if module == "scripts.crawl_cycle":
+            started_at = command[command.index("--inventory-since") + 1]
+            with connect_archive(runner.profile.archive) as connection:
+                connection.execute(
+                    "UPDATE boards SET inventory_next_page = 1, last_inventory_at = ? "
+                    "WHERE board_id = 'aa'",
+                    (started_at,),
+                )
+            return {
+                "ok": True,
+                "status": "succeeded",
+                "changed_posts": 0,
+                "failed_posts": 0,
+                "boards": [{"board_id": "aa", "status": "succeeded"}],
+            }
+        return {
+            "ok": True,
+            "status": "succeeded",
+            "changed_posts": 1,
+            "outcomes": {"stored": 1},
+            "full_content_remaining": 0,
+        }
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "full-catalog", "catalog-content", "catalog-content", command_id="manual"
+    )
+
+    assert modules == ["scripts.crawl_cycle", "scripts.recover_queue"]
+    assert report["safe_code"] == "full_catalog_content_succeeded"
+    assert report["full_content_complete"] is True
+    assert report["changed_posts"] == 1
+
+
 def test_scheduled_run_requires_explicit_export_bootstrap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

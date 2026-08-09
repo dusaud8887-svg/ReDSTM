@@ -391,8 +391,8 @@ Remote command와 무관하게 systemd가 실행한다.
 | incremental cycle | 6시간 |
 | 최신 글 증분 수집 | 6시간마다; 이전 cycle 실행 중이면 이번 slot은 pass |
 | delta publish | marker 유무와 무관하게 증분 reconcile |
-| 전체 board 목차 | 수동 `full-catalog`만; 첫 page부터 끝까지 다시 수집 |
-| 전체 게시글 본문 | 수동 `full-content`만; 성공분을 포함해 전부 다시 수집 |
+| 전체 board 목차 | 수동 `full-catalog`; 첫 page부터 끝까지 다시 수집한 뒤 본문 pass로 이어감 |
+| 전체 게시글 본문 | `full-catalog` 완료 후 같은 command에서 자동 실행하거나 수동 `full-content`로 전부 다시 수집 |
 
 Operations schedule toggle은 최종 제품에서도 직접 timer file을 편집하지 않는다.
 pause-after-current는 진행 중 collection에 협력적 stop marker를 전달하고 다음 automatic start도
@@ -518,8 +518,8 @@ Button은 action, bound, 현재 eligibility와 disabled reason을 함께 보여�
 Runs/Releases ledger에서 별도로 확인한다.
 
 - `sync-now`: 전체 또는 선택 게시판의 최신 증분을 한 번 실행한다.
-- `full-catalog`: 전체 또는 선택 게시판의 제목·주소·목록만 첫 page부터 끝까지 다시 수집한다. 본문은
-  `full-content`의 별도 범위다.
+- `full-catalog`: 전체 또는 선택 게시판의 제목·주소·목록을 첫 page부터 끝까지 다시 수집하고, 목록 pass가
+  완료되면 발견된 frontier의 본문·댓글 수집을 같은 command에서 이어간다.
 - `full-content`: 전체 또는 선택 게시판의 발견된 모든 본문을 성공 여부와 무관하게 다시 수집한다.
 - `retry-batch`: 현재 due인 pending/retry frontier를 상한 없이 순차 처리한다. due 0이면 disable한다.
 - `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,

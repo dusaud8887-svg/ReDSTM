@@ -196,7 +196,8 @@ listing 댓글 기대치를 보존하는 additive schema v4다. 다음 계약으
    known+unchanged 20건을 fallback으로 판정한다.
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
 5. 자동 cycle은 anchor page 뒤 2 page까지만 확인하고 전체 listing은 수동 `full-catalog`가 담당한다.
-6. 전체 body 재검증은 수동 `full-content`, due 재시도는 수동 `retry-batch`가 남은 항목 0까지 이어간다.
+6. 전체 body 재검증은 `full-catalog`의 목록 완료 뒤 자동으로 이어지거나 수동 `full-content`로 실행하고,
+   due 재시도는 수동 `retry-batch`가 남은 항목 0까지 이어간다.
 
 받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
 scheduling만 cap한다. schema v3의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서

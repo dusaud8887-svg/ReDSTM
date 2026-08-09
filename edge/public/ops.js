@@ -20,6 +20,7 @@ const stepLabels = {
 export const safeCodeLabels = {
   cycle_succeeded: "증분 수집 완료", inventory_succeeded: "목록 전수 확인 완료",
   full_catalog_succeeded: "전체 목차 재수집 완료",
+  full_catalog_content_succeeded: "전체 목차·본문 수집 완료",
   full_content_succeeded: "전체 본문 재수집 완료",
   bootstrap_recovery_succeeded: "최초 본문 채우기 완료",
   recovery_succeeded: "본문 재시도 완료", publish_succeeded: "Reader 반영 완료",
@@ -65,7 +66,7 @@ const warningLabels = {
   rate_limited: "원본 서버의 속도 제한으로 감속했습니다.",
   site_unreachable: "원본 서버가 느리거나 응답이 끊겼습니다. 전체 목차는 체크포인트부터 자동으로 이어 재시도합니다.",
   disk_low: "Oracle 저장 공간이 부족합니다.",
-  control_rejected: "운영 상태 전달이 영구 거절됐습니다. 배포 호환성을 확인해야 합니다.",
+  control_rejected: "운영 상태 보고가 최근 거부됐습니다. 최신 거부 원인과 배포 상태를 확인하세요.",
   token_expiring: "수집기 인증 갱신이 필요합니다.",
   publish_stale: "새 보존본 게시가 지연되고 있습니다.",
   maintenance: "Oracle 보관소를 점검하고 있습니다. 수동 수집은 점검 완료 후 다시 사용할 수 있습니다.",
@@ -75,7 +76,7 @@ const warningLabels = {
 const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
 const commandCopy = {
   "sync-now": ["증분 수집 지금 실행", "등록된 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "full-catalog": ["전체 게시글 목차 다시 수집", "선택 범위의 모든 게시판에서 제목·주소·목록을 첫 페이지부터 끝까지 확인합니다. 본문은 수집하지 않습니다. 진행 중 게시판은 끝날 때까지 이어서 처리하고, 원본 장애·일시정지도 체크포인트(게시판·페이지)를 보존한 채 같은 작업을 자동으로 재개합니다. 이미 요청한 전체 목차가 작업 중이면 새 요청 대신 그 실행 기록을 여세요. 원본이 느리면 며칠 걸릴 수 있습니다."],
+  "full-catalog": ["전체 게시글 목차·본문 다시 수집", "선택 범위의 모든 게시판을 첫 페이지부터 끝까지 확인한 뒤, 발견된 게시글 본문과 댓글까지 같은 작업에서 이어 수집합니다. 원본 장애·일시정지는 체크포인트(게시판·페이지·본문 큐)를 보존한 채 자동으로 재개합니다. 이미 요청한 전체 수집이 작업 중이면 새 요청 대신 그 실행 기록을 여세요. 원본이 느리면 며칠 걸릴 수 있습니다."],
   "full-content": ["전체 게시글 본문 다시 수집", "선택 범위에서 발견된 모든 글을 성공 여부와 관계없이 다시 수집합니다. 장기간 실행될 수 있습니다."],
   "retry-batch": ["본문 대기 재시도", "처리 시각이 된 모든 대기 또는 재시도 항목을 우선순위대로 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
@@ -272,13 +273,17 @@ function renderArchiveSnapshot(snapshot) {
   const completed = counters.inventory_completed_boards ?? 0;
   const total = counters.inventory_total_boards ?? 0;
   const inProgress = counters.inventory_in_progress_boards ?? 0;
+  const pending = Math.max(total - completed - inProgress, 0);
+  const finished = Math.min(total, Math.max(completed, 0));
   byId("outline-only").textContent = number(counters.outline_only);
   byId("frontier-waiting").textContent = number(waiting);
   byId("inventory-progress").textContent = total
-    ? `${completed === total ? "완료" : "진행 중"} · ${number(completed)}/${number(total)}`
+    ? `${inProgress ? "진행 중" : pending ? "대기" : "완료"} · ${number(finished)}/${number(total)}`
     : "—";
   byId("inventory-detail").textContent = inProgress
     ? `${number(inProgress)}개 게시판의 전체 목록을 계속 확인 중`
+    : pending
+    ? `${number(pending)}개 게시판의 전체 목록 확인 대기`
     : completed === total && total
     ? "전체 목록 확인 완료 · 이후 최신 페이지만 주기적으로 확인"
     : "전체 분량을 알 수 없어 완료 게시판 수로 표시";

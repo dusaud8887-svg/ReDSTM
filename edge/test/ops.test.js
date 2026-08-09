@@ -39,6 +39,10 @@ test("renders a disk hard-stop as an operator-safe outcome", () => {
   assert.ok(safeCodeLabels.disk_low);
 });
 
+test("labels the combined catalog and content pass", () => {
+  assert.equal(safeCodeLabels.full_catalog_content_succeeded, "전체 목차·본문 수집 완료");
+});
+
 test("orders board attention lexicographically even with large counters", () => {
   const ordered = [
     { board_id: "pending", pending: Number.MAX_SAFE_INTEGER },

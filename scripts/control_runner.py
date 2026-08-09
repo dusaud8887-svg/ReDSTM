@@ -635,7 +635,9 @@ class ControlRunner:
             safe_code,
             result_payload=finish_payload,
         )
-        publishes_changes = action in {"sync-now", "full-content", "retry-batch"}
+        publishes_changes = action in {"sync-now", "full-content", "retry-batch"} or (
+            action == "full-catalog" and finish_payload["counters"]["changed_posts"] > 0
+        )
         if publishes_changes and finish_payload["counters"]["changed_posts"]:
             self._write_publish_marker()
         if action in {"sync-now", "full-catalog"} and report:
@@ -807,13 +809,52 @@ class ControlRunner:
                 self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id), progress)
                 if self._inventory_pass_complete(str(inventory_started_at), board_id):
                     self._complete_inventory_pass(str(inventory_started_at), board_id)
-                    return self._with_inventory_coverage(
-                        self._combined_collection_report(
-                            reports, safe_code="full_catalog_succeeded"
-                        ),
+                    catalog_report = self._with_inventory_coverage(
+                        self._combined_collection_report(reports),
                         str(inventory_started_at),
                         board_id,
                     )
+                    catalog_report.update(
+                        ok=True,
+                        status="succeeded",
+                        safe_code="full_catalog_succeeded",
+                    )
+                    if max_seconds is not None:
+                        return catalog_report
+                    with archive_transaction(self.profile.archive, read_only=True) as connection:
+                        frontier_exists = connection.execute(
+                            "SELECT EXISTS (SELECT 1 FROM crawl_frontier WHERE "
+                            + ("board_id = ? AND " if board_id else "")
+                            + "rowid > 0)",
+                            (board_id,) if board_id else (),
+                        ).fetchone()[0]
+                    if not frontier_exists:
+                        return catalog_report
+                    content_report = self._execute_action(
+                        "full-content",
+                        f"{report_id}-content",
+                        run_id,
+                        command_id=command_id,
+                        board_id=board_id,
+                        max_posts=max_posts,
+                        progress_offset=progress_offset,
+                    )
+                    combined = self._with_inventory_coverage(
+                        self._combined_collection_report([catalog_report, content_report]),
+                        str(inventory_started_at),
+                        board_id,
+                    )
+                    combined["inventory_pass_complete"] = True
+                    if (
+                        content_report.get("ok") is True
+                        and content_report.get("status") == "succeeded"
+                    ):
+                        combined.update(
+                            ok=True,
+                            status="succeeded",
+                            safe_code="full_catalog_content_succeeded",
+                        )
+                    return combined
                 # Ops-bounded catalog (max_seconds set) is one inventory cycle only. The
                 # multi-cycle while-loop is for multi-hour unattended passes; reusing the
                 # per-cycle budget as a loop would run for days despite the operator cap.
@@ -962,10 +1003,28 @@ class ControlRunner:
                 remaining = report.get("full_content_remaining")
                 if remaining == 0:
                     (self.profile.state_dir / _FULL_CONTENT_STARTED).unlink(missing_ok=True)
-                    combined = self._combined_collection_report(
-                        reports, safe_code="full_content_succeeded"
-                    )
-                    combined["full_content_complete"] = True
+                    combined = self._combined_collection_report(reports)
+                    has_item_failures = False
+                    for item in reports:
+                        raw_outcomes = item.get("outcomes")
+                        outcomes = raw_outcomes if isinstance(raw_outcomes, dict) else {}
+                        if (
+                            _integer(item.get("failed_posts"))
+                            or _integer(outcomes.get("parse_failed"))
+                            or _integer(outcomes.get("fetch_failed"))
+                            or bool(item.get("failures"))
+                        ):
+                            has_item_failures = True
+                            break
+                    if not has_item_failures:
+                        combined.update(
+                            ok=True,
+                            status="succeeded",
+                            safe_code="full_content_succeeded",
+                        )
+                    else:
+                        combined.update(ok=False, status="partial")
+                    combined["full_content_complete"] = not has_item_failures
                     combined["full_content_remaining"] = 0
                     return combined
                 if (

@@ -651,7 +651,7 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
 
     retried = response.replace(request=retry_request)
     requests = _listing_requests(list(spider.parse_listing(retried)))
-    assert [request.url for request in requests] == [f"{url}?page=2"]
+    assert requests == []
     assert "listing_parse_failed" in spider.failure_codes
     assert spider.listing_row_skipped == 1
 
@@ -670,9 +670,8 @@ def test_listing_warning_disables_overlap_boundary(tmp_path: Path) -> None:
     assert inventory.next_inventory_page == 3
     inventory_retried = inventory_response.replace(request=inventory_retry)
     inventory_requests = _listing_requests(list(inventory.parse_listing(inventory_retried)))
-    # Good rows keep inventory advancing after the warning retry.
-    assert [request.url for request in inventory_requests] == [f"{url}?page=4"]
-    assert inventory.next_inventory_page == 4
+    assert inventory_requests == []
+    assert inventory.next_inventory_page == 3
     assert inventory.listing_row_skipped == 1
 
 
