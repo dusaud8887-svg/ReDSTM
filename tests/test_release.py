@@ -118,7 +118,7 @@ def test_node_command_resolves_windows_command_shims_only_for_real_execution(
     assert _node_command(subprocess.run, "npx", "wrangler", "--version") == [
         r"C:\Tools\npx.CMD",
         "--no-install",
-        "wrangler@4.120.0",
+        "wrangler@4.123.0",
         "--version",
     ]
     assert _node_command(fake_runner, "npx", "wrangler") == [

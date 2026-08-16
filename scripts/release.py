@@ -41,7 +41,7 @@ CommandRunner = Callable[..., subprocess.CompletedProcess[Any]]
 SmokeRunner = Callable[[str, str], dict[str, Any]]
 
 _D1_DATABASE = "redstm-control"
-_WRANGLER_VERSION = "4.120.0"
+_WRANGLER_VERSION = "4.123.0"
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
 _MIGRATION = re.compile(r"\b\d{4}_[a-zA-Z0-9_.-]+\.sql\b")
 _MIGRATION_NAME = re.compile(r"\d{4}_[a-zA-Z0-9_.-]+\.sql")
