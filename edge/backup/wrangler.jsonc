@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "redstm-d1-backup",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "ACCOUNT_ID": "81d1e7334e4ef4bcbbeffc9b96297699",
+    "DATABASE_ID": "997d0196-c136-410c-b11a-69eff7dc1a75"
+  },
+  "workflows": [
+    {
+      "binding": "D1_BACKUP_WORKFLOW",
+      "name": "redstm-d1-backup-workflow",
+      "class_name": "D1BackupWorkflow"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 21 * * SUN"]
+  },
+  "r2_buckets": [
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "redstm-backups"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
