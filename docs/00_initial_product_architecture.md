@@ -840,7 +840,7 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
 | 부하 제한 | detail concurrency 2, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
-| 요청 실패 | listing/detail 240/900초; detail은 1회 뒤 durable defer, 429는 frontier defer | live timeout/429 빈도 확인 |
+| 요청 실패 | listing/detail 240/1800초; detail은 1회 뒤 durable defer, 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | network는 2분~6시간 backoff로 무기한, parse/storage는 5회 뒤 dead | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
 | listing | complete changed-row seed, overlap boundary, schema v4 inventory cursor·댓글 기대치·증분 anchor | 실제 cursor progression |
@@ -991,7 +991,7 @@ transaction이 실패하면 version과 frontier가 반쪽으로 남지 않아야
 non-HTML detail과 invalid URL은 `parse_failed`/`parse_drift`로 `retry`, normalize/store exception은
 `parse_failed`/`storage_error`로 `retry` 처리한다. 세 capped 오류는 공통 5회 상한 뒤 `dead`가 된다.
 DB write 자체가 실패해 capture도 기록할 수 없는
-경우에만 900초 lease expiry가 최후 복구선이다.
+경우에만 3600초 lease expiry가 최후 복구선이다.
 
 ### 8.6 상태 분류
 
@@ -1041,8 +1041,8 @@ storage_error
   `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, listing `RETRY_TIMES=3`, detail retry 0,
   `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=False`(2026-07-14
   사용자 결정; 요청 간격은 robots `Crawl-delay`와 같은 10초를 계속 지킴)다.
-- listing/detail timeout은 180/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
-  10~60초, frontier lease는 900초다. 180초는 “최적값”이 아니라 오래된 server와 수 MB AA를 위한
+- listing/detail timeout은 240/1800초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
+  10~120초, frontier lease는 3600초다. detail 1800초는 오래된 server와 수 MB AA의 장기 streaming을 위한
   보수적 상한이며 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
 - 요청 발자국(footprint)은 로그인한 회원의 브라우저와 일관되게 맞춘다: 자기식별 봇 token 대신 실제
   브라우저 `USER_AGENT`, `Accept`/`Accept-Language`(`DEFAULT_REQUEST_HEADERS`, `Accept-Encoding`은

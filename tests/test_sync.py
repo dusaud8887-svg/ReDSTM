@@ -1435,14 +1435,14 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.AUTOTHROTTLE_ENABLED is True
     assert crawler_settings.AUTOTHROTTLE_MAX_DELAY == 120.0
     assert crawler_settings.DOWNLOAD_MAXSIZE == 64 << 20
-    assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 2400
+    assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 3600
     assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
     assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
-    assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 900
+    assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 1800
     assert crawler_settings.REDSTM_CONCURRENT_REQUESTS == 2
     assert crawler_settings.REDSTM_DETAIL_CONCURRENCY == 2
     assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 240
-    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["download_timeout"] == 900
+    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["download_timeout"] == 1800
     assert TypeMoonSpider().detail_request("write", 1, _session()).meta["max_retry_times"] == 0
     project = _project_settings()
     assert project.getint("CONCURRENT_REQUESTS") == 2
@@ -1459,7 +1459,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     )
 
     monkeypatch.setattr("sys.argv", ["sync", "--archive", str(archive), "--board", "write"])
-    assert parse_sync_args().lease_seconds == 2400
+    assert parse_sync_args().lease_seconds == 3600
     assert parse_sync_args().max_seconds is None
     assert parse_sync_args().session_prevalidated is False
     assert parse_sync_args().parent_lock_held is False
@@ -1473,7 +1473,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     )
     assert parse_sync_args().parent_lock_held is True
     monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
-    assert parse_recovery_args().lease_seconds == 2400
+    assert parse_recovery_args().lease_seconds == 3600
 
 
 def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:
