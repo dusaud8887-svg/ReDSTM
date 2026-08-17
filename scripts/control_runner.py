@@ -1026,8 +1026,12 @@ class ControlRunner:
                         stop_reason="disk_low",
                     )
                     return combined
+                cycle_command = command
+                if outage_retries:
+                    cycle_command = command.copy()
+                    cycle_command[cycle_command.index("--max-posts") + 1] = "1"
                 report = self._execute_report(
-                    command, report_path, run_id, recovery_step, command_id=command_id
+                    cycle_command, report_path, run_id, recovery_step, command_id=command_id
                 )
                 reports.append(report)
                 if len(reports) > 16:
@@ -2152,6 +2156,7 @@ class ControlRunner:
         inventory_started_at = self._latest_inventory_pass_started_at()
         active_inventory: tuple[str, str] | None = None
         finished_inventory: tuple[str, dict[str, Any]] | None = None
+        live_run_counters: dict[str, int] | None = None
         try:
             with archive_transaction(self.profile.archive, read_only=True) as connection:
                 deadline = time.monotonic() + _SNAPSHOT_TIME_BUDGET_SECONDS
@@ -2190,6 +2195,29 @@ class ControlRunner:
                     """,
                     (inventory_started_at, inventory_started_at),
                 ).fetchone()
+                if run_counters is None:
+                    live_run = connection.execute(
+                        "SELECT run_id FROM crawl_runs WHERE status = 'running' "
+                        "ORDER BY started_at DESC LIMIT 1"
+                    ).fetchone()
+                    if live_run is not None:
+                        outcomes = connection.execute(
+                            """
+                            SELECT
+                                COALESCE(SUM(entity_type = 'post' AND outcome = 'stored'), 0)
+                                    AS changed_posts,
+                                COALESCE(SUM(outcome IN ('parse_failed', 'fetch_failed')), 0)
+                                    AS failed_posts
+                            FROM captures WHERE run_id = ?
+                            """,
+                            (live_run["run_id"],),
+                        ).fetchone()
+                        live_run_counters = {
+                            "changed_posts": int(outcomes["changed_posts"]),
+                            "failed_posts": int(outcomes["failed_posts"]),
+                            "boards_ok": 0,
+                            "boards_failed": 0,
+                        }
                 active_run = connection.execute(
                     "SELECT run_id FROM crawl_runs "
                     "WHERE kind = 'inventory' AND status = 'running' "
@@ -2278,7 +2306,7 @@ class ControlRunner:
             "inventory_completed_boards": int(inventory["completed"] or 0),
             "inventory_in_progress_boards": int(inventory["in_progress"] or 0),
         }
-        counters.update(run_counters or {})
+        counters.update(run_counters or live_run_counters or {})
         self._event(run_id, sequence, "archive_snapshot", "succeeded", counters)
 
     @staticmethod

@@ -473,7 +473,7 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 
 | 영역 | 항목 | 시작값 | 근거 |
 |---|---|---|---|
-| network | 요청 간격 | 10초 하한 + 감속 전용 AutoThrottle 최대 60초 | 서버 응답이 느려지면 자동으로 더 길게; `DOWNLOAD_DELAY` 하한 아래로 빨라지지 않음 |
+| network | 요청 간격 | 10초 하한 + 감속 전용 AutoThrottle 최대 120초 | 서버 응답이 느려지면 자동으로 더 길게; `DOWNLOAD_DELAY` 하한 아래로 빨라지지 않음 |
 | network | robots | `ROBOTSTXT_OBEY=False` (2026-07-14 사용자 결정) | 인증 회원 본인 전용 아카이브; 10초 간격은 robots `Crawl-delay`와 동일하게 유지, per-process robots fetch 대기 제거 |
 | network | 발자국 | 브라우저 `USER_AGENT` + `Accept`/`Accept-Language` + page/detail `Referer` 체인, 로그인 handshake도 동일 | 봇 token을 우선 차단하는 WAF/rate limiter 회피; 회원 브라우저와 같은 발자국 |
 | outage | 봇 차단 감지 | 게시글/목록 자리의 challenge interstitial(Cloudflare/WAF)은 `network_error`로 분류 | site-wide backoff breaker 발화·attempt 보존, parse drift 오분류 방지 |
@@ -481,22 +481,22 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | network | detail timeout | 1800초 | 2026-08-17 실운영에서 서로 다른 대형 AA가 900초 상한에 반복 도달해 장기 streaming을 수용하도록 상향 |
 | network | request retry | 최초 포함 총 4회(`RETRY_TIMES=3`), 408/5xx/522/524; detail은 1회 뒤 durable defer | 기존 영속 재시도 유지 |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
-| network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; detail network retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 0건으로 확정하지 않음 |
-| network | 429/network breaker | `Retry-After` 우선(최대 24시간), 같은 class 연속 3회면 recovery 조기 종료 | 과속·전체 outage에서 다음 97건 요청 금지 |
+| network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; 잘린 detail은 저장하지 않고 durable retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 본문으로 저장하지 않음 |
+| network | 429/network breaker | `Retry-After` 우선(최대 24시간), parse·429 연속 3회/network 연속 5회면 recovery 조기 종료; 다음 장기 cycle은 1건 canary | 과속·전체 outage에서 정상 chunk를 막고 canary 성공 뒤 2병렬 복귀 |
 | outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 enabled board 전체를 순회하지 않음 |
-| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery run도 연속 3회 network breaker에서 `site_unreachable`로 종료 | listing 3회 retry × 180초 포함 최악 약 30분 안팎에 중단 |
+| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery는 연속 network 5회에서 종료 | listing 3회 retry × 240초와 detail 1800초 상한 안에서 중단 |
 | outage | attempt 보존 | `site_unreachable` run(cycle/recovery 모두)의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
-| frontier | network attempts | 5회 뒤 dead | 기존 유지 |
+| frontier | network attempts | 횟수 제한 없이 backoff retry; 과거 network dead도 recovery에서 재개 | 원본 outage로 영구 탈락시키지 않음 |
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
-| frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
+| frontier | 404/명시 삭제문 | HTTP 404는 서로 다른 run 2회, `글이 존재하지 않습니다` 같은 원본 오류 페이지는 1회 positive signal 뒤 missing | parse drift와 분리 |
 | frontier | lease | 3600초 | detail 1800초 1회 + 처리·종료 여유 |
 | recovery | 총량·총시간 | 상한 없음 | due 또는 전체 재수집 대상을 끝까지 순차 처리 |
 | cycle | 총량·총시간 | 상한 없음 | 동일 unit/lock이 다음 slot의 중복 실행을 막음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |
 | session | 자동 재로그인 | 전역 최소 간격 30분 throttle, 실패 시 auth 중단 | 불안정한 사이트에서 로그인 반복 방지 |
 | session | cycle 내 검증 | 시작 preflight + 30분 board 경계 재검증(실패 시 throttled 재로그인 1회) | board마다 GET하지 않고 장기 cycle이 session 수명을 넘겨도 이어서 수집 |
-| parse-drift breaker/auth | sync 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift 확산 방지 |
-| parse-drift breaker/auth | recovery 중단 | 첫 auth, 같은 class parse drift/network/429 연속 3회 | 고립 실패는 격리하되 site-wide drift를 은폐하지 않음 |
+| parse-drift breaker/auth | sync 중단 | 첫 auth, parse drift/429 연속 3회 또는 network 연속 5회 | 고립 실패는 격리하되 site-wide drift 확산 방지 |
+| parse-drift breaker/auth | recovery 중단 | 첫 auth, parse drift/429 연속 3회 또는 network 연속 5회 | 고립 실패는 격리하되 site-wide drift를 은폐하지 않음 |
 | parser | 숫자 | 조회수/댓글수는 유일한 non-negative integer만 허용 | 누락·모호한 값을 0으로 합성하지 않음 |
 | detail audit | stale revisit | 30일 eligibility, recovery batch당 예약 1 slot | due queue가 계속 차도 body-only audit forward progress 보장 |
 | systemd | timer 분산 | `RandomizedDelaySec=15m` | 정시 부하와 요청 패턴 회피 |
@@ -525,7 +525,7 @@ AutoThrottle, WARC middleware와 archive pipeline이 조용히 빠지므로 회�
 - 모든 listing 요청은 `DOWNLOAD_TIMEOUT`/listing timeout에서 실패하고 retry 소진 뒤
   network-class로 분류된다. 연속 3개 board 실패에서 run이 `site_unreachable`
   (`/ops` 표기 "원본 연결 실패")로 조기 종료되고 frontier attempt는 보존된다.
-- run당 최악 소요는 board 3개 × listing retry(3회 × 180초) 시간으로 약 30분 안팎이다. 반복 수동
+- run당 최악 소요는 board 3개 × listing retry(최초 포함 4회 × 240초) 시간으로 길 수 있다. 반복 수동
   재실행은 대기 시간만 늘리므로 다음 자동 실행 또는 원본 회복 뒤 재시도한다.
 
 원본 상태는 Oracle에서 아래로 직접 판별한다(수집 정책과 같은 10초 간격 준수, 1회씩만):

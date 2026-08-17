@@ -55,6 +55,7 @@ _RESTRICTED_PHRASES = (
 # that yields no content AND carries one of these phrases is recorded as missing instead of
 # tripping the parse-drift breaker and halting the board.
 _ABSENT_PHRASES = (
+    "글이 존재하지 않습니다",
     "존재하지 않는 자료",
     "존재하지 않는 게시",
     "삭제된 게시물",

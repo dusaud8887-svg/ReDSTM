@@ -215,15 +215,15 @@ def test_restricted_detail_is_not_misparsed() -> None:
     assert "body_html" not in items[0]
 
 
-def test_deleted_post_message_is_recorded_as_missing_not_parse_failed() -> None:
+@pytest.mark.parametrize(
+    "message",
+    ["존재하지 않는 자료 입니다.", "글이 존재하지 않습니다. 글이 삭제되었거나 이동된 경우입니다."],
+)
+def test_deleted_post_message_is_recorded_as_missing_not_parse_failed(message: str) -> None:
     url = "https://www.typemoon.net/write_free21/62068"
     response = HtmlResponse(
         url=url,
-        body=(
-            "<html><body><div class='container'>"
-            "<p>존재하지 않는 자료 입니다.</p>"
-            "</div></body></html>"
-        ).encode(),
+        body=(f"<html><body><div class='container'><p>{message}</p></div></body></html>").encode(),
         encoding="utf-8",
         request=Request(url=url),
     )

@@ -1011,7 +1011,7 @@ storage_error
 - restricted 판정은 content root가 없는 응답에서만 login form/field 구조와 안내 구문으로
   결정한다. content root가 있으면 구문은 본문 인용으로 보고 정상 저장한다
   ([`03_review_validation_20260711.md`](done/2026-07-11/03_review_validation_20260711.md)).
-- content root와 제목이 모두 없고 원본이 명시적 삭제 문구(`존재하지 않는 자료`, `삭제된
+- content root와 제목이 모두 없고 원본이 명시적 삭제 문구(`글이 존재하지 않습니다`, `존재하지 않는 자료`, `삭제된
   게시물` 등)를 담으면 `missing`으로 분류해 frontier를 `done`으로 닫는다. 이는 구조 변경(parse
   drift)과 구분되는 positive 신호이므로 parse-drift breaker를 올리지 않는다. 삭제 문구가 없는
   빈 본문은 여전히 `parse_failed`로 남겨 drift 감지를 보존한다.
@@ -1022,10 +1022,12 @@ storage_error
   `permission_denied`, `not_found`, `parse_drift`, `storage_error`다. `storage_error`는 capture를
   `parse_failed`로 남기고 frontier를 `retry`로 닫는다. `quality_rejected`의 독립 집계는 아직
   구현되지 않았다.
-- `not_found`는 서로 다른 run에서 두 번 확인하기 전 `deleted`로 확정하지 않는다.
+- HTTP 404 `not_found`는 서로 다른 run에서 두 번 확인하고, 원본의 명시적 삭제 오류 페이지는 1회
+  positive signal로 `missing`을 확정한다.
 - `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
-  6시간에서 멈춘다. `network_error`·`parse_drift`·`storage_error`는 5회 시도 후 `dead`로 전이하며, `auth_required`는
+  6시간에서 멈춘다. `parse_drift`·`storage_error`는 5회 시도 후 `dead`로 전이하고
+  `network_error`는 원본 outage가 항목을 영구 탈락시키지 않도록 무기한 retry하며, `auth_required`는
   session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
 - `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `network_error`·`parse_drift`·
@@ -1072,9 +1074,10 @@ storage_error
 - 로드 시 서버 발급 cookie에 더해 `adult_view=1` 성인 열람 cookie를 런타임 주입한다. 이 합성
   cookie는 disk export에는 쓰지 않아 저장 파일은 서버가 준 cookie 집합 그대로 유지한다
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
-- `RetryMiddleware`의 network/408/5xx retry는 총 3회로 제한되고 429는 durable frontier로 넘긴다.
+- `RetryMiddleware`의 listing network/408/5xx retry는 최초 포함 총 4회로 제한되고, detail과 429는
+  durable frontier로 넘긴다.
 - `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery와 일반 sync는 첫
-  auth, 같은 class의 parse drift/network/429 연속 3회에서 board 내 요청을 중단한다. 이 문서에서는
+  auth, parse drift/429 연속 3회 또는 network 연속 5회에서 board 내 요청을 중단한다. 이 문서에서는
   parse drift 연속 중단을 일관되게 **parse-drift breaker**라고 부른다. 고립된
   parse failure는 해당 항목을 dead로 분류하고 다음 detail을 계속한다. cycle은 board
   경계 결과의 연속 network breaker도 유지한다.
