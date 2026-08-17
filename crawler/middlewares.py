@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from http import HTTPStatus
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO, Self
+from typing import Any, BinaryIO, Self, cast
 from urllib.parse import parse_qs, urlsplit
 
 from scrapy import Spider, signals
 from scrapy.crawler import Crawler
 from scrapy.exceptions import NotConfigured
 from scrapy.http import Request, Response
-from scrapy.utils.defer import deferred_from_coro
 from twisted.internet import reactor
 from warcio.statusandheaders import StatusAndHeaders  # type: ignore[import-untyped]
 from warcio.warcwriter import WARCWriter  # type: ignore[import-untyped]
@@ -26,9 +26,15 @@ _OMITTED_RESPONSE_HEADERS = {b"content-length", b"set-cookie", b"set-cookie2", b
 
 
 class DetailIdleWatchdog:
-    def __init__(self, crawler: Crawler, clock: Any = reactor) -> None:
+    def __init__(
+        self,
+        crawler: Crawler,
+        clock: Any = reactor,
+        stop: Callable[[], None] | None = None,
+    ) -> None:
         self.crawler = crawler
         self.clock = clock
+        self._stop: Callable[[], None] = stop or cast(Any, reactor).stop
         self._timers: dict[Request, Any] = {}
 
     @classmethod
@@ -102,9 +108,15 @@ class DetailIdleWatchdog:
             if callable(abandon):
                 abandon([request, *watched])
         finally:
-            engine = self.crawler.engine
-            if engine is not None:
-                deferred_from_coro(engine.close_spider_async(reason="download_idle_timeout"))
+            # Scrapy waits for in-progress downloads before closing its downloader. This
+            # process owns one spider, so finalize completed WARC parts and stop the reactor;
+            # process exit then closes the stalled sockets without losing durable outcomes.
+            self.crawler.signals.send_catch_log(
+                signal=signals.spider_closed,
+                spider=spider,
+                reason="download_idle_timeout",
+            )
+            self._stop()
 
 
 def _is_allowed_capture(request: Request) -> bool:
