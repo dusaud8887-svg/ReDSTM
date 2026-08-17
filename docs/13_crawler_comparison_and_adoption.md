@@ -136,8 +136,9 @@ timeout 240/1800초다. listing은 내부 재시도 3회, detail은 한 번 뒤 
 - disk는 40GiB warning과 20GiB hard floor로 분리됐다. hard floor는 transaction 중간에 process를
   죽이지 않고 새 crawl 및 장기 작업의 다음 bounded child 앞에서 적용하므로, 현재 child가 쓰는
   최대 분량은 20GiB reserve 안에 흡수해야 한다.
-- dashboard에는 최근 처리량, request latency p50/p95, timeout/429 비율, 현재 in-flight 수가 없다.
-  concurrency 조정 전 이 지표가 먼저 필요하다.
+- dashboard는 5분 snapshot으로 현재 stored/parse·fetch failure와 frontier in-flight를 표시한다.
+  request latency p50/p95와 timeout/429 비율은 아직 없으므로 concurrency 3 검토 전 이 지표가 먼저
+  필요하다.
 
 ## 5. DSOTM TypeMoon 상세 판정
 

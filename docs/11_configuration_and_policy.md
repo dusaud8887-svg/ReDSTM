@@ -134,7 +134,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | WARC | rotation | 1GiB | `crawler/settings.py` |
 | frontier | lease | 3600초 (detail 1800초 1회 + 처리·종료 여유) | `crawler/settings.py` |
 | frontier | attempts/backoff | network는 120초부터 최대 6시간 간격으로 무기한; parse/storage는 5회 | `crawler/settings.py` |
-| source protection | `Retry-After`/breaker | 최대 24시간 / 같은 parse·network·429 class 연속 3회 | `crawler/settings.py` |
+| source protection | `Retry-After`/breaker | 최대 24시간 / parse·429 연속 3회, network 연속 5회 | `crawler/settings.py` |
 | incremental | persisted boundary | exact board anchor 뒤 2 page | schema v4 + `crawler/settings.py` |
 | incremental | bootstrap fallback | anchor가 없을 때만 공지 제외 unchanged 20건 | `crawler/settings.py` |
 | session | local lifetime/login throttle/revalidate | 4시간 / 30분 / 30분 | `crawler/settings.py` |
@@ -142,7 +142,8 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | normalize | source 날짜 파싱 | 결정론적 절대 포맷(2자리 연도 포함) → base-anchored `MM-DD`/`HH:MM` → dateparser relative-time(`어제`/`N일 전`); 원문 `created_at_raw`는 항상 보존 | `scripts/legacy_common.py` |
 | detail audit | stale detail revisit | 30일 eligibility, batch당 oldest-first 예약 1건 | `crawler/settings.py` |
 | cycle | graceful budget | invocation당 4시간 | `crawler/settings.py` + CLI override |
-| recovery | 내부 chunk | normal 20건 / full-content 100건 | 수동 command는 남은 항목 0까지 반복; 자동 cycle은 20건·최대 2시간 단일 batch |
+| recovery | 내부 chunk | normal 20건 / full-content 100건; network outage 뒤 1건 canary | 수동 command는 canary 성공 뒤 정상 chunk로 복귀해 남은 항목 0까지 반복; 자동 cycle은 20건·최대 2시간 단일 batch |
+| telemetry | 실행 중 canonical 집계 | 5분마다 post stored 및 parse/fetch failure, frontier in-flight | 기존 `archive_snapshot` event; 원문 미전송 |
 | recovery | board group order | AA → 창작 → 팬픽 → 나머지 | `crawler/settings.py` |
 | export | automatic workers / changed-post cap | 1 / 0(무제한) | `crawler/settings.py` |
 | export | deterministic compression | post object level 15 / board·search·collection aggregate `-v2` level 6 | `scripts.export_static` |

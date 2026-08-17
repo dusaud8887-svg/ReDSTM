@@ -414,6 +414,39 @@ def test_archive_snapshot_reports_and_finalizes_the_live_inventory_board(tmp_pat
     ]
 
 
+def test_archive_snapshot_reports_live_capture_outcomes(tmp_path: Path) -> None:
+    api = Api([])
+    runner, _store = _runner(tmp_path, api)
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "INSERT INTO crawl_runs (run_id, kind, status, started_at) "
+            "VALUES ('retry-live', 'retry', 'running', '2026-07-12T00:00:00Z')"
+        )
+        connection.executemany(
+            "INSERT INTO captures (run_id, url, entity_type, fetched_at, outcome) "
+            "VALUES ('retry-live', ?, 'post', '2026-07-12T00:01:00Z', ?)",
+            [
+                ("https://source.invalid/1", "stored"),
+                ("https://source.invalid/2", "fetch_failed"),
+                ("https://source.invalid/3", "parse_failed"),
+                ("https://source.invalid/4", "missing"),
+            ],
+        )
+
+    runner._archive_snapshot_event("outer", 1)
+
+    snapshot = next(
+        payload
+        for path, payload in api.calls
+        if path.endswith("/events:batch") and payload["events"][0]["step"] == "archive_snapshot"
+    )
+    counters = snapshot["events"][0]["counters"]
+    assert counters["changed_posts"] == 1
+    assert counters["failed_posts"] == 2
+    assert counters["boards_ok"] == 0
+    assert counters["boards_failed"] == 0
+
+
 def test_runner_registers_a_current_board_missing_from_the_legacy_catalog(tmp_path: Path) -> None:
     runner, _store = _runner(tmp_path, Api([]))
     with connect_archive(runner.profile.archive) as connection:
@@ -1621,7 +1654,13 @@ def test_fill_missing_content_reports_deferred_failures(
         ]
     )
     sleeps: list[float] = []
-    monkeypatch.setattr(runner, "_execute_report", lambda *_args, **_kwargs: next(reports))
+    commands: list[list[str]] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        return next(reports)
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
     monkeypatch.setattr("scripts.control_runner.time.sleep", lambda value: sleeps.append(value))
 
     report = runner._execute_action(
@@ -1631,6 +1670,53 @@ def test_fill_missing_content_reports_deferred_failures(
     assert report["status"] == "partial"
     assert report["safe_code"] == "content_retry_deferred"
     assert report["failed_posts"] == 1
+    assert sleeps == [90]
+    assert [command[command.index("--max-posts") + 1] for command in commands] == [
+        str(REDSTM_RECOVERY_MAX_POSTS),
+        "1",
+    ]
+
+
+def test_recovery_returns_to_normal_chunk_after_successful_canary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    reports = iter(
+        [
+            {
+                "ok": False,
+                "status": "site_unreachable",
+                "selected_posts": 2,
+                "outcomes": {"fetch_failed": 2},
+            },
+            {
+                "ok": True,
+                "status": "succeeded",
+                "selected_posts": 1,
+                "outcomes": {"stored": 1},
+            },
+            {"ok": True, "status": "succeeded", "selected_posts": 0, "outcomes": {}},
+        ]
+    )
+    commands: list[list[str]] = []
+    sleeps: list[float] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        return next(reports)
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda value: sleeps.append(value))
+
+    runner._execute_action(
+        "fill-missing-content", "fill-canary", "fill-canary", command_id="manual"
+    )
+
+    assert [command[command.index("--max-posts") + 1] for command in commands] == [
+        str(REDSTM_RECOVERY_MAX_POSTS),
+        "1",
+        str(REDSTM_RECOVERY_MAX_POSTS),
+    ]
     assert sleeps == [90]
 
 

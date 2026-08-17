@@ -265,8 +265,9 @@ unique index를 둔다. 별도 conflict column이나 기존 row rewrite 없이, 
 사이에 두 요청이 경합해도 DB가 각 group 하나만 허용한다. constraint race는 stable
 `409 command_conflict`로 변환한다.
 
-run 진행/종료의 `archive_snapshot` event는 `outline_only`, frontier state counts와
-`inventory_completed_boards`/`inventory_total_boards`만 담고 `recorded_at`을 as-of로 쓴다.
+run 진행/종료의 `archive_snapshot` event는 `outline_only`, frontier state counts,
+`inventory_completed_boards`/`inventory_total_boards`와 실행 중 canonical capture의 stored 및
+parse/fetch failure 집계를 담고 `recorded_at`을 as-of로 쓴다.
 post/comment 원문이나
 full row는 담지 않으며 이 snapshot이 Operations의 canonical 요약 source다.
 
@@ -479,7 +480,7 @@ fresh heartbeat와 별개로 `자동 수집 지연`을 표시한다.
 ### Active run과 Run history
 
 - active run과 latest terminal run을 분리한다.
-- active run은 step/current board/started를 표시한다. 누적 중간 보고가 있으면 변경·실패·게시판 수를
+- active run은 step/current board/started를 표시한다. 5분 canonical snapshot의 누적 중간 보고가 있으면 변경·실패·게시판 수를
   함께 표시하고, 아직 없으면 `중간 집계 대기`/`—`로 두어 0을 확정값처럼 보이지 않게 한다.
 - `runner_interrupted`가 마지막 누적치를 남기지 못한 경우 run history도 `0/0` 대신 `미보고`를 쓴다.
 - scheduled/manual source
