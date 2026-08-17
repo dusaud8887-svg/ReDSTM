@@ -27,6 +27,7 @@ _ACTIONS = {
     "sync-now",
     "full-catalog",
     "full-content",
+    "fill-missing-content",
     "retry-batch",
     "publish-if-changed",
     "pause-after-current",

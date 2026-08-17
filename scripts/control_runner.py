@@ -29,6 +29,7 @@ from crawler.settings import (
     REDSTM_FULL_CATALOG_STUCK_CYCLES,
     REDSTM_FULL_CONTENT_MAX_POSTS,
     REDSTM_RECOVERY_MAX_POSTS,
+    REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
 )
 from scripts.control_client import (
     ControlClient,
@@ -42,6 +43,7 @@ _RUN_KINDS = {
     "sync-now": "manual-sync",
     "full-catalog": "manual-sync",
     "full-content": "retry",
+    "fill-missing-content": "retry",
     "retry-batch": "retry",
     "publish-if-changed": "publish",
 }
@@ -62,6 +64,7 @@ _SUCCESS_CODES = {
     "sync-now": "cycle_succeeded",
     "full-catalog": "full_catalog_succeeded",
     "full-content": "full_content_succeeded",
+    "fill-missing-content": "missing_content_succeeded",
     "inventory": "inventory_succeeded",
     "bootstrap-recovery": "bootstrap_recovery_succeeded",
     "retry-batch": "recovery_succeeded",
@@ -350,7 +353,7 @@ class ControlRunner:
         intentional_pause = False
         terminal_safe_code: str | None = None
         sequence = 1
-        for action in ("sync-now", "publish-if-changed"):
+        for action in ("sync-now", "retry-batch", "publish-if-changed"):
             self._claim_marker()
             if (self.profile.state_dir / "schedule.paused").exists():
                 paused = True
@@ -369,7 +372,14 @@ class ControlRunner:
                 sequence += 1
                 continue
             try:
-                report = self._execute_action(action, run_id, run_id)
+                report = self._execute_action(
+                    action,
+                    run_id,
+                    run_id,
+                    max_seconds=(
+                        REDSTM_RECOVERY_TIME_BUDGET_SECONDS if action == "retry-batch" else None
+                    ),
+                )
                 action_state, safe_code, payload = self._result(action, report)
             except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
                 # sqlite3.Error covers a canonical archive held by another process
@@ -510,9 +520,18 @@ class ControlRunner:
             return self._replay_terminal(record)
         if state == "running":
             action = str(record["action"])
+            if action in {"fill-missing-content", "retry-batch"}:
+                return self._run_process_action(record, action, resuming=True)
+            raw_args = record.get("args")
+            board_id = raw_args.get("board_id") if isinstance(raw_args, dict) else None
             checkpoint = {
                 "full-catalog": self.profile.state_dir / _INVENTORY_STARTED,
-                "full-content": self.profile.state_dir / _FULL_CONTENT_STARTED,
+                "full-content": (
+                    self._full_content_marker(board_id)
+                    if board_id is None
+                    or (isinstance(board_id, str) and re.fullmatch(r"[a-z0-9_]{1,64}", board_id))
+                    else None
+                ),
             }.get(action)
             if checkpoint is not None and checkpoint.is_file():
                 return self._run_process_action(record, action, resuming=True)
@@ -620,6 +639,12 @@ class ControlRunner:
                 max_posts=max_posts,
                 progress_offset=progress_offset,
             )
+            command_report_dir = self.profile.report_dir / "commands"
+            command_report_dir.mkdir(parents=True, exist_ok=True)
+            (command_report_dir / f"{command_id}.json").write_text(
+                json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             state, safe_code, finish_payload = self._result(action, report)
             finish_payload["counters"] = _sum_collection_counters(
                 finish_payload["counters"], progress_offset
@@ -635,14 +660,25 @@ class ControlRunner:
             safe_code,
             result_payload=finish_payload,
         )
-        publishes_changes = action in {"sync-now", "full-content", "retry-batch"} or (
-            action == "full-catalog" and finish_payload["counters"]["changed_posts"] > 0
-        )
+        publishes_changes = action in {
+            "sync-now",
+            "full-content",
+            "fill-missing-content",
+            "retry-batch",
+        } or (action == "full-catalog" and finish_payload["counters"]["changed_posts"] > 0)
         if publishes_changes and finish_payload["counters"]["changed_posts"]:
             self._write_publish_marker()
         if action in {"sync-now", "full-catalog"} and report:
             self._board_summaries(report)
-        elif action in {"full-content", "retry-batch"} and self.profile.archive.is_file():
+        elif (
+            action
+            in {
+                "full-content",
+                "fill-missing-content",
+                "retry-batch",
+            }
+            and self.profile.archive.is_file()
+        ):
             with archive_transaction(self.profile.archive, read_only=True) as connection:
                 if board_id:
                     board_ids = [board_id]
@@ -677,7 +713,13 @@ class ControlRunner:
             finish_payload["counters"],
             safe_message=safe_code,
         )
-        if action in {"sync-now", "full-catalog", "full-content", "retry-batch"}:
+        if action in {
+            "sync-now",
+            "full-catalog",
+            "full-content",
+            "fill-missing-content",
+            "retry-batch",
+        }:
             self._archive_snapshot_event(run_id, 2)
         delivery = self._send(
             "run_finish",
@@ -709,7 +751,13 @@ class ControlRunner:
         reconcile_attempt: int = 0,
         pending_recovery_checked: bool = False,
     ) -> dict[str, Any]:
-        crawl_actions = {"sync-now", "full-catalog", "full-content", "retry-batch"}
+        crawl_actions = {
+            "sync-now",
+            "full-catalog",
+            "full-content",
+            "fill-missing-content",
+            "retry-batch",
+        }
         if action in crawl_actions and self._disk_stop_reached():
             return {
                 "ok": False,
@@ -831,7 +879,7 @@ class ControlRunner:
                     if not frontier_exists:
                         return catalog_report
                     content_report = self._execute_action(
-                        "full-content",
+                        "fill-missing-content",
                         f"{report_id}-content",
                         run_id,
                         command_id=command_id,
@@ -907,7 +955,7 @@ class ControlRunner:
                 # Page progress after an outage resets the outage budget so a later multi-hour
                 # dribble still gets the full stepped backoff curve.
                 outage_retries = 0
-        if action in {"full-content", "retry-batch"}:
+        if action in {"full-content", "fill-missing-content", "retry-batch"}:
             full_content_checkpoint = (
                 self._ensure_full_content_pass_started(board_id)
                 if action == "full-content"
@@ -955,10 +1003,19 @@ class ControlRunner:
                         str(full_content_checkpoint[1]),
                     )
                 )
+            elif action == "fill-missing-content":
+                command.append("--missing-only")
             reports = []
             auth_retried = False
+            outage_retries = 0
             previous_remaining: int | None = None
-            recovery_step = "full-content" if action == "full-content" else "recovery"
+            recovery_step = (
+                "full-content"
+                if action == "full-content"
+                else "fill-missing-content"
+                if action == "fill-missing-content"
+                else "recovery"
+            )
             while True:
                 if reports and self._disk_stop_reached():
                     combined = self._combined_collection_report(reports)
@@ -973,6 +1030,8 @@ class ControlRunner:
                     command, report_path, run_id, recovery_step, command_id=command_id
                 )
                 reports.append(report)
+                if len(reports) > 16:
+                    reports[:] = [self._combined_collection_report(reports)]
                 if report.get("stop_reason") == "schedule_paused":
                     return self._combined_collection_report(reports)
                 progress = _sum_collection_counters(
@@ -984,25 +1043,61 @@ class ControlRunner:
                 self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id), progress)
                 status = str(report.get("status", "failed"))
                 if status == "auth_failed" and not auth_retried:
+                    if max_seconds is not None:
+                        return self._combined_collection_report(reports)
                     auth_retried = True
                     continue
-                if status in {
-                    "auth_failed",
-                    "site_unreachable",
-                    "rate_limited",
-                    "runner_failed",
-                    "failed",
-                }:
+                if status in {"site_unreachable", "rate_limited", "auth_failed"}:
+                    if max_seconds is not None:
+                        return self._combined_collection_report(reports)
+                    backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+                    delay = backoff[min(outage_retries, len(backoff) - 1)]
+                    outage_retries += 1
+                    time.sleep(delay)
+                    continue
+                if status in {"runner_failed", "failed"}:
                     return self._combined_collection_report(reports)
-                if action == "retry-batch":
+                outcomes = report.get("outcomes")
+                fetch_failed = (
+                    _integer(outcomes.get("fetch_failed")) if isinstance(outcomes, dict) else 0
+                )
+                if (
+                    fetch_failed
+                    and max_seconds is None
+                    and not (action == "full-content" and report.get("full_content_remaining") == 0)
+                ):
+                    backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+                    delay = backoff[min(outage_retries, len(backoff) - 1)]
+                    outage_retries += 1
+                    time.sleep(delay)
+                else:
+                    outage_retries = 0
+                if action in {"fill-missing-content", "retry-batch"}:
                     if _integer(report.get("selected_posts")) == 0:
-                        return self._combined_collection_report(
-                            reports, safe_code="recovery_succeeded"
+                        combined = self._combined_collection_report(reports)
+                        if _collection_counters(combined)["failed_posts"]:
+                            combined.update(
+                                ok=False,
+                                status="partial",
+                                safe_code="content_retry_deferred",
+                            )
+                            return combined
+                        combined.update(
+                            ok=True,
+                            status="succeeded",
+                            safe_code=(
+                                "missing_content_succeeded"
+                                if action == "fill-missing-content"
+                                else "recovery_succeeded"
+                            ),
                         )
+                        return combined
+                    if max_seconds is not None:
+                        return self._combined_collection_report(reports)
                     continue
                 remaining = report.get("full_content_remaining")
                 if remaining == 0:
-                    (self.profile.state_dir / _FULL_CONTENT_STARTED).unlink(missing_ok=True)
+                    self._full_content_marker(board_id).unlink(missing_ok=True)
                     combined = self._combined_collection_report(reports)
                     has_item_failures = False
                     for item in reports:
@@ -1514,7 +1609,7 @@ class ControlRunner:
         (self.profile.state_dir / _INVENTORY_STARTED).unlink(missing_ok=True)
 
     def _ensure_full_content_pass_started(self, board_id: str | None) -> tuple[str, int]:
-        marker = self.profile.state_dir / _FULL_CONTENT_STARTED
+        marker = self._full_content_marker(board_id)
         payload = self._marker_payload(marker)
         if payload is not None:
             started_at = payload.get("started_at")
@@ -1545,6 +1640,11 @@ class ControlRunner:
             {"started_at": started_at, "max_rowid": max_rowid, "board_id": board_id},
         )
         return started_at, max_rowid
+
+    def _full_content_marker(self, board_id: str | None) -> Path:
+        return self.profile.state_dir / (
+            _FULL_CONTENT_STARTED if board_id is None else f"full-content.{board_id}.started"
+        )
 
     def _latest_inventory_pass_started_at(self) -> str | None:
         for name in (_INVENTORY_STARTED, _INVENTORY_COMPLETED):
@@ -1661,7 +1761,14 @@ class ControlRunner:
                     now = time.monotonic()
                     if (
                         command_id is not None
-                        and step in {"crawling", "full-catalog", "recovery", "full-content"}
+                        and step
+                        in {
+                            "crawling",
+                            "full-catalog",
+                            "recovery",
+                            "full-content",
+                            "fill-missing-content",
+                        }
                         and now >= next_snapshot_at
                     ):
                         self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
@@ -1788,12 +1895,8 @@ class ControlRunner:
             boards=list(boards.values()),
             selected_posts=sum(_integer(report.get("selected_posts")) for report in reports),
             scheduled_posts=sum(_integer(report.get("scheduled_posts")) for report in reports),
-            changed_posts=sum(
-                _integer(report.get("changed_posts", report.get("outcomes", {}).get("stored")))
-                for report in reports
-                if isinstance(report.get("outcomes", {}), dict)
-            ),
-            failed_posts=sum(_integer(report.get("failed_posts")) for report in reports),
+            changed_posts=sum(_collection_counters(report)["changed_posts"] for report in reports),
+            failed_posts=sum(_collection_counters(report)["failed_posts"] for report in reports),
         )
         if boards:
             boards_ok = sum(
@@ -1947,7 +2050,8 @@ class ControlRunner:
                            last_incremental_at,
                            (SELECT COUNT(*) FROM posts
                             WHERE posts.board_id = boards.board_id
-                              AND latest_version_id IS NULL) AS outline_only
+                              AND latest_version_id IS NULL
+                              AND availability <> 'missing') AS outline_only
                     FROM boards WHERE board_id = ?
                     """,
                     (board_id,),
@@ -2069,6 +2173,7 @@ class ControlRunner:
                           ON post.board_id = frontier.board_id
                          AND post.external_post_id = frontier.external_post_id
                         WHERE post.latest_version_id IS NULL
+                          AND (post.availability IS NULL OR post.availability <> 'missing')
                         """
                     ).fetchone()[0]
                 )

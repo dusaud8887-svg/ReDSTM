@@ -20,6 +20,7 @@ from crawler.settings import (
     REDSTM_EXPORT_WORKERS,
     REDSTM_FULL_CONTENT_MAX_POSTS,
     REDSTM_RECOVERY_MAX_POSTS,
+    REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
 )
 from scripts.control_client import ControlClient
 from scripts.control_runner import (
@@ -317,11 +318,38 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
         connection.execute(
             "UPDATE boards SET last_inventory_at = '2026-07-12 01:02:03' WHERE board_id = 'aa'"
         )
+        for post_id, availability in ((1, "unknown"), (2, "missing")):
+            url = f"https://www.typemoon.net/aa/{post_id}"
+            connection.execute(
+                """
+                INSERT INTO posts (
+                    board_id, external_post_id, canonical_url, title, availability,
+                    first_seen_at, last_seen_at
+                ) VALUES ('aa', ?, ?, 'outline', ?, 'now', 'now')
+                """,
+                (post_id, url, availability),
+            )
+            connection.execute(
+                """
+                INSERT INTO crawl_frontier (board_id, external_post_id, url)
+                VALUES ('aa', ?, ?)
+                """,
+                (post_id, url),
+            )
 
     runner._board_summaries({"boards": [{"board_id": "aa", "status": "succeeded"}]})
 
     board = next(payload for path, payload in api.calls if path.endswith("/boards/status"))
     assert board["last_inventory_at"] == "2026-07-12T01:02:03Z"
+    assert board["outline_only"] == 1
+
+    runner._archive_snapshot_event("snapshot", 1)
+    snapshot = next(
+        payload
+        for path, payload in api.calls
+        if path.endswith("/events:batch") and payload["events"][0]["step"] == "archive_snapshot"
+    )
+    assert snapshot["events"][0]["counters"]["outline_only"] == 1
 
 
 def test_archive_snapshot_reports_and_finalizes_the_live_inventory_board(tmp_path: Path) -> None:
@@ -1458,7 +1486,10 @@ def test_execute_report_does_not_reuse_a_previous_cycle_report(
     assert not report_path.exists()
 
 
-@pytest.mark.parametrize("action", ["sync-now", "full-catalog", "full-content", "retry-batch"])
+@pytest.mark.parametrize(
+    "action",
+    ["sync-now", "full-catalog", "full-content", "fill-missing-content", "retry-batch"],
+)
 def test_new_crawl_fails_closed_below_the_disk_hard_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
@@ -1533,6 +1564,98 @@ def test_retry_batch_runs_each_cycle_even_with_a_legacy_completion_marker(
     assert commands[0][commands[0].index("--max-posts") + 1] == str(REDSTM_RECOVERY_MAX_POSTS)
 
 
+def test_bounded_retry_does_not_restart_its_time_budget_for_auth_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "status": "auth_failed", "selected_posts": 1}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action("retry-batch", "bounded-auth", "bounded-auth", max_seconds=60)
+
+    assert calls == 1
+    assert report["status"] == "auth_failed"
+
+
+def test_fill_missing_content_uses_only_outline_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    commands: list[list[str]] = []
+
+    def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
+        commands.append(command)
+        return {"ok": True, "status": "succeeded", "selected_posts": 0}
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+
+    report = runner._execute_action(
+        "fill-missing-content", "fill-missing", "fill-missing", command_id="manual"
+    )
+
+    assert report["status"] == "succeeded"
+    assert report["safe_code"] == "missing_content_succeeded"
+    assert "--missing-only" in commands[0]
+    assert "--full-content-before" not in commands[0]
+
+
+def test_fill_missing_content_reports_deferred_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    reports = iter(
+        [
+            {
+                "ok": False,
+                "status": "partial",
+                "selected_posts": 1,
+                "outcomes": {"fetch_failed": 1},
+            },
+            {"ok": True, "status": "succeeded", "selected_posts": 0, "outcomes": {}},
+        ]
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(runner, "_execute_report", lambda *_args, **_kwargs: next(reports))
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda value: sleeps.append(value))
+
+    report = runner._execute_action(
+        "fill-missing-content", "fill-deferred", "fill-deferred", command_id="manual"
+    )
+
+    assert report["status"] == "partial"
+    assert report["safe_code"] == "content_retry_deferred"
+    assert report["failed_posts"] == 1
+    assert sleeps == [90]
+
+
+def test_full_content_checkpoints_are_scoped_by_board(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+
+    runner._ensure_full_content_pass_started(None)
+    runner._ensure_full_content_pass_started("aa_19")
+
+    assert (runner.profile.state_dir / "full-content.started").is_file()
+    assert (runner.profile.state_dir / "full-content.aa_19.started").is_file()
+
+
+def test_combined_collection_report_counts_raw_outcome_failures() -> None:
+    report = ControlRunner._combined_collection_report(
+        [
+            {"status": "partial", "outcomes": {"stored": 3, "fetch_failed": 2}},
+            {"status": "succeeded", "outcomes": {"stored": 1, "parse_failed": 1}},
+        ]
+    )
+
+    assert report["changed_posts"] == 4
+    assert report["failed_posts"] == 3
+
+
 def test_full_content_refetches_every_post_for_one_board(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1559,7 +1682,9 @@ def test_full_content_refetches_every_post_for_one_board(
     assert Path(command[command.index("--pause-file") + 1]).name == "current-run.paused"
 
 
-@pytest.mark.parametrize("action", ["full-catalog", "full-content", "retry-batch"])
+@pytest.mark.parametrize(
+    "action", ["full-catalog", "full-content", "fill-missing-content", "retry-batch"]
+)
 def test_long_collection_returns_immediately_after_a_cooperative_pause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
@@ -1620,6 +1745,7 @@ def test_full_content_checkpoint_survives_a_partial_batch(
     assert result["status"] == "succeeded"
     assert result["full_content_complete"] is True
     assert not (runner.profile.state_dir / "full-content.started").exists()
+    assert not (runner.profile.state_dir / "full-content.aa.started").exists()
     for argument in ("--full-content-before", "--full-content-max-rowid"):
         assert (
             commands[0][commands[0].index(argument) + 1]
@@ -1658,9 +1784,10 @@ def test_full_content_does_not_report_success_after_item_failures(
     assert report["ok"] is False
     assert report["full_content_complete"] is False
     assert not (runner.profile.state_dir / "full-content.started").exists()
+    assert not (runner.profile.state_dir / "full-content.aa.started").exists()
 
 
-def test_full_catalog_continues_into_full_content(
+def test_full_catalog_continues_into_missing_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -1669,11 +1796,11 @@ def test_full_catalog_continues_into_full_content(
             "INSERT INTO crawl_frontier (board_id, external_post_id, url) "
             "VALUES ('aa', 1, 'https://source.invalid/aa/1')"
         )
-    modules: list[str] = []
+    commands: list[list[str]] = []
 
     def execute(command: list[str], *_args: object, **_kwargs: object) -> dict[str, Any]:
         module = command[command.index("-m") + 1]
-        modules.append(module)
+        commands.append(command)
         if module == "scripts.crawl_cycle":
             started_at = command[command.index("--inventory-since") + 1]
             with connect_archive(runner.profile.archive) as connection:
@@ -1693,8 +1820,8 @@ def test_full_catalog_continues_into_full_content(
             "ok": True,
             "status": "succeeded",
             "changed_posts": 1,
+            "selected_posts": 0,
             "outcomes": {"stored": 1},
-            "full_content_remaining": 0,
         }
 
     monkeypatch.setattr(runner, "_execute_report", execute)
@@ -1703,9 +1830,12 @@ def test_full_catalog_continues_into_full_content(
         "full-catalog", "catalog-content", "catalog-content", command_id="manual"
     )
 
-    assert modules == ["scripts.crawl_cycle", "scripts.recover_queue"]
+    assert [command[command.index("-m") + 1] for command in commands] == [
+        "scripts.crawl_cycle",
+        "scripts.recover_queue",
+    ]
+    assert "--missing-only" in commands[1]
     assert report["safe_code"] == "full_catalog_content_succeeded"
-    assert report["full_content_complete"] is True
     assert report["changed_posts"] == 1
 
 
@@ -1766,7 +1896,7 @@ def test_scheduled_run_requires_explicit_export_bootstrap(
     report = runner.run_scheduled()
 
     assert report["status"] == "partial"
-    assert len(commands) == 2
+    assert len(commands) == 3
     start = next(payload for path, payload in api.calls if path == "/api/v1/runner/runs")
     assert start["kind"] == "scheduled" and start["source"] == "systemd"
     assert "command_id" not in start
@@ -1825,7 +1955,7 @@ def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
     monkeypatch.setattr(runner, "_inventory_due", lambda: False)
     monkeypatch.setattr(runner, "_bootstrap_pending", lambda: False)
 
-    def execute(action: str, *_args: object) -> dict[str, Any]:
+    def execute(action: str, *_args: object, **_kwargs: object) -> dict[str, Any]:
         actions.append(action)
         if action == "sync-now":
             return {"ok": False, "status": "runner_failed"}
@@ -1837,8 +1967,8 @@ def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
 
     assert report["status"] == "failed"
     assert actions == ["sync-now", "publish-if-changed"]
-    assert not any(
-        payload["events"][0]["state"] == "skipped"
+    assert any(
+        payload["events"][0]["state"] == "skipped" and payload["events"][0]["step"] == "retry-batch"
         for path, payload in api.calls
         if path.endswith("/events:batch")
     )
@@ -1854,7 +1984,7 @@ def test_scheduled_run_only_collects_latest_and_publishes(
         def __init__(self, arguments: list[str], **_kwargs: object) -> None:
             commands.append(arguments)
             module = arguments[arguments.index("-m") + 1]
-            if module == "scripts.crawl_cycle":
+            if module in {"scripts.crawl_cycle", "scripts.recover_queue"}:
                 output = Path(arguments[arguments.index("--output") + 1])
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(
@@ -1864,7 +1994,7 @@ def test_scheduled_run_only_collects_latest_and_publishes(
                             "status": "succeeded",
                             "changed_posts": 0,
                             "failed_posts": 0,
-                            "boards_ok": 1,
+                            "boards_ok": 1 if module == "scripts.crawl_cycle" else 0,
                             "boards_failed": 0,
                             "boards": [{"board_id": "aa", "status": "succeeded"}],
                         }
@@ -1906,13 +2036,16 @@ def test_scheduled_run_only_collects_latest_and_publishes(
     assert runner.run_scheduled()["status"] == "succeeded"
     assert [command[command.index("-m") + 1] for command in commands] == [
         "scripts.crawl_cycle",
+        "scripts.recover_queue",
         "scripts.export_static",
         "scripts.publish_static",
         "scripts.release_smoke",
     ]
     assert "--inventory" not in commands[0]
     assert commands[0][commands[0].index("--disk-stop-bytes") + 1] == "0"
-    assert all("scripts.recover_queue" not in command for command in commands)
+    recovery = commands[1]
+    assert recovery[recovery.index("--max-posts") + 1] == str(REDSTM_RECOVERY_MAX_POSTS)
+    assert recovery[recovery.index("--max-seconds") + 1] == str(REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
 
 
 def test_partial_inventory_keeps_running_until_every_board_cursor_completes(
@@ -2275,7 +2408,7 @@ def test_full_catalog_supersedes_a_stale_checkpoint_with_another_scope(
     assert completed["board_id"] is None
 
 
-def test_scheduled_run_does_not_start_manual_full_content_recovery(
+def test_scheduled_run_uses_bounded_retry_without_starting_full_content_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -2325,7 +2458,9 @@ def test_scheduled_run_does_not_start_manual_full_content_recovery(
     monkeypatch.setattr("scripts.control_runner.subprocess.Popen", Process)
 
     assert runner.run_scheduled()["status"] == "succeeded"
-    assert all("scripts.recover_queue" not in command for command in commands)
+    recovery = next(command for command in commands if "scripts.recover_queue" in command)
+    assert "--full-content-before" not in recovery
+    assert recovery[recovery.index("--max-seconds") + 1] == str(REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
     assert not (runner.profile.state_dir / "recovery.completed").exists()
 
 

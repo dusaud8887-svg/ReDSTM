@@ -1,7 +1,7 @@
 # ReDSTM 최종 구현·출시 계획
 
 - 상태: Active source of execution truth
-- 기준일: 2026-07-12
+- 기준일: 2026-08-17
 - 범위: 현재 검증된 데이터/코드에서 완전 자동 private archive로 가는 남은 작업
 - 제품 계약: [`00`](00_initial_product_architecture.md)
 - 완료 증거: [`done/2026-07-11`](done/2026-07-11/README.md)
@@ -14,28 +14,28 @@
 | 영역 | 현재 상태 | 제품 판정 |
 |---|---|---|
 | legacy 원본 | E 드라이브에 28,811,358,208-byte verified source 보존 | DONE |
-| canonical | Oracle live schema v3 migration·doctor 통과; repository target은 additive v4, live 미적용 | IN PROGRESS |
+| canonical | Oracle live/repository schema v4, migration·doctor 통과 | DONE |
 | static release | live baseline은 zstd level 15 full release, 282,239 readable posts, `.partial` 0; repository target은 post level 15/aggregate `-v2` level 6 bounded delta | DONE / LOCAL TARGET |
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
 | R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
 | live data | remote pointer rollback/복귀와 authenticated Reader/일반·AA 본문 smoke 완료 | DONE |
 | current UI | Porcelain shell/Reader continuity live, provenance·command eligibility local 완료; production/Android 재검증 전 | IN PROGRESS |
-| crawler core | schema v3 inventory cursor + schema v4 댓글 기대치·증분 anchor local 완료; live migration·canary 전 | IN PROGRESS |
+| crawler core | schema v4 cursor·댓글 기대치·증분 anchor, 내구 retry와 누락 본문 수집 완료 | DONE |
 | unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; schedule 활성화·관찰 전 | IN PROGRESS |
-| Oracle | live schema v3 baseline 완료; runtime fail-closed·명시 migration local 완료, 서로 다른 compatible SHA pair guard·doctor 전 | IN PROGRESS |
+| Oracle | schema v4 baseline, runtime fail-closed, guarded migration·doctor 완료 | DONE |
 | remote operations | role/marker/outbox replay/expired 통과; duplicate/full outage 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
 | GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
 
-현재 결론은 **데이터 기반·authenticated Reader와 live schema v3 runner는 배포됐고 repository target은
-schema v4이며, v4 migration·Operations 세부 provenance·schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
+현재 결론은 **데이터 기반 authenticated Reader와 schema v4 runner가 배포됐고, 전체 누락 본문
+수집 완료 뒤 schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
 
 현재 local gate는 전체 Python suite, Ruff lint/format, mypy와 Edge unit/check/E2E/D1 fixture를 통과해야 한다.
 Playwright self-contained fixture는 1440/768/390/320px Reader/Operations gate를 통과한다. fixture는
 실제 R2 seed가 없어도 AA/prose와 읽기 위치 복원을 검증하고, 환경변수를 주면 대표 live object로
 교체할 수 있다. authenticated production에서는 현재 bundle의 282,239건 index, 일반 본문
 8,738자/댓글 4개와 AA 본문/canvas/댓글 11개를 열어 실데이터 경로를 확인했다. canonical schema
-v3 migration과 doctor, Operations bundle live smoke는 완료됐고 automatic bootstrap canary가 남았다.
+v4 migration과 doctor, Operations bundle live smoke는 완료됐고 automatic bootstrap canary가 남았다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -64,7 +64,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 ## 3. 실행 원칙
 
 - canonical SQLite는 single writer다. crawler, recovery, backup/export를 동시에 쓰지 않는다.
-- TypeMoon detail concurrency 1과 request 시작 간 fixed 10초 delay를 기본으로 한다.
+- TypeMoon global/domain/detail concurrency 2와 request 시작 간 fixed 10초 delay를 기본으로 한다.
 - 자동 schedule은 Oracle systemd, remote command는 D1이다. 둘을 서로의 단일 장애점으로 만들지 않는다.
 - immutable object upload/readback 뒤 pointer-last activate한다.
 - 앱·DB·service를 한 deploy command에서 몰래 삭제/중지/enable하지 않는다.
@@ -232,7 +232,7 @@ Should — acceptance 직후:
 6. 전체 listing과 전체 body는 수동 장기 작업으로만 실행하고 내부 chunk가 끝나면 같은 command가
    다음 chunk를 자동으로 이어 전체 범위를 완료한다.
 
-상태(2026-07-12): live schema v3와 coverage safety를 Oracle에 적용했고 repository schema v4는 local
+당시 상태(2026-07-12): live schema v3와 coverage safety를 Oracle에 적용했고 repository schema v4는 local
 test를 통과했다. sync/recovery는 schema mismatch를 fail-closed하고 별도 `scripts.migrate_archive`만
 lock 아래 migration한다. current/previous의 서로 다른 compatible SHA pair guard가 release flow에
 연결될 때까지 CLI는 `canonical_schema_upgrade_pending`으로 full deploy를 차단한다.
@@ -255,12 +255,12 @@ Oracle 1건 과정에서 listing row별 identity와 마지막 row URL을 섞던 
 robots fetch 제거).
 
 감사에서 발견한 `max_posts` 뒤 changed row 누락은 받은 listing의 모든 변경 row를 먼저 durable seed하고
-이번 detail scheduling만 cap하도록 고쳤다. schema v3은 board별 `inventory_next_page`를 저장해 bounded
-inventory가 다음 page에서 재개된다. repository schema v4는 기존 post 댓글 수와 board별 최신 frontier ID를 backfill하고,
+이번 detail scheduling만 cap하도록 고쳤다. 당시 schema v3은 board별 `inventory_next_page`를 저장해 bounded
+inventory가 다음 page에서 재개된다. schema v4는 기존 post 댓글 수와 board별 최신 frontier ID를 backfill하고,
 listing의 최신 댓글 기대치를 claim/retry/recovery lease까지 보존한다. detail의 실제 댓글이 더 적으면
 `incomplete_comments`로 저장을 거부하고, 성공 store만 실제 저장 댓글 수로 frontier 완료와 같은
 transaction에서 갱신한다. 실패는 기대값을 보존한다. 완료 때만 cursor/`last_inventory_at`을 확정한다.
-v4 migration/flow 회귀는 local 통과했지만 live migration/doctor는 아직 실행하지 않았다. dead는
+당시 v4 migration/flow 회귀는 local만 통과했고, 이후 Oracle migration/doctor까지 완료했다. dead는
 `network_error`·`parse_drift`·`storage_error`를 오류별·건수 제한으로 명시 재개할 수 있다. inventory는 listing
 coverage이며 기존 detail 전체를 다시 요청하는 작업이 아니다.
 

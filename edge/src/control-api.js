@@ -19,6 +19,7 @@ const actions = new Set([
   "sync-now",
   "full-catalog",
   "full-content",
+  "fill-missing-content",
   "retry-batch",
   "publish-if-changed",
   "pause-after-current",
@@ -34,12 +35,14 @@ const commandRunKinds = new Map([
   ["sync-now", "manual-sync"],
   ["full-catalog", "manual-sync"],
   ["full-content", "retry"],
+  ["fill-missing-content", "retry"],
   ["retry-batch", "retry"],
   ["publish-if-changed", "publish"],
 ]);
 const storedActions = new Map([
   ["full-catalog", "sync-now"],
   ["full-content", "retry-batch"],
+  ["fill-missing-content", "retry-batch"],
 ]);
 const safeWarnings = new Set([
   "auth_failed",
@@ -66,7 +69,7 @@ function commandConflictFilter(group) {
 }
 
 function logicalAction(row) {
-  return row.operation ?? row.action;
+  return row.collection_mode ?? row.operation ?? row.action;
 }
 
 function validRequestId(value) {
@@ -194,7 +197,12 @@ async function createCommand(request, env, auth, requestId, url) {
     return failure(requestId, 400, "invalid_command", "Command action or arguments are invalid");
   }
   const argKeys = Object.keys(body.args);
-  const boardAction = ["sync-now", "full-catalog", "full-content"].includes(body.action);
+  const boardAction = [
+    "sync-now",
+    "full-catalog",
+    "full-content",
+    "fill-missing-content",
+  ].includes(body.action);
   if ((!boardAction && argKeys.length) || argKeys.some((key) => key !== "board_id") ||
       (body.args.board_id !== undefined &&
        (typeof body.args.board_id !== "string" || !/^[a-z0-9_]{1,64}$/.test(body.args.board_id)))) {
@@ -222,7 +230,8 @@ async function createCommand(request, env, auth, requestId, url) {
   const command = {
     command_id: crypto.randomUUID(),
     action: storedActions.get(body.action) ?? body.action,
-    operation: body.action,
+    operation: body.action === "fill-missing-content" ? "retry-batch" : body.action,
+    collection_mode: body.action === "fill-missing-content" ? body.action : null,
     args_json: JSON.stringify(body.args),
     state: "queued",
     requested_at: nowText,
@@ -231,14 +240,16 @@ async function createCommand(request, env, auth, requestId, url) {
   try {
     await env.CONTROL_DB.prepare(
       `INSERT INTO commands (
-         command_id, idempotency_key, action, operation, args_json, requested_by_hash,
+         command_id, idempotency_key, action, operation, collection_mode,
+         args_json, requested_by_hash,
          requested_at, expires_at, state
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued')`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued')`,
     ).bind(
       command.command_id,
       idempotencyKey,
       command.action,
       command.operation,
+      command.collection_mode,
       command.args_json,
       await subjectHash(auth.subject.trim().toLowerCase()),
       command.requested_at,
@@ -416,7 +427,8 @@ async function startRun(request, env, requestId) {
   let storedCommandAction = null;
   if (body.command_id != null) {
     const command = await env.CONTROL_DB.prepare(
-      "SELECT action, operation, state, run_id FROM commands WHERE command_id = ?",
+      "SELECT action, operation, collection_mode, state, run_id " +
+      "FROM commands WHERE command_id = ?",
     ).bind(body.command_id).first();
     if (!command || command.state !== "claimed" || command.run_id != null ||
         commandRunKinds.get(logicalAction(command)) !== body.kind) {

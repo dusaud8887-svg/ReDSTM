@@ -1,7 +1,7 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: schema v3 application/canonical/static와 Access/control canary live; repository target schema v4, live migration·automatic delta·shadow·cutover pending
-- 기준일: 2026-07-12
+- 상태: schema v4 application/canonical/static와 Access/control canary live; 누락 본문 완료 뒤 automatic schedule 활성화 pending
+- 기준일: 2026-08-17
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
 - 제외: 실제 DB 삭제, 원격 서비스 중지, credential 원문
@@ -30,7 +30,7 @@ endpoint를 제공하지 않는다.
 | 항목 | 실측 | 판정 |
 |---|---:|---|
 | OS/architecture | Ubuntu 22.04.5, x86_64 | 현재 OS 유지 |
-| CPU/RAM | 2 logical CPU, 956MiB RAM | concurrency 1 수집과 bounded export 가능 |
+| CPU/RAM | 2 logical CPU, 956MiB RAM | staggered concurrency 2 수집과 bounded export 가능 |
 | swap | 4GiB, 약 410MiB 사용 | 저속 crawler 안전망, RAM 대체재는 아님 |
 | root volume | 194GiB, 약 103GiB free | 현재 application/canonical 추가 가능 |
 | uptime | 58일 | 현재 VM 자체는 안정적으로 동작 중 |
@@ -74,7 +74,7 @@ backup을 포함한다. 동시에 7일 동안 CPU·network 사용률이 낮은 i
 
 ```text
 TypeMoon
-  <- detail concurrency 1, fixed 10s start delay
+  <- detail concurrency 2, fixed 10s start delay
   <- Oracle / ReDSTM systemd oneshot
        -> /srv/redstm/canonical/archive.sqlite
        -> /srv/redstm/warc/*.warc.gz
@@ -144,7 +144,7 @@ R2 writer key와 Access service token은 별도 credential file로만
 - control/scheduled runner와 installer의 application·canonical 전환은
   `/srv/redstm/state/control.lock`을 공유한다. installer는 active run을 중단하지 않고 mutation 전에
   `redstm_install_not_started`로 끝난다.
-- crawler는 `CONCURRENT_REQUESTS=1`, domain/detail concurrency 1, fixed start delay 10초를 유지한다.
+- crawler는 global/domain/detail concurrency 2(환경변수로 1–3), fixed start delay 10초를 유지한다.
 - disk는 40GiB 미만에서 경고하고 20GiB 미만에서는 새 crawl 또는 장기 작업의 다음 bounded child를
   시작하지 않는다. `disk_low`로 끝난 전체 목차·본문은 공간 확보 뒤 같은 명령으로 checkpoint부터
   재개한다.
@@ -157,9 +157,9 @@ R2 writer key와 Access service token은 별도 credential file로만
   기록에 counters `미보고`로 보인다. `미보고`가 보이면 reboot/배포/OOM/archive lock 순으로
   `journalctl -u redstm-control.service`, `dmesg | grep -i oom`, journal의 `database is locked`,
   잔존 crawl process(`pgrep -f 'scripts\.(sync|crawl_cycle|recover_queue)'`)를 확인한다.
-- canonical archive는 `journal_mode=DELETE`(reader가 writer를 막음)에 busy timeout 5초라, 고아
-  crawl child나 backup/export가 archive를 잡고 있으면 command 시작 단계의 board UPDATE가 sqlite
-  오류로 끝날 수 있다. 예전 빌드는 이때 unhandled 오류로 죽어 checkpoint 없는 `미보고`를
+- canonical archive는 `journal_mode=WAL`, `synchronous=NORMAL`, busy timeout 5초다. reader는 writer를
+  막지 않지만 고아 crawl child나 다른 writer가 archive를 잡고 있으면 command 시작 단계의 board
+  UPDATE가 sqlite 오류로 끝날 수 있다. 예전 빌드는 이때 unhandled 오류로 죽어 checkpoint 없는 `미보고`를
   남겼고, 현재 빌드는 sqlite lock 오류와 crawl file lock 충돌을 `archive_locked`로, 그 외
   내부 오류를 `runner_failed`로 보고하고 command를 종결한다. 두 경우 모두 원인 traceback이
   `<report-dir>/commands/<command-id>.error.txt`(local 전용, 본문/cookie 없음)에 남는다.
@@ -185,8 +185,8 @@ automatic schedule을 활성화한다. 그 전에는 schedule을 disabled로 유
 
 ### G1. 실제 incremental discovery
 
-상태(2026-07-12): live schema v3 흐름과 coverage safety를 Oracle에 적용했고 repository target은
-listing 댓글 기대치를 보존하는 additive schema v4다. 다음 계약으로 이미
+상태(2026-08-17): live/repository schema v4에 coverage safety, listing 댓글 기대치와 증분 anchor를
+적용했다. 다음 계약으로 이미
 아는 최신 20건을 6시간마다 전부 재요청하지 않는다.
 
 1. listing metadata에서 새 identity 또는 title/category/comment count 변경만 frontier에 넣는다.
@@ -196,12 +196,13 @@ listing 댓글 기대치를 보존하는 additive schema v4다. 다음 계약으
    known+unchanged 20건을 fallback으로 판정한다.
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
 5. 자동 cycle은 anchor page 뒤 2 page까지만 확인하고 전체 listing은 수동 `full-catalog`가 담당한다.
-6. 전체 body 재검증은 `full-catalog`의 목록 완료 뒤 자동으로 이어지거나 수동 `full-content`로 실행하고,
-   due 재시도는 수동 `retry-batch`가 남은 항목 0까지 이어간다.
+6. `full-catalog`는 목록 완료 뒤 누락 body를 이어서 채우며 레거시 missing도 한 번 재검증한다. 기존 성공 body까지
+   재검증할 때는 수동 `full-content`를 사용한다. 자동 cycle도 due 재시도 20건을 최대 2시간 처리하고,
+   수동 `retry-batch`는 due가 없어질 때까지 이어간다.
 
 받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
-scheduling만 cap한다. schema v3의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서
-재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. schema v4는 listing 댓글 기대치와 증분 anchor를
+scheduling만 cap한다. schema v4의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서
+재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. listing 댓글 기대치와 증분 anchor를
 기존 post projection에서 backfill하고 claim/retry/recovery lease에 보존한다. detail 댓글 수가 더 적으면
 `incomplete_comments`로 저장하지 않고, 성공 store만 실제 저장 댓글 수와 lease 완료를 같은 transaction에서
 갱신한다. restricted/parse/fetch/storage 실패는 기대값을 보존한다. 전 board 최초 inventory가 끝나면
@@ -218,7 +219,7 @@ cycle을 중단한다. subprocess를 여러 개 동시에 띄우지 않으며 Ce
 
 상태(2026-07-12): `scripts.crawl_cycle` local core와 P0 failure test, Oracle application/systemd unit 설치를
 완료했고 schedule 활성화·production smoke 전이다. 6시간 `redstm-schedule.timer`는
-최신 글 crawl→변경 publish만 수행한다. 전체 목차와 전체 본문은 수동 명령이며 총량·총시간 상한 없이
+최신 글 crawl→due 실패 20건(최대 2시간)→변경 publish를 수행한다. 전체 목차와 전체 본문은 수동 명령이며 총량·총시간 상한 없이
 단일 writer lock 아래에서 돈다. control/schedule oneshot도 `TimeoutStartSec=infinity`다.
 세션/도달성 preflight 뒤 30분 board 경계에서 session을 재검증하고 worker는 순차 실행한다.
 board 경계 breaker와 더불어 sync 내부도 첫 auth 또는 같은 class parse drift/network/429 3회에서
@@ -367,12 +368,11 @@ schema version을 올릴 때는 새 schema를 이해하지만 자동 migration�
 symlink를 바꾸기 전에 previous release의 `MIGRATIONS`와 canonical의 `schema_migrations`/
 `user_version`을 읽기 전용 비교하고, ledger 연속성·application ID와 v4 frontier column의 nullable
 INTEGER/CHECK physical shape까지 확인한다. 모르는 version, hash mismatch, 더 높은 schema면 거부한다.
-repository target은 sync/recovery가 schema mismatch를 fail-closed하고 별도 `scripts.migrate_archive`만
-control/cycle/sync lock 아래 migration하도록 바뀌었다. release CLI는
-`canonical_schema_upgrade_pending`으로 full deploy를 거부한다. current/previous의 서로 다른
-v4-compatible SHA·migration hash를 검증해 이 entrypoint를 호출하는 release-pair guard가 연결되기
-전에는 live v4 migration을 금지한다. v4 migration 뒤 schema v3-only application으로 돌아가는 rollback은
-허용하지 않으며 static projection 호환성은 이 application rollback 경계를 완화하지 않는다.
+sync/recovery는 schema mismatch를 fail-closed하고 별도 `scripts.migrate_archive`만 control/cycle/sync
+lock 아래 migration한다. release CLI는 upgrade가 필요한 상태에서 full deploy를
+`canonical_schema_upgrade_pending`으로 거부한다. current/previous의 서로 다른 compatible SHA와
+migration hash를 확인한 release-pair guard만 schema migration을 허용한다. schema v4에서 v3-only
+application으로 돌아가는 rollback은 허용하지 않는다.
 
 상태(2026-07-12): **live 완료 증거** — 전용 `redstm` user/path, 당시 pinned uv 0.9.21/Python 3.14와
 schema-v3-compatible application을 배포했다. **현재 local installer target**은 검증된 uv 0.11.28,
@@ -381,13 +381,13 @@ unaligned chunk 복구와 interrupted staging retry를 포함하며, 12,407,148,
 `/srv/redstm/canonical/archive.sqlite`로 atomic activation했다. transfer/staging partial은 없다.
 same-filesystem hardlink snapshot과 single-replace/durability/idempotent retry 강화는 현재 local
 installer target이며 이 변경 자체를 live에 재실행했다고 기록하지 않는다.
-full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 현재 live doctor 결과는 `ok=true`, schema v3,
+full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 현재 live doctor 결과는 `ok=true`, schema v4,
 `quick_check=ok`, foreign key 0, expired lease 0,
 missing/invalid/orphan WARC 0이다. root free는 약 82GB다. R2/TypeMoon credential은 주입·권한과
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
-Access service credential, route-role과 D1 idle heartbeat smoke, schema v3 명시 migration과 doctor는
+Access service credential, route-role과 D1 idle heartbeat smoke, schema v4 migration과 doctor는
 완료됐다. control heartbeat timer는 baseline으로 enabled/active다. **남음** — 명시적 full
 export/publish baseline bootstrap, authenticated bounded recovery·delta canary와 그 뒤 schedule
 activation이다.
@@ -454,7 +454,8 @@ schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 이�
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
-| incremental board cycle | 6시간마다 | exact anchor + overlap 2 page, detail concurrency 1, 10초 delay |
+| incremental board cycle | 6시간마다 | exact anchor + overlap 2 page, detail concurrency 2, 10초 delay |
+| automatic due retry | incremental 뒤 | 20건·최대 2시간 단일 batch, 실패는 다음 slot로 defer |
 | full catalog | 수동 요청 | 첫 page부터 전부, 완료까지 같은 command가 지속 |
 | full content / retry | 수동 요청 | 내부 chunk를 남은 항목 0까지 지속; sync와 직렬 |
 | R2 delta publish | marker 유무와 무관하게 매 cycle reconcile | validated object first, pointer last; 성공 뒤 기존 pending 제거 |
@@ -574,7 +575,7 @@ remote online-backup 저우선순위 hash process는 끝났지만 transient outp
 - `redstm-schedule.timer`는 명시적 full export/publish baseline bootstrap과 authenticated
   crawl→bounded export→publish/readback→rollback rehearsal canary 성공 뒤 enable한다.
 
-상태(2026-07-12): **live application/canonical/schema v3 완료, repository schema v4 준비** — application/user/path/runtime와 schedule unit,
+상태(2026-08-17): **live application/canonical schema v4 완료** — application/user/path/runtime와 schedule unit,
 resumable canonical transfer와 atomic activation,
 위 G4의 full doctor까지 통과했다. staging partial은 남지 않았고 root free는 약 82GB다.
 R2 bucket-scoped config와 TypeMoon credential/session은 값 노출 없이 주입하고 owner/mode를 확인했으며
@@ -582,7 +583,7 @@ Oracle에서 `r2:redstm-archive` 목록 조회가 성공했다. 1건과 20건 bo
 frontier reclaim을 포함해 통과했다. 15분 38초 bounded recovery는 selected 100 중 scheduled 4/
 stored 2인 partial로, CPU가 아니라 원본 서버 network timeout/retry가 지배했다. `100`은 처리 목표가
 아니며 상세 실행 증거는 [`2026-07-12 운영 검증`](archive/2026-07-12/README.md)에 고정한다.
-최신 application `1ffea39...` module smoke, Access service-token route-role/D1 idle heartbeat와 schema v3를
+최신 versioned application module smoke, Access service-token route-role/D1 idle heartbeat와 schema v4를
 확인했다. control heartbeat timer는 enabled/active이고 schedule timer/service는 disabled/inactive다.
 pause/resume marker command 왕복도 통과했다. **남음** — 명시적 full export/publish baseline
 bootstrap과 authenticated crawl→bounded export→publish/readback→rollback rehearsal canary 뒤 schedule

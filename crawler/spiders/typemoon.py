@@ -504,6 +504,9 @@ class TypeMoonSpider(scrapy.Spider):
                 "expected_comment_count": expected_comment_count,
                 # AA bodies regularly need multi-minute streaming; listing timeout is too tight.
                 "download_timeout": REDSTM_DETAIL_TIMEOUT_SECONDS,
+                # A failed multi-minute detail belongs at the back of the durable frontier,
+                # not in Scrapy's immediate retry loop against the same sick origin worker.
+                "max_retry_times": 0,
                 **extra_meta,
             },
         )

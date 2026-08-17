@@ -10,7 +10,7 @@ from crawler.archive import connect_archive, decompress_body, initialize_archive
 from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
-from crawler.settings import REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS
+from crawler.settings import REDSTM_FRONTIER_MAX_ATTEMPTS
 from crawler.store import PARSER_VERSION, ArchiveStore
 
 _NOW = datetime(2026, 7, 11, 2, tzinfo=UTC)
@@ -492,7 +492,7 @@ def test_store_rejects_a_post_with_fewer_comments_than_its_lease(
         assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "running"
 
 
-def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
+def test_retry_backoff_keeps_network_failures_retryable(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
     store = ArchiveStore(path)
@@ -538,7 +538,7 @@ def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
             lease_expires_at=expires_at,
         )
 
-    held = _escalated(REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS + 4, "auth-token")
+    held = _escalated(REDSTM_FRONTIER_MAX_ATTEMPTS + 4, "auth-token")
     store.record_outcome(
         run_id,
         url=held.url,
@@ -555,7 +555,7 @@ def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
         assert row["state"] == "retry"
         assert row["next_attempt_at"] == "2026-07-11T08:00:00+00:00"
 
-    capped = _escalated(REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS, "network-token")
+    capped = _escalated(REDSTM_FRONTIER_MAX_ATTEMPTS, "network-token")
     store.record_outcome(
         run_id,
         url=capped.url,
@@ -571,8 +571,8 @@ def test_retry_backoff_and_network_attempt_cap(tmp_path: Path) -> None:
         row = connection.execute(
             "SELECT state, next_attempt_at, last_error_code FROM crawl_frontier"
         ).fetchone()
-        assert row["state"] == "dead"
-        assert row["next_attempt_at"] is None
+        assert row["state"] == "retry"
+        assert row["next_attempt_at"] == "2026-07-11T02:32:00+00:00"
         assert row["last_error_code"] == "network_error"
 
 

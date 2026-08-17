@@ -1,6 +1,6 @@
 # 크롤러 4자 비교와 채택 기준
 
-- 기준일: 2026-07-14
+- 기준일: 2026-08-17
 - 비교 대상: ReDSTM, `D:\Dark-Side-of-Type-Moon`의 TypeMoon crawler/viewer backend,
   `D:\작업\크롤링 데이터\moon_croller.py`, Crawlee
 - 목적: 장기 운영, 처리량, 실패 격리, 중단/재개, 관측성과 배포 안전성을 비교하고 ReDSTM에
@@ -23,9 +23,8 @@
 4. **단일 `moon_croller.py`는 운영에 사용하지 않는다.** 코드에 인증정보가 평문으로 들어 있고,
    실패한 listing page도 완료 progress처럼 저장할 수 있다. 해당 계정 비밀은 코드 삭제만으로 끝나지
    않으므로 별도 회전이 필요하다.
-5. **현재 속도는 원본 보호 관점에서는 안전하지만 full body에는 매우 느리다.** concurrency 1과
-   요청 시작 10초 간격의 이론상 상한은 시간당 360 request다. 282,000개 본문은 응답 지연과 실패를
-   무시해도 약 32.6일이다. 원본 장애가 해소된 canary에서만 in-flight concurrency를 1→2로 시험한다.
+5. **현재 속도는 원본 보호 관점에서는 안전하지만 full body에는 매우 느리다.** staggered concurrency 2와
+   요청 시작 10초 간격을 사용한다. 동시성은 느린 응답을 겹칠 뿐 request start rate 상한을 높이지 않는다.
 6. **목차와 본문을 서로 다른 프로세스로 동시에 돌리지 않는다.** 동일 원본·세션·canonical writer를
    공유해 부하와 실패 판정을 복잡하게 만든다. 대신 한 Scrapy process 안에서 10초 시작 간격을
    유지한 채 최대 2개 느린 응답을 겹치는 제한적 실험이 우선이다.
@@ -58,12 +57,12 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 | 데이터 모델 | canonical entity/version/capture/frontier | posts/comments/collections/queue | CSV+파일 | library는 storage primitive 제공; domain schema는 사용자가 구현 |
 | 중복 제거 | board+external ID, content hash/version | post/queue 존재 검사 | CSV URL·파일명 | request `uniqueKey` |
 | checkpoint | DB cursor/lease + pass marker | JSON checkpoint + DB queue | page CSV와 파일 존재 | persistent RequestQueue/RequestList |
-| 기본 동시성 | global/domain/detail 1 | UI 2 표기지만 rebuild 실제 직렬 | 1 | resource-aware autoscaling, min/max/분당 제한 |
+| 기본 동시성 | global/domain/detail 2(환경변수 1–3) | UI 2 표기지만 rebuild 실제 직렬 | 1 | resource-aware autoscaling, min/max/분당 제한 |
 | 시작 간격 | 고정 10초, 감속 AutoThrottle | rebuild 고정 4초 | 대략 3~5초+매 5회 추가 휴식 | same-domain delay와 maxRequestsPerMinute |
-| timeout | 180초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
-| retry | Scrapy 2회 재시도+frontier 최대 5 attempt | fetch retry+workflow retry, failed/dead queue | adapter retry와 외부 loop가 중첩 | maxRequestRetries, error/final failure handler |
+| timeout | listing 240초/detail 900초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
+| retry | listing 내부 3회; detail 1회 뒤 durable frontier | fetch retry+workflow retry, failed/dead queue | adapter retry와 외부 loop가 중첩 | maxRequestRetries, error/final failure handler |
 | 429 | Retry-After 최대 24시간 반영 | 60초 cooldown 후 1회 | 일반 HTTPError와 동일, Retry-After 미지원 | blocked retry/session rotation/사용자 handler |
-| 장애 차단 | network/rate/parse 3회 breaker | network 8회, content 5/8 단계 복구 | 없음 | retry budget과 handler; domain breaker는 사용자가 정책화 |
+| 장애 차단 | detail network 5회, parse/rate 3회 breaker | network 8회, content 5/8 단계 복구 | 없음 | retry budget과 handler; domain breaker는 사용자가 정책화 |
 | 실패 격리 | item terminal state, board/cycle partial | item failed/dead, 일부 run 상태 불일치 | page 실패를 빈 결과로 흡수 가능 | request reclaim/final failure 분리 |
 | 일시정지 | marker 기반 cooperative stop | viewer가 SIGTERM→8초 뒤 SIGKILL | Ctrl+C는 listing만 부분 처리 | AutoscaledPool pause/resume/abort |
 | 재시작 | lease 회수, full pass marker, outbox replay | queue recovery와 선택적 JSON resume | CSV/파일 기반 수동 재실행 | persistent queue 사용 시 재개 가능 |
@@ -71,7 +70,7 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 | 현재 진척 | D1 heartbeat+5분 snapshot+board status | SQLite progress/event+viewer | tqdm/CSV | statistics/status callback 제공 |
 | 제어/보안 | Access user/service 분리, fixed action API | viewer allowlist+선택 token | 코드 내 평문 인증정보 | library 범위 밖 |
 | 배포/복구 | immutable release, guarded migration, coordinated rollback | PM2+SQLite deployment | 수동 실행 | Docker 예제 제공; 제품 rollback은 별도 |
-| 장기 무인성 | 가장 높음, schedule gate와 breaker 재시도 정책은 남음 | 중간; viewer 수명과 상태 오판 위험 | 낮음 | engine은 높음, 전체 서비스 계약은 사용자가 완성해야 함 |
+| 장기 무인성 | 가장 높음, durable defer와 bounded automatic retry 구현 | 중간; viewer 수명과 상태 오판 위험 | 낮음 | engine은 높음, 전체 서비스 계약은 사용자가 완성해야 함 |
 
 ## 4. ReDSTM 상세 판정
 
@@ -91,13 +90,12 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 
 ### 현재 처리량
 
-`crawler/settings.py` 기준값은 global/domain/detail concurrency 1, `DOWNLOAD_DELAY=10`,
-`DOWNLOAD_TIMEOUT=180`, AutoThrottle target 1, retry 2회다.
+`crawler/settings.py` 기준값은 global/domain/detail concurrency 2, `DOWNLOAD_DELAY=10`, listing/detail
+timeout 240/900초다. listing은 내부 재시도 3회, detail은 한 번 뒤 durable frontier로 defer한다.
 
 - 응답이 10초 이하일 때 이론상 최대 6 request/minute, 360/hour다.
-- 응답이 30초라면 global concurrency 1 때문에 약 2 request/minute까지 내려간다.
-- concurrency 2는 10초 시작 간격을 없애지 않고 느린 응답 두 개를 겹칠 수 있어, 정상 원본에서는
-  처리량을 높이면서 request start rate 상한은 유지할 수 있다.
+- 응답이 30초 이상이면 concurrency 2가 느린 응답 두 개를 겹쳐 직렬 대기보다 처리량을 높인다.
+- 10초 시작 간격은 유지되므로 동시성 2가 request start burst를 만들지 않는다.
 - 하지만 현재 실서버는 full-catalog 중 세 게시판 연속 network failure로 breaker가 동작했다. 이때
   concurrency를 먼저 올리면 timeout 동시 누적과 장애 오판만 늘어난다.
 - 2026-07-14 최근 inventory worker 3개의 실측은 444초/5 capture, 1,565초/6 capture,
@@ -115,8 +113,8 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 3. SQLite는 WAL reader에는 강하지만 두 crawler writer의 transaction 경쟁은 불필요하다.
 4. 장기 inventory가 발견한 새 frontier를 detail이 즉시 소비하면 pass 완료/잔여량 설명이 어려워진다.
 
-먼저 한 process의 in-flight request만 2로 제한하는 canary가 비용이 가장 작다. catalog/detail 동시
-process는 이 실험으로도 목표 처리량을 못 얻고 원본의 429/timeout이 0에 가까울 때만 재검토한다.
+한 process의 in-flight request만 2로 제한한다. catalog/detail 동시 process는 이 설정으로도 목표
+처리량을 못 얻고 원본의 429/timeout이 0에 가까울 때만 재검토한다.
 
 ### 이번에 닫은 문제
 
@@ -133,8 +131,8 @@ process는 이 실험으로도 목표 처리량을 못 얻고 원본의 429/time
 
 - systemd schedule timer는 아직 disabled다. schema v4와 최신 application 배포는 완료됐지만,
   authenticated crawl→delta publish/readback→rollback rehearsal 성공 gate가 남아 있다.
-- breaker는 실패 확산을 막지만 수동 full pass를 자동으로 며칠 동안 재요청하지 않는다. partial과
-  checkpoint는 보존되나 operator가 같은 command를 다시 실행해야 한다.
+- breaker는 실패 확산을 막고 network 실패는 2분~6시간 backoff로 무기한 defer한다. 자동 cycle도
+  due 20건을 최대 2시간 처리하며, 수동 full pass의 checkpoint도 보존한다.
 - disk는 40GiB warning과 20GiB hard floor로 분리됐다. hard floor는 transaction 중간에 process를
   죽이지 않고 새 crawl 및 장기 작업의 다음 bounded child 앞에서 적용하므로, 현재 child가 쓰는
   최대 분량은 20GiB reserve 안에 흡수해야 한다.

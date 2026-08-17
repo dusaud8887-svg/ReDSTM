@@ -45,9 +45,15 @@ def _recovery_batch(
     limit: int,
     now: datetime | None = None,
     board_id: str | None = None,
+    missing_only: bool = False,
 ) -> tuple[list[tuple[str, int]], int]:
     selected_at = now or datetime.now(UTC)
-    due = frontier.recovery_candidates(limit=limit, now=selected_at, board_id=board_id)
+    due = frontier.recovery_candidates(
+        limit=limit,
+        now=selected_at,
+        board_id=board_id,
+        missing_only=missing_only,
+    )
     # Reserve bounded forward progress even while the due queue stays full. Increase only
     # after canary evidence because every reserved slot is another old-source request.
     stale_limit = max(
@@ -60,7 +66,7 @@ def _recovery_batch(
             stale_before=selected_at - timedelta(seconds=REDSTM_STALE_DETAIL_REVISIT_SECONDS),
             board_id=board_id,
         )
-        if stale_limit
+        if stale_limit and not missing_only
         else []
     )
     candidates = due[: limit - len(revisited)] + revisited
@@ -100,6 +106,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         full_content_before = getattr(args, "full_content_before", None)
         full_content_max_rowid = getattr(args, "full_content_max_rowid", None)
         board_id = getattr(args, "board", None)
+        missing_only = bool(getattr(args, "missing_only", False))
         paused = pause_file is not None and pause_file.exists()
         if paused:
             requeued_dead = revisited_posts = 0
@@ -127,6 +134,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                     frontier,
                     limit=args.max_posts,
                     board_id=board_id,
+                    missing_only=missing_only,
                 )
         run_id = store.start_run("retry")
         warc_dir.mkdir(parents=True, exist_ok=True)
@@ -135,7 +143,6 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         scheduled = 0
         failures: list[str] = []
         spider_failures: set[str] = set()
-        preserved_attempts = 0
         preflight_status: str | None = None
         sessions: list[SessionExport] = []
         if candidates and not paused:
@@ -199,11 +206,8 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         elif "auth_required" in spider_failures:
             status = "auth_failed"
         elif "network_error" in spider_failures:
-            # Breaker fired on consecutive transport failures. Preserve attempts so a long
-            # outage cannot push entries toward dead. When some posts still stored, keep the
-            # batch partial so ops/retry continues instead of treating the whole run as a
-            # hard outage that looks like total failure.
-            preserved_attempts = frontier.preserve_network_attempts([run_id])
+            # Network failures stay in the durable retry queue and their growing attempt
+            # count stretches the retry interval up to the configured backoff cap.
             status = "partial" if int(outcomes.get("stored", 0) or 0) > 0 else "site_unreachable"
         elif "rate_limited" in spider_failures:
             status = "rate_limited"
@@ -222,7 +226,6 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 "interrupted_runs": interrupted_runs,
                 "requeued_dead": requeued_dead,
                 "revisited_posts": revisited_posts,
-                "preserved_attempts": preserved_attempts,
                 "full_content_remaining": full_content_remaining,
             },
         )
@@ -241,7 +244,6 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "interrupted_runs": interrupted_runs,
             "requeued_dead": requeued_dead,
             "revisited_posts": revisited_posts,
-            "preserved_attempts": preserved_attempts,
             "full_content_remaining": full_content_remaining,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
@@ -266,6 +268,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seconds", type=int, default=REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
     parser.add_argument("--lease-seconds", type=int, default=REDSTM_FRONTIER_LEASE_SECONDS)
     parser.add_argument("--board")
+    parser.add_argument("--missing-only", action="store_true")
     parser.add_argument("--full-content-before", type=_aware_datetime)
     parser.add_argument("--full-content-max-rowid", type=int)
     parser.add_argument("--pause-file", type=Path, help=argparse.SUPPRESS)
@@ -285,6 +288,8 @@ def _parse_args() -> argparse.Namespace:
         parser.error("full-content-max-rowid must be non-negative")
     if args.requeue_dead and args.full_content_before is not None:
         parser.error("requeue-dead cannot be combined with full-content mode")
+    if args.missing_only and (args.requeue_dead or args.full_content_before is not None):
+        parser.error("missing-only cannot be combined with requeue-dead or full-content mode")
     return args
 
 

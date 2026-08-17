@@ -349,7 +349,7 @@ Browser가 요청할 수 있는 action은 고정된다.
 | action | server bound | confirmation |
 |---|---|---|
 | sync-now | one normal incremental cycle | simple |
-| retry-batch | max 100 due entries | count summary |
+| retry-batch | 내부 20건 chunk로 due 0까지 처리 | count summary |
 | publish-if-changed | no change이면 no-op | release summary |
 | pause-after-current | current request/transaction 뒤 stop | active run summary |
 | resume-schedule | paused marker만 해제 | next schedule summary |

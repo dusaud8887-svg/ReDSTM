@@ -38,9 +38,9 @@ def test_policy_settings_and_urls_are_conservative() -> None:
     # honors the origin's published Crawl-delay through the fixed DOWNLOAD_DELAY.
     assert settings.ROBOTSTXT_OBEY is False
     assert settings.DOWNLOAD_DELAY == 10.0
-    assert settings.DOWNLOAD_TIMEOUT == 420
+    assert settings.DOWNLOAD_TIMEOUT == 900
     assert settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
-    assert settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 420
+    assert settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 900
     assert settings.RANDOMIZE_DOWNLOAD_DELAY is False
     assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 2
     assert settings.REDSTM_DETAIL_CONCURRENCY == 2

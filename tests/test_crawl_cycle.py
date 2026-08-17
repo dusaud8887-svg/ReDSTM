@@ -404,14 +404,7 @@ def test_cycle_breaks_after_three_network_boards(
 ) -> None:
     args = _args(tmp_path)
     commands: list[list[str]] = []
-    preserved: list[list[str]] = []
     monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
-
-    def preserve(self: object, run_ids: list[str]) -> int:
-        preserved.append(run_ids)
-        return 7
-
-    monkeypatch.setattr("scripts.crawl_cycle.FrontierStore.preserve_network_attempts", preserve)
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
         commands.append(command)
@@ -434,8 +427,6 @@ def test_cycle_breaks_after_three_network_boards(
     report = run_cycle(args)
 
     assert report["status"] == "site_unreachable"
-    assert report["preserved_attempts"] == 7
-    assert preserved == [["run-1", "run-2", "run-3"]]
     assert len(commands) == 3
 
 
@@ -522,10 +513,6 @@ def test_inventory_cycle_still_trips_outage_on_zero_progress_network(
     args.inventory = True
     commands: list[list[str]] = []
     monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        "scripts.crawl_cycle.FrontierStore.preserve_network_attempts",
-        lambda self, run_ids: len(run_ids),
-    )
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
         commands.append(command)

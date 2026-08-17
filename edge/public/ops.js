@@ -5,11 +5,13 @@ const labels = {
   scheduled: "예약 실행", "manual-sync": "수동 동기화", retry: "재시도", publish: "게시",
   "bootstrap-recovery": "최초 본문 채우기",
   "full-catalog": "전체 목차", "full-content": "전체 본문",
+  "fill-missing-content": "누락 본문",
 };
 const stepLabels = {
   idle: "대기", scheduled: "예약 준비", "sync-now": "최신 목록 확인",
   crawling: "상세 수집", inventory: "전체 목록 확인", recovery: "본문 대기 재시도",
   "full-catalog": "전체 목차 재수집", "full-content": "전체 본문 재수집",
+  "fill-missing-content": "본문 없는 글 채우기",
   "retry-batch": "본문 대기 재시도", "bootstrap-recovery": "최초 본문 채우기",
   maintenance: "보관소 무결성 점검",
   archive_snapshot: "중간 집계",
@@ -22,6 +24,8 @@ export const safeCodeLabels = {
   full_catalog_succeeded: "전체 목차 재수집 완료",
   full_catalog_content_succeeded: "전체 목차·본문 수집 완료",
   full_content_succeeded: "전체 본문 재수집 완료",
+  missing_content_succeeded: "본문 없는 글 처리 완료",
+  content_retry_deferred: "일부 본문 실패 · 지연 재시도 예약됨",
   bootstrap_recovery_succeeded: "최초 본문 채우기 완료",
   recovery_succeeded: "본문 재시도 완료", publish_succeeded: "Reader 반영 완료",
   scheduled_succeeded: "예약 실행 완료", scheduled_partial: "예약 실행 일부 완료",
@@ -32,7 +36,7 @@ export const safeCodeLabels = {
   full_catalog_no_progress: "전체 목차 커서 정체 · 원본·파서 확인 후 같은 명령으로 이어서 재시도",
   disk_low: "저장 공간 안전 하한 도달 · 진행분 보존 후 수집 중단",
   auth_failed: "원본 인증 실패", parse_drift: "원본 구조 변경",
-  site_unreachable: "원본 연결 실패 · 전체 목차는 체크포인트 유지 후 자동 재개",
+  site_unreachable: "원본 연결 실패 · 진행분과 재시도 큐는 보존됨",
   rate_limited: "원본 속도 제한",
   export_failed: "Reader 내보내기 실패", publish_failed: "Reader 반영 실패",
   incremental_base_invalid: "Reader 증분 기준 보존본 검증 실패",
@@ -64,7 +68,7 @@ export const safeCodeLabels = {
 const warningLabels = {
   auth_failed: "원본 인증을 확인해야 합니다.", parse_drift: "원본 구조 변경이 감지됐습니다.",
   rate_limited: "원본 서버의 속도 제한으로 감속했습니다.",
-  site_unreachable: "원본 서버가 느리거나 응답이 끊겼습니다. 전체 목차는 체크포인트부터 자동으로 이어 재시도합니다.",
+  site_unreachable: "원본 서버가 느리거나 응답이 끊겼습니다. 진행분은 보존되며 실패 항목은 지연 후 다시 시도합니다.",
   disk_low: "Oracle 저장 공간이 부족합니다.",
   control_rejected: "운영 상태 보고가 최근 거부됐습니다. 최신 거부 원인과 배포 상태를 확인하세요.",
   token_expiring: "수집기 인증 갱신이 필요합니다.",
@@ -76,8 +80,9 @@ const warningLabels = {
 const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
 const commandCopy = {
   "sync-now": ["증분 수집 지금 실행", "등록된 게시판의 최신 페이지를 순차적으로 한 번 확인합니다. 원본 요청 간격은 빨라지지 않습니다."],
-  "full-catalog": ["전체 게시글 목차·본문 다시 수집", "선택 범위의 모든 게시판을 첫 페이지부터 끝까지 확인한 뒤, 발견된 게시글 본문과 댓글까지 같은 작업에서 이어 수집합니다. 원본 장애·일시정지는 체크포인트(게시판·페이지·본문 큐)를 보존한 채 자동으로 재개합니다. 이미 요청한 전체 수집이 작업 중이면 새 요청 대신 그 실행 기록을 여세요. 원본이 느리면 며칠 걸릴 수 있습니다."],
+  "full-catalog": ["전체 게시글 목차·누락 본문 수집", "선택 범위의 모든 게시판을 첫 페이지부터 끝까지 확인한 뒤, 본문이 없는 글과 댓글만 이어 수집합니다. 원본 장애·일시정지는 체크포인트(게시판·페이지·본문 큐)를 보존한 채 자동으로 재개합니다. 이미 요청한 전체 수집이 작업 중이면 새 요청 대신 그 실행 기록을 여세요. 원본이 느리면 며칠 걸릴 수 있습니다."],
   "full-content": ["전체 게시글 본문 다시 수집", "선택 범위에서 발견된 모든 글을 성공 여부와 관계없이 다시 수집합니다. 장기간 실행될 수 있습니다."],
+  "fill-missing-content": ["본문 없는 글만 채우기", "목차만 있고 본문이 없는 글을 처리합니다. 실패한 글은 영속 재시도 큐 뒤로 이동합니다."],
   "retry-batch": ["본문 대기 재시도", "처리 시각이 된 모든 대기 또는 재시도 항목을 우선순위대로 확인합니다."],
   "publish-if-changed": ["변경분 Reader 반영", "새 변경이 있을 때만 검증 후 Reader 보존본을 바꿉니다."],
   "pause-after-current": ["수집 일시정지", "진행 중 수집은 안전한 지점에서 멈추고 다음 자동 실행도 막습니다. 수동 전체수집은 다시 실행하면 체크포인트부터 이어집니다."],
@@ -210,6 +215,7 @@ function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot
     else if (!paused && action === "resume-schedule") { disabled = true; reason = "일시정지 상태에서만 사용할 수 있습니다."; }
     else if (!scheduleEnabled && !running && action === "pause-after-current") { disabled = true; reason = "자동 예약이 이미 꺼져 있습니다."; }
     else if (action === "retry-batch" && retryWaiting === 0) { disabled = true; reason = "현재 처리할 본문 대기 또는 재시도 항목이 없습니다."; }
+    else if (action === "fill-missing-content" && snapshot?.outline_only === 0) { disabled = true; reason = "현재 본문이 없는 글이 없습니다."; }
     button.disabled = disabled;
     copy.textContent = reason;
   }
@@ -613,6 +619,7 @@ function boardRow(board) {
   for (const [action, label] of [
     ["sync-now", "이 게시판 최신"],
     ["full-catalog", "이 게시판 전체 목차"],
+    ["fill-missing-content", "이 게시판 누락 본문"],
     ["full-content", "이 게시판 전체 본문"],
   ]) {
     const button = node("button", "", label);
