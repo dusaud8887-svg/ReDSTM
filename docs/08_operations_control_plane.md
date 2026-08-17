@@ -313,7 +313,7 @@ rows와 30일 retention은 충분한 범위다. [D1 limits](https://developers.c
 | action | fixed bound | result |
 |---|---|---|
 | sync-now | one normal incremental board cycle | run report |
-| retry-batch | due entries max 100 | outcome counts |
+| retry-batch | 내부 20건 chunk로 due 0까지 처리 | outcome counts |
 | publish-if-changed | marker 유무와 무관한 bounded incremental reconcile | release/smoke |
 | pause-after-current | current request/transaction 뒤 stop | paused run |
 | resume-schedule | paused marker만 해제 | next schedule |
@@ -390,8 +390,9 @@ Remote command와 무관하게 systemd가 실행한다.
 |---|---|
 | incremental cycle | 6시간 |
 | 최신 글 증분 수집 | 6시간마다; 이전 cycle 실행 중이면 이번 slot은 pass |
+| due 본문 재시도 | 증분 뒤 20건·최대 2시간의 단일 batch; 실패분은 다음 slot로 defer |
 | delta publish | marker 유무와 무관하게 증분 reconcile |
-| 전체 board 목차 | 수동 `full-catalog`; 첫 page부터 끝까지 다시 수집한 뒤 본문 pass로 이어감 |
+| 전체 board 목차 | 수동 `full-catalog`; 첫 page부터 끝까지 다시 수집한 뒤 누락 본문 pass로 이어감 |
 | 전체 게시글 본문 | `full-catalog` 완료 후 같은 command에서 자동 실행하거나 수동 `full-content`로 전부 다시 수집 |
 
 Operations schedule toggle은 최종 제품에서도 직접 timer file을 편집하지 않는다.
@@ -399,8 +400,9 @@ pause-after-current는 진행 중 collection에 협력적 stop marker를 전달�
 보류한다. resume-schedule은 두 marker를 해제한다.
 운영 목표 상태는 자동 enabled지만, 웹의 `일시정지 해제`는 비활성 systemd timer를 켜지 않는다.
 
-각 6시간 cycle은 최신 page incremental과 변경분 게시만 수행한다. 직전 기준 게시글이 발견된 page 뒤
-2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와 전체 본문은 자동 cycle에 섞지 않는다.
+각 6시간 cycle은 최신 page incremental, due 실패 20건의 최대 2시간 재시도, 변경분 게시를 수행한다.
+직전 기준 게시글이 발견된 page 뒤 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와
+전체 본문 pass는 자동 cycle에 섞지 않는다.
 수동 전체 목차는 `inventory_next_page`와 scope marker로 모든 row를 다시 읽으며, 수동 전체 본문은
 시작 시각과 frontier 최대 rowid를 checkpoint로 고정해 이미 성공한 글도 양수 chunk로 다시 받는다.
 두 작업 모두 전체 pass 총량·총시간 상한은 없지만 각 child invocation은 설정된 page/post/time 상한을
@@ -519,7 +521,7 @@ Runs/Releases ledger에서 별도로 확인한다.
 
 - `sync-now`: 전체 또는 선택 게시판의 최신 증분을 한 번 실행한다.
 - `full-catalog`: 전체 또는 선택 게시판의 제목·주소·목록을 첫 page부터 끝까지 다시 수집하고, 목록 pass가
-  완료되면 발견된 frontier의 본문·댓글 수집을 같은 command에서 이어간다.
+  완료되면 누락 본문·댓글 수집을 같은 command에서 이어간다.
 - `full-content`: 전체 또는 선택 게시판의 발견된 모든 본문을 성공 여부와 무관하게 다시 수집한다.
 - `retry-batch`: 현재 due인 pending/retry frontier를 상한 없이 순차 처리한다. due 0이면 disable한다.
 - `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,

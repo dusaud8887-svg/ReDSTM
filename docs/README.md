@@ -82,8 +82,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 - stable post identity와 Signal Archive frontend의 1440/768/390/320px local fixture 검증
 - local loopback read-only Operations C0
 - Oracle read-only audit, target runbook, ADR-014/015
-- Oracle에서 12,407,148,544-byte canonical 활성화, schema v3 migration/full doctor와 application
-  `1ffea39...` 배포 통과
+- Oracle에서 canonical schema v4 활성화와 migration/full doctor, versioned application 배포 통과
 - Zero Trust Free, runner 전용 Access application/Service Auth policy와 1년 service token
 - Oracle control oneshot → Access → Worker → D1 heartbeat와 user/service route 분리 smoke
 - authenticated production Reader 282,239건, 일반/AA 본문·댓글과 `/ops` idle heartbeat smoke
@@ -94,7 +93,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
   4-viewport 구현
 - complete listing seed, sync mid-board breaker, 30분 session 재검증, cycle-wide writer lock,
   subprocess hard bound와 bounded dead revive의 local crawler 구현
-- schema v3 inventory cursor, schema v4 durable listing 댓글 기대치·증분 anchor와 수동 full collection,
+- schema v4 inventory cursor·durable listing 댓글 기대치·증분 anchor와 수동 full collection,
   Operations telemetry의 local 검증
 - 홈/탐색/보관함 IA, current-release 미완독 이어읽기, catalog scroll, 모바일 직접 저장/집중 종료,
   AA 댓글 설정 연동의 4-viewport local 검증
@@ -107,7 +106,7 @@ canonical replica가 아니다. Worker/D1 장애 중에도 자동 crawl과 마�
 `/search` URL·History 복원, mobile Operations 진입점, 768px top navigation과 PC rail을 확인했다.
 Operations light palette, 자동 schedule/Runner/Reader/canonical 구분, recent failure와 board inventory
 진척을 포함한 D1 `0003`/Worker/Oracle bundle의 live 배포가 끝났다. 실제 Android와
-사용자 시각 acceptance가 남았다. Oracle은 application `1ffea39`, schema v3 canonical doctor, static seed,
+사용자 시각 acceptance가 남았다. Oracle은 schema v4 canonical doctor, static seed,
 R2/TypeMoon/Access credential과 D1 heartbeat까지 통과했다. 원본 요청 없는 pause/resume marker,
 heartbeat outbox replay와 expired command도 live 검증했다. control timer는 enabled/active이고 schedule
 timer/service는 disabled/inactive다. crawler는 listing → durable frontier → serial detail lease → capture/outcome과

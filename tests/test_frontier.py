@@ -136,13 +136,17 @@ def test_reopen_done_and_claim_only_requested_identity(tmp_path: Path) -> None:
     assert second.external_post_id == 2
 
 
-def test_site_outage_restores_network_attempt_without_reviving_other_failures(
+def test_recovery_revives_legacy_dead_network_failure_without_resetting_attempts(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "frontier.sqlite"
     store = FrontierStore(path)
     store.initialize()
-    for post_id, state, error in ((1, "dead", "network_error"), (2, "retry", "auth_required")):
+    for post_id, state, error in (
+        (1, "dead", "network_error"),
+        (2, "retry", "auth_required"),
+        (3, "dead", "TypeMoon login request failed: handshake operation timed out"),
+    ):
         store.seed("write_free21", post_id, f"https://www.typemoon.net/write_free21/{post_id}")
         with connect_archive(path) as connection:
             connection.execute(
@@ -171,7 +175,11 @@ def test_site_outage_restores_network_attempt_without_reviving_other_failures(
             ],
         )
 
-    assert store.preserve_network_attempts(["sync-outage", "sync-outage"]) == 1
+    assert store.recovery_candidates(limit=3, now=datetime(2026, 7, 11, tzinfo=UTC)) == [
+        ("write_free21", 1),
+        ("write_free21", 2),
+        ("write_free21", 3),
+    ]
 
     with connect_archive(path, read_only=True) as connection:
         rows = [
@@ -183,7 +191,11 @@ def test_site_outage_restores_network_attempt_without_reviving_other_failures(
                 """
             )
         ]
-    assert rows == [(1, "retry", 4, None), (2, "retry", 5, "auth_required")]
+    assert rows == [
+        (1, "retry", 5, "network_error"),
+        (2, "retry", 5, "auth_required"),
+        (3, "retry", 5, "TypeMoon login request failed: handshake operation timed out"),
+    ]
 
 
 def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
@@ -207,23 +219,8 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
                 (error, post_id),
             )
 
-    assert store.requeue_dead(error_code="network_error", limit=1) == 1
-
-    with connect_archive(path, read_only=True) as connection:
-        rows = [
-            tuple(row)
-            for row in connection.execute(
-                "SELECT external_post_id, state, attempts FROM crawl_frontier "
-                "ORDER BY external_post_id"
-            )
-        ]
-    assert rows == [
-        (1, "retry", 0),
-        (2, "dead", 5),
-        (3, "dead", 5),
-        (4, "dead", 5),
-        (5, "dead", 5),
-    ]
+    with pytest.raises(ValueError, match="unsupported"):
+        store.requeue_dead(error_code="network_error", limit=1)
     assert (
         store.requeue_dead(
             error_code="storage_error",

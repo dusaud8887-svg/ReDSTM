@@ -41,6 +41,8 @@ test("renders a disk hard-stop as an operator-safe outcome", () => {
 
 test("labels the combined catalog and content pass", () => {
   assert.equal(safeCodeLabels.full_catalog_content_succeeded, "전체 목차·본문 수집 완료");
+  assert.equal(safeCodeLabels.missing_content_succeeded, "본문 없는 글 처리 완료");
+  assert.ok(safeCodeLabels.content_retry_deferred);
 });
 
 test("orders board attention lexicographically even with large counters", () => {

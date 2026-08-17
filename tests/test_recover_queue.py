@@ -172,6 +172,35 @@ def test_recovery_prefers_outline_only_posts(tmp_path: Path) -> None:
     frontier.seed("aa_a01", 2, "https://www.typemoon.net/aa_a01/2")
 
     assert frontier.recovery_candidates(limit=1, now=_NOW) == [("aa_a01", 2)]
+    assert frontier.recovery_candidates(limit=5, now=_NOW, missing_only=True) == [("aa_a01", 2)]
+
+
+def test_recovery_round_robins_across_boards(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.executemany(
+            """
+            INSERT INTO boards (
+                board_id, name, group_name, canonical_url, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, 'https://www.typemoon.net/' || ?, 'now', 'now')
+            """,
+            [
+                ("aa_a01", "AA", "aa", "aa_a01"),
+                ("write_free21", "Creation", "creation", "write_free21"),
+            ],
+        )
+    frontier = FrontierStore(archive)
+    for board_id in ("aa_a01", "write_free21"):
+        for post_id in (1, 2, 3):
+            frontier.seed(board_id, post_id, f"https://www.typemoon.net/{board_id}/{post_id}")
+
+    assert frontier.recovery_candidates(limit=4, now=_NOW) == [
+        ("aa_a01", 1),
+        ("write_free21", 1),
+        ("aa_a01", 2),
+        ("write_free21", 2),
+    ]
 
 
 def test_recovery_uses_free_slots_for_oldest_stale_details(
@@ -583,13 +612,6 @@ def test_recovery_network_breaker_reports_outage_and_preserves_attempts(
     monkeypatch.setattr(
         "scripts.recover_queue.ensure_session_export", lambda *args, **kwargs: _session()
     )
-    preserved: list[list[str]] = []
-
-    def preserve(self: FrontierStore, run_ids: list[str]) -> int:
-        preserved.append(run_ids)
-        return 3
-
-    monkeypatch.setattr("scripts.recover_queue.FrontierStore.preserve_network_attempts", preserve)
 
     class FakeCrawler:
         # The spider halted through the consecutive-network breaker: spider-level
@@ -635,14 +657,11 @@ def test_recovery_network_breaker_reports_outage_and_preserves_attempts(
 
     assert report["ok"] is False
     assert report["status"] == "site_unreachable"
-    assert report["preserved_attempts"] == 3
-    assert preserved == [[report["run_id"]]]
     with connect_archive(archive, read_only=True) as connection:
         run = connection.execute(
             "SELECT status, summary_json FROM crawl_runs WHERE kind = 'retry'"
         ).fetchone()
         assert run["status"] == "failed"
-        assert json.loads(run["summary_json"])["preserved_attempts"] == 3
 
 
 def test_recovery_report_includes_capture_failure_codes(

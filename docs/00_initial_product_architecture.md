@@ -238,7 +238,7 @@ Phase 0 static-edge gate 통과 후 single-writer canonical DB는 유지하면�
 
 2026-07-11 기준 TypeMoon homepage와 short board listing은 로그인 없이 접근 가능하고, 일부 상세 콘텐츠는 “권한이 제한된 게시물”로 표시된다. 사이트 footer는 콘텐츠 저작권과 책임이 각 게시자에게 있다고 밝힌다. [TypeMoon homepage](https://www.typemoon.net/)
 
-공식 [`robots.txt`](https://www.typemoon.net/robots.txt)는 `User-agent: *`에 `Crawl-delay: 10`을 두고 `/bbs/li`, `/bbs/lo`, `/bbs/wr` 등 list/login/write 계열 경로를 금지한다. 사용자는 2026-07-14에 인증 회원 본인 전용 아카이브로서 robots 정책을 준수하지 않기로 결정했다(`ROBOTSTXT_OBEY=False`). crawler는 계속 short board/post URL만 사용하고 동시성 1, 고정 10초 간격(robots의 `Crawl-delay: 10`과 동일)보다 빠르게 요청하지 않는다. sitemap 9,446개 URL의 최신 `lastmod`는 2021-03-23이고 detail query URL은 5개뿐이어서 현재 게시물 discovery 근거로 사용하지 않는다.
+공식 [`robots.txt`](https://www.typemoon.net/robots.txt)는 `User-agent: *`에 `Crawl-delay: 10`을 두고 `/bbs/li`, `/bbs/lo`, `/bbs/wr` 등 list/login/write 계열 경로를 금지한다. 사용자는 2026-07-14에 인증 회원 본인 전용 아카이브로서 robots 정책을 준수하지 않기로 결정했다(`ROBOTSTXT_OBEY=False`). crawler는 계속 short board/post URL만 사용하고 staggered 동시성 2, 고정 10초 시작 간격(robots의 `Crawl-delay: 10`과 동일)보다 빠르게 요청하지 않는다. sitemap 9,446개 URL의 최신 `lastmod`는 2021-03-23이고 detail query URL은 5개뿐이어서 현재 게시물 discovery 근거로 사용하지 않는다.
 
 공식 [이용약관](https://www.typemoon.net/page/provision)의 회원 의무 조항은 서비스에서 얻은 정보의 복제·출판·제3자 제공을 금지하고, 저작권 조항은 게시물 저작권이 게시자에게 있으며 영리 이용을 금지한다고 명시한다. 개인 아카이빙을 허용하는 운영자 승인은 확인되지 않았다. 사용자는 2026-07-11 결과를 공개·공유하지 않는 본인 전용 아카이브로 수집을 진행한다고 명시적으로 결정했다. 따라서 `full_crawl_approved=true`로 기록하되 이 결정은 운영자 허락이나 법률 판단을 뜻하지 않는다.
 
@@ -827,8 +827,7 @@ viewer에 직접 렌더링하지 않는다.
 
 ### 8.0 2026-07-12 구현 감사 판정
 
-현재 crawler core와 Oracle 수동 canary, live schema v3 migration/doctor는 동작하고 repository target은
-additive schema v4다. v4 code/migration test는 local에서 닫혔고 live migration은 아직 실행하지 않았다.
+현재 crawler core와 Oracle 수동 canary, live/repository schema v4 migration/doctor가 동작한다.
 **pass-epoch inventory/bootstrap bundle의 live canary, 자동 schedule과 최대 20~30분 집중 관찰
 전**이다. canonical 실측 queue는
 약 pending 29.4k/retry 4.3k다. `max-posts=100`은 후보 선택의
@@ -840,12 +839,12 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
-| 부하 제한 | detail concurrency 1, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
-| 요청 실패 | explicit 180초 timeout, 408/5xx·network 총 3회 retry; 429는 frontier defer | live timeout/429 빈도 확인 |
-| durable retry | frontier backoff/dead와 network/parse/storage bounded revive | 실제 backlog에서 revive report 확인 |
+| 부하 제한 | detail concurrency 2, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
+| 요청 실패 | listing/detail 240/900초; detail은 1회 뒤 durable defer, 429는 frontier defer | live timeout/429 빈도 확인 |
+| durable retry | network는 2분~6시간 backoff로 무기한, parse/storage는 5회 뒤 dead | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
-| listing | complete changed-row seed, overlap boundary, schema v3 inventory cursor와 v4 댓글 기대치·증분 anchor | 실제 cursor progression |
-| detail | 1건씩 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
+| listing | complete changed-row seed, overlap boundary, schema v4 inventory cursor·댓글 기대치·증분 anchor | 실제 cursor progression |
+| detail | 최대 2건 staggered claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
 | monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage와 최대 20~30분 집중 canary |
 
 repository schema v4 migration/doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke
@@ -900,7 +899,7 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 현재 `scripts.sync`는 일반 run에서 board별 page 1부터 `max_pages` 상한 안에서 listing metadata
 변경을 비교한다. schema v4의 exact `incremental_anchor_post_id`를 찾은 뒤 설정된 2개 overlap page까지
 읽으며, anchor가 아직 없는 bootstrap에서만 공지 제외 unchanged 20건을 fallback boundary로 쓴다.
-`--inventory`는 schema v3의 board별
+`--inventory`는 schema v4의 board별
 `inventory_next_page`부터 bounded page window를 읽고 미완료면 다음 run에서 이어 간다. schema v4는
 listing의 댓글 기대치를 frontier/lease에 보존해 detail 댓글 누락을 fail-closed한다.
 
@@ -1038,8 +1037,8 @@ storage_error
 
 - network policy의 단일 source of truth는 `crawler/settings.py`다. YAML을 추가하지 않는다.
   board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
-- 구현값은 `CONCURRENT_REQUESTS=1`, `CONCURRENT_REQUESTS_PER_DOMAIN=1`, detail concurrency 1,
-  `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, `RETRY_TIMES=2`,
+- 구현값은 `CONCURRENT_REQUESTS=2`, `CONCURRENT_REQUESTS_PER_DOMAIN=2`, detail concurrency 2,
+  `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, listing `RETRY_TIMES=3`, detail retry 0,
   `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=False`(2026-07-14
   사용자 결정; 요청 간격은 robots `Crawl-delay`와 같은 10초를 계속 지킴)다.
 - listing/detail timeout은 180/180초, response warning/max는 8/64MiB, 감속 전용 AutoThrottle은
@@ -1050,7 +1049,7 @@ storage_error
   Scrapy 압축 middleware가 관리), page 이동·상세 진입에 자연스러운 `Referer` 체인을 쓴다. 로그인
   handshake(`crawler.session`)도 같은 UA와 negotiation header를 보낸다. 이는 gnuboard/Apache WAF나
   rate limiter가 봇 token을 우선 차단하는 것을 피하기 위한 것이고, 인증 회원이 브라우저로 보는 것과
-  같은 페이지를 같은 발자국으로 받는다. 요청 간격 10초·동시성 1은 그대로 유지한다.
+  같은 페이지를 같은 발자국으로 받는다. 요청 시작 간격 10초·동시성 2를 유지한다.
 - 봇 차단·challenge interstitial(Cloudflare/WAF)이 게시글/목록 자리에 오면 parse drift가 아니라
   `network_error`로 분류해 site-wide backoff breaker를 태우고 frontier attempt를 보존한다. 이 판정은
   기대 구조가 이미 없는 응답에서만 하므로 그 문구를 인용한 정상 글에는 영향이 없다.
@@ -1430,8 +1429,8 @@ Gate:
 
 ### 13.3 Phase 1: archive kernel
 
-상태: archive kernel core와 local P0 safety, live schema v3 Oracle migration/doctor 완료, repository schema
-v4 local test 완료. v4 live migration과 새 automatic bundle의 gate 대기. schema/importer/parser/store/frontier, bounded
+상태: archive kernel core와 local P0 safety, live/repository schema v4 Oracle migration/doctor 완료.
+새 automatic bundle의 gate 대기. schema/importer/parser/store/frontier, bounded
 listing/sync/recovery, WARC, listing/run 실패 판정, 1건씩 lease, stale run 회수, timeout/retry/429/404
 정책과 `doctor`는 구현했다. systemd source와 D1 heartbeat, marker/outbox/expired command canary는
 실연결했다. sync mid-board breaker, session mid-cycle revalidation, 모든 분류 가능한 detail exit의 lease
@@ -1625,7 +1624,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 | TypeMoon 갑작스러운 종료 | backfill 미완료 | 기존 DB 먼저 보존, 고가치 board 우선 |
 | HTML drift | 잘못된 빈 본문 저장 | raw-first, quality gate, parse_drift 중단 |
 | 계정/session 만료 | crawl 정지 | 저장 session reuse, form login 1회, 명시적 auth_required |
-| 과도한 요청으로 차단 | coverage 저하/운영 피해 | concurrency 1, fixed delay, Retry-After/backoff |
+| 과도한 요청으로 차단 | coverage 저하/운영 피해 | staggered concurrency 2, fixed delay, Retry-After/backoff |
 | raw HTML XSS | 개인 기기 compromise | WARC 직접 렌더 금지, sanitize/CSP |
 | R2 credential 탈취 | serving 삭제 | content-addressed canonical/backup에서 재배포, scoped token |
 | B2 credential 탈취 | backup 삭제 | 별도 account/token, Oracle canonical, offline recovery 사본 |
@@ -1758,7 +1757,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - 결정: **승인 (2026-07-11, 사용자 방향 확정)**
 - 범위: instance, 194GiB boot volume, SSH와 network는 유지하고 legacy application/data만 검증된
   manifest 단위로 퇴역한다. Oracle에는 public viewer/API를 두지 않는다.
-- 근거: 추가 비용 0, 97GiB free와 4GiB swap을 이미 확보했고 concurrency 1 crawler에 충분하다.
+- 근거: 추가 비용 0, 71GiB 이상 free와 4GiB swap을 확보했고 concurrency 2 crawler에 충분하다.
   Cloudflare Free CPU/ephemeral container disk는 Python/Scrapy + 12GB SQLite/WARC host에 맞지 않고,
   새 Oracle A1을 위해 현 instance를 삭제하면 capacity와 200GB volume을 잃을 위험이 있다.
 - runtime: native pinned `uv` + Python 3.14 + systemd oneshot/timer. Docker는 smoke/fallback이며
@@ -1780,7 +1779,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
   R2 release 열람을 중단하지 않는다.
 - 통신: public inbound Oracle port를 열지 않는다. Oracle이 전용 Access service token으로
   command claim, heartbeat와 event를 outbound HTTPS로 보낸다.
-- 명령: `sync-now`, `retry-batch`(최대 100), `publish-if-changed`,
+- 명령: `sync-now`, `full-catalog`, `fill-missing-content`, `full-content`, `retry-batch`, `publish-if-changed`,
   `pause-after-current`, `resume-schedule`만 허용한다. shell, 임의 path/arg, restore/delete,
   강제 kill은 금지한다.
 - 안전성: conditional claim, expires_at, claim lease/renew/reclaim, idempotency key, local command
@@ -1842,7 +1841,7 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 [x] schema v3 inventory cursor migration 코드와 회귀 test
 [x] Oracle canonical schema v3 migration과 doctor
 [x] schema v4 durable listing 댓글 기대치·증분 anchor migration 코드와 회귀 test
-[ ] schema-v4-compatible application 2회 배포 뒤 canonical v4 migration/doctor
+[x] schema-v4-compatible application 2회 배포 뒤 canonical v4 migration/doctor
 [ ] pass-epoch inventory/bootstrap bundle live canary와 automatic schedule 관찰
 [x] full exporter/collection reader/Access JWT/rclone publish 구현
 ```

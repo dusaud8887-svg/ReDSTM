@@ -271,6 +271,7 @@ class FrontierStore:
         limit: int,
         now: datetime | None = None,
         board_id: str | None = None,
+        missing_only: bool = False,
     ) -> list[tuple[str, int]]:
         if limit < 1:
             raise ValueError("limit must be positive")
@@ -279,6 +280,17 @@ class FrontierStore:
         expired_board_clause = " AND board_id = ?" if board_id is not None else ""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                f"""
+                UPDATE crawl_frontier
+                SET state = 'retry', next_attempt_at = ?
+                WHERE state = 'dead'
+                  AND (last_error_code = 'network_error'
+                       OR lower(last_error_code) LIKE '%timed out%')
+                  {expired_board_clause}
+                """,
+                (selected_at, *([board_id] if board_id is not None else [])),
+            )
             connection.execute(
                 f"""
                 UPDATE crawl_frontier
@@ -292,30 +304,48 @@ class FrontierStore:
             group_order_sql = " ".join(
                 f"WHEN ? THEN {rank}" for rank, _group in enumerate(REDSTM_RECOVERY_GROUP_ORDER)
             )
-            # Prefer outline-only posts (no body version yet): inventory seeds leave
-            # latest_version_id NULL while pending rows with bodies are lower priority.
+            missing_clause = " AND post.latest_version_id IS NULL" if missing_only else ""
+            # Round-robin at board granularity so one slow, large board cannot monopolize
+            # an entire recovery batch.
             rows = connection.execute(
                 f"""
-                SELECT frontier.board_id, frontier.external_post_id
-                FROM crawl_frontier AS frontier
-                LEFT JOIN boards AS board ON board.board_id = frontier.board_id
-                LEFT JOIN posts AS post
-                  ON post.board_id = frontier.board_id
-                 AND post.external_post_id = frontier.external_post_id
-                WHERE frontier.state IN ('pending', 'retry')
-                  AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
-                  {board_clause}
+                WITH candidates AS (
+                    SELECT frontier.board_id, frontier.external_post_id,
+                        frontier.state, frontier.priority, frontier.attempts,
+                        board.group_name,
+                        CASE WHEN post.latest_version_id IS NULL THEN 0 ELSE 1 END AS body_rank,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY frontier.board_id
+                            ORDER BY
+                                CASE WHEN post.latest_version_id IS NULL THEN 0 ELSE 1 END,
+                                CASE WHEN frontier.state = 'retry' THEN 0 ELSE 1 END,
+                                frontier.priority DESC,
+                                frontier.attempts,
+                                frontier.external_post_id
+                        ) AS board_rank
+                    FROM crawl_frontier AS frontier
+                    LEFT JOIN boards AS board ON board.board_id = frontier.board_id
+                    LEFT JOIN posts AS post
+                      ON post.board_id = frontier.board_id
+                     AND post.external_post_id = frontier.external_post_id
+                    WHERE frontier.state IN ('pending', 'retry')
+                      AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
+                      {board_clause}
+                      {missing_clause}
+                )
+                SELECT board_id, external_post_id FROM candidates
                 ORDER BY
-                    CASE WHEN post.latest_version_id IS NULL THEN 0 ELSE 1 END,
-                    CASE WHEN frontier.state = 'retry' THEN 0 ELSE 1 END,
-                    CASE board.group_name
+                    body_rank,
+                    board_rank,
+                    CASE WHEN state = 'retry' THEN 0 ELSE 1 END,
+                    CASE group_name
                         {group_order_sql}
                         ELSE 3
                     END,
-                    frontier.priority DESC,
-                    frontier.attempts,
-                    frontier.board_id,
-                    frontier.external_post_id
+                    priority DESC,
+                    attempts,
+                    board_id,
+                    external_post_id
                 LIMIT ?
                 """,
                 (
@@ -474,26 +504,6 @@ class FrontierStore:
                 )
                 """,
                 (error_code, *([board_id] if board_id is not None else []), limit),
-            )
-        return cursor.rowcount
-
-    def preserve_network_attempts(self, run_ids: list[str]) -> int:
-        unique_run_ids = list(dict.fromkeys(run_ids))
-        if not unique_run_ids:
-            return 0
-        placeholders = ",".join("?" for _ in unique_run_ids)
-        with self._connect() as connection:
-            cursor = connection.execute(
-                f"""
-                UPDATE crawl_frontier
-                SET attempts = MAX(attempts - 1, 0), state = 'retry',
-                    next_attempt_at = NULL, last_error_code = NULL
-                WHERE state IN ('retry', 'dead') AND url IN (
-                    SELECT url FROM captures
-                    WHERE run_id IN ({placeholders}) AND error_code = 'network_error'
-                )
-                """,
-                unique_run_ids,
             )
         return cursor.rowcount
 

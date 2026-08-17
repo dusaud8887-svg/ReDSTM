@@ -240,7 +240,7 @@ test("keeps stale runner, empty telemetry, and readable release distinct", async
   await expect(page.locator("#latest-changed")).toHaveText("—");
   await expect(page.locator("#outline-only")).toHaveText("미보고");
   await expect(page.locator("#boards-list")).toContainText("운영 기록이 아직 보고되지 않았습니다");
-  await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(7);
+  await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(8);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -266,7 +266,7 @@ test("shows archive maintenance as live and blocks commands with a clear reason"
   await expect(page.locator("#last-heartbeat")).toContainText("확인 필요");
   await expect(page.locator("#active-step")).toHaveText("보관소 무결성 점검");
   await expect(page.locator("#warning-label")).toContainText("수동 수집은 점검 완료 후");
-  await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(7);
+  await expect(page.locator(".control-list [data-action]:disabled")).toHaveCount(8);
   await expect(page.locator("#control-summary")).toContainText("보관소 점검이 끝나면");
 });
 
@@ -503,7 +503,7 @@ test("only enables pause while the runner is working", async ({ page }) => {
   await page.goto("/ops");
 
   await expect(page.locator('.control-list [data-action="pause-after-current"]')).toBeEnabled();
-  await expect(page.locator('.control-list [data-action]:not([data-action="pause-after-current"]):disabled')).toHaveCount(6);
+  await expect(page.locator('.control-list [data-action]:not([data-action="pause-after-current"]):disabled')).toHaveCount(7);
   await expect(page.locator("#latest-changed")).toHaveText("23");
   await expect(page.locator("#latest-failed")).toHaveText("2");
   await expect(page.locator("#latest-boards")).toHaveText("4/5");

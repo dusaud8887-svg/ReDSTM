@@ -18,7 +18,6 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from crawler.archive import connect_archive
-from crawler.frontier import FrontierStore
 from crawler.session import (
     AutomaticLoginThrottleError,
     SessionNetworkError,
@@ -254,7 +253,6 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 "failed_posts": 0,
                 "boards_ok": 0,
                 "boards_failed": 0,
-                "preserved_attempts": 0,
                 "stop_reason": None,
                 "boards": [],
                 "inventory_coverage_complete": True,
@@ -290,8 +288,6 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         report_dir.mkdir(parents=True, exist_ok=False)
         consecutive_network_failures = 0
         consecutive_rate_limits = 0
-        network_run_ids: list[str] = []
-        preserved_attempts = 0
         status = "succeeded"
         stop_reason: str | None = None
         for board_id in boards:
@@ -411,8 +407,6 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 consecutive_network_failures = 0
                 continue
             network_failure = bool(failures & _NETWORK_FAILURES)
-            if network_failure and isinstance(report.get("run_id"), str):
-                network_run_ids.append(report["run_id"])
             # Inventory full-catalog often advances many listing pages before a later dribble
             # timeout. Counting that board as a pure outage aborts the pass after three boards
             # that each made real cursor progress. Only zero-progress network boards feed the
@@ -435,9 +429,6 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 consecutive_network_failures = 0
             if consecutive_network_failures >= REDSTM_CIRCUIT_BREAKER_FAILURES:
                 status = "site_unreachable"
-                preserved_attempts = FrontierStore(args.archive).preserve_network_attempts(
-                    network_run_ids
-                )
                 break
             consecutive_rate_limits = (
                 consecutive_rate_limits + 1 if "rate_limited" in failures else 0
@@ -467,7 +458,6 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             "failed_posts": failed_posts,
             "boards_ok": boards_ok,
             "boards_failed": len(results) - boards_ok,
-            "preserved_attempts": preserved_attempts,
             "stop_reason": stop_reason,
             "boards": results,
         }

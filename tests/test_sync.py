@@ -1438,11 +1438,12 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 2400
     assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
     assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
-    assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 420
+    assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 900
     assert crawler_settings.REDSTM_CONCURRENT_REQUESTS == 2
     assert crawler_settings.REDSTM_DETAIL_CONCURRENCY == 2
     assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 240
-    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["download_timeout"] == 420
+    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["download_timeout"] == 900
+    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["max_retry_times"] == 0
     project = _project_settings()
     assert project.getint("CONCURRENT_REQUESTS") == 2
     assert project.getint("CONCURRENT_REQUESTS_PER_DOMAIN") == 2

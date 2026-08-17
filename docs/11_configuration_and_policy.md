@@ -9,9 +9,9 @@
 source는 코드와 native deployment declaration이며, 이 문서는 source 위치와 변경 gate를 연결한다.
 같은 값을 별도 YAML에 다시 복사하지 않는다.
 
-canonical live는 schema v3이고 repository target은 additive schema v4다. migration SQL/hash는
-`crawler/archive.py`가 단일 source다. exporter는 exact migration ledger와 v4의
-`static_projection_compatible=True` 선언을 함께 확인할 때만 기존 v3 export state를 승격한다.
+canonical live와 repository target은 schema v4다. migration SQL/hash는 `crawler/archive.py`가
+단일 source다. exporter는 exact migration ledger와 v4의 `static_projection_compatible=True`
+선언을 함께 확인할 때만 기존 v3 export state를 승격한다.
 
 ## 1. 설정 원칙
 
@@ -128,12 +128,12 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | request | robots | 미준수(`ROBOTSTXT_OBEY=False`, 2026-07-14 사용자 결정; 10초 간격은 유지) | `crawler/settings.py` |
 | request | 발자국 | 브라우저 `USER_AGENT`(Chrome 150), `Accept`/`Accept-Language`, UA client hints(`sec-ch-ua*`)와 fetch-metadata(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`) 헤더(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer`와 `Sec-Fetch-Site` 체인, 로그인 핸드셰이크도 동일 헤더 | `crawler/settings.py` + `crawler/spiders/typemoon.py` + `crawler/session.py` |
 | request | TLS 지문 impersonation | 기본 off; `REDSTM_IMPERSONATE_BROWSER` 설정 시 curl_cffi/scrapy-impersonate로 crawl·로그인 모두 Chrome TLS/JA3 정합(optional `impersonate` extra 필요, canary 후 활성) | `crawler/footprint.py` + `crawler/settings.py` + `crawler/session.py` |
-| request | listing/detail timeout | 240초 / 420초 (AA 대형 본문, 장기 dribble) | `crawler/settings.py` |
-| request | retry | 최초 포함 총 4회 (`RETRY_TIMES=3`) | `crawler/settings.py` |
+| request | listing/detail timeout | 240초 / 900초 (AA 대형 본문, 장기 dribble) | `crawler/settings.py` |
+| request | retry | listing은 최초 포함 총 4회; detail은 1회 뒤 영속 frontier로 이관 | `crawler/settings.py` + `crawler/spiders/typemoon.py` |
 | response | warning/max | 8MiB / 64MiB | `crawler/settings.py` |
 | WARC | rotation | 1GiB | `crawler/settings.py` |
-| frontier | lease | 2400초 (detail 420초 × 재시도 + 여유) | `crawler/settings.py` |
-| frontier | capped 오류 attempts/backoff | network/parse/storage 5회, 120초부터 최대 6시간 | `crawler/settings.py` |
+| frontier | lease | 2400초 (detail 900초 1회 + 처리·종료 여유) | `crawler/settings.py` |
+| frontier | attempts/backoff | network는 120초부터 최대 6시간 간격으로 무기한; parse/storage는 5회 | `crawler/settings.py` |
 | source protection | `Retry-After`/breaker | 최대 24시간 / 같은 parse·network·429 class 연속 3회 | `crawler/settings.py` |
 | incremental | persisted boundary | exact board anchor 뒤 2 page | schema v4 + `crawler/settings.py` |
 | incremental | bootstrap fallback | anchor가 없을 때만 공지 제외 unchanged 20건 | `crawler/settings.py` |
@@ -142,7 +142,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | normalize | source 날짜 파싱 | 결정론적 절대 포맷(2자리 연도 포함) → base-anchored `MM-DD`/`HH:MM` → dateparser relative-time(`어제`/`N일 전`); 원문 `created_at_raw`는 항상 보존 | `scripts/legacy_common.py` |
 | detail audit | stale detail revisit | 30일 eligibility, batch당 oldest-first 예약 1건 | `crawler/settings.py` |
 | cycle | graceful budget | invocation당 4시간 | `crawler/settings.py` + CLI override |
-| recovery | 내부 chunk | normal 20건 / full-content 100건 | 같은 command가 남은 항목 0까지 자동 반복; 총량·총시간 상한 아님 |
+| recovery | 내부 chunk | normal 20건 / full-content 100건 | 수동 command는 남은 항목 0까지 반복; 자동 cycle은 20건·최대 2시간 단일 batch |
 | recovery | board group order | AA → 창작 → 팬픽 → 나머지 | `crawler/settings.py` |
 | export | automatic workers / changed-post cap | 1 / 0(무제한) | `crawler/settings.py` |
 | export | deterministic compression | post object level 15 / board·search·collection aggregate `-v2` level 6 | `scripts.export_static` |

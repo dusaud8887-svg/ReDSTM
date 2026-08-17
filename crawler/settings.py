@@ -87,11 +87,11 @@ AUTOTHROTTLE_TARGET_CONCURRENCY = float(REDSTM_CONCURRENT_REQUESTS)
 # - detail (especially AA): multi-MB HTML that routinely needs several minutes.
 # DOWNLOAD_TIMEOUT is the Scrapy default; per-request meta overrides it.
 REDSTM_LISTING_TIMEOUT_SECONDS = 240
-REDSTM_DETAIL_TIMEOUT_SECONDS = 420
+REDSTM_DETAIL_TIMEOUT_SECONDS = 15 * 60
 DOWNLOAD_TIMEOUT = REDSTM_DETAIL_TIMEOUT_SECONDS
 
-# First try + RETRY_TIMES retries. Flaky dribble/truncated bodies need one more
-# chance than the old total of 3 when the origin stalls mid-stream then recovers.
+# Listing pages retry in-process because their cursor cannot advance on a failed page.
+# Detail requests override this to zero and use the persistent frontier backoff instead.
 RETRY_TIMES = 3
 RETRY_HTTP_CODES = [408, 500, 502, 503, 504, 520, 522, 524]
 DOWNLOAD_WARNSIZE = 8 << 20
@@ -126,12 +126,12 @@ if REDSTM_IMPERSONATE_BROWSER:
 
 REDSTM_WARC_PATH = ".data/warc/capture.warc.gz"
 REDSTM_WARC_MAX_BYTES = 1 << 30
-# Detail 420s × (1 + RETRY_TIMES) ≈ 28 min worst case per lease, plus processing room under
-# staggered concurrency 2–3. Keep lease above that so reclaim does not steal a live download.
+# One detail attempt may stream for 15 minutes. Keep enough lease room for processing/shutdown.
 REDSTM_FRONTIER_LEASE_SECONDS = 2400
 REDSTM_FRONTIER_MAX_ATTEMPTS = 5
-REDSTM_FRONTIER_NETWORK_MAX_ATTEMPTS = REDSTM_FRONTIER_MAX_ATTEMPTS
-REDSTM_CAPPED_RETRY_ERROR_CODES = frozenset({"network_error", "parse_drift", "storage_error"})
+# Origin/network failures remain retryable forever with capped backoff. Parser and local
+# storage failures require manual review after the bounded attempt budget.
+REDSTM_CAPPED_RETRY_ERROR_CODES = frozenset({"parse_drift", "storage_error"})
 REDSTM_FRONTIER_BACKOFF_BASE_SECONDS = 120
 REDSTM_FRONTIER_BACKOFF_CAP_SECONDS = 6 * 60 * 60
 REDSTM_LISTING_OVERLAP_UNCHANGED = 20

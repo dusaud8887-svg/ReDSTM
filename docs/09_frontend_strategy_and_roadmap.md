@@ -261,7 +261,7 @@ Operations는 D1을 canonical replica로 쓰지 않는다.
 행동:
 
 - sync-now
-- retry-batch max 100
+- retry-batch: 내부 20건 chunk로 due 0까지 처리
 - publish-if-changed
 - pause-after-current
 - resume-schedule

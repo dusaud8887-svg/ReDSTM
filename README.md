@@ -1,7 +1,7 @@
 # ReDSTM
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
-schema v3 Oracle canonical runner가 배포돼 있고 repository target은 additive schema v4다. v4는 댓글 기대값과 증분 기준 게시글을 함께 이관한다. 남은 제품 작업은 production delta/failure canary,
+schema v4 Oracle canonical runner가 배포돼 있다. v4는 댓글 기대값과 증분 기준 게시글을 함께 보존한다. 남은 제품 작업은 production delta/failure canary,
 그 전에 필요한 명시적 full export/publish baseline bootstrap, 실제 Android acceptance와 최대 20~30분
 집중 운영 관찰이다. 완료된 초기
 migration·타당성 증거는 `docs/done/`에 둔다.
@@ -107,7 +107,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
 - R2 baseline upload/check/pointer와 authenticated data smoke/rollback
 - Access user/service role을 분리한 remote `/ops`, D1 heartbeat와 fixed command marker/outbox/expiry canary
-- 6시간 최신 글 증분 수집과 목차 완료 후 본문까지 이어지는 전체 재수집
+- 6시간 최신 글 증분 수집·bounded 실패 재시도·변경 배포와, 목차 완료 후 누락 본문까지 이어지는 전체 수집
 - AA -> 창작 -> 팬픽 우선의 설정 기반 순차 recovery chunk
 - stable post identity user-state export/import와 vendored Saitamaar font
 - 홈/탐색/보관함 mobile-first Reader, 소설/AA filter, direct save와 Operations 상호 진입
@@ -130,14 +130,16 @@ robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTX
 원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. 요청은 로그인 회원의 브라우저와 일관된 발자국
 (실제 브라우저 UA, `Accept`/`Accept-Language`, page·detail `Referer` 체인; 로그인 handshake도 동일)을
 보내 WAF/rate limiter의 봇 차단을 피하고, 봇 차단·challenge 페이지가 오면 parse drift가 아니라
-`network_error`로 backoff한다. listing/detail timeout은 180초로 같고, 원본 outage에서는 cycle/recovery
-모두 `site_unreachable`로 조기 종료하며 그 run의 network attempt를 보존한다. Oracle canonical live는 schema v3이고
-repository target은 listing 댓글 기대값과 마지막 증분 게시글을 함께 보존하는 additive schema v4다.
-자동 모드는 최신 page incremental만 6시간마다 실행한다. 이전 기준 게시글이 나온 page 뒤 2 page를
-더 확인하고, 이미 다른 cycle이 실행 중이면 새 cycle은 `busy`로 통과한다. 전체 재수집은
-Operations의 명시적 수동 작업이며, 목차를 끝낸 뒤 같은 작업에서 본문·댓글까지 이어가고 기존 성공분도 건너뛰지 않는다. 게시글 하나가 실패해도 다음 글로
-진행하고 capped 오류가 5회 실패한 항목만 최종 실패 목록으로 분리한다. 수동 full 작업은 20/100건의
-양수 chunk와 영속 checkpoint로 전체 범위를 이어 가며 상세 요청은 한 번에 1개만 처리한다.
+`network_error`로 backoff한다. listing/detail timeout은 각각 240/900초다. listing cursor는 내부에서
+최대 3회 재시도하지만 detail은 한 번만 요청하고, 실패하면 영속 frontier가 2분~6시간 backoff로
+다음 batch에 무기한 재시도한다. Oracle canonical live와 repository target은 schema v4다.
+자동 모드는 최신 page incremental 뒤 due 실패 20건을 최대 2시간 재처리하고 변경분을 6시간마다
+배포한다. 이전 기준 게시글이 나온 page 뒤 2 page를 더 확인하고, 이미 다른 cycle이 실행 중이면 새
+cycle은 `busy`로 통과한다. 전체 수집은 Operations의 명시적 수동 작업이며, 목차를 끝낸 뒤 같은
+작업에서 누락 본문·댓글을 이어간다. 레거시 missing도 한 번 재검증해 현재 상태를 확정한다. 기존 성공분까지 다시 검증할 때만 별도
+`full-content`를 사용한다. 게시글 하나가 실패해도 다음 글로 진행하고 network 오류는 영구 retry,
+parse/storage 오류만 5회 뒤 최종 실패로 분리한다. 수동 full 작업은 20/100건의 양수 chunk와 영속
+checkpoint로 전체 범위를 이어 가며 상세 요청은 최대 2개를 stagger해 처리한다.
 network·session·revisit 정책은 `crawler/settings.py`, secret은 environment가 source
 of truth이며 별도 YAML은 두지 않는다. 전체 분류와 환경변수 계약은
 [`설정·운영 정책 기준`](docs/11_configuration_and_policy.md)을 따른다. automatic delta는 verified
