@@ -18,6 +18,7 @@ from crawler.settings import (
     REDSTM_ACCEPT_LANGUAGE,
     REDSTM_CIRCUIT_BREAKER_FAILURES,
     REDSTM_DETAIL_CONCURRENCY,
+    REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS,
     REDSTM_DETAIL_TIMEOUT_SECONDS,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_INCREMENTAL_OVERLAP_PAGES,
@@ -505,6 +506,7 @@ class TypeMoonSpider(scrapy.Spider):
                 "expected_comment_count": expected_comment_count,
                 # AA bodies regularly need multi-minute streaming; listing timeout is too tight.
                 "download_timeout": REDSTM_DETAIL_TIMEOUT_SECONDS,
+                "download_idle_timeout": REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS,
                 # A failed multi-minute detail belongs at the back of the durable frontier,
                 # not in Scrapy's immediate retry loop against the same sick origin worker.
                 "max_retry_times": 0,
@@ -516,6 +518,9 @@ class TypeMoonSpider(scrapy.Spider):
         if self.store is None or self.run_id is None:
             return None
         request = failure.request
+        recorded = request.meta.get("redstm_recorded_error")
+        if isinstance(recorded, str):
+            return recorded
         lease = request.meta.get("frontier_lease")
         if not isinstance(lease, FrontierLease):
             raise ValueError("failed detail request has no frontier lease")
@@ -546,7 +551,32 @@ class TypeMoonSpider(scrapy.Spider):
             frontier_state="retry",
             retry_after_at=_retry_after(response, fetched_at) if status_code == 429 else None,
         )
+        request.meta["redstm_recorded_error"] = error_code
         return error_code
+
+    def download_idle_timeout(self, requests: Iterable[scrapy.Request]) -> None:
+        if self.store is None or self.run_id is None:
+            return
+        for request in requests:
+            if isinstance(request.meta.get("redstm_recorded_error"), str):
+                continue
+            lease = request.meta.get("frontier_lease")
+            if not isinstance(lease, FrontierLease):
+                continue
+            self.store.record_outcome(
+                self.run_id,
+                url=request.url,
+                outcome="fetch_failed",
+                fetched_at=datetime.now(UTC),
+                board_id=lease.board_id,
+                external_post_id=lease.external_post_id,
+                error_code="network_error",
+                lease=lease,
+                frontier_state="retry",
+            )
+            request.meta["redstm_recorded_error"] = "network_error"
+        self.failure_codes.add("network_error")
+        self._halted = True
 
     def listing_request(
         self,

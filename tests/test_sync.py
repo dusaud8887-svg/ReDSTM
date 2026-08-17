@@ -1439,18 +1439,22 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
     assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
     assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 1800
+    assert crawler_settings.REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS == 300
     assert crawler_settings.REDSTM_CONCURRENT_REQUESTS == 2
     assert crawler_settings.REDSTM_DETAIL_CONCURRENCY == 2
     assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 240
-    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["download_timeout"] == 1800
-    assert TypeMoonSpider().detail_request("write", 1, _session()).meta["max_retry_times"] == 0
+    detail = TypeMoonSpider().detail_request("write", 1, _session())
+    assert detail.meta["download_timeout"] == 1800
+    assert detail.meta["download_idle_timeout"] == 300
+    assert detail.meta["max_retry_times"] == 0
     project = _project_settings()
     assert project.getint("CONCURRENT_REQUESTS") == 2
     assert project.getint("CONCURRENT_REQUESTS_PER_DOMAIN") == 2
     assert project.getfloat("DOWNLOAD_DELAY") == 10
     assert project.getint("RETRY_TIMES") == 3
     assert project.getdict("DOWNLOADER_MIDDLEWARES") == {
-        "crawler.middlewares.WarcCaptureMiddleware": 595
+        "crawler.middlewares.DetailIdleWatchdog": 590,
+        "crawler.middlewares.WarcCaptureMiddleware": 595,
     }
     assert project.getdict("ITEM_PIPELINES") == {"crawler.archive_pipeline.ArchivePipeline": 300}
     assert _project_settings(123).getint("CLOSESPIDER_TIMEOUT") == 123
@@ -1474,6 +1478,45 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert parse_sync_args().parent_lock_held is True
     monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
     assert parse_recovery_args().lease_seconds == 3600
+
+
+def test_detail_idle_timeout_requeues_every_in_flight_lease_once(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    _initialize(archive)
+    store = ArchiveStore(archive)
+    frontier = FrontierStore(archive)
+    run_id = store.start_run("retry")
+    spider = TypeMoonSpider(archive_path=archive, run_id=run_id, session=_session())
+    requests: list[Request] = []
+    for post_id in (1, 2):
+        url = spider.detail_url("write_free21", post_id)
+        frontier.seed("write_free21", post_id, url)
+        lease = frontier.claim_identity("write_free21", post_id, lease_seconds=60)
+        assert lease is not None
+        request = spider.detail_request("write_free21", post_id, _session())
+        request.meta["frontier_lease"] = lease
+        requests.append(request)
+
+    spider.download_idle_timeout(requests)
+    assert spider.detail_error(SimpleNamespace(request=requests[0], value=OSError())) == (
+        "network_error"
+    )
+
+    with connect_archive(archive) as connection:
+        states = connection.execute(
+            "SELECT state, last_error_code FROM crawl_frontier ORDER BY external_post_id"
+        ).fetchall()
+        captures = connection.execute(
+            "SELECT outcome, error_code FROM captures WHERE run_id = ? ORDER BY id", (run_id,)
+        ).fetchall()
+    assert [tuple(row) for row in states] == [
+        ("retry", "network_error"),
+        ("retry", "network_error"),
+    ]
+    assert [tuple(row) for row in captures] == [
+        ("fetch_failed", "network_error"),
+        ("fetch_failed", "network_error"),
+    ]
 
 
 def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:

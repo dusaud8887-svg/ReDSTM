@@ -59,7 +59,7 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 | checkpoint | DB cursor/lease + pass marker | JSON checkpoint + DB queue | page CSV와 파일 존재 | persistent RequestQueue/RequestList |
 | 기본 동시성 | global/domain/detail 2(환경변수 1–3) | UI 2 표기지만 rebuild 실제 직렬 | 1 | resource-aware autoscaling, min/max/분당 제한 |
 | 시작 간격 | 고정 10초, 감속 AutoThrottle | rebuild 고정 4초 | 대략 3~5초+매 5회 추가 휴식 | same-domain delay와 maxRequestsPerMinute |
-| timeout | listing 240초/detail 1800초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
+| timeout | listing 총 240초/detail 총 1800초+수신 idle 300초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
 | retry | listing 내부 3회; detail 1회 뒤 durable frontier | fetch retry+workflow retry, failed/dead queue | adapter retry와 외부 loop가 중첩 | maxRequestRetries, error/final failure handler |
 | 429 | Retry-After 최대 24시간 반영 | 60초 cooldown 후 1회 | 일반 HTTPError와 동일, Retry-After 미지원 | blocked retry/session rotation/사용자 handler |
 | 장애 차단 | detail network 5회, parse/rate 3회 breaker | network 8회, content 5/8 단계 복구 | 없음 | retry budget과 handler; domain breaker는 사용자가 정책화 |
@@ -91,7 +91,8 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 ### 현재 처리량
 
 `crawler/settings.py` 기준값은 global/domain/detail concurrency 2, `DOWNLOAD_DELAY=10`, listing/detail
-timeout 240/1800초다. listing은 내부 재시도 3회, detail은 한 번 뒤 durable frontier로 defer한다.
+총 timeout 240/1800초다. listing은 내부 재시도 3회, detail은 수신이 300초 멈추거나 한 번 실패하면
+durable frontier로 defer한다.
 
 - 응답이 10초 이하일 때 이론상 최대 6 request/minute, 360/hour다.
 - 응답이 30초 이상이면 concurrency 2가 느린 응답 두 개를 겹쳐 직렬 대기보다 처리량을 높인다.

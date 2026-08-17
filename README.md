@@ -130,7 +130,8 @@ robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTX
 원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. 요청은 로그인 회원의 브라우저와 일관된 발자국
 (실제 브라우저 UA, `Accept`/`Accept-Language`, page·detail `Referer` 체인; 로그인 handshake도 동일)을
 보내 WAF/rate limiter의 봇 차단을 피하고, 봇 차단·challenge 페이지가 오면 parse drift가 아니라
-`network_error`로 backoff한다. listing/detail timeout은 각각 240/1800초다. listing cursor는 내부에서
+`network_error`로 backoff한다. listing/detail 총 timeout은 각각 240/1800초이고, detail은 수신
+진행이 300초 멈추면 배치의 in-flight lease를 즉시 retry로 반환한다. listing cursor는 내부에서
 최대 3회 재시도하지만 detail은 한 번만 요청하고, 실패하면 영속 frontier가 2분~6시간 backoff로
 다음 batch에 무기한 재시도한다. network breaker 뒤 장기 수동 작업은 1건 canary로 원본 회복을
 확인한 뒤 정상 20건 chunk·2병렬로 복귀한다. 실행 중 Operations 집계는 5분마다 canonical
