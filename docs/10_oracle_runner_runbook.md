@@ -477,9 +477,9 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | network | robots | `ROBOTSTXT_OBEY=False` (2026-07-14 사용자 결정) | 인증 회원 본인 전용 아카이브; 10초 간격은 robots `Crawl-delay`와 동일하게 유지, per-process robots fetch 대기 제거 |
 | network | 발자국 | 브라우저 `USER_AGENT` + `Accept`/`Accept-Language` + page/detail `Referer` 체인, 로그인 handshake도 동일 | 봇 token을 우선 차단하는 WAF/rate limiter 회피; 회원 브라우저와 같은 발자국 |
 | outage | 봇 차단 감지 | 게시글/목록 자리의 challenge interstitial(Cloudflare/WAF)은 `network_error`로 분류 | site-wide backoff breaker 발화·attempt 보존, parse drift 오분류 방지 |
-| network | listing timeout | 180초 | 저속 원본에서 목록도 수 분간 streaming됨; 실측상 본문 뒤 비정상 TLS EOF(약 109초)와 저속 완결 응답을 모두 수용, detail과 동일 상한 |
-| network | detail timeout | 180초 | 수 MB AA + 느린 응답(기존 유지) |
-| network | request retry | 총 3회(`RETRY_TIMES=2`), 408/5xx/522/524 | 기존 유지 |
+| network | listing timeout | 240초 | 저속 원본에서 목록도 수 분간 streaming됨; 실측상 본문 뒤 비정상 TLS EOF(약 109초)와 저속 완결 응답을 모두 수용 |
+| network | detail timeout | 1800초 | 2026-08-17 실운영에서 서로 다른 대형 AA가 900초 상한에 반복 도달해 장기 streaming을 수용하도록 상향 |
+| network | request retry | 최초 포함 총 4회(`RETRY_TIMES=3`), 408/5xx/522/524; detail은 1회 뒤 durable defer | 기존 영속 재시도 유지 |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; detail network retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 0건으로 확정하지 않음 |
 | network | 429/network breaker | `Retry-After` 우선(최대 24시간), 같은 class 연속 3회면 recovery 조기 종료 | 과속·전체 outage에서 다음 97건 요청 금지 |
@@ -489,7 +489,7 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | frontier | network attempts | 5회 뒤 dead | 기존 유지 |
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
 | frontier | 404 | 서로 다른 run 2회 확인 뒤 missing | 기존 유지 |
-| frontier | lease | 900초로 상향 | detail 180초 × 최대 3 시도(~570초+) + 처리 여유; 현행 300초는 느린 AA 재시도 경로를 못 덮음 |
+| frontier | lease | 3600초 | detail 1800초 1회 + 처리·종료 여유 |
 | recovery | 총량·총시간 | 상한 없음 | due 또는 전체 재수집 대상을 끝까지 순차 처리 |
 | cycle | 총량·총시간 | 상한 없음 | 동일 unit/lock이 다음 slot의 중복 실행을 막음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |

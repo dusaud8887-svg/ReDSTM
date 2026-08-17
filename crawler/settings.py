@@ -87,7 +87,7 @@ AUTOTHROTTLE_TARGET_CONCURRENCY = float(REDSTM_CONCURRENT_REQUESTS)
 # - detail (especially AA): multi-MB HTML that routinely needs several minutes.
 # DOWNLOAD_TIMEOUT is the Scrapy default; per-request meta overrides it.
 REDSTM_LISTING_TIMEOUT_SECONDS = 240
-REDSTM_DETAIL_TIMEOUT_SECONDS = 15 * 60
+REDSTM_DETAIL_TIMEOUT_SECONDS = 30 * 60
 DOWNLOAD_TIMEOUT = REDSTM_DETAIL_TIMEOUT_SECONDS
 
 # Listing pages retry in-process because their cursor cannot advance on a failed page.
@@ -126,8 +126,8 @@ if REDSTM_IMPERSONATE_BROWSER:
 
 REDSTM_WARC_PATH = ".data/warc/capture.warc.gz"
 REDSTM_WARC_MAX_BYTES = 1 << 30
-# One detail attempt may stream for 15 minutes. Keep enough lease room for processing/shutdown.
-REDSTM_FRONTIER_LEASE_SECONDS = 2400
+# One detail attempt may stream for 30 minutes. Keep enough lease room for processing/shutdown.
+REDSTM_FRONTIER_LEASE_SECONDS = 3600
 REDSTM_FRONTIER_MAX_ATTEMPTS = 5
 # Origin/network failures remain retryable forever with capped backoff. Parser and local
 # storage failures require manual review after the bounded attempt budget.
