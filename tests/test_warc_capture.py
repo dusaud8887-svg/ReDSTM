@@ -24,21 +24,18 @@ def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings() -> None:
     abandoned: list[list[Request]] = []
     closed: list[str] = []
 
-    class Engine:
-        async def close_spider_async(self, *, reason: str) -> None:
-            closed.append(reason)
-
     spider = SimpleNamespace(
         download_idle_timeout=lambda requests: abandoned.append(requests),
         logger=SimpleNamespace(warning=lambda *args: None),
     )
     crawler = SimpleNamespace(
         spider=spider,
-        engine=Engine(),
         stats=SimpleNamespace(inc_value=lambda key: None),
+        signals=SimpleNamespace(send_catch_log=lambda **kwargs: closed.append(kwargs["reason"])),
     )
     clock = Clock()
-    watchdog = DetailIdleWatchdog(cast(Crawler, crawler), clock)
+    stopped: list[bool] = []
+    watchdog = DetailIdleWatchdog(cast(Crawler, crawler), clock, lambda: stopped.append(True))
     stalled = Request("https://www.typemoon.net/aa/1", meta={"download_idle_timeout": 300})
     sibling = Request("https://www.typemoon.net/aa/2", meta={"download_idle_timeout": 300})
     listing = Request("https://www.typemoon.net/aa")
@@ -54,6 +51,7 @@ def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings() -> None:
 
     assert abandoned == [[stalled, sibling]]
     assert closed == ["download_idle_timeout"]
+    assert stopped == [True]
 
 
 def test_warc_capture_keeps_raw_response_without_secrets(tmp_path: Path) -> None:
