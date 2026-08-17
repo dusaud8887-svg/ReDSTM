@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 class SequentialDetailDownloadHandler:
     """Use Requests' per-read timeout for details and Scrapy's handler for everything else."""
 
+    lazy = True
+
     def __init__(self, crawler: Crawler) -> None:
         if crawler.settings.get("REDSTM_IMPERSONATE_BROWSER"):
             handler_type = import_module("scrapy_impersonate").ImpersonateDownloadHandler
