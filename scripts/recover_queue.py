@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -141,6 +142,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         warc_path = warc_dir / f"{run_id}.warc.gz"
 
         scheduled = 0
+        download_idle_timeout = False
         failures: list[str] = []
         spider_failures: set[str] = set()
         preflight_status: str | None = None
@@ -179,6 +181,9 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 impersonate_browser=REDSTM_IMPERSONATE_BROWSER,
             )
             process.start(stop_after_crawl=True)
+            download_idle_timeout = bool(
+                crawler.stats and crawler.stats.get_value("redstm/detail_idle_timeouts")
+            )
             spider = crawler.spider
             scheduled = int(getattr(spider, "scheduled_posts", 0)) if spider else 0
             paused = bool(getattr(spider, "paused", False))
@@ -245,7 +250,13 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "requeued_dead": requeued_dead,
             "revisited_posts": revisited_posts,
             "full_content_remaining": full_content_remaining,
-            "stop_reason": "schedule_paused" if paused else None,
+            "stop_reason": (
+                "schedule_paused"
+                if paused
+                else "download_idle_timeout"
+                if download_idle_timeout
+                else None
+            ),
             "warc_path": str(warc_path),
         }
     except Exception:
@@ -306,7 +317,15 @@ def main() -> int:
     if args.output is not None:
         _write_report(args.output, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report["ok"] else 2
+    exit_code = 0 if report["ok"] else 2
+    if report.get("stop_reason") == "download_idle_timeout":
+        # reactor.crash() intentionally skips Scrapy's circular shutdown hook, including
+        # Twisted thread-pool cleanup. The durable report is complete, so end this
+        # single-crawl child without waiting on those abandoned downloader resources.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":
