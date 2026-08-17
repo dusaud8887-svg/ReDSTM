@@ -128,11 +128,11 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | request | robots | 미준수(`ROBOTSTXT_OBEY=False`, 2026-07-14 사용자 결정; 10초 간격은 유지) | `crawler/settings.py` |
 | request | 발자국 | 브라우저 `USER_AGENT`(Chrome 150), `Accept`/`Accept-Language`, UA client hints(`sec-ch-ua*`)와 fetch-metadata(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`) 헤더(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer`와 `Sec-Fetch-Site` 체인, 로그인 핸드셰이크도 동일 헤더 | `crawler/settings.py` + `crawler/spiders/typemoon.py` + `crawler/session.py` |
 | request | TLS 지문 impersonation | 기본 off; `REDSTM_IMPERSONATE_BROWSER` 설정 시 curl_cffi/scrapy-impersonate로 crawl·로그인 모두 Chrome TLS/JA3 정합(optional `impersonate` extra 필요, canary 후 활성) | `crawler/footprint.py` + `crawler/settings.py` + `crawler/session.py` |
-| request | listing/detail timeout | 240초 / 1800초 (AA 대형 본문, 장기 dribble) | `crawler/settings.py` |
+| request | listing/detail timeout | listing 총 240초 / detail 총 1800초 + 수신 idle 300초(첫 응답 600초) | `crawler/settings.py` |
 | request | retry | listing은 최초 포함 총 4회; detail은 1회 뒤 영속 frontier로 이관 | `crawler/settings.py` + `crawler/spiders/typemoon.py` |
 | response | warning/max | 8MiB / 64MiB | `crawler/settings.py` |
 | WARC | rotation | 1GiB | `crawler/settings.py` |
-| frontier | lease | 3600초 (detail 1800초 1회 + 처리·종료 여유) | `crawler/settings.py` |
+| frontier | lease | 3600초 (detail 총 1800초 1회 + 처리·종료 여유; idle 종료 시 즉시 retry 반환) | `crawler/settings.py` |
 | frontier | attempts/backoff | network는 120초부터 최대 6시간 간격으로 무기한; parse/storage는 5회 | `crawler/settings.py` |
 | source protection | `Retry-After`/breaker | 최대 24시간 / parse·429 연속 3회, network 연속 5회 | `crawler/settings.py` |
 | incremental | persisted boundary | exact board anchor 뒤 2 page | schema v4 + `crawler/settings.py` |

@@ -88,6 +88,10 @@ AUTOTHROTTLE_TARGET_CONCURRENCY = float(REDSTM_CONCURRENT_REQUESTS)
 # DOWNLOAD_TIMEOUT is the Scrapy default; per-request meta overrides it.
 REDSTM_LISTING_TIMEOUT_SECONDS = 240
 REDSTM_DETAIL_TIMEOUT_SECONDS = 30 * 60
+# Total time protects large AA documents; idle time detects a socket that stopped making
+# progress. The watchdog gives the first response headers twice this budget for
+# queue/origin latency.
+REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS = 5 * 60
 DOWNLOAD_TIMEOUT = REDSTM_DETAIL_TIMEOUT_SECONDS
 
 # Listing pages retry in-process because their cursor cannot advance on a failed page.
@@ -103,7 +107,10 @@ COOKIES_ENABLED = True
 TELNETCONSOLE_ENABLED = False
 LOG_LEVEL = "INFO"
 
-DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {"crawler.middlewares.WarcCaptureMiddleware": 595}
+DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {
+    "crawler.middlewares.DetailIdleWatchdog": 590,
+    "crawler.middlewares.WarcCaptureMiddleware": 595,
+}
 ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}
 
 # Optional TLS/JA3 fingerprint impersonation (off unless REDSTM_IMPERSONATE_BROWSER is set).

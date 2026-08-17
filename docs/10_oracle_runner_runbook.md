@@ -478,13 +478,13 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | network | 발자국 | 브라우저 `USER_AGENT` + `Accept`/`Accept-Language` + page/detail `Referer` 체인, 로그인 handshake도 동일 | 봇 token을 우선 차단하는 WAF/rate limiter 회피; 회원 브라우저와 같은 발자국 |
 | outage | 봇 차단 감지 | 게시글/목록 자리의 challenge interstitial(Cloudflare/WAF)은 `network_error`로 분류 | site-wide backoff breaker 발화·attempt 보존, parse drift 오분류 방지 |
 | network | listing timeout | 240초 | 저속 원본에서 목록도 수 분간 streaming됨; 실측상 본문 뒤 비정상 TLS EOF(약 109초)와 저속 완결 응답을 모두 수용 |
-| network | detail timeout | 1800초 | 2026-08-17 실운영에서 서로 다른 대형 AA가 900초 상한에 반복 도달해 장기 streaming을 수용하도록 상향 |
+| network | detail timeout | 총 1800초 + 수신 idle 300초(첫 응답 600초) | 대형 AA가 계속 streaming되는 동안은 총 상한까지 허용하되, 2026-08-17 실측처럼 일부 body 뒤 socket 수신이 멈춘 연결은 배치 전체 in-flight lease를 즉시 retry로 반환하고 1건 canary로 전환 |
 | network | request retry | 최초 포함 총 4회(`RETRY_TIMES=3`), 408/5xx/522/524; detail은 1회 뒤 durable defer | 기존 영속 재시도 유지 |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; 잘린 detail은 저장하지 않고 durable retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 본문으로 저장하지 않음 |
 | network | 429/network breaker | `Retry-After` 우선(최대 24시간), parse·429 연속 3회/network 연속 5회면 recovery 조기 종료; 다음 장기 cycle은 1건 canary | 과속·전체 outage에서 정상 chunk를 막고 canary 성공 뒤 2병렬 복귀 |
 | outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 enabled board 전체를 순회하지 않음 |
-| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery는 연속 network 5회에서 종료 | listing 3회 retry × 240초와 detail 1800초 상한 안에서 중단 |
+| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery는 연속 network 5회 또는 detail idle 300초에서 종료 | listing은 기존 retry를 유지하고, detail 무수신은 30분씩 누적하지 않음 |
 | outage | attempt 보존 | `site_unreachable` run(cycle/recovery 모두)의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
 | frontier | network attempts | 횟수 제한 없이 backoff retry; 과거 network dead도 recovery에서 재개 | 원본 outage로 영구 탈락시키지 않음 |
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |

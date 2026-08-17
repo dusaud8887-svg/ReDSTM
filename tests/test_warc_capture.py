@@ -4,15 +4,56 @@ import gzip
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
+from scrapy import Spider
+from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request
+from twisted.internet.task import Clock
 from warcio.archiveiterator import ArchiveIterator  # type: ignore[import-untyped]
 
 from crawler import settings
 from crawler.archive import initialize_archive
-from crawler.middlewares import WarcCaptureMiddleware
+from crawler.middlewares import DetailIdleWatchdog, WarcCaptureMiddleware
 from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
+
+
+def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings() -> None:
+    abandoned: list[list[Request]] = []
+    closed: list[str] = []
+
+    class Engine:
+        async def close_spider_async(self, *, reason: str) -> None:
+            closed.append(reason)
+
+    spider = SimpleNamespace(
+        download_idle_timeout=lambda requests: abandoned.append(requests),
+        logger=SimpleNamespace(warning=lambda *args: None),
+    )
+    crawler = SimpleNamespace(
+        spider=spider,
+        engine=Engine(),
+        stats=SimpleNamespace(inc_value=lambda key: None),
+    )
+    clock = Clock()
+    watchdog = DetailIdleWatchdog(cast(Crawler, crawler), clock)
+    stalled = Request("https://www.typemoon.net/aa/1", meta={"download_idle_timeout": 300})
+    sibling = Request("https://www.typemoon.net/aa/2", meta={"download_idle_timeout": 300})
+    listing = Request("https://www.typemoon.net/aa")
+    impersonated = Request(
+        "https://www.typemoon.net/aa/3",
+        meta={"download_idle_timeout": 300, "impersonate": "chrome150"},
+    )
+
+    for request in (stalled, sibling, listing, impersonated):
+        watchdog.request_reached_downloader(request, cast(Spider, spider))
+    watchdog.bytes_received(b"part", stalled, cast(Spider, spider))
+    clock.advance(300)
+
+    assert abandoned == [[stalled, sibling]]
+    assert closed == ["download_idle_timeout"]
 
 
 def test_warc_capture_keeps_raw_response_without_secrets(tmp_path: Path) -> None:

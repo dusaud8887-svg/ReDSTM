@@ -5,13 +5,15 @@ import re
 from http import HTTPStatus
 from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO, Self
+from typing import Any, BinaryIO, Self
 from urllib.parse import parse_qs, urlsplit
 
 from scrapy import Spider, signals
 from scrapy.crawler import Crawler
 from scrapy.exceptions import NotConfigured
 from scrapy.http import Request, Response
+from scrapy.utils.defer import deferred_from_coro
+from twisted.internet import reactor
 from warcio.statusandheaders import StatusAndHeaders  # type: ignore[import-untyped]
 from warcio.warcwriter import WARCWriter  # type: ignore[import-untyped]
 
@@ -21,6 +23,88 @@ from crawler.store import ArchiveStore
 _CAPTURE_PATH = re.compile(r"^/[a-z0-9_]+(?:/[0-9]+)?$")
 _TYPEMOON_HOSTS = {"typemoon.net", "www.typemoon.net"}
 _OMITTED_RESPONSE_HEADERS = {b"content-length", b"set-cookie", b"set-cookie2", b"transfer-encoding"}
+
+
+class DetailIdleWatchdog:
+    def __init__(self, crawler: Crawler, clock: Any = reactor) -> None:
+        self.crawler = crawler
+        self.clock = clock
+        self._timers: dict[Request, Any] = {}
+
+    @classmethod
+    def from_crawler(cls, crawler: Crawler) -> Self:
+        middleware = cls(crawler)
+        crawler.signals.connect(
+            middleware.request_reached_downloader, signal=signals.request_reached_downloader
+        )
+        crawler.signals.connect(middleware.headers_received, signal=signals.headers_received)
+        crawler.signals.connect(middleware.bytes_received, signal=signals.bytes_received)
+        crawler.signals.connect(
+            middleware.request_left_downloader, signal=signals.request_left_downloader
+        )
+        crawler.signals.connect(middleware.spider_closed, signal=signals.spider_closed)
+        return middleware
+
+    def request_reached_downloader(self, request: Request, spider: Spider) -> None:
+        # scrapy-impersonate buffers the response and does not emit Scrapy byte signals.
+        # Its optional requests therefore keep the existing total download timeout only.
+        if request.meta.get("impersonate"):
+            return
+        timeout = request.meta.get("download_idle_timeout")
+        if type(timeout) is int and timeout > 0:
+            self._reset(request, timeout * 2)
+
+    def bytes_received(self, data: bytes, request: Request, spider: Spider) -> None:
+        timeout = request.meta.get("download_idle_timeout")
+        if type(timeout) is int and timeout > 0:
+            self._reset(request, timeout)
+
+    def headers_received(
+        self, headers: Any, body_length: int, request: Request, spider: Spider
+    ) -> None:
+        timeout = request.meta.get("download_idle_timeout")
+        if type(timeout) is int and timeout > 0:
+            self._reset(request, timeout)
+
+    def request_left_downloader(self, request: Request, spider: Spider) -> None:
+        self._cancel(request)
+
+    def spider_closed(self, spider: Spider, reason: str) -> None:
+        for request in list(self._timers):
+            self._cancel(request)
+
+    def _reset(self, request: Request, timeout: int) -> None:
+        self._cancel(request)
+        self._timers[request] = self.clock.callLater(timeout, self._expired, request)
+
+    def _cancel(self, request: Request) -> None:
+        timer = self._timers.pop(request, None)
+        if timer is not None and timer.active():
+            timer.cancel()
+
+    def _expired(self, request: Request) -> None:
+        self._timers.pop(request, None)
+        spider = self.crawler.spider
+        if spider is None:
+            return
+        watched = list(self._timers)
+        for pending in watched:
+            self._cancel(pending)
+        if self.crawler.stats is not None:
+            self.crawler.stats.inc_value("redstm/detail_idle_timeouts")
+        spider.logger.warning(
+            "Detail download made no progress; closing %s in-flight request(s): %s",
+            len(watched) + 1,
+            request.url,
+        )
+        abandon = getattr(spider, "download_idle_timeout", None)
+        try:
+            if callable(abandon):
+                abandon([request, *watched])
+        finally:
+            engine = self.crawler.engine
+            if engine is not None:
+                deferred_from_coro(engine.close_spider_async(reason="download_idle_timeout"))
 
 
 def _is_allowed_capture(request: Request) -> bool:
