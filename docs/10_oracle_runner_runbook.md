@@ -74,7 +74,7 @@ backup을 포함한다. 동시에 7일 동안 CPU·network 사용률이 낮은 i
 
 ```text
 TypeMoon
-  <- detail concurrency 2, fixed 10s start delay
+  <- listing concurrency 2 / detail concurrency 1, fixed 10s start delay
   <- Oracle / ReDSTM systemd oneshot
        -> /srv/redstm/canonical/archive.sqlite
        -> /srv/redstm/warc/*.warc.gz
@@ -144,7 +144,8 @@ R2 writer key와 Access service token은 별도 credential file로만
 - control/scheduled runner와 installer의 application·canonical 전환은
   `/srv/redstm/state/control.lock`을 공유한다. installer는 active run을 중단하지 않고 mutation 전에
   `redstm_install_not_started`로 끝난다.
-- crawler는 global/domain/detail concurrency 2(환경변수로 1–3), fixed start delay 10초를 유지한다.
+- crawler는 listing global/domain concurrency 2(환경변수로 1–3), detail concurrency 1과 fixed
+  start delay 10초를 유지한다.
 - disk는 40GiB 미만에서 경고하고 20GiB 미만에서는 새 crawl 또는 장기 작업의 다음 bounded child를
   시작하지 않는다. `disk_low`로 끝난 전체 목차·본문은 공간 확보 뒤 같은 명령으로 checkpoint부터
   재개한다.
@@ -454,7 +455,7 @@ schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 이�
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
-| incremental board cycle | 6시간마다 | exact anchor + overlap 2 page, detail concurrency 2, 10초 delay |
+| incremental board cycle | 6시간마다 | exact anchor + overlap 2 page, detail concurrency 1, 10초 delay |
 | automatic due retry | incremental 뒤 | 20건·최대 2시간 단일 batch, 실패는 다음 slot로 defer |
 | full catalog | 수동 요청 | 첫 page부터 전부, 완료까지 같은 command가 지속 |
 | full content / retry | 수동 요청 | 내부 chunk를 남은 항목 0까지 지속; sync와 직렬 |
@@ -478,18 +479,18 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | network | 발자국 | 브라우저 `USER_AGENT` + `Accept`/`Accept-Language` + page/detail `Referer` 체인, 로그인 handshake도 동일 | 봇 token을 우선 차단하는 WAF/rate limiter 회피; 회원 브라우저와 같은 발자국 |
 | outage | 봇 차단 감지 | 게시글/목록 자리의 challenge interstitial(Cloudflare/WAF)은 `network_error`로 분류 | site-wide backoff breaker 발화·attempt 보존, parse drift 오분류 방지 |
 | network | listing timeout | 240초 | 저속 원본에서 목록도 수 분간 streaming됨; 실측상 본문 뒤 비정상 TLS EOF(약 109초)와 저속 완결 응답을 모두 수용 |
-| network | detail timeout | 총 1800초 + 수신 idle 300초(첫 응답 600초) | 대형 AA가 계속 streaming되는 동안은 총 상한까지 허용하되, 2026-08-17 실측처럼 일부 body 뒤 socket 수신이 멈춘 연결은 WARC·보고서 저장과 lease 반환 뒤 crawl 자식을 확정 종료하고 1건 canary로 전환 |
-| network | request retry | 최초 포함 총 4회(`RETRY_TIMES=3`), 408/5xx/522/524; detail은 1회 뒤 durable defer | 기존 영속 재시도 유지 |
+| network | detail timeout | connect 6.1초 + read-idle 30초, 총시간 상한 없음 | 2025 local 30,644건/20.19GiB에서 검증된 Requests 의미론: 바이트가 흐르는 대형 AA는 끝까지 받고 멈춘 해당 글만 실패 |
+| network | request retry | listing 최초 포함 총 4회; detail 동일 글 총 3회 | 개별 detail만 빠르게 재시도하고 최종 실패만 durable defer |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; 잘린 detail은 저장하지 않고 durable retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 본문으로 저장하지 않음 |
-| network | 429/network breaker | `Retry-After` 우선(최대 24시간), parse·429 연속 3회/network 연속 5회면 recovery 조기 종료; 다음 장기 cycle은 1건 canary | 과속·전체 outage에서 정상 chunk를 막고 canary 성공 뒤 2병렬 복귀 |
+| network | 429/network breaker | `Retry-After` 우선(최대 24시간), parse·429 연속 3회/network 연속 5회면 recovery 조기 종료; 다음 장기 cycle은 1건 canary | 과속·전체 outage에서 정상 chunk를 막고 canary 성공 뒤 정상 직렬 detail로 복귀 |
 | outage | run preflight | 세션 검증 + 도달성 GET 1회(60초, 재시도 1회/간격 30초) | 죽은 사이트에 enabled board 전체를 순회하지 않음 |
-| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery는 연속 network 5회 또는 detail idle 300초에서 종료 | listing은 기존 retry를 유지하고, detail 무수신은 30분씩 누적하지 않음 |
+| outage | run 중 breaker | 연속 3개 board가 network-class 실패 → `site_unreachable` 조기 종료; recovery는 개별 3회 재시도까지 소진한 network 실패가 연속 5건이면 종료 | 한 문제 글은 격리하고 실제 site-wide outage만 중단 |
 | outage | attempt 보존 | `site_unreachable` run(cycle/recovery 모두)의 network 실패는 frontier attempt로 세지 않음 | 장기 outage가 entry를 dead로 밀지 않음 |
 | frontier | network attempts | 횟수 제한 없이 backoff retry; 과거 network dead도 recovery에서 재개 | 원본 outage로 영구 탈락시키지 않음 |
 | frontier | backoff | 120초 × 2^(n-1), 상한 6시간 | 기존 유지 |
 | frontier | 404/명시 삭제문 | HTTP 404는 서로 다른 run 2회, `글이 존재하지 않습니다` 같은 원본 오류 페이지는 1회 positive signal 뒤 missing | parse drift와 분리 |
-| frontier | lease | 3600초 | detail 1800초 1회 + 처리·종료 여유 |
+| frontier | lease | 3600초 | detail 3회 전송 + 처리·종료 여유 |
 | recovery | 총량·총시간 | 상한 없음 | due 또는 전체 재수집 대상을 끝까지 순차 처리 |
 | cycle | 총량·총시간 | 상한 없음 | 동일 unit/lock이 다음 slot의 중복 실행을 막음 |
 | session | login/검증 timeout | 30초 | 기존 유지 |

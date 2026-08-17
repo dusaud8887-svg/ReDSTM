@@ -839,12 +839,12 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
-| 부하 제한 | detail concurrency 2, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
-| 요청 실패 | listing/detail 총 240/1800초; detail 수신 idle 300초면 in-flight lease 즉시 defer, 429는 frontier defer | live timeout/429 빈도 확인 |
+| 부하 제한 | listing concurrency 2/detail 1, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
+| 요청 실패 | listing 총 240초; detail connect 6.1초/read-idle 30초와 동일 글 총 3회, 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | network는 2분~6시간 backoff로 무기한, parse/storage는 5회 뒤 dead | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
 | listing | complete changed-row seed, overlap boundary, schema v4 inventory cursor·댓글 기대치·증분 anchor | 실제 cursor progression |
-| detail | 최대 2건 staggered claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
+| detail | 최대 1건 순차 claim, 모든 분류 가능한 exit의 capture+terminal lease transition | live non-HTML/storage failure canary |
 | monitoring/UI | sync/recovery hook, JSON report, CLI/C0, D1 heartbeat와 remote Operations | duplicate/outage와 최대 20~30분 집중 canary |
 
 repository schema v4 migration/doctor와 `crawl → bounded export → publish/readback → rollback rehearsal` authenticated smoke
@@ -1039,20 +1039,20 @@ storage_error
 
 - network policy의 단일 source of truth는 `crawler/settings.py`다. YAML을 추가하지 않는다.
   board/page/post/lease 같은 run 범위는 CLI, ID/PW는 environment로 분리한다.
-- 구현값은 `CONCURRENT_REQUESTS=2`, `CONCURRENT_REQUESTS_PER_DOMAIN=2`, detail concurrency 2,
-  `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, listing `RETRY_TIMES=3`, detail retry 0,
+- 구현값은 `CONCURRENT_REQUESTS=2`, `CONCURRENT_REQUESTS_PER_DOMAIN=2`, detail concurrency 1,
+  `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, listing `RETRY_TIMES=3`, detail retry 2,
   `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=False`(2026-07-14
   사용자 결정; 요청 간격은 robots `Crawl-delay`와 같은 10초를 계속 지킴)다.
-- listing/detail 총 timeout은 240/1800초, detail 수신 idle은 300초(첫 응답 600초), response
-  warning/max는 8/64MiB, 감속 전용 AutoThrottle은 10~120초, frontier lease는 3600초다. detail
-  1800초는 오래된 server와 수 MB AA의 장기 streaming을 위한 보수적 상한이고, idle watchdog은
-  진행이 멈춘 socket만 배치 종료·durable retry한다. 정확한 표는 [`10 §8.1`](10_oracle_runner_runbook.md)이다.
+- listing 총 timeout은 240초, detail은 connect 6.1초/read-idle 30초(총시간 상한 없음), response
+  warning/max는 8/64MiB, 감속 전용 AutoThrottle은 10~120초, frontier lease는 3600초다. detail은
+  바이트가 흐르는 수 MB AA를 끝까지 받고 멈춘 해당 글만 총 3회 재시도한다. 정확한 표는
+  [`10 §8.1`](10_oracle_runner_runbook.md)이다.
 - 요청 발자국(footprint)은 로그인한 회원의 브라우저와 일관되게 맞춘다: 자기식별 봇 token 대신 실제
   브라우저 `USER_AGENT`, `Accept`/`Accept-Language`(`DEFAULT_REQUEST_HEADERS`, `Accept-Encoding`은
   Scrapy 압축 middleware가 관리), page 이동·상세 진입에 자연스러운 `Referer` 체인을 쓴다. 로그인
   handshake(`crawler.session`)도 같은 UA와 negotiation header를 보낸다. 이는 gnuboard/Apache WAF나
   rate limiter가 봇 token을 우선 차단하는 것을 피하기 위한 것이고, 인증 회원이 브라우저로 보는 것과
-  같은 페이지를 같은 발자국으로 받는다. 요청 시작 간격 10초·동시성 2를 유지한다.
+  같은 페이지를 같은 발자국으로 받는다. 요청 시작 간격 10초, listing 동시성 2/detail 1을 유지한다.
 - 봇 차단·challenge interstitial(Cloudflare/WAF)이 게시글/목록 자리에 오면 parse drift가 아니라
   `network_error`로 분류해 site-wide backoff breaker를 태우고 frontier attempt를 보존한다. 이 판정은
   기대 구조가 이미 없는 응답에서만 하므로 그 문구를 인용한 정상 글에는 영향이 없다.
@@ -1075,8 +1075,8 @@ storage_error
 - 로드 시 서버 발급 cookie에 더해 `adult_view=1` 성인 열람 cookie를 런타임 주입한다. 이 합성
   cookie는 disk export에는 쓰지 않아 저장 파일은 서버가 준 cookie 집합 그대로 유지한다
 - cookie는 검증된 TypeMoon short detail GET에만 전달하며 객체 표현, WARC, application log에 값을 남기지 않음
-- `RetryMiddleware`의 listing network/408/5xx retry는 최초 포함 총 4회로 제한되고, detail과 429는
-  durable frontier로 넘긴다.
+- `RetryMiddleware`의 listing network/408/5xx retry는 최초 포함 총 4회, detail은 총 3회로 제한되고,
+  최종 detail 실패와 429는 durable frontier로 넘긴다.
 - `ETag`/`Last-Modified` conditional request는 아직 구현하지 않았다. recovery와 일반 sync는 첫
   auth, parse drift/429 연속 3회 또는 network 연속 5회에서 board 내 요청을 중단한다. 이 문서에서는
   parse drift 연속 중단을 일관되게 **parse-drift breaker**라고 부른다. 고립된

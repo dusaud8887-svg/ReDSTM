@@ -23,11 +23,12 @@
 4. **단일 `moon_croller.py`는 운영에 사용하지 않는다.** 코드에 인증정보가 평문으로 들어 있고,
    실패한 listing page도 완료 progress처럼 저장할 수 있다. 해당 계정 비밀은 코드 삭제만으로 끝나지
    않으므로 별도 회전이 필요하다.
-5. **현재 속도는 원본 보호 관점에서는 안전하지만 full body에는 매우 느리다.** staggered concurrency 2와
-   요청 시작 10초 간격을 사용한다. 동시성은 느린 응답을 겹칠 뿐 request start rate 상한을 높이지 않는다.
+5. **2025 local 수집 증거를 운영 전송 정책에 반영했다.** `moon_croller.py`는 AA 30,644건/20.19GiB를
+   순차 Requests, connect 6.1초/read-idle 30초로 받았다. 파싱·저장 구조는 채택하지 않고 이 검증된
+   전송 의미론만 현재 Scrapy/WARC/frontier에 이식했다.
 6. **목차와 본문을 서로 다른 프로세스로 동시에 돌리지 않는다.** 동일 원본·세션·canonical writer를
    공유해 부하와 실패 판정을 복잡하게 만든다. 대신 한 Scrapy process 안에서 10초 시작 간격을
-   유지한 채 최대 2개 느린 응답을 겹치는 제한적 실험이 우선이다.
+   유지하되 인증 detail은 동일 PHP session에서 하나씩 처리한다.
 
 ## 2. 공개 후보 선별
 
@@ -57,10 +58,10 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 | 데이터 모델 | canonical entity/version/capture/frontier | posts/comments/collections/queue | CSV+파일 | library는 storage primitive 제공; domain schema는 사용자가 구현 |
 | 중복 제거 | board+external ID, content hash/version | post/queue 존재 검사 | CSV URL·파일명 | request `uniqueKey` |
 | checkpoint | DB cursor/lease + pass marker | JSON checkpoint + DB queue | page CSV와 파일 존재 | persistent RequestQueue/RequestList |
-| 기본 동시성 | global/domain/detail 2(환경변수 1–3) | UI 2 표기지만 rebuild 실제 직렬 | 1 | resource-aware autoscaling, min/max/분당 제한 |
+| 기본 동시성 | listing global/domain 2(환경변수 1–3), detail 1 | UI 2 표기지만 rebuild 실제 직렬 | 1 | resource-aware autoscaling, min/max/분당 제한 |
 | 시작 간격 | 고정 10초, 감속 AutoThrottle | rebuild 고정 4초 | 대략 3~5초+매 5회 추가 휴식 | same-domain delay와 maxRequestsPerMinute |
-| timeout | listing 총 240초/detail 총 1800초+수신 idle 300초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
-| retry | listing 내부 3회; detail 1회 뒤 durable frontier | fetch retry+workflow retry, failed/dead queue | adapter retry와 외부 loop가 중첩 | maxRequestRetries, error/final failure handler |
+| timeout | listing 총 240초/detail connect 6.1초+read-idle 30초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
+| retry | listing 최초 포함 4회; detail 동일 글 총 3회 뒤 durable frontier | fetch retry+workflow retry, failed/dead queue | adapter retry와 외부 loop가 중첩 | maxRequestRetries, error/final failure handler |
 | 429 | Retry-After 최대 24시간 반영 | 60초 cooldown 후 1회 | 일반 HTTPError와 동일, Retry-After 미지원 | blocked retry/session rotation/사용자 handler |
 | 장애 차단 | detail network 5회, parse/rate 3회 breaker | network 8회, content 5/8 단계 복구 | 없음 | retry budget과 handler; domain breaker는 사용자가 정책화 |
 | 실패 격리 | item terminal state, board/cycle partial | item failed/dead, 일부 run 상태 불일치 | page 실패를 빈 결과로 흡수 가능 | request reclaim/final failure 분리 |
@@ -90,19 +91,19 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 
 ### 현재 처리량
 
-`crawler/settings.py` 기준값은 global/domain/detail concurrency 2, `DOWNLOAD_DELAY=10`, listing/detail
-총 timeout 240/1800초다. listing은 내부 재시도 3회, detail은 수신이 300초 멈추거나 한 번 실패하면
-durable frontier로 defer한다.
+`crawler/settings.py` 기준값은 listing global/domain concurrency 2, detail concurrency 1,
+`DOWNLOAD_DELAY=10`이다. listing은 총 timeout 240초와 최초 포함 4회, detail은 connect 6.1초와
+read-idle 30초, 동일 글 총 3회를 사용한 뒤 durable frontier로 defer한다.
 
 - 응답이 10초 이하일 때 이론상 최대 6 request/minute, 360/hour다.
-- 응답이 30초 이상이면 concurrency 2가 느린 응답 두 개를 겹쳐 직렬 대기보다 처리량을 높인다.
-- 10초 시작 간격은 유지되므로 동시성 2가 request start burst를 만들지 않는다.
-- 하지만 현재 실서버는 full-catalog 중 세 게시판 연속 network failure로 breaker가 동작했다. 이때
-  concurrency를 먼저 올리면 timeout 동시 누적과 장애 오판만 늘어난다.
+- listing은 10초 시작 간격과 concurrency 2를 유지하지만, detail은 동일 PHP session의 worker/session
+  lock 경합을 피하려고 직렬화한다.
+- detail read timeout은 총시간이 아니라 연속 무수신 시간이다. 따라서 수 MB AA가 30초보다 오래 걸려도
+  바이트가 계속 오면 중단하지 않는다.
 - 2026-07-14 최근 inventory worker 3개의 실측은 444초/5 capture, 1,565초/6 capture,
   1,166초/10 capture였다. 이는 raw retry request 수가 아니라 canonical에 남은 terminal capture 기준
   약 0.23~0.68건/분이다. 합계 21 capture 중 9건은 잘린 응답 계열 `network_error`, 429는 0이었다.
-  현재 병목은 politeness delay보다 원본의 장시간 streaming/불완전 응답이므로 동시성을 유지한다.
+  이 실측과 2025 local 대량 성공을 함께 보면 detail 병렬화보다 개별 idle 실패·재시도가 안전하다.
 
 ### 목차와 본문 동시 실행
 
@@ -114,7 +115,7 @@ durable frontier로 defer한다.
 3. SQLite는 WAL reader에는 강하지만 두 crawler writer의 transaction 경쟁은 불필요하다.
 4. 장기 inventory가 발견한 새 frontier를 detail이 즉시 소비하면 pass 완료/잔여량 설명이 어려워진다.
 
-한 process의 in-flight request만 2로 제한한다. catalog/detail 동시 process는 이 설정으로도 목표
+한 process의 listing in-flight는 2, detail은 1로 제한한다. catalog/detail 동시 process는 이 설정으로도 목표
 처리량을 못 얻고 원본의 429/timeout이 0에 가까울 때만 재검토한다.
 
 ### 이번에 닫은 문제
@@ -252,8 +253,8 @@ durable frontier로 defer한다.
 ### P1: canary 뒤 성능/장기운영 개선
 
 1. dashboard에 request/min, latency p50/p95, timeout/429 ratio, in-flight를 추가한다.
-2. 20~30분 canary에서 global/domain/detail concurrency 2를 시험하되 10초 시작 간격은 유지한다.
-   timeout/429/parse drift가 하나라도 악화되면 즉시 1로 복귀한다.
+2. 20~30분 canary에서 listing concurrency 2/detail 1과 10초 시작 간격을 검증한다. detail 병렬화는
+   동일 PHP session의 stall이 재현됐으므로 처리량 근거만으로 다시 활성화하지 않는다.
 3. 수동 full pass가 breaker partial로 끝났을 때 다음 재개 가능 시각과 checkpoint board/page를
    Operations에 명시한다. 자동 무한 재시도는 추가하지 않는다.
 4. parse-empty/quality failure에 response 길이, title/content selector 결과, visible text 길이 같은
@@ -263,7 +264,7 @@ durable frontier로 defer한다.
 
 1. 협력적 pause가 180초 timeout 때문에 너무 느리다는 실측이 반복되면 PID 시작 시각을 검증하는
    별도 “강제 중단”을 추가한다. SIGKILL 전에 checkpoint/WARC/SQLite 무결성 검사를 계약한다.
-2. concurrency 2로도 full body 목표를 못 맞출 때 catalog/detail 동시 process가 아니라 board partition,
+2. 직렬 detail로도 full body 목표를 못 맞출 때 catalog/detail 동시 process가 아니라 board partition,
    shared per-domain rate limiter 또는 별도 read/write queue를 설계한다.
 3. anti-bot/browser가 실제 필수가 되면 Scrapling/Crawlee browser lane을 일부 URL에만 opt-in한다.
 

@@ -15,16 +15,18 @@ from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
 from crawler.settings import (
+    REDSTM_ACCEPT,
     REDSTM_ACCEPT_LANGUAGE,
     REDSTM_CIRCUIT_BREAKER_FAILURES,
+    REDSTM_CLIENT_HINT_HEADERS,
     REDSTM_DETAIL_CONCURRENCY,
-    REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS,
-    REDSTM_DETAIL_TIMEOUT_SECONDS,
+    REDSTM_DETAIL_RETRY_TIMES,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_INCREMENTAL_OVERLAP_PAGES,
     REDSTM_LISTING_OVERLAP_UNCHANGED,
     REDSTM_LISTING_PAGE_WARNING_RETRIES,
     REDSTM_LISTING_TIMEOUT_SECONDS,
+    REDSTM_NAVIGATION_HEADERS,
     REDSTM_NETWORK_BREAKER_FAILURES,
     REDSTM_PARSE_BREAKER_FAILURES,
     REDSTM_RETRY_AFTER_MAX_SECONDS,
@@ -355,7 +357,6 @@ class TypeMoonSpider(scrapy.Spider):
         listing_only: bool = False,
         anchor_post_id: int | None = None,
         overlap_pages: int = REDSTM_INCREMENTAL_OVERLAP_PAGES,
-        detail_concurrency: int = REDSTM_DETAIL_CONCURRENCY,
         pause_file: str | Path | None = None,
         impersonate_browser: str = "",
     ) -> None:
@@ -377,7 +378,6 @@ class TypeMoonSpider(scrapy.Spider):
         self.listing_only = bool(listing_only)
         self.anchor_post_id = int(anchor_post_id) if anchor_post_id is not None else None
         self.overlap_pages = int(overlap_pages)
-        self.detail_concurrency = int(detail_concurrency)
         self.pause_file = Path(pause_file) if pause_file is not None else None
         # max_pages may be 0 in inventory mode (unlimited; cycle time budget cuts the run).
         if (
@@ -386,7 +386,6 @@ class TypeMoonSpider(scrapy.Spider):
                 self.start_page,
                 self.max_posts,
                 self.lease_seconds,
-                self.detail_concurrency,
             )
             < 1
             or (self.max_pages < 1 and not self.inventory)
@@ -489,11 +488,19 @@ class TypeMoonSpider(scrapy.Spider):
             type(expected_comment_count) is not int or expected_comment_count < 0
         ):
             raise ValueError("expected_comment_count must be a non-negative integer or None")
-        # A member reaches a post by clicking it from the board listing, so the detail request
-        # carries the board page as its Referer and Sec-Fetch-Site: same-origin.
-        cookies, headers, extra_meta = self._footprint(
-            session, sec_fetch_site="same-origin", referer=self.listing_url(board_id)
-        )
+        # Detail transport is deliberately the proven sequential Requests path even when
+        # listing TLS impersonation is enabled. Carry the full coherent HTTP footprint here
+        # because impersonation mode stands down the global Scrapy defaults.
+        cookies = session.as_scrapy_cookies()
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": REDSTM_ACCEPT,
+            "Accept-Language": REDSTM_ACCEPT_LANGUAGE,
+            **REDSTM_CLIENT_HINT_HEADERS,
+            **REDSTM_NAVIGATION_HEADERS,
+            "Sec-Fetch-Site": "same-origin",
+            "Referer": self.listing_url(board_id),
+        }
         return scrapy.Request(
             self.detail_url(board_id, external_post_id),
             callback=self.parse_detail,
@@ -504,13 +511,10 @@ class TypeMoonSpider(scrapy.Spider):
                 "cookiejar": 1,
                 "redstm_capture": True,
                 "expected_comment_count": expected_comment_count,
-                # AA bodies regularly need multi-minute streaming; listing timeout is too tight.
-                "download_timeout": REDSTM_DETAIL_TIMEOUT_SECONDS,
-                "download_idle_timeout": REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS,
-                # A failed multi-minute detail belongs at the back of the durable frontier,
-                # not in Scrapy's immediate retry loop against the same sick origin worker.
-                "max_retry_times": 0,
-                **extra_meta,
+                "redstm_sequential_detail": True,
+                # Requests turns 30 seconds without bytes into this request's error. Retry
+                # only this detail three total times before durable frontier backoff.
+                "max_retry_times": REDSTM_DETAIL_RETRY_TIMES,
             },
         )
 
@@ -553,30 +557,6 @@ class TypeMoonSpider(scrapy.Spider):
         )
         request.meta["redstm_recorded_error"] = error_code
         return error_code
-
-    def download_idle_timeout(self, requests: Iterable[scrapy.Request]) -> None:
-        if self.store is None or self.run_id is None:
-            return
-        for request in requests:
-            if isinstance(request.meta.get("redstm_recorded_error"), str):
-                continue
-            lease = request.meta.get("frontier_lease")
-            if not isinstance(lease, FrontierLease):
-                continue
-            self.store.record_outcome(
-                self.run_id,
-                url=request.url,
-                outcome="fetch_failed",
-                fetched_at=datetime.now(UTC),
-                board_id=lease.board_id,
-                external_post_id=lease.external_post_id,
-                error_code="network_error",
-                lease=lease,
-                frontier_state="retry",
-            )
-            request.meta["redstm_recorded_error"] = "network_error"
-        self.failure_codes.add("network_error")
-        self._halted = True
 
     def listing_request(
         self,
@@ -927,7 +907,7 @@ class TypeMoonSpider(scrapy.Spider):
         yield from self._next_detail_requests()
 
     def _next_detail_requests(self) -> Iterable[scrapy.Request]:
-        while self._detail_in_flight < self.detail_concurrency:
+        while self._detail_in_flight < REDSTM_DETAIL_CONCURRENCY:
             request = self._next_detail_request()
             if request is None:
                 return
@@ -936,7 +916,7 @@ class TypeMoonSpider(scrapy.Spider):
     def _next_detail_request(self) -> scrapy.Request | None:
         if (
             self._stop_requested()
-            or self._detail_in_flight >= self.detail_concurrency
+            or self._detail_in_flight >= REDSTM_DETAIL_CONCURRENCY
             or self.frontier is None
             or self.session is None
             or self.listing_only
@@ -1201,7 +1181,6 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         run_id: str,
         session: SessionExport,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
-        detail_concurrency: int = REDSTM_DETAIL_CONCURRENCY,
         pause_file: str | Path | None = None,
         impersonate_browser: str = "",
     ) -> None:
@@ -1211,7 +1190,6 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
             run_id=run_id,
             session=session,
             lease_seconds=lease_seconds,
-            detail_concurrency=detail_concurrency,
             pause_file=pause_file,
             impersonate_browser=impersonate_browser,
         )
@@ -1221,7 +1199,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
             yield request
 
     def _next_recovery_requests(self) -> Iterable[scrapy.Request]:
-        while self._detail_in_flight < self.detail_concurrency:
+        while self._detail_in_flight < REDSTM_DETAIL_CONCURRENCY:
             request = self._next_recovery_request()
             if request is None:
                 return

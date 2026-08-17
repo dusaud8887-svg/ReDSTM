@@ -1050,7 +1050,7 @@ def test_capture_failure_codes_ignores_a_listing_error_resolved_by_retry(tmp_pat
     assert _capture_failure_codes(path, run_id) == []
 
 
-def test_sync_claims_up_to_detail_concurrency_leases(tmp_path: Path) -> None:
+def test_sync_claims_one_detail_lease(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
     run_id = ArchiveStore(path).start_run("sync")
@@ -1060,7 +1060,6 @@ def test_sync_claims_up_to_detail_concurrency_leases(tmp_path: Path) -> None:
         run_id=run_id,
         session=_session(),
         max_posts=3,
-        detail_concurrency=2,
     )
     url = "https://www.typemoon.net/write_free21"
     response = HtmlResponse(
@@ -1081,7 +1080,7 @@ def test_sync_claims_up_to_detail_concurrency_leases(tmp_path: Path) -> None:
 
     requests = _detail_requests(list(spider.parse_listing(response)))
 
-    assert len(requests) == 2
+    assert len(requests) == 1
     assert {request.meta["expected_comment_count"] for request in requests} == {0}
     with connect_archive(path, read_only=True) as connection:
         assert [
@@ -1092,7 +1091,7 @@ def test_sync_claims_up_to_detail_concurrency_leases(tmp_path: Path) -> None:
             )
         ] == [
             (1, "https://www.typemoon.net/write_free21/1", "running", 0),
-            (2, "https://www.typemoon.net/write_free21/2", "running", 0),
+            (2, "https://www.typemoon.net/write_free21/2", "pending", 0),
             (3, "https://www.typemoon.net/write_free21/3", "pending", 0),
         ]
 
@@ -1106,7 +1105,6 @@ def test_sync_stops_current_board_on_auth_response(tmp_path: Path) -> None:
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
         max_posts=2,
-        detail_concurrency=1,
     )
     listing_url = "https://www.typemoon.net/write_free21"
     listing = HtmlResponse(
@@ -1153,7 +1151,6 @@ def test_sync_stops_after_consecutive_network_failures(tmp_path: Path) -> None:
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
         max_posts=needed + 1,
-        detail_concurrency=1,
     )
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
@@ -1194,7 +1191,6 @@ def test_detail_dataloss_retries_without_storing_and_trips_breaker(tmp_path: Pat
         run_id=run_id,
         session=_session(),
         max_posts=needed + 1,
-        detail_concurrency=1,
     )
     rows = "".join(
         f"<tr><td class='td-subj-wrap'><a href='/write_free21/{post_id}'>"
@@ -1265,7 +1261,6 @@ def test_pause_marker_stops_before_next_detail_lease(tmp_path: Path) -> None:
         run_id=ArchiveStore(path).start_run("sync"),
         session=_session(),
         max_posts=2,
-        detail_concurrency=1,
         pause_file=pause_file,
     )
     url = "https://www.typemoon.net/write_free21"
@@ -1415,7 +1410,7 @@ def test_concurrent_requests_env_is_bounded(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("REDSTM_CONCURRENT_REQUESTS", "3")
     reloaded = importlib.reload(settings_module)
     assert reloaded.CONCURRENT_REQUESTS == 3
-    assert reloaded.REDSTM_DETAIL_CONCURRENCY == 3
+    assert reloaded.REDSTM_DETAIL_CONCURRENCY == 1
     monkeypatch.setenv("REDSTM_CONCURRENT_REQUESTS", "99")
     reloaded = importlib.reload(settings_module)
     assert reloaded.CONCURRENT_REQUESTS == 3
@@ -1438,24 +1433,23 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert crawler_settings.REDSTM_FRONTIER_LEASE_SECONDS == 3600
     assert crawler_settings.DOWNLOAD_FAIL_ON_DATALOSS is False
     assert crawler_settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
-    assert crawler_settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 1800
-    assert crawler_settings.REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS == 300
+    assert crawler_settings.REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS == 6.1
+    assert crawler_settings.REDSTM_DETAIL_READ_TIMEOUT_SECONDS == 30
     assert crawler_settings.REDSTM_CONCURRENT_REQUESTS == 2
-    assert crawler_settings.REDSTM_DETAIL_CONCURRENCY == 2
+    assert crawler_settings.REDSTM_DETAIL_CONCURRENCY == 1
     assert TypeMoonSpider().listing_request("write").meta["download_timeout"] == 240
     detail = TypeMoonSpider().detail_request("write", 1, _session())
-    assert detail.meta["download_timeout"] == 1800
-    assert detail.meta["download_idle_timeout"] == 300
-    assert detail.meta["max_retry_times"] == 0
+    assert detail.meta["redstm_sequential_detail"] is True
+    assert detail.meta["max_retry_times"] == 2
     project = _project_settings()
     assert project.getint("CONCURRENT_REQUESTS") == 2
     assert project.getint("CONCURRENT_REQUESTS_PER_DOMAIN") == 2
     assert project.getfloat("DOWNLOAD_DELAY") == 10
     assert project.getint("RETRY_TIMES") == 3
     assert project.getdict("DOWNLOADER_MIDDLEWARES") == {
-        "crawler.middlewares.DetailIdleWatchdog": 590,
         "crawler.middlewares.WarcCaptureMiddleware": 595,
     }
+    assert project.getdict("DOWNLOAD_HANDLERS")["https"].endswith("SequentialDetailDownloadHandler")
     assert project.getdict("ITEM_PIPELINES") == {"crawler.archive_pipeline.ArchivePipeline": 300}
     assert _project_settings(123).getint("CLOSESPIDER_TIMEOUT") == 123
     assert _timed_out(
@@ -1478,45 +1472,6 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert parse_sync_args().parent_lock_held is True
     monkeypatch.setattr("sys.argv", ["recover", "--archive", str(archive)])
     assert parse_recovery_args().lease_seconds == 3600
-
-
-def test_detail_idle_timeout_requeues_every_in_flight_lease_once(tmp_path: Path) -> None:
-    archive = tmp_path / "archive.sqlite"
-    _initialize(archive)
-    store = ArchiveStore(archive)
-    frontier = FrontierStore(archive)
-    run_id = store.start_run("retry")
-    spider = TypeMoonSpider(archive_path=archive, run_id=run_id, session=_session())
-    requests: list[Request] = []
-    for post_id in (1, 2):
-        url = spider.detail_url("write_free21", post_id)
-        frontier.seed("write_free21", post_id, url)
-        lease = frontier.claim_identity("write_free21", post_id, lease_seconds=60)
-        assert lease is not None
-        request = spider.detail_request("write_free21", post_id, _session())
-        request.meta["frontier_lease"] = lease
-        requests.append(request)
-
-    spider.download_idle_timeout(requests)
-    assert spider.detail_error(SimpleNamespace(request=requests[0], value=OSError())) == (
-        "network_error"
-    )
-
-    with connect_archive(archive) as connection:
-        states = connection.execute(
-            "SELECT state, last_error_code FROM crawl_frontier ORDER BY external_post_id"
-        ).fetchall()
-        captures = connection.execute(
-            "SELECT outcome, error_code FROM captures WHERE run_id = ? ORDER BY id", (run_id,)
-        ).fetchall()
-    assert [tuple(row) for row in states] == [
-        ("retry", "network_error"),
-        ("retry", "network_error"),
-    ]
-    assert [tuple(row) for row in captures] == [
-        ("fetch_failed", "network_error"),
-        ("fetch_failed", "network_error"),
-    ]
 
 
 def test_healthcheck_ping_requires_secret_free_https(monkeypatch: pytest.MonkeyPatch) -> None:
