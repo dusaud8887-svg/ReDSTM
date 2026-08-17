@@ -30,11 +30,11 @@ class DetailIdleWatchdog:
         self,
         crawler: Crawler,
         clock: Any = reactor,
-        stop: Callable[[], None] | None = None,
+        abort: Callable[[], None] | None = None,
     ) -> None:
         self.crawler = crawler
         self.clock = clock
-        self._stop: Callable[[], None] = stop or cast(Any, reactor).stop
+        self._abort: Callable[[], None] = abort or cast(Any, reactor).crash
         self._timers: dict[Request, Any] = {}
 
     @classmethod
@@ -108,15 +108,15 @@ class DetailIdleWatchdog:
             if callable(abandon):
                 abandon([request, *watched])
         finally:
-            # Scrapy waits for in-progress downloads before closing its downloader. This
-            # process owns one spider, so finalize completed WARC parts and stop the reactor;
-            # process exit then closes the stalled sockets without losing durable outcomes.
+            # reactor.stop() runs Scrapy's shutdown hook, which waits for these same stalled
+            # downloads. This process owns one spider, so finalize completed WARC parts and
+            # bypass that circular wait; process exit closes the sockets after report writing.
             self.crawler.signals.send_catch_log(
                 signal=signals.spider_closed,
                 spider=spider,
                 reason="download_idle_timeout",
             )
-            self._stop()
+            self._abort()
 
 
 def _is_allowed_capture(request: Request) -> bool:

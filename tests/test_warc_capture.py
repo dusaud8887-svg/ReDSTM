@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from scrapy import Spider
 from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request
@@ -20,7 +21,9 @@ from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 
 
-def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings() -> None:
+def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     abandoned: list[list[Request]] = []
     closed: list[str] = []
 
@@ -34,8 +37,9 @@ def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings() -> None:
         signals=SimpleNamespace(send_catch_log=lambda **kwargs: closed.append(kwargs["reason"])),
     )
     clock = Clock()
-    stopped: list[bool] = []
-    watchdog = DetailIdleWatchdog(cast(Crawler, crawler), clock, lambda: stopped.append(True))
+    aborted: list[bool] = []
+    monkeypatch.setattr("crawler.middlewares.reactor.crash", lambda: aborted.append(True))
+    watchdog = DetailIdleWatchdog(cast(Crawler, crawler), clock)
     stalled = Request("https://www.typemoon.net/aa/1", meta={"download_idle_timeout": 300})
     sibling = Request("https://www.typemoon.net/aa/2", meta={"download_idle_timeout": 300})
     listing = Request("https://www.typemoon.net/aa")
@@ -51,7 +55,7 @@ def test_detail_idle_watchdog_closes_the_batch_but_ignores_listings() -> None:
 
     assert abandoned == [[stalled, sibling]]
     assert closed == ["download_idle_timeout"]
-    assert stopped == [True]
+    assert aborted == [True]
 
 
 def test_warc_capture_keeps_raw_response_without_secrets(tmp_path: Path) -> None:
