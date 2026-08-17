@@ -123,18 +123,18 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 
 이 항목들은 [`구현 및 운영 준비 계획`](docs/04_implementation_plan.md)의 우선순위와 gate에 따라 구현한다.
 
-현재 crawler는 global/domain/detail concurrency 2(환경변수 `REDSTM_CONCURRENT_REQUESTS`로 1–3)와
-요청 시작 간 10초 고정 delay를 유지한다. 두 번째 요청은 첫 요청이 아직 스트리밍 중이어도 delay 뒤에
-시작되며 동시 burst가 아니다.
+현재 crawler는 listing global/domain concurrency 2(환경변수 `REDSTM_CONCURRENT_REQUESTS`로 1–3),
+detail concurrency 1과 요청 시작 간 10초 고정 delay를 유지한다. 동일 PHP 로그인 세션의 본문 요청은
+직렬화해 저사양 origin의 session/worker 경합을 피한다.
 robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTXT_OBEY=False`), 10초 간격은
 원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. 요청은 로그인 회원의 브라우저와 일관된 발자국
 (실제 브라우저 UA, `Accept`/`Accept-Language`, page·detail `Referer` 체인; 로그인 handshake도 동일)을
 보내 WAF/rate limiter의 봇 차단을 피하고, 봇 차단·challenge 페이지가 오면 parse drift가 아니라
-`network_error`로 backoff한다. listing/detail 총 timeout은 각각 240/1800초이고, detail은 수신
-진행이 300초 멈추면 배치의 in-flight lease를 즉시 retry로 반환한다. listing cursor는 내부에서
-최대 3회 재시도하지만 detail은 한 번만 요청하고, 실패하면 영속 frontier가 2분~6시간 backoff로
-다음 batch에 무기한 재시도한다. network breaker 뒤 장기 수동 작업은 1건 canary로 원본 회복을
-확인한 뒤 정상 20건 chunk·2병렬로 복귀한다. 실행 중 Operations 집계는 5분마다 canonical
+`network_error`로 backoff한다. listing은 총 240초 timeout이고, detail은 connect 6.1초/read-idle
+30초라서 바이트가 계속 오는 대형 AA는 끝까지 받되 멈춘 글만 끊는다. listing은 최초 포함 최대 4회,
+detail은 동일 글만 총 3회 재시도한 뒤 영속 frontier가 2분~6시간 backoff로 무기한 재시도한다.
+network breaker 뒤 장기 수동 작업은 1건 canary로 원본 회복을 확인한 뒤 정상 20건 직렬 chunk로
+복귀한다. 실행 중 Operations 집계는 5분마다 canonical
 `captures`의 저장·전송 실패·파싱 실패를 읽어 실제 성공/실패를 표시한다. Oracle canonical live와
 repository target은 schema v4다.
 자동 모드는 최신 page incremental 뒤 due 실패 20건을 최대 2시간 재처리하고 변경분을 6시간마다

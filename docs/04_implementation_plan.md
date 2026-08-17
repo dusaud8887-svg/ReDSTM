@@ -64,7 +64,7 @@ R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같
 ## 3. 실행 원칙
 
 - canonical SQLite는 single writer다. crawler, recovery, backup/export를 동시에 쓰지 않는다.
-- TypeMoon global/domain/detail concurrency 2와 request 시작 간 fixed 10초 delay를 기본으로 한다.
+- TypeMoon listing global/domain concurrency 2, detail concurrency 1과 fixed 10초 delay를 기본으로 한다.
 - 자동 schedule은 Oracle systemd, remote command는 D1이다. 둘을 서로의 단일 장애점으로 만들지 않는다.
 - immutable object upload/readback 뒤 pointer-last activate한다.
 - 앱·DB·service를 한 deploy command에서 몰래 삭제/중지/enable하지 않는다.

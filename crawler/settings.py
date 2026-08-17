@@ -59,10 +59,9 @@ DEFAULT_REQUEST_HEADERS = {
 }
 
 # --- Pacing & concurrency ---------------------------------------------------
-# TypeMoon is a small gnuboard host that often dribbles PHP responses for tens of
-# seconds. Staggered concurrency (2 default, operator-capped at 3) lets a second
-# request start after DOWNLOAD_DELAY while the first is still streaming — that is
-# not a burst of simultaneous opens. DOWNLOAD_DELAY=10 is the published Crawl-delay
+# TypeMoon is a small gnuboard host. Listings may use staggered concurrency, while
+# authenticated details stay sequential because concurrent requests sharing its PHP
+# session repeatedly stall each other. DOWNLOAD_DELAY=10 is the published Crawl-delay
 # floor; AutoThrottle only slows further under load (never below the delay).
 # Override: REDSTM_CONCURRENT_REQUESTS=1|2|3 (invalid values fall back to 2).
 REDSTM_CONCURRENT_REQUESTS = _env_int("REDSTM_CONCURRENT_REQUESTS", 2, minimum=1, maximum=3)
@@ -81,22 +80,18 @@ AUTOTHROTTLE_MAX_DELAY = 120.0
 AUTOTHROTTLE_TARGET_CONCURRENCY = float(REDSTM_CONCURRENT_REQUESTS)
 
 # --- Timeouts ----------------------------------------------------------------
-# Long-lived archival against a flaky, slow gnuboard host prefers waiting over cutting
-# off a body that is still dribbling. Two budgets for two body shapes:
-# - listing: ~100–200 KiB HTML; still allow multi-minute streams under load.
-# - detail (especially AA): multi-MB HTML that routinely needs several minutes.
-# DOWNLOAD_TIMEOUT is the Scrapy default; per-request meta overrides it.
+# Listing uses Scrapy's total timeout. Detail uses the sequential Requests handler below:
+# its read timeout is an inactivity budget, so multi-MB AA may run indefinitely while bytes
+# arrive but one silent origin socket is released after 30 seconds.
 REDSTM_LISTING_TIMEOUT_SECONDS = 240
-REDSTM_DETAIL_TIMEOUT_SECONDS = 30 * 60
-# Total time protects large AA documents; idle time detects a socket that stopped making
-# progress. The watchdog gives the first response headers twice this budget for
-# queue/origin latency.
-REDSTM_DETAIL_IDLE_TIMEOUT_SECONDS = 5 * 60
-DOWNLOAD_TIMEOUT = REDSTM_DETAIL_TIMEOUT_SECONDS
+REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS = 6.1
+REDSTM_DETAIL_READ_TIMEOUT_SECONDS = 30
+DOWNLOAD_TIMEOUT = REDSTM_LISTING_TIMEOUT_SECONDS
 
-# Listing pages retry in-process because their cursor cannot advance on a failed page.
-# Detail requests override this to zero and use the persistent frontier backoff instead.
+# Listing pages use the project default (initial request plus three retries). Details use
+# three total attempts before their single final failure enters the persistent frontier.
 RETRY_TIMES = 3
+REDSTM_DETAIL_RETRY_TIMES = 2
 RETRY_HTTP_CODES = [408, 500, 502, 503, 504, 520, 522, 524]
 DOWNLOAD_WARNSIZE = 8 << 20
 DOWNLOAD_MAXSIZE = 64 << 20
@@ -108,8 +103,11 @@ TELNETCONSOLE_ENABLED = False
 LOG_LEVEL = "INFO"
 
 DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {
-    "crawler.middlewares.DetailIdleWatchdog": 590,
     "crawler.middlewares.WarcCaptureMiddleware": 595,
+}
+DOWNLOAD_HANDLERS = {
+    "http": "crawler.download_handlers.SequentialDetailDownloadHandler",
+    "https": "crawler.download_handlers.SequentialDetailDownloadHandler",
 }
 ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}
 
@@ -121,10 +119,6 @@ ITEM_PIPELINES = {"crawler.archive_pipeline.ArchivePipeline": 300}
 REDSTM_IMPERSONATE_BROWSER = impersonate_target()
 if REDSTM_IMPERSONATE_BROWSER:
     TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
-    DOWNLOAD_HANDLERS = {
-        "http": "scrapy_impersonate.ImpersonateDownloadHandler",
-        "https": "scrapy_impersonate.ImpersonateDownloadHandler",
-    }
     DEFAULT_REQUEST_HEADERS = {}
     DOWNLOADER_MIDDLEWARES = {
         **DOWNLOADER_MIDDLEWARES,
@@ -133,7 +127,7 @@ if REDSTM_IMPERSONATE_BROWSER:
 
 REDSTM_WARC_PATH = ".data/warc/capture.warc.gz"
 REDSTM_WARC_MAX_BYTES = 1 << 30
-# One detail attempt may stream for 30 minutes. Keep enough lease room for processing/shutdown.
+# Three detail attempts may stream for a long time while bytes continue to arrive.
 REDSTM_FRONTIER_LEASE_SECONDS = 3600
 REDSTM_FRONTIER_MAX_ATTEMPTS = 5
 # Origin/network failures remain retryable forever with capped backoff. Parser and local
@@ -143,8 +137,9 @@ REDSTM_FRONTIER_BACKOFF_BASE_SECONDS = 120
 REDSTM_FRONTIER_BACKOFF_CAP_SECONDS = 6 * 60 * 60
 REDSTM_LISTING_OVERLAP_UNCHANGED = 20
 REDSTM_INCREMENTAL_OVERLAP_PAGES = 2
-# Match Scrapy download slots so recovery/detail in-flight never exceeds concurrency.
-REDSTM_DETAIL_CONCURRENCY = REDSTM_CONCURRENT_REQUESTS
+# The proven local collector was sequential; sharing one PHP session across parallel detail
+# requests is the production stall trigger. Listing concurrency remains independently bounded.
+REDSTM_DETAIL_CONCURRENCY = 1
 # Rate-limit and parse breakers stay tight. Network dribble on this origin often produces
 # 3–4 consecutive timeouts then recovers; halting a whole recovery/sync batch at 3 wastes
 # the remaining candidates that would still store successfully.

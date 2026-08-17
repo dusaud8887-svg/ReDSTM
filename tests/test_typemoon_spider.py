@@ -38,20 +38,19 @@ def test_policy_settings_and_urls_are_conservative() -> None:
     # honors the origin's published Crawl-delay through the fixed DOWNLOAD_DELAY.
     assert settings.ROBOTSTXT_OBEY is False
     assert settings.DOWNLOAD_DELAY == 10.0
-    assert settings.DOWNLOAD_TIMEOUT == 1800
+    assert settings.DOWNLOAD_TIMEOUT == 240
     assert settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
-    assert settings.REDSTM_DETAIL_TIMEOUT_SECONDS == 1800
+    assert settings.REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS == 6.1
+    assert settings.REDSTM_DETAIL_READ_TIMEOUT_SECONDS == 30
     assert settings.RANDOMIZE_DOWNLOAD_DELAY is False
     assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 2
-    assert settings.REDSTM_DETAIL_CONCURRENCY == 2
+    assert settings.REDSTM_DETAIL_CONCURRENCY == 1
     assert settings.RETRY_TIMES == 3
     assert settings.RETRY_HTTP_CODES == [408, 500, 502, 503, 504, 520, 522, 524]
-    # Impersonation is off by default: the static header footprint stands, no curl handler.
+    # Detail always uses the sequential handler; it delegates listings to Scrapy HTTP/1.1.
     assert settings.REDSTM_IMPERSONATE_BROWSER == ""
     assert "sec-ch-ua" in settings.DEFAULT_REQUEST_HEADERS
-    assert not hasattr(settings, "DOWNLOAD_HANDLERS") or "scrapy_impersonate" not in str(
-        settings.DOWNLOAD_HANDLERS
-    )
+    assert settings.DOWNLOAD_HANDLERS["https"].endswith("SequentialDetailDownloadHandler")
 
 
 def test_impersonation_env_gates_the_curl_download_handler_and_stands_down_static_headers(
@@ -63,9 +62,7 @@ def test_impersonation_env_gates_the_curl_download_handler_and_stands_down_stati
     try:
         reloaded = importlib.reload(settings)
         assert reloaded.REDSTM_IMPERSONATE_BROWSER == "chrome131"
-        assert reloaded.DOWNLOAD_HANDLERS["https"] == (
-            "scrapy_impersonate.ImpersonateDownloadHandler"
-        )
+        assert reloaded.DOWNLOAD_HANDLERS["https"].endswith("SequentialDetailDownloadHandler")
         assert reloaded.TWISTED_REACTOR.endswith("AsyncioSelectorReactor")
         # curl_cffi owns the fingerprint, so the static hints and Scrapy UA middleware stand down.
         assert reloaded.DEFAULT_REQUEST_HEADERS == {}
@@ -401,14 +398,13 @@ def test_impersonate_mode_defers_the_fingerprint_to_curl_and_flattens_cookies() 
     spider = TypeMoonSpider(impersonate_browser="chrome131")
 
     detail = spider.detail_request("write_free21", 62068, session)
-    # curl_cffi owns the UA/client hints, so no UA header leaks to contradict the profile.
-    assert b"User-Agent" not in detail.headers
-    assert detail.meta["impersonate"] == "chrome131"
+    # Detail keeps the proven sequential HTTP/1.1 transport; listing still uses curl_cffi.
+    assert detail.headers["User-Agent"] == settings.USER_AGENT.encode()
+    assert "impersonate" not in detail.meta
+    assert detail.meta["redstm_sequential_detail"] is True
     assert detail.headers["Sec-Fetch-Site"] == b"same-origin"
     assert detail.headers["Referer"] == b"https://www.typemoon.net/write_free21"
-    # Cookies must be a flat name->value map; the verbose Scrapy form is mangled by the
-    # curl_cffi bridge into "name=PHPSESSID; value=secret; ..." and breaks auth.
-    assert detail.cookies == {"PHPSESSID": "secret", "adult_view": "1"}
+    assert isinstance(detail.cookies, list)
 
     first = spider.listing_request("write_free21", page=1, session=session)
     assert first.meta["impersonate"] == "chrome131"

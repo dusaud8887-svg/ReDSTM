@@ -24,7 +24,7 @@ from crawler.session import (
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
 from scripts.recover_queue import _parse_args as parse_recovery_args
-from scripts.recover_queue import _recovery_batch, main, run_recovery
+from scripts.recover_queue import _recovery_batch, run_recovery
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "typemoon" / "detail.html"
 _NOW = datetime(2026, 7, 11, tzinfo=UTC)
@@ -37,21 +37,6 @@ def _session() -> SessionExport:
         _NOW + timedelta(hours=4),
         "ReDSTM-test/1.0",
     )
-
-
-def test_main_force_exits_after_idle_timeout_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    output = tmp_path / "report.json"
-    report = {"ok": False, "status": "partial", "stop_reason": "download_idle_timeout"}
-    exits: list[int] = []
-    monkeypatch.setattr("scripts.recover_queue._parse_args", lambda: Namespace(output=output))
-    monkeypatch.setattr("scripts.recover_queue.run_recovery", lambda args: report)
-    monkeypatch.setattr("scripts.recover_queue.os._exit", lambda code: exits.append(code))
-
-    assert main() == 2
-    assert exits == [2]
-    assert json.loads(output.read_text(encoding="utf-8")) == report
 
 
 def test_recovery_priority_bound_and_idempotent_transition(tmp_path: Path) -> None:
@@ -427,7 +412,6 @@ def test_recovery_stops_after_consecutive_site_failures(
         run_id=run_id,
         session=_session(),
         lease_seconds=60,
-        detail_concurrency=1,
     )
     [request] = asyncio.run(_collect_start(spider))
 
@@ -471,7 +455,6 @@ def test_recovery_stops_on_auth_response(tmp_path: Path) -> None:
         run_id=run_id,
         session=_session(),
         lease_seconds=60,
-        detail_concurrency=1,
     )
     [request] = asyncio.run(_collect_start(spider))
     response = HtmlResponse(
@@ -635,8 +618,8 @@ def test_recovery_network_breaker_reports_outage_and_preserves_attempts(
 
         class Stats:
             @staticmethod
-            def get_value(name: str) -> int | None:
-                return 1 if name == "redstm/detail_idle_timeouts" else None
+            def get_value(name: str) -> None:
+                return None
 
         stats = Stats()
 
@@ -672,7 +655,6 @@ def test_recovery_network_breaker_reports_outage_and_preserves_attempts(
 
     assert report["ok"] is False
     assert report["status"] == "site_unreachable"
-    assert report["stop_reason"] == "download_idle_timeout"
     with connect_archive(archive, read_only=True) as connection:
         run = connection.execute(
             "SELECT status, summary_json FROM crawl_runs WHERE kind = 'retry'"

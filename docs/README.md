@@ -148,7 +148,7 @@ baseline은 명시적 full export/publish bootstrap과 authenticated delta readb
 - frontend: plain HTML/CSS/ES modules; framework/UI kit 추가 없음
 - control: Worker `/api/v1` 한 경계, Access user/service role 분리
 - command: sync/retry/publish/pause/resume fixed action만; shell/path/restore/delete 금지
-- crawler: listing index를 queue seed로 쓰고 detail은 lease 최대 2건씩 엇갈려 처리; 시작 간 10초 하한
+- crawler: listing index를 queue seed로 쓰고 detail은 lease 1건씩 순차 처리; 시작 간 10초 하한
   delay(감속 전용 autothrottle), bounded outage 중단, durable inventory cursor, systemd automation,
   delta publish; local safety 계약과 남은 live gate는 `00 §8`/`10 §6·8.1`
 - access: private 유지; live 확인은 로그인된 Chrome, 자동 E2E는 local Worker 사용
