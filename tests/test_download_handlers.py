@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import gzip
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import requests
@@ -43,7 +43,9 @@ class _Raw:
         assert decode_content is False
         yield from self.chunks
         if self.read_timeout:
-            raise ReadTimeoutError(None, "https://www.typemoon.net/aa_a01/1", "timed out")
+            raise ReadTimeoutError(
+                cast(Any, None), "https://www.typemoon.net/aa_a01/1", "timed out"
+            )
 
 
 class _Source:
