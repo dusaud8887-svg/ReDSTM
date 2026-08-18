@@ -268,7 +268,7 @@ def test_detail_and_comments_use_explicit_selectors() -> None:
     assert post["comments"][0]["content_text"] == "댓글\n 내용"
 
 
-def test_listing_comment_expectation_fails_closed_on_incomplete_detail() -> None:
+def test_listing_comment_expectation_still_stores_body_when_comments_are_short() -> None:
     url = "https://www.typemoon.net/write_free21/62068"
     response = _response("detail.html", url).replace(
         request=Request(url=url, meta={"expected_comment_count": 2})
@@ -276,9 +276,9 @@ def test_listing_comment_expectation_fails_closed_on_incomplete_detail() -> None
 
     item = list(TypeMoonSpider().parse_detail(response))[0]
 
-    assert item["outcome"] == "parse_failed"
-    assert item["warnings"] == ["incomplete_comments"]
-    assert "comments" not in item
+    assert item["outcome"] == "stored"
+    assert len(item["comments"]) == 1
+    assert item["title"] == "대표 상세 게시물"
 
 
 def test_listing_comment_expectation_accepts_complete_detail() -> None:

@@ -305,6 +305,14 @@ class FrontierStore:
                 f"WHEN ? THEN {rank}" for rank, _group in enumerate(REDSTM_RECOVERY_GROUP_ORDER)
             )
             missing_clause = " AND post.latest_version_id IS NULL" if missing_only else ""
+            # missing-only is a first-pass body drain: never-tried pending rows must outrank
+            # accumulated retry/legacy failures or the batch never leaves the retry pile.
+            # Ordinary recovery still prefers due retry so failed items are reattempted first.
+            state_rank_sql = (
+                "CASE WHEN frontier.state = 'pending' THEN 0 ELSE 1 END"
+                if missing_only
+                else "CASE WHEN frontier.state = 'retry' THEN 0 ELSE 1 END"
+            )
             # Round-robin at board granularity so one slow, large board cannot monopolize
             # an entire recovery batch.
             rows = connection.execute(
@@ -318,7 +326,7 @@ class FrontierStore:
                             PARTITION BY frontier.board_id
                             ORDER BY
                                 CASE WHEN post.latest_version_id IS NULL THEN 0 ELSE 1 END,
-                                CASE WHEN frontier.state = 'retry' THEN 0 ELSE 1 END,
+                                {state_rank_sql},
                                 frontier.priority DESC,
                                 frontier.attempts,
                                 frontier.external_post_id
@@ -337,7 +345,7 @@ class FrontierStore:
                 ORDER BY
                     body_rank,
                     board_rank,
-                    CASE WHEN state = 'retry' THEN 0 ELSE 1 END,
+                    {state_rank_sql.replace("frontier.state", "state")},
                     CASE group_name
                         {group_order_sql}
                         ELSE 3

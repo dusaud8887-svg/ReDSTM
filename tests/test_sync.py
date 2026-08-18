@@ -1447,6 +1447,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     assert project.getfloat("DOWNLOAD_DELAY") == 10
     assert project.getint("RETRY_TIMES") == 3
     assert project.getdict("DOWNLOADER_MIDDLEWARES") == {
+        "crawler.middlewares.OriginProxyMiddleware": 350,
         "crawler.middlewares.WarcCaptureMiddleware": 595,
     }
     assert project.getdict("DOWNLOAD_HANDLERS")["https"].endswith("SequentialDetailDownloadHandler")

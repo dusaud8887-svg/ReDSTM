@@ -129,12 +129,6 @@ class ArchiveStore:
         parser_version: str = PARSER_VERSION,
         lease: FrontierLease | None = None,
     ) -> StoreResult:
-        if (
-            lease is not None
-            and lease.expected_comment_count is not None
-            and len(post.comments) < lease.expected_comment_count
-        ):
-            raise ValueError("captured post has fewer comments than the listing advertised")
         captured_at_text = _timestamp(captured_at)
         created_at_source = normalize_source_timestamp(post.created_at_raw, base=captured_at)
         with archive_transaction(self.path) as connection:
@@ -316,7 +310,17 @@ class ArchiveStore:
             )
             assert capture_cursor.lastrowid is not None
             if lease is not None:
-                complete_lease(connection, lease, stored_comment_count=len(post.comments))
+                expected = lease.expected_comment_count
+                if expected is not None and len(post.comments) < expected:
+                    transition_lease(
+                        connection,
+                        lease,
+                        state="retry",
+                        error_code="incomplete_comments",
+                        next_attempt_at=retry_backoff(max(lease.attempts, 1), captured_at),
+                    )
+                else:
+                    complete_lease(connection, lease, stored_comment_count=len(post.comments))
             return StoreResult(post_id, version_id, capture_cursor.lastrowid, changed)
 
     def record_outcome(

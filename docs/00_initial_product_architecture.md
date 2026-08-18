@@ -710,7 +710,7 @@ expected_comment_count nullable  # latest listing observation, >= 0
 PRIMARY KEY(board_id, external_post_id)
 ```
 
-`running` row는 두 lease 필드가 모두 있어야 한다. batch claim은 `BEGIN IMMEDIATE` 안에서 만료된 row를 `retry`로 돌리고 새 token/만료시각을 기록한다. 완료 갱신은 key와 token이 모두 일치할 때만 허용해, 종료된 이전 process가 재임대된 작업을 늦게 완료 처리하지 못하게 한다. v4는 기존 frontier를 현재 post projection의 댓글 수로 backfill하고 목차-only row는 `NULL`을 유지한다. 이후 listing의 최신 댓글 수를 claim/retry/recovery lease까지 보존한다. detail에서 더 적은 댓글만 파싱되면 `incomplete_comments`로 저장하지 않으며, 성공 store만 실제 저장 댓글 수와 lease 완료를 같은 transaction에서 갱신한다. restricted/parse/fetch/storage 실패는 기대값을 지우지 않는다.
+`running` row는 두 lease 필드가 모두 있어야 한다. batch claim은 `BEGIN IMMEDIATE` 안에서 만료된 row를 `retry`로 돌리고 새 token/만료시각을 기록한다. 완료 갱신은 key와 token이 모두 일치할 때만 허용해, 종료된 이전 process가 재임대된 작업을 늦게 완료 처리하지 못하게 한다. v4는 기존 frontier를 현재 post projection의 댓글 수로 backfill하고 목차-only row는 `NULL`을 유지한다. 이후 listing의 최신 댓글 수를 claim/retry/recovery lease까지 보존한다. title+본문이 있으면 댓글이 listing 기대치보다 적어도 본문을 저장하고 frontier는 `incomplete_comments` retry로 남겨 댓글만 다시 받는다. 본문이 없으면 기존처럼 `parse_failed`다. restricted/parse/fetch/storage 실패는 기대값을 지우지 않는다.
 
 #### `crawl_runs`
 

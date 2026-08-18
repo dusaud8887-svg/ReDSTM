@@ -12,12 +12,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
-from urllib.request import HTTPCookieProcessor, Request, build_opener
+from urllib.request import (
+    HTTPCookieProcessor,
+    OpenerDirector,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 from filelock import FileLock, Timeout
 from parsel import Selector
 
 from crawler.footprint import impersonate_target
+from crawler.origin_proxy import active_origin_proxy, urllib_proxy_handler
 from crawler.settings import (
     REDSTM_ACCEPT,
     REDSTM_ACCEPT_LANGUAGE,
@@ -47,6 +54,14 @@ _LOGIN_PAGE_URL = f"{_BASE_URL}bbs/login.php"
 _LOGIN_CHECK_URL = f"{_BASE_URL}bbs/login_check.php"
 _SESSION_LIFETIME = timedelta(seconds=REDSTM_SESSION_LIFETIME_SECONDS)
 _AUTO_LOGIN_MIN_INTERVAL = timedelta(seconds=REDSTM_AUTO_LOGIN_MIN_INTERVAL_SECONDS)
+
+
+def _opener(cookie_jar: CookieJar) -> OpenerDirector:
+    handlers: list[HTTPCookieProcessor | ProxyHandler] = [HTTPCookieProcessor(cookie_jar)]
+    proxy = urllib_proxy_handler()
+    if proxy is not None:
+        handlers.append(proxy)
+    return build_opener(*handlers)
 
 
 def _handshake_headers(user_agent: str, **extra: str) -> dict[str, str]:
@@ -303,7 +318,7 @@ def _urllib_home_html(session: SessionExport, *, timeout: float) -> str:
                 rfc2109=False,
             )
         )
-    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    opener = _opener(cookie_jar)
     return _read_html(
         opener.open(
             Request(_BASE_URL, headers=_handshake_headers(session.user_agent)),
@@ -321,7 +336,10 @@ def _impersonate_home_html(session: SessionExport, *, timeout: float, target: st
     with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
         _seed_impersonate_cookies(client, session)
         response = client.get(
-            _BASE_URL, headers=_impersonate_headers(session.user_agent), timeout=timeout
+            _BASE_URL,
+            headers=_impersonate_headers(session.user_agent),
+            timeout=timeout,
+            proxy=active_origin_proxy(),
         )
         return str(response.text)
 
@@ -358,7 +376,7 @@ def _urllib_login(
     user_id: str, password: str, user_agent: str, *, timeout: float
 ) -> tuple[CookieJar, str]:
     cookie_jar = CookieJar()
-    opener = build_opener(HTTPCookieProcessor(cookie_jar))
+    opener = _opener(cookie_jar)
     login_html = _read_html(
         opener.open(
             Request(_LOGIN_PAGE_URL, headers=_handshake_headers(user_agent)),
@@ -391,9 +409,13 @@ def _impersonate_login(
     from curl_cffi import requests as cffi_requests
 
     with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
+        proxy = active_origin_proxy()
         login_html = str(
             client.get(
-                _LOGIN_PAGE_URL, headers=_impersonate_headers(user_agent), timeout=timeout
+                _LOGIN_PAGE_URL,
+                headers=_impersonate_headers(user_agent),
+                timeout=timeout,
+                proxy=proxy,
             ).text
         )
         fields = _login_fields(login_html, user_id, password)
@@ -404,12 +426,14 @@ def _impersonate_login(
                 user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
             ),
             timeout=timeout,
+            proxy=proxy,
         )
         home_html = str(
             client.get(
                 _BASE_URL,
                 headers=_impersonate_headers(user_agent, Referer=_LOGIN_PAGE_URL),
                 timeout=timeout,
+                proxy=proxy,
             ).text
         )
         # curl_cffi exposes a standard http.cookiejar.CookieJar, so the caller's cookie

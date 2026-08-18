@@ -1061,9 +1061,9 @@ class ControlRunner:
                     continue
                 if status in {"runner_failed", "failed"}:
                     return self._combined_collection_report(reports)
-                failure_codes = report.get("failures")
+                breaker_codes = report.get("breaker_codes")
                 network_outage = (
-                    isinstance(failure_codes, list) and "network_error" in failure_codes
+                    isinstance(breaker_codes, list) and "network_error" in breaker_codes
                 )
                 if (
                     network_outage

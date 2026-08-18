@@ -204,9 +204,9 @@ automatic schedule을 활성화한다. 그 전에는 schedule을 disabled로 유
 받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
 scheduling만 cap한다. schema v4의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서
 재개되게 하며 완료 때만 cursor와 `last_inventory_at`을 확정한다. listing 댓글 기대치와 증분 anchor를
-기존 post projection에서 backfill하고 claim/retry/recovery lease에 보존한다. detail 댓글 수가 더 적으면
-`incomplete_comments`로 저장하지 않고, 성공 store만 실제 저장 댓글 수와 lease 완료를 같은 transaction에서
-갱신한다. restricted/parse/fetch/storage 실패는 기대값을 보존한다. 전 board 최초 inventory가 끝나면
+기존 post projection에서 backfill하고 claim/retry/recovery lease에 보존한다. title+본문이 있으면 댓글이 listing 기대치보다 적어도 본문을
+저장하고 frontier는 `incomplete_comments` retry로 남긴다. 본문이 없으면 `parse_failed`다.
+restricted/parse/fetch/storage 실패는 기대값을 보존한다. 전 board 최초 inventory가 끝나면
 목차-only pending/retry backlog는 수동 전체 본문 작업으로 비운다.
 inventory는 listing coverage이며 기존 detail 전체 재요청은 별도 수동 작업이다. dead는
 `network_error`·`parse_drift`·`storage_error`를 오류별·건수 제한으로 명시 재개한다.

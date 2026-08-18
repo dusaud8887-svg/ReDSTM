@@ -15,11 +15,12 @@ from scrapy.http import Request, Response
 from warcio.statusandheaders import StatusAndHeaders  # type: ignore[import-untyped]
 from warcio.warcwriter import WARCWriter  # type: ignore[import-untyped]
 
+from crawler.origin_proxy import TYPEMOON_ORIGIN_HOSTS, active_origin_proxy
 from crawler.settings import REDSTM_WARC_MAX_BYTES
 from crawler.store import ArchiveStore
 
 _CAPTURE_PATH = re.compile(r"^/[a-z0-9_]+(?:/[0-9]+)?$")
-_TYPEMOON_HOSTS = {"typemoon.net", "www.typemoon.net"}
+_TYPEMOON_HOSTS = set(TYPEMOON_ORIGIN_HOSTS)
 _OMITTED_RESPONSE_HEADERS = {b"content-length", b"set-cookie", b"set-cookie2", b"transfer-encoding"}
 
 
@@ -60,6 +61,18 @@ def _response_headers(response: Response) -> list[tuple[str, str]]:
         headers.extend((decoded_name, value.decode("latin-1")) for value in values)
     headers.append(("Content-Length", str(len(response.body))))
     return headers
+
+
+class OriginProxyMiddleware:
+    def process_request(self, request: Request, spider: Spider) -> None:
+        del spider
+        proxy = active_origin_proxy()
+        if proxy is None:
+            return
+        host = urlsplit(request.url).hostname
+        if host not in TYPEMOON_ORIGIN_HOSTS:
+            return
+        request.meta.setdefault("proxy", proxy)
 
 
 class WarcCaptureMiddleware:

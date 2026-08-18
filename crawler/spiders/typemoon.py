@@ -499,6 +499,7 @@ class TypeMoonSpider(scrapy.Spider):
             **REDSTM_CLIENT_HINT_HEADERS,
             **REDSTM_NAVIGATION_HEADERS,
             "Sec-Fetch-Site": "same-origin",
+            "Connection": "close",
             "Referer": self.listing_url(board_id),
         }
         return scrapy.Request(
@@ -1110,6 +1111,18 @@ class TypeMoonSpider(scrapy.Spider):
             )
             return
 
+        if response.request is not None and response.request.meta.get("redstm_truncated"):
+            if title is None or content is None:
+                yield CapturedPostItem(
+                    board_id=board_id,
+                    external_post_id=external_post_id,
+                    canonical_url=canonical_url,
+                    outcome="fetch_failed",
+                    error_code="network_error",
+                    warnings=["truncated_body"],
+                    **capture_metadata,
+                )
+                return
         warnings = []
         views: int | None = None
         if title is None:
@@ -1131,7 +1144,8 @@ class TypeMoonSpider(scrapy.Spider):
                 warnings.append("invalid_expected_comment_count")
             elif len(comments) < expected_comment_count:
                 warnings.append("incomplete_comments")
-        if warnings:
+        blocking = [warning for warning in warnings if warning != "incomplete_comments"]
+        if blocking:
             yield CapturedPostItem(
                 board_id=board_id,
                 external_post_id=external_post_id,

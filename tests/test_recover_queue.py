@@ -175,6 +175,43 @@ def test_recovery_prefers_outline_only_posts(tmp_path: Path) -> None:
     assert frontier.recovery_candidates(limit=5, now=_NOW, missing_only=True) == [("aa_a01", 2)]
 
 
+def test_missing_only_recovery_prefers_pending_over_due_retry(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title, first_seen_at, last_seen_at
+            ) VALUES ('aa_a01', ?, 'https://www.typemoon.net/aa_a01/' || ?, 't', 'now', 'now')
+            """,
+            [(1, 1), (2, 2)],
+        )
+    frontier = FrontierStore(archive)
+    frontier.seed("aa_a01", 1, "https://www.typemoon.net/aa_a01/1")
+    frontier.seed("aa_a01", 2, "https://www.typemoon.net/aa_a01/2")
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            UPDATE crawl_frontier
+            SET state = 'retry', attempts = 2, last_error_code = 'network_error'
+            WHERE external_post_id = 1
+            """
+        )
+
+    assert frontier.recovery_candidates(limit=2, now=_NOW) == [("aa_a01", 1), ("aa_a01", 2)]
+    assert frontier.recovery_candidates(limit=2, now=_NOW, missing_only=True) == [
+        ("aa_a01", 2),
+        ("aa_a01", 1),
+    ]
+
+
 def test_recovery_round_robins_across_boards(tmp_path: Path) -> None:
     archive = tmp_path / "archive.sqlite"
     initialize_archive(archive)
@@ -655,6 +692,7 @@ def test_recovery_network_breaker_reports_outage_and_preserves_attempts(
 
     assert report["ok"] is False
     assert report["status"] == "site_unreachable"
+    assert report["breaker_codes"] == ["network_error"]
     with connect_archive(archive, read_only=True) as connection:
         run = connection.execute(
             "SELECT status, summary_json FROM crawl_runs WHERE kind = 'retry'"
@@ -722,3 +760,4 @@ def test_recovery_report_includes_capture_failure_codes(
 
     assert report["ok"] is False
     assert report["failures"] == ["auth_required", "recovery_time_budget"]
+    assert report["breaker_codes"] == []

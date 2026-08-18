@@ -17,6 +17,7 @@ from scrapy.utils.defer import maybe_deferred_to_future
 from twisted.internet.threads import deferToThread
 from urllib3.exceptions import ProtocolError, ReadTimeoutError, SSLError
 
+from crawler.origin_proxy import requests_proxies
 from crawler.settings import (
     REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS,
     REDSTM_DETAIL_READ_TIMEOUT_SECONDS,
@@ -59,12 +60,14 @@ class SequentialDetailDownloadHandler:
         headers: dict[str, str] = dict(cast(Any, request.headers.to_unicode_dict()))
         # Preserve compressed wire bytes for WARC; Scrapy decompresses after capture.
         headers["Accept-Encoding"] = "gzip, deflate"
+        headers["Connection"] = "close"
         started_at = time.monotonic()
         with self._session.get(
             request.url,
             headers=headers,
             allow_redirects=False,
             stream=True,
+            proxies=requests_proxies(),
             timeout=(
                 REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS,
                 REDSTM_DETAIL_READ_TIMEOUT_SECONDS,
@@ -78,6 +81,7 @@ class SequentialDetailDownloadHandler:
                 )
             body = bytearray()
             warned = False
+            truncated: BaseException | None = None
             try:
                 for chunk in source.raw.stream(amt=64 << 10, decode_content=False):
                     if not chunk:
@@ -95,11 +99,17 @@ class SequentialDetailDownloadHandler:
                         )
                         warned = True
             except ReadTimeoutError as error:
-                raise requests.exceptions.ConnectionError(error) from error
+                truncated = error
             except ProtocolError as error:
-                raise requests.exceptions.ChunkedEncodingError(error) from error
+                truncated = error
             except SSLError as error:
                 raise requests.exceptions.SSLError(error) from error
+            if truncated is not None and not body:
+                if isinstance(truncated, ReadTimeoutError):
+                    raise requests.exceptions.ConnectionError(truncated) from truncated
+                raise requests.exceptions.ChunkedEncodingError(truncated) from truncated
+            if truncated is not None:
+                request.meta["redstm_truncated"] = True
             body_bytes = bytes(body)
             response_headers = self._response_headers(source, len(body_bytes))
             response_type = responsetypes.from_args(

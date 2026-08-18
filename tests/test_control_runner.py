@@ -1649,6 +1649,7 @@ def test_fill_missing_content_keeps_full_batches_after_isolated_failure(
                 "status": "partial",
                 "selected_posts": 1,
                 "outcomes": {"fetch_failed": 1},
+                "failures": ["network_error"],
             },
             {"ok": True, "status": "succeeded", "selected_posts": 0, "outcomes": {}},
         ]
@@ -1689,6 +1690,7 @@ def test_recovery_returns_to_normal_chunk_after_successful_canary(
                 "selected_posts": 2,
                 "outcomes": {"fetch_failed": 2},
                 "failures": ["network_error"],
+                "breaker_codes": ["network_error"],
             },
             {
                 "ok": True,

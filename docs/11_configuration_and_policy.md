@@ -98,6 +98,7 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_RECOVERY_HEALTHCHECK_URL` | `access.env` optional | recovery dead-man 사용 시 | 예 | `scripts.recover_queue` |
 | `REDSTM_BACKUP_HEALTHCHECK_URL` | `access.env` optional | 비활성 backup command를 수동 사용할 때 | 예 | `scripts.backup_archive` |
 | `REDSTM_RESTORE_HEALTHCHECK_URL` | `access.env` optional | 수동 restore rehearsal 사용 시 | 예 | `scripts.restore_archive` |
+| `REDSTM_ORIGIN_PROXY` | `access.env` optional | TypeMoon HTTPS만 경유할 HTTP CONNECT proxy (`http://127.0.0.1:18080`). 시작 시 listener가 없으면 이 process는 직접 연결 | 아니오 | session/listing/detail |
 
 Release workstation에서만 쓰는 `REDSTM_ORACLE_HOST`, `REDSTM_ORACLE_USER`, `REDSTM_ORACLE_KEY`는
 Oracle SSH target 선택값이다. key 변수에는 private key 원문이 아니라 local file path만 넣는다.
@@ -142,7 +143,10 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | normalize | source 날짜 파싱 | 결정론적 절대 포맷(2자리 연도 포함) → base-anchored `MM-DD`/`HH:MM` → dateparser relative-time(`어제`/`N일 전`); 원문 `created_at_raw`는 항상 보존 | `scripts/legacy_common.py` |
 | detail audit | stale detail revisit | 30일 eligibility, batch당 oldest-first 예약 1건 | `crawler/settings.py` |
 | cycle | graceful budget | invocation당 4시간 | `crawler/settings.py` + CLI override |
-| recovery | 내부 chunk | normal 20건 / full-content 100건; network outage 뒤 1건 canary | 수동 command는 canary 성공 뒤 정상 chunk로 복귀해 남은 항목 0까지 반복; 자동 cycle은 20건·최대 2시간 단일 batch |
+| recovery | 내부 chunk | normal 20건 / full-content 100건; spider network breaker 뒤에만 1건 canary | 고립 fetch 실패는 20건 유지. 수동 command는 canary 성공 뒤 정상 chunk로 복귀해 남은 항목 0까지 반복; 자동 cycle은 20건·최대 2시간 단일 batch |
+| recovery | missing-only 순서 | 본문 없는 pending을 due retry보다 앞 | `crawler/frontier.py` |
+| request | origin proxy | optional `REDSTM_ORIGIN_PROXY`; TypeMoon host만, listener 없으면 직접 연결 | `crawler/origin_proxy.py` |
+| request | detail connection | 요청마다 `Connection: close`; 부분 HTML은 본문이 보이면 salvage | `crawler/download_handlers.py` |
 | telemetry | 실행 중 canonical 집계 | 5분마다 post stored 및 parse/fetch failure, frontier in-flight | 기존 `archive_snapshot` event; 원문 미전송 |
 | recovery | board group order | AA → 창작 → 팬픽 → 나머지 | `crawler/settings.py` |
 | export | automatic workers / changed-post cap | 1 / 0(무제한) | `crawler/settings.py` |

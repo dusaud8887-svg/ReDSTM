@@ -103,6 +103,7 @@ TELNETCONSOLE_ENABLED = False
 LOG_LEVEL = "INFO"
 
 DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {
+    "crawler.middlewares.OriginProxyMiddleware": 350,
     "crawler.middlewares.WarcCaptureMiddleware": 595,
 }
 DOWNLOAD_HANDLERS = {
@@ -132,7 +133,7 @@ REDSTM_FRONTIER_LEASE_SECONDS = 3600
 REDSTM_FRONTIER_MAX_ATTEMPTS = 5
 # Origin/network failures remain retryable forever with capped backoff. Parser and local
 # storage failures require manual review after the bounded attempt budget.
-REDSTM_CAPPED_RETRY_ERROR_CODES = frozenset({"parse_drift", "storage_error"})
+REDSTM_CAPPED_RETRY_ERROR_CODES = frozenset({"parse_drift", "storage_error", "incomplete_comments"})
 REDSTM_FRONTIER_BACKOFF_BASE_SECONDS = 120
 REDSTM_FRONTIER_BACKOFF_CAP_SECONDS = 6 * 60 * 60
 REDSTM_LISTING_OVERLAP_UNCHANGED = 20

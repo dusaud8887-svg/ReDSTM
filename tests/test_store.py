@@ -464,7 +464,7 @@ def test_non_stored_outcome_preserves_frontier_expectation(
         )
 
 
-def test_store_rejects_a_post_with_fewer_comments_than_its_lease(
+def test_store_keeps_body_and_retries_when_comments_are_incomplete(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "archive.sqlite"
@@ -477,19 +477,26 @@ def test_store_rejects_a_post_with_fewer_comments_than_its_lease(
     store = ArchiveStore(path)
     run_id = store.start_run("sync", now=_NOW)
 
-    with pytest.raises(ValueError, match="fewer comments"):
-        store.store_post(
-            run_id,
-            _post(),
-            captured_at=_NOW,
-            raw_sha256="a" * 64,
-            warc_file="capture.warc.gz",
-            lease=lease,
-        )
+    result = store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="capture.warc.gz",
+        lease=lease,
+    )
 
+    assert result.changed is True
     with connect_archive(path, read_only=True) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
-        assert connection.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "running"
+        post = connection.execute(
+            "SELECT latest_version_id, comment_count FROM posts WHERE external_post_id = 7"
+        ).fetchone()
+        assert post["latest_version_id"] is not None
+        assert post["comment_count"] == 1
+        frontier_row = connection.execute(
+            "SELECT state, last_error_code FROM crawl_frontier"
+        ).fetchone()
+        assert tuple(frontier_row) == ("retry", "incomplete_comments")
 
 
 def test_retry_backoff_keeps_network_failures_retryable(tmp_path: Path) -> None:

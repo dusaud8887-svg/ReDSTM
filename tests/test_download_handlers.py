@@ -111,6 +111,18 @@ def test_sequential_detail_preserves_wire_body_then_scrapy_decodes_it() -> None:
     assert handler._session.kwargs["stream"] is True  # type: ignore[attr-defined]
     assert handler._session.kwargs["allow_redirects"] is False  # type: ignore[attr-defined]
     assert handler._session.kwargs["headers"]["Accept-Encoding"] == "gzip, deflate"  # type: ignore[attr-defined]
+    assert handler._session.kwargs["headers"]["Connection"] == "close"  # type: ignore[attr-defined]
+
+
+def test_sequential_detail_returns_partial_body_after_idle_timeout() -> None:
+    encoded_body = gzip.compress(b"<html>partial</html>")
+    handler = _handler(_Source([encoded_body], read_timeout=True))
+    request = Request("https://www.typemoon.net/aa_a01/1")
+
+    response = handler._download_detail(request)
+
+    assert response.body == encoded_body
+    assert request.meta["redstm_truncated"] is True
 
 
 def test_sequential_detail_rejects_oversized_response_before_reading() -> None:

@@ -188,6 +188,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             failures = sorted(spider_failures | set(_capture_failure_codes(archive, run_id)))
             if _timed_out(crawler):
                 failures = sorted({*failures, "recovery_time_budget"})
+        breaker_codes = sorted(spider_failures)
 
         outcomes = _capture_summary(archive, run_id)
         full_content_remaining = (
@@ -222,6 +223,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 "selected_posts": len(candidates),
                 "outcomes": outcomes,
                 "failures": failures,
+                "breaker_codes": breaker_codes,
                 "preflight_status": preflight_status,
                 "interrupted_runs": interrupted_runs,
                 "requeued_dead": requeued_dead,
@@ -241,6 +243,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "scheduled_posts": scheduled,
             "outcomes": outcomes,
             "failures": failures,
+            "breaker_codes": breaker_codes,
             "interrupted_runs": interrupted_runs,
             "requeued_dead": requeued_dead,
             "revisited_posts": revisited_posts,
