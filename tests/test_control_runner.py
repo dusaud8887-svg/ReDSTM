@@ -1638,7 +1638,7 @@ def test_fill_missing_content_uses_only_outline_queue(
     assert "--full-content-before" not in commands[0]
 
 
-def test_fill_missing_content_reports_deferred_failures(
+def test_fill_missing_content_keeps_full_batches_after_isolated_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -1670,10 +1670,10 @@ def test_fill_missing_content_reports_deferred_failures(
     assert report["status"] == "partial"
     assert report["safe_code"] == "content_retry_deferred"
     assert report["failed_posts"] == 1
-    assert sleeps == [90]
+    assert sleeps == []
     assert [command[command.index("--max-posts") + 1] for command in commands] == [
         str(REDSTM_RECOVERY_MAX_POSTS),
-        "1",
+        str(REDSTM_RECOVERY_MAX_POSTS),
     ]
 
 
@@ -1685,9 +1685,10 @@ def test_recovery_returns_to_normal_chunk_after_successful_canary(
         [
             {
                 "ok": False,
-                "status": "site_unreachable",
+                "status": "partial",
                 "selected_posts": 2,
                 "outcomes": {"fetch_failed": 2},
+                "failures": ["network_error"],
             },
             {
                 "ok": True,

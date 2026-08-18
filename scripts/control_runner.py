@@ -1061,12 +1061,12 @@ class ControlRunner:
                     continue
                 if status in {"runner_failed", "failed"}:
                     return self._combined_collection_report(reports)
-                outcomes = report.get("outcomes")
-                fetch_failed = (
-                    _integer(outcomes.get("fetch_failed")) if isinstance(outcomes, dict) else 0
+                failure_codes = report.get("failures")
+                network_outage = (
+                    isinstance(failure_codes, list) and "network_error" in failure_codes
                 )
                 if (
-                    fetch_failed
+                    network_outage
                     and max_seconds is None
                     and not (action == "full-content" and report.get("full_content_remaining") == 0)
                 ):
