@@ -100,6 +100,8 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_RESTORE_HEALTHCHECK_URL` | `access.env` optional | 수동 restore rehearsal 사용 시 | 예 | `scripts.restore_archive` |
 | `REDSTM_ORIGIN_PROXY` | `access.env` optional | TypeMoon HTTPS만 경유할 HTTP CONNECT proxy (`http://127.0.0.1:18080`). 시작 시 listener가 없으면 이 process는 직접 연결 | 아니오 | session/listing/detail |
 
+워크스테이션에서 홈 경로를 켜려면 `scripts/windows/start-origin-egress.cmd`를 실행한다. 이미 떠 있으면 다시 만들지 않는다. 이 계정의 Windows 시작프로그램에 같은 스크립트 바로가기를 두면 로그인 때 자동으로 붙는다.
+
 Release workstation에서만 쓰는 `REDSTM_ORACLE_HOST`, `REDSTM_ORACLE_USER`, `REDSTM_ORACLE_KEY`는
 Oracle SSH target 선택값이다. key 변수에는 private key 원문이 아니라 local file path만 넣는다.
 Oracle systemd 환경 파일로 복사하지 않는다.
