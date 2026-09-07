@@ -228,6 +228,8 @@ def _has_login_form(response: scrapy.http.HtmlResponse) -> bool:
 
 
 def _looks_restricted(response: scrapy.http.HtmlResponse) -> bool:
+    if response.css('form input[type="password"][name="wr_password"]'):
+        return True
     visible_text = " ".join(response.css("body ::text").getall()).casefold()
     return any(phrase.casefold() in visible_text for phrase in _RESTRICTED_PHRASES)
 

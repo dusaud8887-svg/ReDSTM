@@ -212,6 +212,21 @@ def test_restricted_detail_is_not_misparsed() -> None:
     assert "body_html" not in items[0]
 
 
+def test_password_protected_post_is_restricted_without_retaining_the_form() -> None:
+    url = "https://www.typemoon.net/bbs/password.php?w=s&bo_table=write_plus&wr_id=729040"
+    response = HtmlResponse(
+        url=url,
+        request=Request(url),
+        body=b'<form action="password_check.php"><input type="password" name="wr_password"></form>',
+        encoding="utf-8",
+    )
+    item = list(TypeMoonSpider().parse_detail(response))[0]
+    assert item["outcome"] == "restricted"
+    assert item["board_id"] == "write_plus"
+    assert item["external_post_id"] == 729040
+    assert "body_html" not in item
+
+
 @pytest.mark.parametrize(
     "message",
     ["존재하지 않는 자료 입니다.", "글이 존재하지 않습니다. 글이 삭제되었거나 이동된 경우입니다."],
