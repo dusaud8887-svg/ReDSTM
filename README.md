@@ -100,7 +100,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - 429 `Retry-After` frontier defer와 서로 다른 run 2회 확인 404 missing 판정
 - read-only DB/lease/WARC `doctor`와 verified SQLite snapshot command
 - archive된 loopback-only read-only Operations Console C0와 capability session/Origin/CSP 경계
-- deterministic zstd level 15 post object와 level 6 `-v2` board/search/collection aggregate export,
+- deterministic zstd level 6 post object와 level 6 `-v2` board/search/collection aggregate export,
   verified incremental state와 release rollback
 - 검증된 zstd full `release.json`과 `.partial` 0개 산출물
 - pointer-last `rclone` publish command

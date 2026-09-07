@@ -12,7 +12,7 @@ const SEARCH_FIELDS_WITH_AA = [...SEARCH_FIELDS, "is_aa"];
 function normalize(value) {
   return String(value ?? "")
     .normalize("NFKC")
-    .toLocaleLowerCase("ko-KR");
+    .toLowerCase();
 }
 
 export function prepareSearch(payload) {
