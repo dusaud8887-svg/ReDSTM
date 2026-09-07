@@ -467,6 +467,30 @@ def test_incremental_export_reads_bodies_only_for_changed_posts(
     assert second["release_key"] != first["release_key"]
 
 
+def test_incremental_export_uses_preserved_comments_not_listing_count(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    with connect_archive(source) as connection:
+        connection.execute("UPDATE posts SET comment_count = 15 WHERE board_id = 'aa_a01'")
+    first = export_static(source, output)
+    _store_post(
+        source,
+        _post("ss_temp01", 1, "Updated", "changed", comments=1),
+        _NOW + timedelta(hours=1),
+    )
+    second = export_static(source, output, incremental_only=True)
+    assert second["mode"] == "incremental"
+    assert second["changed_posts"] == 1
+    assert second["comment_count"] == first["comment_count"]
+    validated = validate_release(output, second["release_key"])
+    assert validated["comment_count"] == first["comment_count"]
+    with connect_archive(source) as connection:
+        assert connection.execute(
+            "SELECT comment_count FROM posts WHERE board_id = 'aa_a01'"
+        ).fetchone()[0] == 15
+
+
 def test_incremental_export_includes_untracked_projection_changes_mixed_with_a_capture(
     tmp_path: Path,
 ) -> None:

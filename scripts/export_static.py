@@ -431,7 +431,8 @@ def _search_row_bytes(
         """
         SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
                p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
-               p.views, p.is_aa, p.comment_count, p.latest_version_id,
+               p.views, p.is_aa, p.latest_version_id,
+               (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
                v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
         FROM posts AS p
         JOIN post_versions AS v ON v.id = p.latest_version_id
@@ -1255,7 +1256,8 @@ def _projection_rows(connection: sqlite3.Connection) -> Iterator[sqlite3.Row]:
             """
             SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
                    p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
-                   p.views, p.is_aa, p.comment_count, p.latest_version_id,
+                   p.views, p.is_aa, p.latest_version_id,
+                   (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
                    v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
             FROM posts AS p
             JOIN post_versions AS v ON v.id = p.latest_version_id
@@ -1610,7 +1612,8 @@ def _write_projection_release(
                 """
                 SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
                        p.title, p.author, p.category, p.created_at_source, p.created_at_raw,
-                       p.views, p.is_aa, p.comment_count, p.latest_version_id,
+                       p.views, p.is_aa, p.latest_version_id,
+                       (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
                        v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
                 FROM posts AS p
                 JOIN post_versions AS v ON v.id = p.latest_version_id
@@ -1660,8 +1663,8 @@ def _write_projection_release(
         "post_count": post_count,
         "comment_count": int(
             connection.execute(
-                "SELECT COALESCE(SUM(comment_count), 0) FROM posts "
-                "WHERE latest_version_id IS NOT NULL"
+                "SELECT COUNT(*) FROM comments c JOIN posts p ON p.id = c.post_id "
+                "WHERE p.latest_version_id IS NOT NULL"
             ).fetchone()[0]
         ),
         "unavailable_post_count": cast(int, fingerprint["unavailable_post_count"]),
