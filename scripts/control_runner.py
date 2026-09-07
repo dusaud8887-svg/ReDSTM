@@ -925,7 +925,7 @@ class ControlRunner:
                 if status in {"site_unreachable", "rate_limited", "auth_failed"}:
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
-                    time.sleep(delay)
+                    self._backoff(delay, run_id, crawl_step, command_id, pause_file)
                     continue
                 if status in {"runner_failed", "failed"}:
                     combined = self._combined_collection_report(reports)
@@ -948,7 +948,7 @@ class ControlRunner:
                             combined, str(inventory_started_at), board_id
                         )
                     delay = backoff[min(stuck_cycles - 1, len(backoff) - 1)]
-                    time.sleep(delay)
+                    self._backoff(delay, run_id, crawl_step, command_id, pause_file)
                     continue
                 previous_signature = signature
                 stuck_cycles = 0
@@ -1057,7 +1057,7 @@ class ControlRunner:
                     backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
-                    time.sleep(delay)
+                    self._backoff(delay, run_id, recovery_step, command_id, pause_file)
                     continue
                 if status in {"runner_failed", "failed"}:
                     return self._combined_collection_report(reports)
@@ -1073,7 +1073,7 @@ class ControlRunner:
                     backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
-                    time.sleep(delay)
+                    self._backoff(delay, run_id, recovery_step, command_id, pause_file)
                 else:
                     outage_retries = 0
                 if action in {"fill-missing-content", "retry-batch"}:
@@ -1732,6 +1732,24 @@ class ControlRunner:
         if return_code not in (0, 2) and report.get("ok") is not True:
             return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         return report
+
+    def _backoff(
+        self,
+        seconds: int,
+        run_id: str,
+        step: str,
+        command_id: str | None,
+        pause_file: Path,
+    ) -> None:
+        # Keep long outage waits observable and interruptible through the normal marker API.
+        for elapsed in range(0, seconds, 30):
+            self._claim_marker()
+            if pause_file.exists():
+                return
+            if command_id is not None:
+                self.store.touch_command(command_id)
+            self._heartbeat("degraded", run_id=run_id, step=step, command_id=command_id)
+            time.sleep(min(30, seconds - elapsed))
 
     def _wait(
         self,

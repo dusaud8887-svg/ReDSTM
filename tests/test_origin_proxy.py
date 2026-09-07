@@ -11,7 +11,6 @@ from crawler.origin_proxy import (
     active_origin_proxy,
     configured_origin_proxy,
     requests_proxies,
-    reset_origin_proxy_state,
 )
 from crawler.spiders.typemoon import TypeMoonSpider
 
@@ -20,7 +19,6 @@ _DETAIL = Path(__file__).parent / "fixtures" / "typemoon" / "detail.html"
 
 def test_origin_proxy_stays_off_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("REDSTM_ORIGIN_PROXY", raising=False)
-    reset_origin_proxy_state()
     assert configured_origin_proxy() is None
     assert active_origin_proxy() is None
     assert requests_proxies() is None
@@ -28,14 +26,12 @@ def test_origin_proxy_stays_off_without_env(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_origin_proxy_falls_back_when_listener_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REDSTM_ORIGIN_PROXY", "http://127.0.0.1:1")
-    reset_origin_proxy_state()
     assert active_origin_proxy() is None
     assert requests_proxies() is None
 
 
 def test_origin_proxy_middleware_sets_typemoon_meta(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REDSTM_ORIGIN_PROXY", "http://127.0.0.1:18080")
-    reset_origin_proxy_state()
     monkeypatch.setattr("crawler.origin_proxy._proxy_listening", lambda _url: True)
     request = Request("https://www.typemoon.net/aa_a01/1")
     OriginProxyMiddleware().process_request(request, Spider("test"))
@@ -44,7 +40,6 @@ def test_origin_proxy_middleware_sets_typemoon_meta(monkeypatch: pytest.MonkeyPa
 
 def test_origin_proxy_middleware_ignores_other_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REDSTM_ORIGIN_PROXY", "http://127.0.0.1:18080")
-    reset_origin_proxy_state()
     monkeypatch.setattr("crawler.origin_proxy._proxy_listening", lambda _url: True)
     request = Request("https://example.com/")
     OriginProxyMiddleware().process_request(request, Spider("test"))
@@ -81,3 +76,15 @@ def test_truncated_detail_without_article_is_network_error() -> None:
     item = list(TypeMoonSpider().parse_detail(response))[0]
     assert item["outcome"] == "fetch_failed"
     assert item["error_code"] == "network_error"
+
+
+def test_origin_proxy_rechecks_tunnel_after_disconnect_and_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDSTM_ORIGIN_PROXY", "http://127.0.0.1:18080")
+    states = iter((False, True, False, True))
+    monkeypatch.setattr("crawler.origin_proxy._proxy_listening", lambda _url: next(states))
+    assert active_origin_proxy() is None
+    assert active_origin_proxy() == "http://127.0.0.1:18080"
+    assert active_origin_proxy() is None
+    assert active_origin_proxy() == "http://127.0.0.1:18080"

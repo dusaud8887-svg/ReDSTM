@@ -5,6 +5,7 @@ import os
 from crawler.footprint import impersonate_target
 
 BOT_NAME = "redstm"
+DOWNLOAD_VERIFY_CERTIFICATES = True
 
 SPIDER_MODULES = ["crawler.spiders"]
 NEWSPIDER_MODULE = "crawler.spiders"

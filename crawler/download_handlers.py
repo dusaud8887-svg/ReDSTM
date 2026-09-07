@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from importlib import import_module
 from typing import Any, cast
@@ -68,6 +69,7 @@ class SequentialDetailDownloadHandler:
             allow_redirects=False,
             stream=True,
             proxies=requests_proxies(),
+            verify=os.environ.get("REQUESTS_CA_BUNDLE") or True,
             timeout=(
                 REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS,
                 REDSTM_DETAIL_READ_TIMEOUT_SECONDS,

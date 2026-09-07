@@ -138,3 +138,12 @@ def test_requests_read_timeout_is_a_scrapy_retry_exception() -> None:
     with pytest.raises(requests.exceptions.ConnectionError) as caught:
         handler._download_detail(Request("https://www.typemoon.net/aa_a01/1"))
     assert isinstance(caught.value, middleware.exceptions_to_retry)
+
+
+def test_detail_uses_explicit_ca_bundle_without_environment_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/certs/ca-certificates.crt")
+    handler = _handler(_Source([b"<html>ok</html>"]))
+    handler._download_detail(Request("https://www.typemoon.net/aa_a01/1"))
+    assert handler._session.kwargs["verify"] == "/etc/ssl/certs/ca-certificates.crt"  # type: ignore[attr-defined]

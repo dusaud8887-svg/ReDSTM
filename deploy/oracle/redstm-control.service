@@ -10,6 +10,8 @@ Group=redstm
 WorkingDirectory=/opt/redstm/current
 EnvironmentFile=-/etc/redstm/access.env
 EnvironmentFile=-/etc/redstm/runtime.env
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+Environment=REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 Environment=RCLONE_CONFIG=/etc/redstm/rclone.conf
 ExecStart=/opt/redstm/current/.venv/bin/python -m scripts.control_runner
 Restart=no

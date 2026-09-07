@@ -1720,7 +1720,7 @@ def test_recovery_returns_to_normal_chunk_after_successful_canary(
         "1",
         str(REDSTM_RECOVERY_MAX_POSTS),
     ]
-    assert sleeps == [90]
+    assert sleeps == [30] * 3
 
 
 def test_full_content_checkpoints_are_scoped_by_board(tmp_path: Path) -> None:
@@ -2229,7 +2229,7 @@ def test_full_catalog_failure_keeps_progress_from_earlier_cycles(
     )
 
     assert calls == 3
-    assert sleeps == [90]
+    assert sleeps == [30] * 3
     assert report["status"] == "runner_failed"
     assert report["inventory_pass_complete"] is False
     assert report["changed_posts"] == 9
@@ -2288,7 +2288,7 @@ def test_full_catalog_resumes_after_transient_site_unreachable(
     )
 
     assert calls == 4
-    assert sleeps == [90, 180, 300]
+    assert sleeps == [30] * 19
     assert report["status"] == "succeeded"
     assert report["safe_code"] == "full_catalog_succeeded"
     assert report["inventory_completed_boards"] >= 1
@@ -2329,7 +2329,10 @@ def test_full_catalog_retries_once_after_session_expiry(
 def test_full_catalog_aborts_when_inventory_makes_no_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from crawler.settings import REDSTM_FULL_CATALOG_STUCK_CYCLES
+    from crawler.settings import (
+        REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS,
+        REDSTM_FULL_CATALOG_STUCK_CYCLES,
+    )
 
     runner, _store = _runner(tmp_path, Api([]))
     calls = 0
@@ -2350,7 +2353,12 @@ def test_full_catalog_aborts_when_inventory_makes_no_progress(
     # First cycle establishes the signature; STUCK_CYCLES identical follow-ups fail the pass.
     # Sleep happens on stuck cycles 1..STUCK-1; the final identical cycle fails without sleep.
     assert calls == REDSTM_FULL_CATALOG_STUCK_CYCLES + 1
-    assert len(sleeps) == REDSTM_FULL_CATALOG_STUCK_CYCLES - 1
+    assert sum(sleeps) == sum(
+        REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS[
+            min(index, len(REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS) - 1)
+        ]
+        for index in range(REDSTM_FULL_CATALOG_STUCK_CYCLES - 1)
+    )
     assert report["status"] == "failed"
     assert report["safe_code"] == "full_catalog_no_progress"
     assert report["inventory_pass_complete"] is False
@@ -2748,3 +2756,26 @@ def test_marker_claim_drains_the_entire_outbox_first(tmp_path: Path) -> None:
     assert claim_index == 51
     assert store.stats()["rows"] == 0
     assert (runner.profile.state_dir / "schedule.paused").is_file()
+
+
+def test_outage_backoff_heartbeats_and_obeys_pause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = Api([])
+    runner, store = _runner(tmp_path, api)
+    command_id = str(uuid4())
+    store.record_claim(command_id, "fill-missing-content")
+    pause_file = runner.profile.state_dir / "current-run.paused"
+    sleeps = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        pause_file.touch()
+
+    monkeypatch.setattr("scripts.control_runner.time.sleep", sleep)
+    runner._backoff(600, "retry-test", "fill-missing-content", command_id, pause_file)
+    assert sleeps == [30]
+    heartbeats = [body for path, body in api.calls if path.endswith("/heartbeat")]
+    assert len(heartbeats) == 1
+    assert heartbeats[0]["active_run_id"] == "retry-test"
+    assert heartbeats[0]["state"] == "degraded"

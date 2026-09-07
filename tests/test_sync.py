@@ -1444,6 +1444,7 @@ def test_slow_detail_defaults_keep_rate_and_lease_bounds(
     project = _project_settings()
     assert project.getint("CONCURRENT_REQUESTS") == 2
     assert project.getint("CONCURRENT_REQUESTS_PER_DOMAIN") == 2
+    assert project.getbool("DOWNLOAD_VERIFY_CERTIFICATES") is True
     assert project.getfloat("DOWNLOAD_DELAY") == 10
     assert project.getint("RETRY_TIMES") == 3
     assert project.getdict("DOWNLOADER_MIDDLEWARES") == {
