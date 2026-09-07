@@ -486,9 +486,12 @@ def test_incremental_export_uses_preserved_comments_not_listing_count(tmp_path: 
     validated = validate_release(output, second["release_key"])
     assert validated["comment_count"] == first["comment_count"]
     with connect_archive(source) as connection:
-        assert connection.execute(
-            "SELECT comment_count FROM posts WHERE board_id = 'aa_a01'"
-        ).fetchone()[0] == 15
+        assert (
+            connection.execute(
+                "SELECT comment_count FROM posts WHERE board_id = 'aa_a01'"
+            ).fetchone()[0]
+            == 15
+        )
 
 
 def test_incremental_export_includes_untracked_projection_changes_mixed_with_a_capture(
