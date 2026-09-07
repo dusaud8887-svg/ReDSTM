@@ -474,6 +474,9 @@ def test_incremental_export_uses_preserved_comments_not_listing_count(tmp_path: 
     with connect_archive(source) as connection:
         connection.execute("UPDATE posts SET comment_count = 15 WHERE board_id = 'aa_a01'")
     first = export_static(source, output)
+    with connect_archive(source) as connection:
+        connection.execute("UPDATE posts SET comment_count = 25 WHERE board_id = 'aa_a01'")
+    assert export_static(source, output, incremental_only=True)["mode"] == "incremental_noop"
     _store_post(
         source,
         _post("ss_temp01", 1, "Updated", "changed", comments=1),
@@ -490,7 +493,7 @@ def test_incremental_export_uses_preserved_comments_not_listing_count(tmp_path: 
             connection.execute(
                 "SELECT comment_count FROM posts WHERE board_id = 'aa_a01'"
             ).fetchone()[0]
-            == 15
+            == 25
         )
 
 

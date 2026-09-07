@@ -714,7 +714,8 @@ def _snapshot_fingerprint(connection: sqlite3.Connection) -> dict[str, int | str
         """
         SELECT p.id, p.board_id, p.external_post_id, p.canonical_url, p.title, p.author,
                p.category, p.created_at_source, p.created_at_raw, p.is_aa,
-               p.comment_count, p.latest_version_id, v.content_sha256, v.comments_sha256,
+               (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id),
+               p.latest_version_id, v.content_sha256, v.comments_sha256,
                v.capture_origin, v.warc_record_id
         FROM posts AS p
         JOIN post_versions AS v ON v.id = p.latest_version_id
