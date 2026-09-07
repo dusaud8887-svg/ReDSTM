@@ -467,6 +467,31 @@ def test_incremental_export_reads_bodies_only_for_changed_posts(
     assert second["release_key"] != first["release_key"]
 
 
+@pytest.mark.parametrize("same_payload", [True, False])
+def test_staged_object_reuses_only_identical_decompressed_content(
+    tmp_path: Path, same_payload: bool
+) -> None:
+    payload = b'{"text":"' + b"preserved content " * 1000 + b'"}\n'
+    writer = export_static_module._ObjectWriter(tmp_path)
+    staged = export_static_module._stage_zstd_object(writer, "boards/test/manifest-v2", [payload])
+    target = tmp_path / staged.key
+    target.parent.mkdir(parents=True)
+    compressor = zstd.ZstdCompressor(level=1)
+    original = compressor.compress(payload if same_payload else payload + b"extra")
+    original += compressor.flush()
+    target.write_bytes(original)
+    if same_payload:
+        ref = export_static_module._write_staged_zstd_object(writer, staged)
+        assert ref["object_sha256"] == hashlib.sha256(original).hexdigest()
+        assert ref["object_bytes"] == len(original)
+        assert writer.reused == 1
+    else:
+        with pytest.raises(RuntimeError, match="immutable object differs"):
+            export_static_module._write_staged_zstd_object(writer, staged)
+    assert target.read_bytes() == original
+    assert not staged.path.exists()
+
+
 def test_incremental_export_uses_preserved_comments_not_listing_count(tmp_path: Path) -> None:
     source = tmp_path / "canonical.sqlite"
     output = tmp_path / "static"

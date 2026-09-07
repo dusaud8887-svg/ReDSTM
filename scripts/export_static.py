@@ -521,7 +521,16 @@ def _write_staged_zstd_object(writer: _ObjectWriter, staged: _StagedObject) -> d
                 for chunk in iter(lambda: existing_stream.read(1024 * 1024), b""):
                     existing.update(chunk)
             if target.stat().st_size != object_bytes or existing.hexdigest() != object_sha256:
-                raise RuntimeError(f"immutable object differs: {staged.key}")
+                # A payload-addressed object can have another valid zstd encoding.
+                # Keep its original bytes after comparing the decompressed content.
+                with zstd.open(target, "rb") as decoded, staged.path.open("rb") as payload:
+                    for chunk in iter(lambda: payload.read(1024 * 1024), b""):
+                        if decoded.read(len(chunk)) != chunk:
+                            raise RuntimeError(f"immutable object differs: {staged.key}")
+                    if decoded.read(1):
+                        raise RuntimeError(f"immutable object differs: {staged.key}")
+                object_bytes = target.stat().st_size
+                object_sha256 = existing.hexdigest()
             writer.reused += 1
         else:
             os.replace(object_path, target)
