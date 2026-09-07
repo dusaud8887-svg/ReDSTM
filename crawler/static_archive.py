@@ -12,7 +12,7 @@ from scrapy import Selector
 from crawler.pipelines import NormalizedPost
 
 _TYPEMOON_HOSTS = {"typemoon.net", "www.typemoon.net"}
-_COMPRESSION_LEVEL = 15
+_COMPRESSION_LEVEL = 6
 
 
 @dataclass(frozen=True, slots=True)
