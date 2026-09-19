@@ -182,7 +182,9 @@ REDSTM_CYCLE_MAX_POSTS = 20
 REDSTM_CYCLE_TIME_BUDGET_SECONDS = 4 * 60 * 60
 # Child Scrapy process grace after CLOSESPIDER_TIMEOUT so long AA finishes can close cleanly.
 REDSTM_WORKER_GRACE_SECONDS = 120
-REDSTM_RECOVERY_MAX_POSTS = 20
+# The two-hour scheduled recovery window, not the candidate cap, should bound work.
+# Sequential production throughput is roughly 40-60 posts in that window.
+REDSTM_RECOVERY_MAX_POSTS = 100
 REDSTM_RECOVERY_TIME_BUDGET_SECONDS = 2 * 60 * 60
 REDSTM_FULL_CONTENT_MAX_POSTS = 100
 REDSTM_RECOVERY_GROUP_ORDER = ("aa", "creation", "fanfic")

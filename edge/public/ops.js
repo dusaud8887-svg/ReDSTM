@@ -114,6 +114,7 @@ let lastState = "not_enrolled";
 let lastActiveCommands = 0;
 let lastSnapshot = null;
 let lastScheduleEnabled = false;
+let overviewAvailable = false;
 const pendingActions = new Set();
 const commandKeys = new Map();
 
@@ -207,7 +208,8 @@ function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot
     copy.dataset.default ||= copy.textContent;
     let reason = copy.dataset.default;
     let disabled = pendingActions.has(action);
-    if (pendingActions.has(action)) reason = "요청을 보내는 중입니다.";
+    if (!overviewAvailable) { disabled = true; reason = "운영 상태 갱신 후 요청할 수 있습니다."; }
+    else if (pendingActions.has(action)) reason = "요청을 보내는 중입니다.";
     else if (unavailable) { disabled = true; reason = "수집기가 다시 연결된 뒤 요청할 수 있습니다."; }
     else if (maintenance) { disabled = true; reason = "보관소 무결성 점검이 끝난 뒤 요청할 수 있습니다."; }
     else if (running && action !== "pause-after-current") { disabled = true; reason = "현재 작업 중에는 수집 일시정지만 요청할 수 있습니다."; }
@@ -219,7 +221,9 @@ function updateControls(runner, state, activeCommands, scheduleEnabled, snapshot
     button.disabled = disabled;
     copy.textContent = reason;
   }
-  byId("control-summary").textContent = activeCommands
+  byId("control-summary").textContent = !overviewAvailable
+    ? "운영 상태 갱신이 필요합니다. 새로고침 후 수동 작업을 요청하세요."
+    : activeCommands
     ? `활성 명령 ${activeCommands}개 · 완료될 때까지 같은 작업을 다시 요청하지 마세요.`
     : unavailable
     ? "수집기 신호가 돌아오면 수동 작업을 요청할 수 있습니다."
@@ -357,7 +361,7 @@ function renderOverview(data) {
   const nextAt = Date.parse(runner?.next_scheduled_at);
   const nextOverdue = scheduleEnabled && Number.isFinite(nextAt) &&
     nextAt < Date.now() - SCHEDULE_GRACE_MS && !automaticRunning;
-  const automaticOverdue = scheduleEnabled && Number.isFinite(automaticAt) &&
+  const automaticOverdue = scheduleEnabled && !automaticRunning && Number.isFinite(automaticAt) &&
     Date.now() - automaticAt > AUTOMATIC_RUN_STALE_MS;
   const automaticUnverified = scheduleEnabled && !automaticRunning && !Number.isFinite(automaticAt);
   const automation = baseAutomation === "on" && automaticUnverified
@@ -466,7 +470,19 @@ function renderOverview(data) {
   lastState = state;
   lastActiveCommands = Number(data.active_commands ?? 0);
   lastScheduleEnabled = scheduleEnabled;
+  overviewAvailable = true;
   updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
+}
+
+async function loadOverview() {
+  try {
+    renderOverview(await api("/api/v1/ops/overview"));
+  } catch (error) {
+    overviewAvailable = false;
+    updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
+    if (byId("command-dialog").open) byId("command-dialog").close("cancel");
+    throw error;
+  }
 }
 
 function runRow(run) {
@@ -618,7 +634,7 @@ function boardRow(board) {
   const actions = node("div", "board-actions");
   for (const [action, label] of [
     ["sync-now", "이 게시판 최신"],
-    ["full-catalog", "이 게시판 전체 목차"],
+    ["full-catalog", "이 게시판 목차·누락 본문"],
     ["fill-missing-content", "이 게시판 누락 본문"],
     ["full-content", "이 게시판 전체 본문"],
   ]) {
@@ -755,7 +771,7 @@ async function loadAll() {
   byId("refresh").disabled = true;
   byId("error-banner").hidden = true;
   const tasks = [
-    ["자동 수집 상태", api("/api/v1/ops/overview").then(renderOverview)],
+    ["자동 수집 상태", loadOverview()],
     ["실행 기록", loadRuns()],
     ["게시판별 진척", loadBoards()],
     ["최종 실패 게시글", loadFailures()],
@@ -811,7 +827,7 @@ async function watchCommand(command) {
     renderCommand(command);
   }
   if (!terminal.has(command.state)) renderCommand(command, true);
-  await Promise.allSettled([api("/api/v1/ops/overview").then(renderOverview), loadRuns()]);
+  await Promise.allSettled([loadOverview(), loadRuns()]);
 }
 
 async function createCommand(action, args = {}) {
@@ -864,7 +880,9 @@ if (typeof document !== "undefined") {
 async function refreshLoop() {
   const delay = lastRunner?.state === "running" ? ACTIVE_REFRESH_MS : IDLE_REFRESH_MS;
   await new Promise((resolve) => setTimeout(resolve, delay));
-  if (!document.hidden) await loadAll().catch(showError);
+  if (!document.hidden) {
+    await loadOverview().catch((error) => showError(error, "자동 수집 상태"));
+  }
   void refreshLoop();
 }
 if (typeof document !== "undefined") void refreshLoop();

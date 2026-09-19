@@ -1953,7 +1953,7 @@ def test_scheduled_run_requires_explicit_export_bootstrap(
                         {
                             "ok": True,
                             "status": "succeeded",
-                            "changed_posts": 1 if module == "scripts.crawl_cycle" else 0,
+                            "changed_posts": 1 if module == "scripts.recover_queue" else 0,
                             "failed_posts": 0,
                             "boards_ok": 1 if module == "scripts.crawl_cycle" else 0,
                             "boards_failed": 0,
@@ -2057,7 +2057,8 @@ def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
     assert report["status"] == "failed"
     assert actions == ["sync-now", "publish-if-changed"]
     assert any(
-        payload["events"][0]["state"] == "skipped" and payload["events"][0]["step"] == "retry-batch"
+        payload["events"][0]["state"] == "skipped"
+        and payload["events"][0]["step"] == "fill-missing-content"
         for path, payload in api.calls
         if path.endswith("/events:batch")
     )
@@ -2135,6 +2136,7 @@ def test_scheduled_run_only_collects_latest_and_publishes(
     recovery = commands[1]
     assert recovery[recovery.index("--max-posts") + 1] == str(REDSTM_RECOVERY_MAX_POSTS)
     assert recovery[recovery.index("--max-seconds") + 1] == str(REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
+    assert "--missing-only" in recovery
 
 
 def test_partial_inventory_keeps_running_until_every_board_cursor_completes(

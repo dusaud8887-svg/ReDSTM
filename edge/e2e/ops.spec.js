@@ -14,6 +14,9 @@ async function useOperationsFixture(page, received, fixture = {}) {
   await page.route("**/api/v1/ops/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (fixture.requestCounts) {
+      fixture.requestCounts[url.pathname] = (fixture.requestCounts[url.pathname] || 0) + 1;
+    }
     if (fixture.failures?.includes(url.pathname)) {
       return route.fulfill({ status: 503, json: { error: { code: "fixture_unavailable" } } });
     }
@@ -476,6 +479,60 @@ test("names the sections affected by a partial refresh failure", async ({ page }
   await expect(page.locator("#error-banner")).toContainText("영향: 게시판별 진척");
   await expect(page.locator("#updated-at")).toContainText("일부 갱신 실패");
   await expect(page.locator("#reader-posts")).toHaveText("282,239");
+});
+
+test("disables commands after overview refresh fails and restores them on recovery", async ({ page }) => {
+  const fixture = { failures: [] };
+  const received = [];
+  await page.clock.install();
+  await useOperationsFixture(page, received, fixture);
+  await page.goto("/ops");
+  await expect(page.locator('.control-list [data-action="sync-now"]')).toBeEnabled();
+  await page.locator('.control-list [data-action="sync-now"]').click();
+  fixture.failures.push("/api/v1/ops/overview");
+  await page.clock.fastForward(60_000);
+  await expect(page.locator("#error-banner")).toContainText("자동 수집 상태");
+  await expect(page.locator("#command-dialog")).not.toBeVisible();
+  expect(received).toHaveLength(0);
+  await expect(page.locator("[data-action]:enabled")).toHaveCount(0);
+  await expect(page.locator("#control-summary")).toContainText("상태 갱신");
+  fixture.failures.length = 0;
+  await page.locator("#refresh").click();
+  await expect(page.locator('.control-list [data-action="sync-now"]')).toBeEnabled();
+});
+
+test("does not mark a live automatic run overdue because the previous run is old", async ({ page }) => {
+  const previous = new Date(Date.now() - 8 * 60 * 60_000).toISOString();
+  await useOperationsFixture(page, [], { overview: {
+    runner: { state: "running", heartbeat_at: now, active_step: "crawling" },
+    schedule_enabled: true,
+    active_run: { kind: "scheduled", state: "running", started_at: now },
+    latest_automatic_run: { kind: "scheduled", state: "succeeded", finished_at: previous },
+  } });
+  await page.goto("/ops");
+  await expect(page.locator("#last-automatic")).toContainText("실행 중");
+  await expect(page.locator("#overview-title")).toHaveText("자동 수집 켜짐");
+  await expect(page.locator("#warning-line")).toBeHidden();
+});
+
+test("polls only the lightweight overview while the runner is active", async ({ page }) => {
+  const requestCounts = {};
+  await page.clock.install();
+  await useOperationsFixture(page, [], {
+    requestCounts,
+    overview: {
+      runner: { state: "running", heartbeat_at: now, active_step: "crawling" },
+      schedule_enabled: true,
+      active_run: { kind: "scheduled", state: "running", started_at: now },
+    },
+  });
+  await page.goto("/ops");
+  await expect(page.locator("#overview-title")).toHaveText("자동 수집 켜짐");
+  await page.clock.fastForward(60_000);
+  await expect.poll(() => requestCounts["/api/v1/ops/overview"]).toBeGreaterThan(1);
+  expect(requestCounts["/api/v1/ops/failures"]).toBe(1);
+  expect(requestCounts["/api/v1/ops/boards"]).toBe(1);
+  expect(requestCounts["/api/v1/ops/releases"]).toBe(1);
 });
 
 test("only enables pause while the runner is working", async ({ page }) => {

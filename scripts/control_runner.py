@@ -353,7 +353,7 @@ class ControlRunner:
         intentional_pause = False
         terminal_safe_code: str | None = None
         sequence = 1
-        for action in ("sync-now", "retry-batch", "publish-if-changed"):
+        for action in ("sync-now", "fill-missing-content", "publish-if-changed"):
             self._claim_marker()
             if (self.profile.state_dir / "schedule.paused").exists():
                 paused = True
@@ -361,7 +361,12 @@ class ControlRunner:
                     state = "partial"
                     intentional_pause = True
                 break
-            if action in {"inventory", "bootstrap-recovery", "retry-batch"} and crawl_status in {
+            if action in {
+                "inventory",
+                "bootstrap-recovery",
+                "fill-missing-content",
+                "retry-batch",
+            } and crawl_status in {
                 "failed",
                 "runner_failed",
                 "site_unreachable",
@@ -377,7 +382,9 @@ class ControlRunner:
                     run_id,
                     run_id,
                     max_seconds=(
-                        REDSTM_RECOVERY_TIME_BUDGET_SECONDS if action == "retry-batch" else None
+                        REDSTM_RECOVERY_TIME_BUDGET_SECONDS
+                        if action == "fill-missing-content"
+                        else None
                     ),
                 )
                 action_state, safe_code, payload = self._result(action, report)
@@ -397,7 +404,14 @@ class ControlRunner:
             if action in {"sync-now", "inventory"}:
                 self._board_summaries(report)
             if (
-                action in {"sync-now", "inventory", "bootstrap-recovery", "retry-batch"}
+                action
+                in {
+                    "sync-now",
+                    "inventory",
+                    "bootstrap-recovery",
+                    "fill-missing-content",
+                    "retry-batch",
+                }
                 and payload["counters"]["changed_posts"]
             ):
                 self._write_publish_marker()
