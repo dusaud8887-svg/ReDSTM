@@ -418,6 +418,77 @@ def test_recovery_cli_limits_dead_requeue(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert args.requeue_dead == "parse_drift"
 
 
+def test_dead_requeue_crawls_the_entries_it_requeued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with connect_archive(archive) as connection:
+        connection.executemany(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES (?, ?, 'https://www.typemoon.net/' || ?, 'now', 'now')
+            """,
+            [("aa_a01", "AA", "aa_a01"), ("write_plus", "Plus", "write_plus")],
+        )
+    frontier = FrontierStore(archive)
+    frontier.seed("aa_a01", 1, "https://www.typemoon.net/aa_a01/1")
+    frontier.seed("write_plus", 2, "https://www.typemoon.net/write_plus/2")
+    with connect_archive(archive) as connection:
+        connection.execute(
+            """
+            UPDATE crawl_frontier
+            SET state = 'dead', attempts = 5, last_error_code = 'parse_drift'
+            WHERE board_id = 'write_plus'
+            """
+        )
+    monkeypatch.setattr(
+        "scripts.recover_queue.ensure_session_export", lambda *args, **kwargs: _session()
+    )
+    observed: list[object] = []
+
+    class FakeCrawler:
+        spider = SimpleNamespace(scheduled_posts=0, paused=False, failure_codes=set())
+
+        class Stats:
+            @staticmethod
+            def get_value(name: str) -> None:
+                return None
+
+        stats = Stats()
+
+    class FakeProcess:
+        def __init__(self, settings: object) -> None:
+            pass
+
+        def create_crawler(self, spider: object) -> FakeCrawler:
+            return FakeCrawler()
+
+        def crawl(self, crawler: FakeCrawler, **kwargs: object) -> None:
+            observed.append(kwargs["candidates"])
+
+        def start(self, *, stop_after_crawl: bool) -> None:
+            pass
+
+    monkeypatch.setattr("scripts.recover_queue.CrawlerProcess", FakeProcess)
+    monkeypatch.setattr("scripts.recover_queue.notify_dead_man", lambda *args: None)
+
+    report = run_recovery(
+        Namespace(
+            archive=archive,
+            session=tmp_path / "session.json",
+            warc_dir=tmp_path / "warc",
+            max_posts=1,
+            max_seconds=60,
+            lease_seconds=60,
+            requeue_dead="parse_drift",
+        )
+    )
+
+    assert observed == [[("write_plus", 2)]]
+    assert report["requeued_dead"] == 1
+
+
 @pytest.mark.parametrize(
     ("status", "failure_code"), [(None, "network_error"), (429, "rate_limited")]
 )

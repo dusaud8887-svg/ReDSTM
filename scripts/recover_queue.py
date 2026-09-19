@@ -120,16 +120,16 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                     attempted_before=full_content_before,
                     board_id=board_id,
                 )
-            else:
-                requeued_dead = (
-                    frontier.requeue_dead(
-                        error_code=requeue_code,
-                        limit=args.max_posts,
-                        board_id=board_id,
-                    )
-                    if requeue_code
-                    else 0
+            elif requeue_code:
+                candidates = frontier.requeue_dead(
+                    error_code=requeue_code,
+                    limit=args.max_posts,
+                    board_id=board_id,
                 )
+                requeued_dead = len(candidates)
+                revisited_posts = 0
+            else:
+                requeued_dead = 0
                 candidates, revisited_posts = _recovery_batch(
                     frontier,
                     limit=args.max_posts,

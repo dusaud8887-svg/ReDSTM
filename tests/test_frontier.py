@@ -93,7 +93,7 @@ def test_latest_listing_expectation_survives_retry_and_can_be_cleared(tmp_path: 
     with connect_archive(path) as connection:
         transition_lease(connection, retried, state="dead", error_code="parse_drift")
 
-    assert store.requeue_dead(error_code="parse_drift", limit=1) == 1
+    assert store.requeue_dead(error_code="parse_drift", limit=1) == [("write_free21", 1)]
     requeued = store.claim_identity("write_free21", 1, lease_seconds=60)
     assert requeued is not None
     assert requeued.expected_comment_count == 0
@@ -227,7 +227,7 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
             limit=1,
             board_id="write_free21",
         )
-        == 1
+        == [("write_free21", 4)]
     )
     with pytest.raises(ValueError, match="unsupported"):
         store.requeue_dead(error_code="auth_required", limit=1)

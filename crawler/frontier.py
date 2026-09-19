@@ -492,14 +492,16 @@ class FrontierStore:
             )
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
 
-    def requeue_dead(self, *, error_code: str, limit: int, board_id: str | None = None) -> int:
+    def requeue_dead(
+        self, *, error_code: str, limit: int, board_id: str | None = None
+    ) -> list[tuple[str, int]]:
         if error_code not in REDSTM_CAPPED_RETRY_ERROR_CODES:
             raise ValueError("unsupported dead frontier error code")
         if limit < 1:
             raise ValueError("limit must be positive")
         board_clause = " AND board_id = ?" if board_id is not None else ""
         with self._connect() as connection:
-            cursor = connection.execute(
+            rows = connection.execute(
                 f"""
                 UPDATE crawl_frontier
                 SET state = 'retry', attempts = 0, next_attempt_at = NULL,
@@ -510,10 +512,17 @@ class FrontierStore:
                       {board_clause}
                     ORDER BY priority DESC, board_id, external_post_id LIMIT ?
                 )
+                RETURNING board_id, external_post_id, priority
                 """,
                 (error_code, *([board_id] if board_id is not None else []), limit),
+            ).fetchall()
+        return [
+            (str(row["board_id"]), int(row["external_post_id"]))
+            for row in sorted(
+                rows,
+                key=lambda row: (-int(row["priority"]), row["board_id"], row["external_post_id"]),
             )
-        return cursor.rowcount
+        ]
 
     def claim(
         self,
