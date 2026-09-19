@@ -1725,6 +1725,8 @@ class ControlRunner:
         except OSError, ValueError:
             return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         if return_code not in (0, 2) and report.get("ok") is not True:
+            if report.get("safe_code") == "archive_locked":
+                return report
             return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         return report
 

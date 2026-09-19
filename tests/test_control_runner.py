@@ -1541,6 +1541,23 @@ def test_execute_report_does_not_reuse_a_previous_cycle_report(
     assert not report_path.exists()
 
 
+def test_execute_report_preserves_archive_lock_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    report_path = tmp_path / "reports" / "recovery.json"
+    monkeypatch.setattr(runner, "_wait", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        runner,
+        "_read_report",
+        lambda _path: {"ok": False, "status": "failed", "safe_code": "archive_locked"},
+    )
+
+    report = runner._execute_report(["crawler"], report_path, "run", "crawling")
+
+    assert report["safe_code"] == "archive_locked"
+
+
 @pytest.mark.parametrize(
     "action",
     ["sync-now", "full-catalog", "full-content", "fill-missing-content", "retry-batch"],

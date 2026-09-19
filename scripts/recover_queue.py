@@ -39,6 +39,10 @@ from scripts.sync import (
 )
 
 
+class ArchiveLockedError(RuntimeError):
+    pass
+
+
 def _recovery_batch(
     frontier: FrontierStore,
     *,
@@ -94,7 +98,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
     try:
         lock.acquire()
     except Timeout as error:
-        raise RuntimeError("another archive process holds the lock") from error
+        raise ArchiveLockedError("another archive process holds the lock") from error
 
     run_id: str | None = None
     store = ArchiveStore(archive)
@@ -301,7 +305,15 @@ def main() -> int:
     try:
         report = run_recovery(args)
     except (OSError, RuntimeError, SessionRefreshError, ValueError, sqlite3.Error) as error:
-        report = {"ok": False, "error": type(error).__name__, "message": str(error)}
+        report = {
+            "ok": False,
+            "status": "failed",
+            "safe_code": (
+                "archive_locked" if isinstance(error, ArchiveLockedError) else "runner_failed"
+            ),
+            "error": type(error).__name__,
+            "message": str(error),
+        }
         if args.output is not None:
             _write_report(args.output, report)
         print(json.dumps(report, ensure_ascii=False))

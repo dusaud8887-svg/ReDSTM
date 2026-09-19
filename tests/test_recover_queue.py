@@ -23,8 +23,15 @@ from crawler.session import (
 )
 from crawler.spiders.typemoon import TypeMoonRecoverySpider
 from crawler.store import ArchiveStore
-from scripts.recover_queue import _parse_args as parse_recovery_args
-from scripts.recover_queue import _recovery_batch, run_recovery
+from scripts.recover_queue import (
+    ArchiveLockedError,
+    _recovery_batch,
+    main,
+    run_recovery,
+)
+from scripts.recover_queue import (
+    _parse_args as parse_recovery_args,
+)
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "typemoon" / "detail.html"
 _NOW = datetime(2026, 7, 11, tzinfo=UTC)
@@ -487,6 +494,23 @@ def test_dead_requeue_crawls_the_entries_it_requeued(
 
     assert observed == [[("write_plus", 2)]]
     assert report["requeued_dead"] == 1
+
+
+def test_archive_lock_writes_distinct_safe_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "report.json"
+
+    def fail_recovery(_args: Namespace) -> None:
+        raise ArchiveLockedError("locked")
+
+    monkeypatch.setattr(
+        "scripts.recover_queue._parse_args", lambda: Namespace(output=output)
+    )
+    monkeypatch.setattr("scripts.recover_queue.run_recovery", fail_recovery)
+
+    assert main() == 1
+    assert json.loads(output.read_text(encoding="utf-8"))["safe_code"] == "archive_locked"
 
 
 @pytest.mark.parametrize(
