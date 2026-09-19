@@ -32,8 +32,10 @@ async function useOperationsFixture(page, received, fixture = {}) {
         archive_snapshot: {
           recorded_at: now,
           counters: {
+            discovered_posts: 284070, body_collected: 282239,
             outline_only: 1831, frontier_pending: 12, frontier_running: 0, frontier_retry: 3,
-            frontier_dead: 1, inventory_total_boards: 46, inventory_completed_boards: 44,
+            frontier_dead: 1, missing_body_pending: 14, missing_body_dead: 1,
+            inventory_total_boards: 46, inventory_completed_boards: 44,
             inventory_in_progress_boards: 2,
           },
         },
@@ -136,9 +138,12 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
   await expect(page.locator(".healthy-boards > summary")).toHaveText("정상 게시판 1개");
   await expect(page.getByText("healthy_1")).toBeHidden();
   await expect(page.locator("#reader-posts")).toHaveText("282,239");
+  await expect(page.locator("#discovered-posts")).toHaveText("284,070");
+  await expect(page.locator("#body-collected")).toHaveText("282,239");
   await expect(page.locator("#outline-only")).toHaveText("1,831");
-  await expect(page.getByText("전체 수집 큐", { exact: true })).toBeVisible();
-  await expect(page.locator("#collected-comments")).toHaveText("3,729,706");
+  await expect(page.locator("#missing-body-pending")).toHaveText("14");
+  await expect(page.locator("#missing-body-dead")).toHaveText("1");
+  await expect(page.getByText("전체 작업 큐", { exact: true })).toBeVisible();
   await expect(page.locator("#inventory-progress")).toHaveText("진행 중 · 44/46");
   await expect(page.locator("#issue-metrics")).toBeHidden();
   await expect(page.locator("#release-current")).toBeHidden();
@@ -338,6 +343,29 @@ test("shows a reported zero checkpoint after an interrupted run", async ({ page 
   await expect(page.locator(".run-entry .run-metric strong").nth(0)).toHaveText("0");
 });
 
+test("labels scheduled missing-body work without a fake board total", async ({ page }) => {
+  const recovery = {
+    run_id: "scheduled-recovery", kind: "scheduled", source: "systemd", state: "partial",
+    started_at: now, finished_at: now, changed_posts: 36, failed_posts: 2,
+    boards_ok: 0, boards_failed: 0, safe_summary_code: "schedule_paused",
+  };
+  await useOperationsFixture(page, [], {
+    overview: {
+      runner: { state: "idle", heartbeat_at: now, next_scheduled_at: nextAutomatic },
+      schedule_enabled: true, active_run: null, latest_run: recovery,
+      latest_automatic_run: recovery, recent_issue: null, archive_snapshot: null,
+      active_commands: 0,
+    },
+    runs: { items: [recovery], next_cursor: null },
+  });
+  await page.goto("/ops");
+
+  await expect(page.locator("#latest-changed-label")).toHaveText("처리 완료");
+  await expect(page.locator("#latest-failed-label")).toHaveText("이번 시도 실패");
+  await expect(page.locator("#latest-boards")).toHaveText("해당 없음");
+  await expect(page.locator(".run-entry .run-metric small").nth(2)).toHaveText("게시판 해당 없음");
+});
+
 test("shows a connected runner with a disabled schedule as automation off", async ({ page }) => {
   await useOperationsFixture(page, [], {
     overview: {
@@ -425,7 +453,7 @@ test("does not surface issues older than seven days", async ({ page }) => {
   });
   await page.goto("/ops");
 
-  await expect(page.locator("#issue-title")).toHaveText("최근 7일 실패 없음");
+  await expect(page.locator("#issue-title")).toHaveText("조치 필요한 실패 없음");
   await expect(page.locator("#issue-metrics")).toBeHidden();
 });
 

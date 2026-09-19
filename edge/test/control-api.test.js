@@ -496,7 +496,11 @@ test("heartbeat and overview expose only bounded status", async () => {
         assert.match(sql, /recorded_at <= \?/);
         return {
           counters_json: JSON.stringify({
+            discovered_posts: 100,
+            body_collected: 97,
             outline_only: 3,
+            missing_body_pending: 2,
+            missing_body_dead: 1,
             frontier_pending: 2,
             inventory_total_boards: 46,
             inventory_completed_boards: 40,
@@ -641,6 +645,8 @@ test("heartbeat and overview expose only bounded status", async () => {
   assert.equal(overviewData.recent_issue.recovered, true);
   assert.equal(overviewData.recent_issue.recovered_at, "2026-07-12T04:00:00.000Z");
   assert.equal(overviewData.archive_snapshot.counters.outline_only, 3);
+  assert.equal(overviewData.archive_snapshot.counters.discovered_posts, 100);
+  assert.equal(overviewData.archive_snapshot.counters.missing_body_pending, 2);
 });
 
 test("keeps a long manual run active while the runner heartbeats it", async () => {

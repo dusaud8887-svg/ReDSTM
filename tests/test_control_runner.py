@@ -351,6 +351,10 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
     )
     assert snapshot["events"][0]["counters"]["inventory_total_boards"] == 1
     assert snapshot["events"][0]["counters"]["outline_only"] == 1
+    assert snapshot["events"][0]["counters"]["discovered_posts"] == 2
+    assert snapshot["events"][0]["counters"]["body_collected"] == 0
+    assert snapshot["events"][0]["counters"]["missing_body_pending"] == 1
+    assert snapshot["events"][0]["counters"]["missing_body_dead"] == 0
 
 
 def test_archive_snapshot_reports_and_finalizes_the_live_inventory_board(tmp_path: Path) -> None:

@@ -270,10 +270,13 @@ function renderArchiveSnapshot(snapshot) {
   const counters = snapshot?.counters || null;
   lastSnapshot = counters;
   if (!counters) {
+    byId("discovered-posts").textContent = "미보고";
+    byId("body-collected").textContent = "미보고";
     byId("outline-only").textContent = "미보고";
+    byId("missing-body-pending").textContent = "미보고";
+    byId("missing-body-dead").textContent = "미보고";
     byId("frontier-waiting").textContent = "미보고";
     byId("inventory-progress").textContent = "미보고";
-    byId("frontier-dead").textContent = "미보고";
     byId("inventory-detail").textContent = "게시판별 전체 목록 확인 이력 집계";
     byId("archive-as-of").textContent = "Oracle 원본 DB 집계가 아직 보고되지 않았습니다.";
     return;
@@ -285,7 +288,11 @@ function renderArchiveSnapshot(snapshot) {
   const inProgress = counters.inventory_in_progress_boards ?? 0;
   const pending = Math.max(total - completed - inProgress, 0);
   const finished = Math.min(total, Math.max(completed, 0));
+  byId("discovered-posts").textContent = number(counters.discovered_posts);
+  byId("body-collected").textContent = number(counters.body_collected);
   byId("outline-only").textContent = number(counters.outline_only);
+  byId("missing-body-pending").textContent = number(counters.missing_body_pending);
+  byId("missing-body-dead").textContent = number(counters.missing_body_dead);
   byId("frontier-waiting").textContent = number(waiting);
   byId("inventory-progress").textContent = total
     ? `${inProgress ? "진행 중" : pending ? "대기" : "완료"} · ${number(finished)}/${number(total)}`
@@ -297,7 +304,6 @@ function renderArchiveSnapshot(snapshot) {
     : completed === total && total
     ? "전체 목록 확인 완료 · 이후 최신 페이지만 주기적으로 확인"
     : "전체 분량을 알 수 없어 완료 게시판 수로 표시";
-  byId("frontier-dead").textContent = number(counters.frontier_dead);
   byId("archive-as-of").textContent = `Oracle 원본 DB · 최근 집계 ${time(snapshot.recorded_at)}`;
 }
 
@@ -309,8 +315,8 @@ function renderIssue(issue) {
   if (!recent) {
     section.dataset.state = "clear";
     metrics.hidden = true;
-    byId("issue-title").textContent = "최근 7일 실패 없음";
-    byId("issue-reason").textContent = "최근 운영 기록에서 일부 완료 또는 실패가 보고되지 않았습니다.";
+    byId("issue-title").textContent = "조치 필요한 실패 없음";
+    byId("issue-reason").textContent = "요청한 일시정지처럼 정상적인 일부 완료는 문제에서 제외합니다.";
     byId("issue-time").textContent = "—";
     byId("issue-kind").textContent = "—";
     byId("issue-posts").textContent = "—";
@@ -378,7 +384,7 @@ function renderOverview(data) {
   const reasons = {
     on: runner?.state === "running"
       ? "예약된 보존 작업을 수행하고 있습니다. Reader는 현재 활성 보존본으로 계속 사용할 수 있습니다."
-      : "6시간마다 최신 페이지를 확인하고, 변경분이 있으면 검증 후 Reader에 반영합니다.",
+      : "6시간마다 본문 미확보 글을 최대 4시간·120건 우선 처리한 뒤 최신 페이지를 확인하고 Reader에 반영합니다.",
     delayed: nextOverdue
       ? "다음 자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다. 수집기와 Oracle timer를 확인하세요."
       : "마지막 자동 실행이 7시간보다 오래됐습니다. 다음 실행 시각과 수집기 기록을 확인하세요.",
@@ -448,13 +454,16 @@ function renderOverview(data) {
     : "수집기 실행 기록이 아직 보고되지 않았습니다.";
   byId("latest-start").textContent = time(shown?.started_at);
   const inventoryFocus = isInventoryFocusedRun(shown, active ? runner?.active_step : null);
-  byId("latest-changed-label").textContent = inventoryFocus ? "본문 저장" : "본문 변경";
-  byId("latest-failed-label").textContent = inventoryFocus ? "목록 실패" : "항목 실패";
-  byId("latest-boards-label").textContent = inventoryFocus ? "게시판 처리" : "게시판";
+  const recoveryFocus = isRecoveryFocusedRun(shown, active ? runner?.active_step : null);
+  byId("latest-changed-label").textContent = recoveryFocus ? "처리 완료" : inventoryFocus ? "본문 저장" : "본문 변경";
+  byId("latest-failed-label").textContent = recoveryFocus ? "이번 시도 실패" : inventoryFocus ? "목록 실패" : "항목 실패";
+  byId("latest-boards-label").textContent = recoveryFocus ? "게시판 집계" : inventoryFocus ? "게시판 처리" : "게시판";
   byId("latest-changed").textContent = shown && (!active || progressReported) && shownCountersReported ? number(shown.changed_posts) : active || !shown ? "—" : "미보고";
   byId("latest-failed").textContent = shown && (!active || progressReported) && shownCountersReported ? number(shown.failed_posts) : active || !shown ? "—" : "미보고";
   const boardsReported = Number.isFinite(shown?.boards_ok) && Number.isFinite(shown?.boards_failed);
-  byId("latest-boards").textContent = boardsReported && (!active || progressReported) && shownCountersReported
+  byId("latest-boards").textContent = recoveryFocus
+    ? "해당 없음"
+    : boardsReported && (!active || progressReported) && shownCountersReported
     ? `${shown.boards_ok}/${shown.boards_ok + shown.boards_failed}`
     : active || !shown ? "—" : "미보고";
   if (shown && inventoryFocus && shownCountersReported && Number(shown.changed_posts || 0) === 0) {
@@ -472,6 +481,15 @@ function renderOverview(data) {
   lastScheduleEnabled = scheduleEnabled;
   overviewAvailable = true;
   updateControls(lastRunner, lastState, lastActiveCommands, lastScheduleEnabled, lastSnapshot);
+}
+
+function isRecoveryFocusedRun(run, activeStep = null) {
+  const step = activeStep || run?.latest_event?.step;
+  const boards = Number(run?.boards_ok || 0) + Number(run?.boards_failed || 0);
+  return ["recovery", "retry-batch", "fill-missing-content", "bootstrap-recovery"].includes(step) ||
+    ["retry", "bootstrap-recovery", "fill-missing-content"].includes(run?.kind) ||
+    ["missing_content_succeeded", "content_retry_deferred", "recovery_succeeded", "bootstrap_recovery_succeeded"].includes(run?.safe_summary_code) ||
+    (run?.kind === "scheduled" && boards === 0 && Number(run?.changed_posts || 0) + Number(run?.failed_posts || 0) > 0);
 }
 
 async function loadOverview() {
@@ -494,10 +512,11 @@ function runRow(run) {
   identity.append(node("strong", "", runLabel(run)), node("small", "", shortId(run.run_id)));
   const countersReported = runCountersReported(run);
   const inventoryFocus = isInventoryFocusedRun(run);
+  const recoveryFocus = isRecoveryFocusedRun(run);
   const changed = node("div", "run-metric");
   changed.append(
     node("strong", "", countersReported ? run.changed_posts : "미보고"),
-    node("small", "", inventoryFocus ? "본문" : "변경"),
+    node("small", "", recoveryFocus ? "처리" : inventoryFocus ? "본문" : "변경"),
   );
   const failed = node("div", "run-metric");
   failed.append(
@@ -506,8 +525,8 @@ function runRow(run) {
   );
   const boards = node("div", "run-metric");
   boards.append(
-    node("strong", "", countersReported ? `${run.boards_ok}/${run.boards_ok + run.boards_failed}` : "미보고"),
-    node("small", "", "게시판"),
+    node("strong", "", recoveryFocus ? "—" : countersReported ? `${run.boards_ok}/${run.boards_ok + run.boards_failed}` : "미보고"),
+    node("small", "", recoveryFocus ? "게시판 해당 없음" : "게시판"),
   );
   const started = node("div", "run-metric");
   started.append(node("strong", "", age(run.started_at)), node("small", "", time(run.started_at)));
@@ -568,7 +587,7 @@ function inventoryComplete(board) {
 
 function boardNeedsAttention(board) {
   return Boolean(board.warning_code) || ["partial", "failed"].includes(board.last_outcome) ||
-    [board.pending, board.running, board.retry, board.dead].some((value) => Number(value) > 0) ||
+    [board.running, board.dead].some((value) => Number(value) > 0) ||
     !inventoryComplete(board);
 }
 
@@ -683,8 +702,8 @@ function renderFailures(items, append = false) {
     const row = node("article", "failure-row");
     row.append(
       node("strong", "", `${item.board_id} / ${item.external_post_id}`),
-      node("span", "", `${item.attempts}회 실패`),
-      node("span", "", safeCodeLabels[item.error_code] || item.error_code),
+      node("span", "", `${item.attempts}회 후 분리`),
+      node("span", "", `마지막 판정 · ${safeCodeLabels[item.error_code] || item.error_code}`),
       node("time", "", time(item.last_attempt_at)),
     );
     list.append(row);
@@ -709,16 +728,10 @@ async function loadBoards(append = false) {
 function renderReleases(data) {
   const available = Boolean(data.current?.release_id);
   const releaseCounts = data.current?.counts || {};
-  const commentParts = [releaseCounts.comment_count, releaseCounts.unavailable_comment_count]
-    .filter(Number.isFinite);
-  const collectedComments = commentParts.length
-    ? commentParts.reduce((total, value) => total + value, 0)
-    : null;
   byId("reader-continuity").dataset.state = available ? "available" : "unavailable";
   byId("reader-state").textContent = available ? "Reader 사용 가능" : "Reader 보존본 없음";
   byId("reader-release").textContent = available ? `현재 보존본 활성 · ${time(data.current.activated_at)}` : "활성 Reader 보존본을 확인할 수 없습니다.";
   byId("reader-posts").textContent = number(releaseCounts.post_count);
-  byId("collected-comments").textContent = number(collectedComments);
   byId("release-current").textContent = available ? `사용 가능 · ${shortId(data.current.release_id)}` : "사용 불가";
   byId("release-current-time").textContent = time(data.current?.activated_at);
   byId("release-previous").textContent = data.previous ? shortId(data.previous.release_id) : "이전 보존본 정보 없음";

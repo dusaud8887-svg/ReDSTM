@@ -2183,18 +2183,31 @@ class ControlRunner:
                         "SELECT state, COUNT(*) AS count FROM crawl_frontier GROUP BY state"
                     )
                 }
-                outline_only = int(
-                    connection.execute(
-                        """
-                        SELECT COUNT(*) FROM crawl_frontier AS frontier
-                        LEFT JOIN posts AS post
-                          ON post.board_id = frontier.board_id
-                         AND post.external_post_id = frontier.external_post_id
-                        WHERE post.latest_version_id IS NULL
-                          AND (post.availability IS NULL OR post.availability <> 'missing')
-                        """
-                    ).fetchone()[0]
-                )
+                post_coverage = connection.execute(
+                    """
+                    SELECT
+                        COUNT(post.external_post_id) AS discovered_posts,
+                        COALESCE(SUM(post.latest_version_id IS NOT NULL), 0) AS body_collected,
+                        COALESCE(SUM(
+                            post.latest_version_id IS NULL
+                            AND (post.availability IS NULL OR post.availability <> 'missing')
+                        ), 0) AS outline_only,
+                        COALESCE(SUM(
+                            post.latest_version_id IS NULL
+                            AND (post.availability IS NULL OR post.availability <> 'missing')
+                            AND frontier.state IN ('pending', 'running', 'retry')
+                        ), 0) AS missing_body_pending,
+                        COALESCE(SUM(
+                            post.latest_version_id IS NULL
+                            AND (post.availability IS NULL OR post.availability <> 'missing')
+                            AND frontier.state = 'dead'
+                        ), 0) AS missing_body_dead
+                    FROM posts AS post
+                    LEFT JOIN crawl_frontier AS frontier
+                      ON frontier.board_id = post.board_id
+                     AND frontier.external_post_id = post.external_post_id
+                    """
+                ).fetchone()
                 inventory = connection.execute(
                     """
                     SELECT COUNT(*) AS total,
@@ -2309,7 +2322,11 @@ class ControlRunner:
         except OSError:
             pass
         counters = {
-            "outline_only": outline_only,
+            "discovered_posts": int(post_coverage["discovered_posts"]),
+            "body_collected": int(post_coverage["body_collected"]),
+            "outline_only": int(post_coverage["outline_only"]),
+            "missing_body_pending": int(post_coverage["missing_body_pending"]),
+            "missing_body_dead": int(post_coverage["missing_body_dead"]),
             "frontier_pending": frontier.get("pending", 0),
             "frontier_running": frontier.get("running", 0),
             "frontier_retry": frontier.get("retry", 0),
