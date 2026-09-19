@@ -1,6 +1,6 @@
 # Reader 탐색 구조 개선
 
-- 상태: Phase 1 구현·자동 검증 완료; 배포 대기
+- 상태: Phase 1 배포 완료; Phase 2 실사용 판정 대기
 - 기준일: 2026-09-19
 - 대상: `edge/public/index.html`, `app.js`, `app.css`, Reader E2E
 - 원칙: 새 API·프레임워크 없이 현재 검색 색인과 작품 색인을 재사용한다.
@@ -56,6 +56,7 @@
 - [x] 390px: `/search` 검색 옵션·focus·URL 복원 자동 검증
 - [x] desktop: 목록/Reader 2-pane 유지
 - [x] 기존 `/collections`, `/read/:board/:id`, `/saved` deep link 회귀 없음
+- [x] Cloudflare Worker `b9502456-1f72-4a9f-bd20-d82c2c8e79a2` 배포 및 live `/browse`, `/search` 확인
 - [ ] 실제 Android Chrome 터치·Back 확인
 
 ## 이어서 작업할 때
