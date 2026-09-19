@@ -261,14 +261,17 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   const width = page.viewportSize().width;
   const navigation = width >= 1200 ? ".rail nav" : width >= 760 ? ".app-bar" : ".bottom-nav";
-  for (const destination of ["library", "search", "bookmarks", "settings"]) {
+  for (const destination of ["browse", "search", "bookmarks", "settings"]) {
     await expect(page.locator(`${navigation} [data-destination="${destination}"]`)).toBeVisible();
   }
+  await expect(page.locator(width >= 1200 ? ".wordmark" : ".app-home")).toBeVisible();
   const operations = page.locator(`${width >= 1200 ? ".rail" : ".app-bar"} a[href="/ops"]`);
   await expect(operations).toBeVisible();
   await expect(operations).toHaveAccessibleName(/운영/);
   if (width < 1200) await expect(operations).toContainText("운영");
 
+  await page.locator(`${navigation} [data-destination="browse"]`).click();
+  await expect(page).toHaveURL(/\/browse$/);
   await page.locator(`${navigation} [data-destination="search"]`).click();
   await expect(page).toHaveURL(/\/search$/);
   await page.locator(`${navigation} [data-destination="bookmarks"]`).click();
@@ -279,8 +282,31 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/search$/);
-  await page.locator(`${navigation} [data-destination="library"]`).click();
-  await expect(page).toHaveURL(/\/$/);
+});
+
+test("separates board browsing from keyword search", async ({ page }, testInfo) => {
+  await useCollectionFixture(page);
+  await page.goto("/browse?board=board_a");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#catalog-title")).toHaveText("게시판 둘러보기");
+  await expect(page.locator("#search-input")).toBeHidden();
+  await expect(page.locator("#search-target")).toBeHidden();
+  await expect(page.locator("#search-match")).toBeHidden();
+  await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await expect(page.locator(".result-item")).toHaveCount(3);
+  await expect(page.locator(".result-board")).toHaveText(["board_a", "board_a", "board_a"]);
+  await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-browse.png` });
+
+  await page.locator('[data-scope="collections"]').click();
+  await expect(page).toHaveURL(/\/browse\?scope=collections/);
+  await expect(page.locator("#catalog-title")).toHaveText("작품 둘러보기");
+  await expect(page.locator("#search-input")).toBeHidden();
+
+  await page.locator('[data-destination="search"]:visible').first().click();
+  await expect(page).toHaveURL(/\/search\?board=board_a$/);
+  await expect(page.locator("#catalog-title")).toHaveText("글 검색");
+  await expect(page.locator("#search-input")).toBeVisible();
+  await expect(page.locator("#search-input")).toBeFocused();
 });
 
 test("restores search controls from the URL and browser history", async ({ page }) => {

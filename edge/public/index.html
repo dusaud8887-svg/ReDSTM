@@ -17,13 +17,13 @@
     <aside class="rail" aria-label="주요 메뉴">
       <button class="wordmark" type="button" data-destination="library" aria-label="ReDSTM 홈">Re</button>
       <nav>
-        <button class="active" type="button" data-destination="library" aria-pressed="true">
+        <button type="button" data-destination="browse" aria-pressed="false">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg>
-          <span>홈</span>
+          <span>둘러보기</span>
         </button>
         <button type="button" data-destination="search" aria-pressed="false">
           <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg>
-          <span>탐색</span>
+          <span>검색</span>
         </button>
         <button type="button" data-destination="bookmarks" aria-pressed="false">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg>
@@ -48,10 +48,10 @@
       <button class="catalog-toggle" id="catalog-toggle" type="button" aria-label="목록 접기" aria-expanded="true">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".5"/><circle cx="4" cy="12" r=".5"/><circle cx="4" cy="18" r=".5"/></svg>
       </button>
-      <strong>ReDSTM</strong>
+      <button class="app-home" type="button" data-destination="library" aria-label="ReDSTM 홈">ReDSTM</button>
       <nav class="app-nav" aria-label="주요 메뉴">
-        <button class="active" type="button" data-destination="library" aria-pressed="true">홈</button>
-        <button type="button" data-destination="search" aria-pressed="false">탐색</button>
+        <button type="button" data-destination="browse" aria-pressed="false">둘러보기</button>
+        <button type="button" data-destination="search" aria-pressed="false">검색</button>
         <button type="button" data-destination="bookmarks" aria-pressed="false">보관함</button>
       </nav>
       <a class="archive-facts" href="/ops">
@@ -72,7 +72,7 @@
           <span class="catalog-count" aria-hidden="true">ReDSTM</span>
         </header>
         <nav class="view-tabs scope-tabs" id="scope-tabs" aria-label="탐색 범위" hidden>
-          <button type="button" class="active" data-scope="posts" aria-pressed="true">글</button>
+          <button type="button" class="active" data-scope="posts" aria-pressed="true">게시판 글</button>
           <button type="button" data-scope="collections" aria-pressed="false">작품</button>
         </nav>
         <div class="catalog-controls">
@@ -202,8 +202,8 @@
     </main>
 
     <nav class="bottom-nav" aria-label="주요 메뉴">
-      <button class="active" type="button" data-destination="library" aria-pressed="true"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>홈</span></button>
-      <button type="button" data-destination="search" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg><span>탐색</span></button>
+      <button type="button" data-destination="browse" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>둘러보기</span></button>
+      <button type="button" data-destination="search" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg><span>검색</span></button>
       <button type="button" data-destination="bookmarks" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg><span>보관함</span></button>
       <button type="button" data-destination="settings" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8V6M12 18v3.2M2.8 12H6M18 12h3.2M5.5 5.5l2.3 2.3m8.4 8.4 2.3 2.3m0-13-2.3 2.3m-8.4 8.4-2.3 2.3"/></svg><span>설정</span></button>
     </nav>

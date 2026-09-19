@@ -397,7 +397,7 @@ function openMobileReader() {
   document.body.classList.add("reader-open");
 }
 
-function closeMobileReader(focusSearch = currentDestination !== "library") {
+function closeMobileReader(focusSearch = currentDestination === "search") {
   document.body.classList.remove("reader-open");
   document.body.classList.remove("collection-detail-open");
   document.body.classList.remove("reader-controls-hidden");
@@ -447,8 +447,9 @@ function currentSearchState() {
   };
 }
 
-function searchUrl(state = currentSearchState()) {
+function searchUrl(state = currentSearchState(), destination = currentDestination) {
   const params = new URLSearchParams();
+  if (currentScope === "collections") params.set("scope", "collections");
   if (state.query) params.set("q", state.query);
   if (state.boardId) params.set("board", state.boardId);
   if (currentScope === "posts" && state.mode !== "all") params.set("mode", state.mode);
@@ -459,7 +460,7 @@ function searchUrl(state = currentSearchState()) {
   const defaultSort = currentScope === "collections" ? "title" : "latest";
   if (state.sort !== defaultSort) params.set("sort", state.sort);
   const query = params.toString();
-  const path = currentScope === "collections" ? "/collections" : "/search";
+  const path = destination === "browse" ? "/browse" : "/search";
   return query ? `${path}?${query}` : path;
 }
 
@@ -477,7 +478,8 @@ function savedUrl(state = currentSearchState(), view = currentView) {
 
 function applyCatalogRoute(destination) {
   const params = new URLSearchParams(location.search);
-  setScope(destination === "search" && location.pathname.startsWith("/collections") ? "collections" : "posts");
+  setScope(params.get("scope") === "collections" || location.pathname.startsWith("/collections")
+    ? "collections" : "posts");
   elements["search-input"].value = params.get("q") ?? "";
   elements["board-filter"].value = params.get("board") ?? "";
   const mode = params.get("mode");
@@ -496,7 +498,7 @@ function applyCatalogRoute(destination) {
 
 function syncSearchRoute() {
   const state = currentSearchState();
-  if (location.pathname === "/search" || location.pathname === "/collections") {
+  if (["/browse", "/search", "/collections"].includes(location.pathname)) {
     history.replaceState({ redstmSearch: state }, "", searchUrl(state));
   } else if (location.pathname === "/saved") {
     history.replaceState({ redstmSaved: { ...state, view: currentView } }, "", savedUrl(state));
@@ -505,21 +507,27 @@ function syncSearchRoute() {
 
 function updateDestinationLayout() {
   const home = currentDestination === "library";
+  const browsing = currentDestination === "browse";
+  const searching = currentDestination === "search";
   const saved = currentDestination === "bookmarks";
   document.body.classList.toggle("home-open", home);
   document.body.classList.toggle("saved-open", saved);
-  elements["scope-tabs"].hidden = currentDestination !== "search";
+  elements["scope-tabs"].hidden = !browsing && !searching;
   document.querySelector(".saved-tabs").hidden = !saved;
   document.querySelector(".sort-field").hidden = saved;
+  elements["search-input"].closest("label").hidden = browsing;
   elements["mode-filter"].closest("label").hidden = saved || currentScope === "collections";
-  document.querySelector(".search-target-field").hidden = currentScope === "collections";
-  document.querySelector(".search-match-field").hidden = currentScope === "collections";
+  document.querySelector(".search-target-field").hidden = browsing || currentScope === "collections";
+  document.querySelector(".search-match-field").hidden = browsing || currentScope === "collections";
   document.querySelector(".collection-kind-field").hidden = saved || currentScope !== "collections";
   document.querySelector(".collection-read-field").hidden = saved || currentScope !== "collections";
-  elements["catalog-title"].textContent = saved ? "내 보관함" : currentScope === "collections" ? "작품 탐색" : "글 탐색";
+  elements["catalog-title"].textContent = saved ? "내 보관함"
+    : currentScope === "collections" ? (browsing ? "작품 둘러보기" : "작품 검색")
+    : browsing ? "게시판 둘러보기" : "글 검색";
   elements["catalog-subtitle"].textContent = saved
     ? (currentView === "history" ? "최근 읽은 글" : "저장한 글")
-    : currentScope === "collections" ? "연재·번역·AA 목차" : "전체 보존본";
+    : currentScope === "collections" ? "연재·번역·AA 목차"
+    : browsing ? "게시판별 보존 글" : "전체 보존본";
 }
 
 function openSettings() {
@@ -591,10 +599,11 @@ function showDestination(destination, navigate = true, view = destination === "b
   if (currentSummary) persistReadingPosition();
   else if (currentDestination !== "library") persistCatalogState();
   setImmersive(false, false);
-  if (destination !== "search") setScope("posts");
+  if (!["browse", "search"].includes(destination)) setScope("posts");
   currentDestination = destination;
   currentView = view;
-  document.title = `${destination === "library" ? "홈" : destination === "search" ? (currentScope === "collections" ? "작품 탐색" : "글 탐색") : "내 보관함"} — ReDSTM`;
+  const catalogLabel = currentScope === "collections" ? "작품" : "글";
+  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : "내 보관함"} — ReDSTM`;
   currentSummary = null;
   currentPayload = null;
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
@@ -602,8 +611,9 @@ function showDestination(destination, navigate = true, view = destination === "b
   elements["post-settings-actions"].hidden = true;
   updateDestinationLayout();
   if (destination === "library") renderCover();
-  else if (destination === "search" && currentScope === "collections") renderCover("작품을 선택하세요", "작품별 목차에서 이어서 읽을 수 있습니다.", false);
-  else if (destination === "search") renderCover("탐색에서 글을 선택하세요", "검색하거나 목록에서 읽을 글을 고르세요.", false);
+  else if (currentScope === "collections") renderCover("작품을 선택하세요", "작품별 목차에서 이어서 읽을 수 있습니다.", false);
+  else if (destination === "browse") renderCover("게시판에서 글을 선택하세요", "게시판과 형식을 고르고 보존된 글을 훑어보세요.", false);
+  else if (destination === "search") renderCover("검색 결과에서 글을 선택하세요", "제목이나 작성자로 읽을 글을 찾으세요.", false);
   else renderCover("보관함에서 글을 선택하세요", "저장한 글이나 최근 읽은 글을 고르세요.", false);
   closeMobileReader(destination === "search");
   if (destination === "bookmarks") {
@@ -684,7 +694,8 @@ async function handleRoute() {
     const collectionId = routeCollectionId();
     const settingsRoute = location.pathname === "/settings";
     const destination = location.pathname === "/saved" ? "bookmarks" :
-      (location.pathname === "/search" || location.pathname.startsWith("/collections")) ? "search" : "library";
+      location.pathname === "/search" ? "search" :
+      (location.pathname === "/browse" || location.pathname.startsWith("/collections")) ? "browse" : "library";
     if (destination !== "library") applyCatalogRoute(destination);
     showDestination(destination, false, currentView);
     if (collectionId !== null) await openCollectionDetail(collectionId, false);
@@ -1646,7 +1657,7 @@ elements["continue-reading"].addEventListener("click", () => {
   const latest = historyEntries.find((entry) => entry.summary?.object_key && (entry.progress ?? 0) < 0.95)?.summary;
   if (latest) loadPost(latest);
 });
-elements["browse-all"].addEventListener("click", () => showDestination("search"));
+elements["browse-all"].addEventListener("click", () => showDestination("browse"));
 elements["home-action"].addEventListener("click", () => location.reload());
 elements["catalog-toggle"].addEventListener("click", () => {
   const collapsed = document.body.classList.toggle("catalog-collapsed");
@@ -1699,7 +1710,7 @@ for (const button of document.querySelectorAll("[data-scope]")) {
   button.addEventListener("click", () => {
     if (button.dataset.scope === currentScope) return;
     setScope(button.dataset.scope);
-    showDestination("search");
+    showDestination(["browse", "search"].includes(currentDestination) ? currentDestination : "browse");
   });
 }
 elements["result-more"].addEventListener("click", loadMoreResults);
@@ -1719,7 +1730,7 @@ for (const tab of document.querySelectorAll("[data-view]")) {
 }
 for (const button of document.querySelectorAll("[data-destination]")) {
   button.addEventListener("click", () => {
-    if (button.dataset.destination === "search") setScope("posts");
+    if (["browse", "search"].includes(button.dataset.destination)) setScope("posts");
     showDestination(button.dataset.destination);
   });
 }
