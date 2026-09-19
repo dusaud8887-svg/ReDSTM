@@ -504,9 +504,7 @@ def test_archive_lock_writes_distinct_safe_code(
     def fail_recovery(_args: Namespace) -> None:
         raise ArchiveLockedError("locked")
 
-    monkeypatch.setattr(
-        "scripts.recover_queue._parse_args", lambda: Namespace(output=output)
-    )
+    monkeypatch.setattr("scripts.recover_queue._parse_args", lambda: Namespace(output=output))
     monkeypatch.setattr("scripts.recover_queue.run_recovery", fail_recovery)
 
     assert main() == 1
