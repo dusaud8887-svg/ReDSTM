@@ -349,6 +349,7 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
         for path, payload in api.calls
         if path.endswith("/events:batch") and payload["events"][0]["step"] == "archive_snapshot"
     )
+    assert snapshot["events"][0]["counters"]["inventory_total_boards"] == 1
     assert snapshot["events"][0]["counters"]["outline_only"] == 1
 
 
@@ -625,6 +626,23 @@ def test_sync_command_emits_bounded_run_and_board_results(
 
     assert runner.run_once()["status"] == "idle"
     assert processes == 1
+
+
+def test_manual_missing_content_is_bounded_for_schedule_fairness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command("fill-missing-content")
+    runner, _store = _runner(tmp_path, Api([command]))
+    observed: dict[str, int | None] = {}
+
+    def execute(_action: str, *_args: object, **kwargs: object) -> dict[str, Any]:
+        observed["max_seconds"] = cast(int | None, kwargs["max_seconds"])
+        return {"ok": True, "status": "succeeded", "selected_posts": 0}
+
+    monkeypatch.setattr(runner, "_execute_action", execute)
+
+    assert runner.run_once()["status"] == "succeeded"
+    assert observed["max_seconds"] == REDSTM_RECOVERY_TIME_BUDGET_SECONDS
 
 
 def test_interrupted_local_run_replays_failure_without_reexecution(tmp_path: Path) -> None:

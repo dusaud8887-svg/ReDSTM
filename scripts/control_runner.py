@@ -638,6 +638,8 @@ class ControlRunner:
             max_seconds = _optional_positive_int(
                 raw_args.get("max_seconds"), name="max_seconds", maximum=24 * 60 * 60
             )
+            if max_seconds is None and action in {"fill-missing-content", "retry-batch"}:
+                max_seconds = REDSTM_RECOVERY_TIME_BUDGET_SECONDS
             max_posts = _optional_positive_int(
                 raw_args.get("max_posts"), name="max_posts", maximum=500
             )
