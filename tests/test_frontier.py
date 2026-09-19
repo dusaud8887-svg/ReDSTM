@@ -221,14 +221,11 @@ def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="unsupported"):
         store.requeue_dead(error_code="network_error", limit=1)
-    assert (
-        store.requeue_dead(
-            error_code="storage_error",
-            limit=1,
-            board_id="write_free21",
-        )
-        == [("write_free21", 4)]
-    )
+    assert store.requeue_dead(
+        error_code="storage_error",
+        limit=1,
+        board_id="write_free21",
+    ) == [("write_free21", 4)]
     with pytest.raises(ValueError, match="unsupported"):
         store.requeue_dead(error_code="auth_required", limit=1)
 
