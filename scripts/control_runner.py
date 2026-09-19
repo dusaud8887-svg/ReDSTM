@@ -365,11 +365,8 @@ class ControlRunner:
                     action,
                     run_id,
                     run_id,
-                    max_seconds=(
-                        REDSTM_RECOVERY_TIME_BUDGET_SECONDS
-                        if action == "fill-missing-content"
-                        else None
-                    ),
+                    max_seconds=4 * 60 * 60 if action == "fill-missing-content" else None,
+                    max_posts=120 if action == "fill-missing-content" else None,
                 )
                 action_state, safe_code, payload = self._result(action, report)
             except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:

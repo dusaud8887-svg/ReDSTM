@@ -2144,8 +2144,8 @@ def test_scheduled_run_collects_missing_then_latest_and_publishes(
         "scripts.release_smoke",
     ]
     recovery = commands[0]
-    assert recovery[recovery.index("--max-posts") + 1] == str(REDSTM_RECOVERY_MAX_POSTS)
-    assert recovery[recovery.index("--max-seconds") + 1] == str(REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
+    assert recovery[recovery.index("--max-posts") + 1] == "120"
+    assert recovery[recovery.index("--max-seconds") + 1] == str(4 * 60 * 60)
     assert "--missing-only" in recovery
     crawl = commands[1]
     assert "--inventory" not in crawl
@@ -2572,7 +2572,7 @@ def test_scheduled_run_uses_bounded_retry_without_starting_full_content_recovery
     assert runner.run_scheduled()["status"] == "succeeded"
     recovery = next(command for command in commands if "scripts.recover_queue" in command)
     assert "--full-content-before" not in recovery
-    assert recovery[recovery.index("--max-seconds") + 1] == str(REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
+    assert recovery[recovery.index("--max-seconds") + 1] == str(4 * 60 * 60)
     assert not (runner.profile.state_dir / "recovery.completed").exists()
 
 
