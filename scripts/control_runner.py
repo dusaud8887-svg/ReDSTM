@@ -348,12 +348,11 @@ class ControlRunner:
         state = "succeeded"
         counters = {"changed_posts": 0, "failed_posts": 0, "boards_ok": 0, "boards_failed": 0}
         release_id: str | None = None
-        crawl_status = "failed"
         paused = False
         intentional_pause = False
         terminal_safe_code: str | None = None
         sequence = 1
-        for action in ("sync-now", "fill-missing-content", "publish-if-changed"):
+        for action in ("fill-missing-content", "sync-now", "publish-if-changed"):
             self._claim_marker()
             if (self.profile.state_dir / "schedule.paused").exists():
                 paused = True
@@ -361,21 +360,6 @@ class ControlRunner:
                     state = "partial"
                     intentional_pause = True
                 break
-            if action in {
-                "inventory",
-                "bootstrap-recovery",
-                "fill-missing-content",
-                "retry-batch",
-            } and crawl_status in {
-                "failed",
-                "runner_failed",
-                "site_unreachable",
-                "rate_limited",
-                "auth_failed",
-            }:
-                self._event(run_id, sequence, action, "skipped")
-                sequence += 1
-                continue
             try:
                 report = self._execute_action(
                     action,
@@ -397,8 +381,6 @@ class ControlRunner:
                 safe_code = "archive_locked" if _is_archive_locked(error) else "runner_failed"
                 self._write_command_diagnostics(run_id, action, error)
                 payload = self._finish_payload("failed", safe_code)
-            if action == "sync-now":
-                crawl_status = str(report.get("status", "failed"))
             if report.get("stop_reason") == "schedule_paused":
                 intentional_pause = True
             if action in {"sync-now", "inventory"}:

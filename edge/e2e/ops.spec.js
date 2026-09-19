@@ -137,6 +137,7 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
   await expect(page.getByText("healthy_1")).toBeHidden();
   await expect(page.locator("#reader-posts")).toHaveText("282,239");
   await expect(page.locator("#outline-only")).toHaveText("1,831");
+  await expect(page.getByText("전체 수집 큐", { exact: true })).toBeVisible();
   await expect(page.locator("#collected-comments")).toHaveText("3,729,706");
   await expect(page.locator("#inventory-progress")).toHaveText("진행 중 · 44/46");
   await expect(page.locator("#issue-metrics")).toBeHidden();

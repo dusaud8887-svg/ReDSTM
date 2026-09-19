@@ -2021,6 +2021,7 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
     runner, _store = _runner(tmp_path, api)
     reports = iter(
         [
+            {"ok": True, "status": "succeeded"},
             {
                 "ok": False,
                 "status": "partial",
@@ -2032,7 +2033,6 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
                     }
                 ],
             },
-            {"ok": True, "status": "succeeded"},
             {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"},
         ]
     )
@@ -2053,7 +2053,7 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
     assert sync_event["safe_message"] == "parse_drift"
 
 
-def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
+def test_scheduled_run_collects_missing_content_before_a_failed_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api = Api([])
@@ -2073,16 +2073,10 @@ def test_scheduled_run_skips_follow_up_after_runner_failed_sync(
     report = runner.run_scheduled()
 
     assert report["status"] == "failed"
-    assert actions == ["sync-now", "publish-if-changed"]
-    assert any(
-        payload["events"][0]["state"] == "skipped"
-        and payload["events"][0]["step"] == "fill-missing-content"
-        for path, payload in api.calls
-        if path.endswith("/events:batch")
-    )
+    assert actions == ["fill-missing-content", "sync-now", "publish-if-changed"]
 
 
-def test_scheduled_run_only_collects_latest_and_publishes(
+def test_scheduled_run_collects_missing_then_latest_and_publishes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -2143,18 +2137,19 @@ def test_scheduled_run_only_collects_latest_and_publishes(
 
     assert runner.run_scheduled()["status"] == "succeeded"
     assert [command[command.index("-m") + 1] for command in commands] == [
-        "scripts.crawl_cycle",
         "scripts.recover_queue",
+        "scripts.crawl_cycle",
         "scripts.export_static",
         "scripts.publish_static",
         "scripts.release_smoke",
     ]
-    assert "--inventory" not in commands[0]
-    assert commands[0][commands[0].index("--disk-stop-bytes") + 1] == "0"
-    recovery = commands[1]
+    recovery = commands[0]
     assert recovery[recovery.index("--max-posts") + 1] == str(REDSTM_RECOVERY_MAX_POSTS)
     assert recovery[recovery.index("--max-seconds") + 1] == str(REDSTM_RECOVERY_TIME_BUDGET_SECONDS)
     assert "--missing-only" in recovery
+    crawl = commands[1]
+    assert "--inventory" not in crawl
+    assert crawl[crawl.index("--disk-stop-bytes") + 1] == "0"
 
 
 def test_partial_inventory_keeps_running_until_every_board_cursor_completes(
