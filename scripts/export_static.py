@@ -1161,12 +1161,12 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
     for key, value in expected.items():
         if manifest.get(key) != value:
             raise ValueError(f"release {key} mismatch")
-    unavailable = {}
+    unavailable_totals: dict[str, int] = {}
     for key in ("unavailable_post_count", "unavailable_comment_count"):
         unavailable_value = manifest.get(key)
         if not isinstance(unavailable_value, int) or unavailable_value < 0:
             raise ValueError(f"invalid release {key}")
-        unavailable[key] = unavailable_value
+        unavailable_totals[key] = unavailable_value
     search_ref = cast(dict[str, Any], manifest["search"])
     collection_ref = cast(dict[str, Any], manifest["collections"])
     if search_ref.get("post_count") != len(search_rows):
@@ -1176,7 +1176,7 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
         or collection_ref.get("entry_count") != entry_count
     ):
         raise ValueError("collection reference count mismatch")
-    return {"release_key": release_key, **expected, **unavailable}
+    return {"release_key": release_key, **expected, **unavailable_totals}
 
 
 def validate_incremental_release(root: Path, release: str) -> dict[str, int | str]:
