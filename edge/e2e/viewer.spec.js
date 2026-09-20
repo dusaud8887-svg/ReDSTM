@@ -69,6 +69,7 @@ async function useCollectionFixture(page, { collectionV2 = false, largeStandalon
       schema_version: 1,
       search: { object_key: "search/e2e.json.zst" },
       collections: { object_key: collectionIndexKey },
+      boards: [{ board_id: "board_a", name: "자유게시판", group_name: "창작", post_count: 3 }],
     }],
     ["search/e2e.json.zst", {
       schema_version: 1,
@@ -88,7 +89,7 @@ async function useCollectionFixture(page, { collectionV2 = false, largeStandalon
       shard_count: 64,
       collections: [{
         id: 1, board_id: "board_a", kind: "series", title: "테스트 연작", entry_count: 3,
-        latest_created_at: "2026-07-11T00:00:00Z",
+        unavailable_count: 1, latest_created_at: "2026-07-11T00:00:00Z",
       }],
       detail_shards: [{ shard: 1, object_key: collectionDetailKey }],
       memberships: [{ board_id: "board_a", object_key: collectionMembershipKey }],
@@ -187,6 +188,13 @@ async function useAccessExpiredFixture(page) {
   await page.route("**/archive/**", (route) => route.fulfill({ status: 403, body: "expired" }));
 }
 
+async function setSelect(page, id, value) {
+  await page.locator(`#${id}`).evaluate((element, selected) => {
+    element.value = selected;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+}
+
 async function openPost(page, key) {
   await page.goto(stableUrl(key));
   await expect(page.locator("#archive-state")).toHaveText("보존본");
@@ -220,7 +228,7 @@ test("shows a row skeleton until the archive index is ready", async ({ page }) =
 
 test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {
   await usePaginationFixture(page, 150);
-  await page.goto("/search");
+  await page.goto("/browse");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
 
   const items = page.locator(".result-item");
@@ -260,10 +268,12 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   const width = page.viewportSize().width;
-  const navigation = width >= 1200 ? ".rail nav" : width >= 760 ? ".app-bar" : ".bottom-nav";
-  for (const destination of ["browse", "search", "bookmarks", "settings"]) {
+  const navigation = width >= 1200 ? ".rail-primary" : width >= 760 ? ".app-nav" : ".bottom-nav";
+  for (const destination of ["library", "browse", "search", "bookmarks"]) {
     await expect(page.locator(`${navigation} [data-destination="${destination}"]`)).toBeVisible();
   }
+  const settings = page.locator(width >= 1200 ? ".rail-secondary [data-destination='settings']" : ".app-settings");
+  await expect(settings).toBeVisible();
   await expect(page.locator(width >= 1200 ? ".wordmark" : ".app-home")).toBeVisible();
   const operations = page.locator(`${width >= 1200 ? ".rail" : ".app-bar"} a[href="/ops"]`);
   await expect(operations).toBeVisible();
@@ -278,7 +288,7 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   await expect(page).toHaveURL(/\/saved$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/search$/);
-  await page.locator(`${navigation} [data-destination="settings"]`).click();
+  await settings.click();
   await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/search$/);
@@ -294,7 +304,7 @@ test("separates board browsing from keyword search", async ({ page }, testInfo) 
   await expect(page.locator("#search-match")).toBeHidden();
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
   await expect(page.locator(".result-item")).toHaveCount(3);
-  await expect(page.locator(".result-board")).toHaveText(["board_a", "board_a", "board_a"]);
+  await expect(page.locator(".result-board")).toHaveText(["자유게시판", "자유게시판", "자유게시판"]);
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-browse.png` });
 
   await page.locator('[data-scope="collections"]').click();
@@ -319,8 +329,8 @@ test("restores search controls from the URL and browser history", async ({ page 
   await expect(page.locator("#sort-filter")).toHaveValue("oldest");
   await expect(page.locator(".result-item", { hasText: "둘째" })).toBeVisible();
 
-  await page.locator("#sort-filter").selectOption("latest");
-  await page.locator("#mode-filter").selectOption("aa");
+  await setSelect(page, "sort-filter", "latest");
+  await setSelect(page, "mode-filter", "aa");
   await page.locator("#search-input").fill("첫째");
   await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("첫째");
   await expect.poll(() => page.evaluate(() => history.state?.redstmSearch)).toEqual({
@@ -338,7 +348,7 @@ test("restores search controls from the URL and browser history", async ({ page 
 
 test("restores catalog scroll and focused row after Reader Back", async ({ page }) => {
   await useCollectionFixture(page);
-  await page.goto("/search");
+  await page.goto("/browse");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   const list = page.locator("#result-list");
   await list.evaluate((element) => {
@@ -353,14 +363,14 @@ test("restores catalog scroll and focused row after Reader Back", async ({ page 
   await target.click();
   await expect(page.locator("#reader")).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/search$/);
+  await expect(page).toHaveURL(/\/browse$/);
   await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBe(expectedScroll);
   await expect(page.locator(".result-item:focus .result-title")).toHaveText(title);
 });
 
 test("loads more board posts from the local search index", async ({ page }) => {
   await useCollectionFixture(page, { paginated: true });
-  await page.goto("/search?board=board_a");
+  await page.goto("/browse?board=board_a");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator(".result-item")).toHaveCount(100);
   await expect(page.locator("#result-status")).toContainText("103건 중 100건");
@@ -380,11 +390,11 @@ test("loads more board posts from the local search index", async ({ page }) => {
 
 test("normalizes AA mode on a legacy search index", async ({ page }) => {
   await useCollectionFixture(page, { legacyIndex: true });
-  await page.goto("/search?mode=aa");
+  await page.goto("/browse?mode=aa");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#mode-filter")).toBeDisabled();
   await expect(page.locator("#mode-filter")).toHaveValue("all");
-  await expect(page).toHaveURL(/\/search$/);
+  await expect(page).toHaveURL(/\/browse$/);
   await expect(page.locator(".result-item")).toHaveCount(3);
 });
 
@@ -434,13 +444,15 @@ test("keeps saved and recent-reading routes distinct", async ({ page }, testInfo
   await page.reload();
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator('[data-view="history"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#catalog-subtitle")).toHaveText("최근 읽은 글");
+  await expect(page.locator("#catalog-subtitle")).toHaveText("최근 읽음");
 
   await page.locator('[data-view="bookmarks"]').click();
   await expect(page).toHaveURL(/\/saved$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/saved\?view=recent$/);
   await expect(page.locator('[data-view="history"]')).toHaveAttribute("aria-pressed", "true");
+  await page.locator('[data-view="reading"]').click();
+  await expect(page).toHaveURL(/\/saved\?view=reading$/);
 });
 
 test("shows the archive cover and uses a single-plane mobile reader", async ({ page }, testInfo) => {
@@ -479,7 +491,9 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   }
   await page.locator("#home-search").click();
   await expect(page.locator("#search-input")).toBeFocused();
+  await expect(page.locator("#search-empty")).toBeVisible();
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-explore.png` });
+  await page.locator('[data-destination="browse"]:visible').first().click();
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page).toHaveURL(/\/read\/board_a\/3$/);
@@ -518,9 +532,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("white-space", "pre");
   await expect(page.locator(".aa-canvas p").first()).toHaveCSS("margin-bottom", "0px");
   await expect(page.locator(".aa-canvas p").first()).toHaveCSS("line-height", "18px");
-  const aaResult = page.locator(".result-item", { hasText: "첫째" });
-  await expect(aaResult.locator(".result-badges")).toContainText("AA");
-  await expect(aaResult.locator(".result-badges")).toContainText("읽음");
+  await expect(page.locator("#reader-kicker")).toContainText("자유게시판");
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
   await expect(page.locator('[data-aa-background="#f5f5f0"]')).toHaveText("아이보리");
@@ -623,7 +635,7 @@ test("shows progress while receiving a large post", async ({ page }) => {
     const target = document.getElementById("archive-state");
     new MutationObserver(() => window.__redstmArchiveStates.push(target.textContent)).observe(target, { childList: true });
   });
-  await page.locator("#home-search").click();
+  await page.locator('[data-destination="browse"]:visible').first().click();
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page.locator("#archive-state")).toHaveText("보존본");
@@ -677,9 +689,11 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await page.locator("#reader-title").focus();
   await page.keyboard.press("b");
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".result-item", { hasText: "비소속" }).locator(".result-badges")).toContainText("저장");
   await page.keyboard.press("/");
   await expect(page.locator("#search-input")).toBeFocused();
+  await page.locator("#search-input").fill("비소속");
+  await expect(page.locator(".result-item", { hasText: "비소속" })).toBeVisible();
+  await expect(page.locator(".result-item", { hasText: "비소속" }).locator(".result-badges")).toContainText("저장");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".result-item").first()).toBeFocused();
   await page.keyboard.press("Enter");
@@ -690,14 +704,14 @@ test("leaves immersive mode when browser Back returns to the catalog", async ({ 
   await useCollectionFixture(page);
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
-  await page.locator("#home-search").click();
+  await page.locator('[data-destination="browse"]:visible').first().click();
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader-title")).toBeFocused();
   await page.keyboard.press("f");
   await expect(page.locator("body")).toHaveClass(/immersive/);
   await expect(page.locator("#immersive-exit")).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/search$/);
+  await expect(page).toHaveURL(/\/browse$/);
   await expect(page.locator("body")).not.toHaveClass(/immersive/);
   if (page.viewportSize().width < 760) await expect(page.locator(".bottom-nav")).toBeVisible();
   else if (page.viewportSize().width < 1200) await expect(page.locator(".app-bar")).toBeVisible();
@@ -717,7 +731,7 @@ test("searches and renders a representative AA post", async ({ page }, testInfo)
   expect(query).toBeTruthy();
 
   await page.keyboard.press("/");
-  await page.locator("#board-filter").selectOption(stableUrl(aaKey).split("/")[2]);
+  await setSelect(page, "board-filter", stableUrl(aaKey).split("/")[2]);
   await page.locator("#search-input").fill(query);
   await expect(page.locator(".result-item", { hasText: title })).toBeVisible();
   await page.locator(".result-item", { hasText: title }).click();
@@ -793,20 +807,20 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   if (mobile) {
     await page.goto("/");
     await expect(page.locator("#archive-state")).toHaveText("보존본");
-    await page.locator('.bottom-nav [data-destination="search"]').click();
+    await page.locator('.bottom-nav [data-destination="browse"]').click();
     await page.locator(".result-item", { hasText: "첫째" }).click();
     await page.locator(next).click();
     await expect(page.locator("#reader-title")).toHaveText("둘째");
     await page.reload();
     await expect(page.locator("#reader-title")).toHaveText("둘째");
     await page.locator("#reader-bottom-list").click();
-    await expect(page).toHaveURL(/\/search$/);
+    await expect(page).toHaveURL(/\/browse$/);
     await page.goBack();
     await expect(page).toHaveURL(/\/$/);
   }
 
   await openPost(page, secondKey);
-  await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
+  await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1편 보존 불가");
   await expect(page.locator(previous)).toBeEnabled();
   await expect(page.locator(next)).toBeDisabled();
   await expect(page.locator("#end-next")).toBeEnabled();
@@ -814,7 +828,7 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
 
   await page.locator(previous).click();
   await expect(page.locator("#reader-title")).toHaveText("첫째");
-  await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 1/3 · 1건 보존 불가");
+  await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 1/3 · 1편 보존 불가");
   await expect(page.locator(previous)).toBeDisabled();
   await expect(page.locator(next)).toBeEnabled();
   if (mobile) {
@@ -830,7 +844,7 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   await expect(page.locator(next)).toBeEnabled();
   await page.locator(next).click();
   await expect(page.locator("#reader-title")).toHaveText("둘째");
-  await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1건 보존 불가");
+  await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1편 보존 불가");
 });
 
 test("publishes install metadata without registering offline behavior", async ({ page }) => {
@@ -857,11 +871,11 @@ test("searches selected fields with AND or OR token matching and preserves the U
   await expect(page.locator(".result-item", { hasText: "둘째" })).toBeVisible();
   await expect(page.locator(".result-item", { hasText: "비소속" })).toBeVisible();
 
-  await page.locator("#search-match").selectOption("and");
+  await setSelect(page, "search-match", "and");
   await expect(page.locator(".result-item")).toHaveCount(0);
   await expect.poll(() => new URL(page.url()).searchParams.has("match")).toBe(false);
   await page.locator("#search-input").fill("작성자");
-  await page.locator("#search-target").selectOption("author");
+  await setSelect(page, "search-target", "author");
   await expect(page.locator(".result-item")).toHaveCount(3);
   await expect.poll(() => new URL(page.url()).searchParams.get("target")).toBe("author");
   await page.reload();
@@ -962,19 +976,106 @@ test("filters collections by kind and reading state and continues at the next un
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#collection-kind-filter")).toHaveValue("series");
   await expect(page.locator("#collection-read-filter")).toHaveValue("reading");
-  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("읽음 1/3");
-  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("최근 1편");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("0/2편");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("1편 이어 읽기");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("1편 보존 불가");
 
-  await page.locator("#collection-kind-filter").selectOption("oneshot");
+  await setSelect(page, "collection-kind-filter", "oneshot");
   await expect(page).toHaveURL(/kind=oneshot/);
   await expect(page.locator(".result-item")).toHaveCount(0);
-  await page.locator("#collection-kind-filter").selectOption("series");
+  await setSelect(page, "collection-kind-filter", "series");
   await page.locator(".result-item", { hasText: "테스트 연작" }).click();
-  await expect(page.locator("#collection-meta")).toContainText("읽음 1/2");
-  await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("읽음");
-  await expect(page.locator("#collection-continue")).toContainText("3편 둘째");
+  await expect(page.locator("#collection-meta")).toContainText("읽음 0/2");
+  await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("40%");
+  await expect(page.locator("#collection-continue")).toContainText("1편부터 이어 읽기");
   await page.locator("#collection-continue").click();
+  await expect(page.locator("#reader-title")).toHaveText("첫째");
+});
+
+test("continues a finished chapter at the next available episode, not a skipped gap", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2,
+    settings: {},
+    history: {
+      "board_a:1": { readAt: "2026-07-11T00:00:00Z", progress: 0 },
+      "board_a:2": { readAt: "2026-07-12T00:00:00Z", progress: 0.95 },
+    },
+    bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/collections/1");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#collection-continue")).toBeHidden();
+  await expect(page.locator('#collection-entry-list [data-position="3"] .collection-entry-state')).toHaveText("완료");
+  await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("");
+});
+
+test("treats a collection as finished when every available episode is done", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2,
+    settings: {},
+    history: {
+      "board_a:1": { readAt: "2026-07-11T00:00:00Z", progress: 0.95 },
+      "board_a:2": { readAt: "2026-07-12T00:00:00Z", progress: 1 },
+    },
+    bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/browse?scope=collections");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const row = page.locator(".result-item", { hasText: "테스트 연작" });
+  await expect(row).toContainText("2/2편");
+  await expect(row).toContainText("다시 보기");
+  await expect(row).toContainText("1편 보존 불가");
+});
+
+test("marks the current episode finished when moving on from the article end", async ({ page }) => {
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/collections/1");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator('.collection-entry[data-position="1"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("첫째");
+  await page.locator("#end-next").click();
   await expect(page.locator("#reader-title")).toHaveText("둘째");
+  await page.locator("#collection-context").click();
+  await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("완료");
+});
+
+test("labels standalone next/previous as board order and list next as the current result", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/read/board_a/3");
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  await expect(page.locator("#end-next span")).toHaveText("다음 글 · 게시판");
+  await page.goto("/browse");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator(".result-item", { hasText: "비소속" }).click();
+  await expect(page.locator("#end-next span")).toHaveText("다음 글 · 현재 결과");
+});
+
+test("offers the next collection episode from Home after finishing the latest chapter", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2,
+    settings: {},
+    history: { "board_a:1": { readAt: "2026-07-12T00:00:00Z", progress: 0.95 } },
+    bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#continue-block")).toBeVisible();
+  await expect(page.locator("#continue-title")).toHaveText("둘째");
+  await page.locator("#continue-reading").click();
+  await expect(page.locator("#reader-title")).toHaveText("둘째");
+});
+
+test("widens a failed search one condition at a time", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/search?q=없는제목&target=title&board=board_a");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator(".result-item")).toHaveCount(0);
+  await expect(page.locator("#search-widen")).toBeVisible();
+  await page.locator("#search-widen button", { hasText: "전체 필드로 검색" }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.has("target")).toBe(false);
 });
 
 test("distinguishes a missing preserved object", async ({ page }) => {
@@ -1017,4 +1118,49 @@ test("preserves loaded Reader content while connectivity changes", async ({ page
   await expect(page.locator("#archive-body")).toContainText("둘째 본문 1");
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect(page.locator("#archive-state")).toHaveText("보존본");
+});
+
+test("uses a full-width discovery canvas and hides the empty reader pane", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/browse");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("body")).toHaveClass(/discovery/);
+  await expect(page.locator("#empty-reader")).toBeHidden();
+  await expect(page.locator("#reader")).toBeHidden();
+  await expect(page.locator(".result-item")).toHaveCount(3);
+  if (page.viewportSize().width >= 1200) {
+    const width = await page.locator(".catalog-inner").evaluate((element) => element.getBoundingClientRect().width);
+    expect(width).toBeGreaterThan(680);
+  }
+  if (page.viewportSize().width < 760) {
+    const firstTop = await page.locator(".result-item").first().evaluate((element) => element.getBoundingClientRect().top);
+    expect(firstTop).toBeLessThan(240);
+  }
+
+  await page.locator(".result-item").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(page.locator("body")).toHaveClass(/reading/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/browse$/);
+  await expect(page.locator("body")).toHaveClass(/discovery/);
+});
+
+test("does not dump the whole archive into an empty search", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/search");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#search-empty")).toBeVisible();
+  await expect(page.locator(".result-item")).toHaveCount(0);
+  await page.locator("#search-input").fill("첫째");
+  await expect(page.locator(".result-item", { hasText: "첫째" })).toBeVisible();
+  await expect(page.locator(".result-title mark")).toHaveText("첫째");
+});
+
+test("opens a direct Reader deep link without inventing a context list", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/read/board_a/3");
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  await expect(page.locator("body")).toHaveClass(/reading/);
+  await expect(page.locator("body")).not.toHaveClass(/reading-context/);
+  if (page.viewportSize().width >= 760) await expect(page.locator(".catalog")).toBeHidden();
 });

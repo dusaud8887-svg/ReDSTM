@@ -268,6 +268,8 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
 
     assert collection_payload["schema_version"] == 2
     assert collection_payload["shard_count"] == 64
+    assert collection_payload["collections"][0]["unavailable_count"] == 1
+    assert collection_payload["collections"][1]["unavailable_count"] == 0
     entries = collection_rows[0]["entries"]
     assert entries[0]["object_key"].startswith("posts/ss_temp01/1-")
     assert entries[1] == {

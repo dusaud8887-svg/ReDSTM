@@ -1046,6 +1046,14 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
                 or not isinstance(summary.get("title"), str)
                 or type(summary.get("entry_count")) is not int
                 or summary["entry_count"] < 0
+                or (
+                    "unavailable_count" in summary
+                    and (
+                        type(summary.get("unavailable_count")) is not int
+                        or summary["unavailable_count"] < 0
+                        or summary["unavailable_count"] > summary["entry_count"]
+                    )
+                )
                 or summary["id"] in collection_summaries
             ):
                 raise ValueError("invalid collection summary")
@@ -1111,11 +1119,13 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
         ):
             raise ValueError("invalid collection")
         summary = collection_summaries.get(collection["id"]) if collection_summaries else None
+        unavailable = sum(1 for entry in collection["entries"] if entry.get("object_key") is None)
         if summary is not None and (
             summary["board_id"] != collection["board_id"]
             or summary["kind"] != collection["kind"]
             or summary["title"] != collection["title"]
             or summary["entry_count"] != len(collection["entries"])
+            or summary.get("unavailable_count", unavailable) != unavailable
         ):
             raise ValueError("collection summary does not match detail")
         for position, entry in enumerate(collection["entries"], 1):
@@ -1420,6 +1430,15 @@ def _stage_collection_objects(
 ]:
     collection_count = int(connection.execute("SELECT COUNT(*) FROM collections").fetchone()[0])
     entry_count = int(connection.execute("SELECT COUNT(*) FROM collection_entries").fetchone()[0])
+    unavailable_by_id = {
+        collection_id: sum(
+            1 for row in _collection_entry_rows(connection, collection_id)
+            if object_key_for_row(row) is None
+        )
+        for collection_id in (
+            int(row["id"]) for row in connection.execute("SELECT id FROM collections ORDER BY id")
+        )
+    }
     summaries = [
         {
             "id": int(row["id"]),
@@ -1427,6 +1446,7 @@ def _stage_collection_objects(
             "kind": str(row["kind"]),
             "title": str(row["title"]),
             "entry_count": int(row["entry_count"]),
+            "unavailable_count": unavailable_by_id.get(int(row["id"]), 0),
             "latest_created_at": row["latest_created_at"],
         }
         for row in connection.execute(
