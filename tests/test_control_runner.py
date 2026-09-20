@@ -632,21 +632,23 @@ def test_sync_command_emits_bounded_run_and_board_results(
     assert processes == 1
 
 
-def test_manual_missing_content_is_bounded_for_schedule_fairness(
+def test_manual_missing_content_runs_until_empty_while_retry_batch_stays_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    command = _command("fill-missing-content")
-    runner, _store = _runner(tmp_path, Api([command]))
-    observed: dict[str, int | None] = {}
+    observed: list[int | None] = []
 
     def execute(_action: str, *_args: object, **kwargs: object) -> dict[str, Any]:
-        observed["max_seconds"] = cast(int | None, kwargs["max_seconds"])
+        observed.append(cast(int | None, kwargs["max_seconds"]))
         return {"ok": True, "status": "succeeded", "selected_posts": 0}
 
-    monkeypatch.setattr(runner, "_execute_action", execute)
+    missing_runner, _store = _runner(tmp_path / "missing", Api([_command("fill-missing-content")]))
+    retry_runner, _store = _runner(tmp_path / "retry", Api([_command("retry-batch")]))
+    monkeypatch.setattr(missing_runner, "_execute_action", execute)
+    monkeypatch.setattr(retry_runner, "_execute_action", execute)
 
-    assert runner.run_once()["status"] == "succeeded"
-    assert observed["max_seconds"] == REDSTM_RECOVERY_TIME_BUDGET_SECONDS
+    assert missing_runner.run_once()["status"] == "succeeded"
+    assert retry_runner.run_once()["status"] == "succeeded"
+    assert observed == [None, REDSTM_RECOVERY_TIME_BUDGET_SECONDS]
 
 
 def test_interrupted_local_run_replays_failure_without_reexecution(tmp_path: Path) -> None:
@@ -1688,7 +1690,8 @@ def test_fill_missing_content_keeps_full_batches_after_isolated_failure(
                 "status": "partial",
                 "selected_posts": 1,
                 "outcomes": {"fetch_failed": 1},
-                "failures": ["network_error"],
+                "failures": ["network_error", "recovery_time_budget"],
+                "stop_reason": "recovery_time_budget",
             },
             {"ok": True, "status": "succeeded", "selected_posts": 0, "outcomes": {}},
         ]
@@ -1839,6 +1842,18 @@ def test_long_collection_returns_immediately_after_a_cooperative_pause(
     assert report["status"] == "partial"
     assert report["stop_reason"] == "schedule_paused"
     assert runner._result(action, report)[1] == "schedule_paused"
+
+
+def test_time_budget_is_reported_ahead_of_incidental_network_failures(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    report = {
+        "ok": False,
+        "status": "partial",
+        "stop_reason": "recovery_time_budget",
+        "failures": ["network_error", "recovery_time_budget"],
+    }
+
+    assert runner._result("retry-batch", report)[1] == "recovery_time_budget"
 
 
 def test_full_content_checkpoint_survives_a_partial_batch(

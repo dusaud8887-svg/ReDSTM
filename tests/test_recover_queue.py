@@ -854,3 +854,4 @@ def test_recovery_report_includes_capture_failure_codes(
     assert report["ok"] is False
     assert report["failures"] == ["auth_required", "recovery_time_budget"]
     assert report["breaker_codes"] == []
+    assert report["stop_reason"] == "recovery_time_budget"

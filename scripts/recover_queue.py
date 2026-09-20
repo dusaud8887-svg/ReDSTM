@@ -147,6 +147,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
         scheduled = 0
         failures: list[str] = []
         spider_failures: set[str] = set()
+        timed_out = False
         preflight_status: str | None = None
         sessions: list[SessionExport] = []
         if candidates and not paused:
@@ -190,7 +191,8 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             # unlike capture codes which record every isolated item failure.
             spider_failures = set(getattr(spider, "failure_codes", ()))
             failures = sorted(spider_failures | set(_capture_failure_codes(archive, run_id)))
-            if _timed_out(crawler):
+            timed_out = _timed_out(crawler)
+            if timed_out:
                 failures = sorted({*failures, "recovery_time_budget"})
         breaker_codes = sorted(spider_failures)
 
@@ -252,7 +254,9 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             "requeued_dead": requeued_dead,
             "revisited_posts": revisited_posts,
             "full_content_remaining": full_content_remaining,
-            "stop_reason": "schedule_paused" if paused else None,
+            "stop_reason": (
+                "schedule_paused" if paused else "recovery_time_budget" if timed_out else None
+            ),
             "warc_path": str(warc_path),
         }
     except Exception:

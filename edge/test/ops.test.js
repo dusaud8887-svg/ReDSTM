@@ -37,6 +37,7 @@ test("renders every bounded export and publish recovery outcome", () => {
 
 test("renders a disk hard-stop as an operator-safe outcome", () => {
   assert.ok(safeCodeLabels.disk_low);
+  assert.ok(safeCodeLabels.recovery_time_budget);
 });
 
 test("labels the combined catalog and content pass", () => {

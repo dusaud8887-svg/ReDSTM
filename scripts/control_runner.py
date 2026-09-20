@@ -71,6 +71,7 @@ _SUCCESS_CODES = {
     "publish-if-changed": "publish_succeeded",
 }
 _WARNING_CODES = {
+    "recovery_time_budget": "recovery_time_budget",
     "auth_required": "auth_failed",
     "listing_parse_failed": "parse_drift",
     "parse_drift": "parse_drift",
@@ -617,7 +618,7 @@ class ControlRunner:
             max_seconds = _optional_positive_int(
                 raw_args.get("max_seconds"), name="max_seconds", maximum=24 * 60 * 60
             )
-            if max_seconds is None and action in {"fill-missing-content", "retry-batch"}:
+            if max_seconds is None and action == "retry-batch":
                 max_seconds = REDSTM_RECOVERY_TIME_BUDGET_SECONDS
             max_posts = _optional_positive_int(
                 raw_args.get("max_posts"), name="max_posts", maximum=500
@@ -1945,11 +1946,12 @@ class ControlRunner:
                 if isinstance(board_failures, list):
                     failure_codes.extend(code for code in board_failures if isinstance(code, str))
         warning_code = next(
-            (_WARNING_CODES[code] for code in failure_codes if code in _WARNING_CODES),
-            None,
+            (_WARNING_CODES[code] for code in _WARNING_CODES if code in failure_codes), None
         )
         if report.get("stop_reason") == "schedule_paused":
             default_code = "schedule_paused"
+        elif report.get("stop_reason") == "recovery_time_budget":
+            default_code = "recovery_time_budget"
         elif state == "succeeded":
             default_code = _SUCCESS_CODES[action]
         else:
