@@ -1432,7 +1432,8 @@ def _stage_collection_objects(
     entry_count = int(connection.execute("SELECT COUNT(*) FROM collection_entries").fetchone()[0])
     unavailable_by_id = {
         collection_id: sum(
-            1 for row in _collection_entry_rows(connection, collection_id)
+            1
+            for row in _collection_entry_rows(connection, collection_id)
             if object_key_for_row(row) is None
         )
         for collection_id in (
