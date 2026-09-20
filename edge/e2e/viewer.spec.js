@@ -742,12 +742,14 @@ test("applies and persists prose typography over legacy source styles", async ({
 test("shows progress while receiving a large post", async ({ page }) => {
   await useCollectionFixture(page, { largeStandalone: true });
   await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.evaluate(() => {
     window.__redstmArchiveStates = [];
     const target = document.getElementById("archive-state");
     new MutationObserver(() => window.__redstmArchiveStates.push(target.textContent)).observe(target, { childList: true });
   });
   await page.locator('[data-destination="browse"]:visible').first().click();
+  await expect(page.locator(".result-item").first()).toBeVisible();
   await page.locator(".result-item").first().click();
   await expect(page.locator("#reader")).toBeVisible();
   await expect(page.locator("#archive-state")).toHaveText("보존본");
@@ -760,11 +762,15 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await openPost(page, standaloneKey);
   await page.locator("#reader-pane").evaluate(async (element) => {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    element.scrollTop = 130;
+    element.scrollTop = Math.max(130, Math.floor(element.scrollHeight / 4));
+    element.dispatchEvent(new Event("scroll"));
   });
   await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
-  await expect(page.locator("#reading-progress")).not.toHaveCSS("width", "0px");
+  await expect.poll(async () => {
+    const width = await page.locator("#reading-progress").evaluate((element) => element.style.width);
+    return Number.parseFloat(width);
+  }).toBeGreaterThan(0);
   if (page.viewportSize().width < 760) {
     const scrollBy = (delta) => page.locator("#reader-pane").evaluate(async (element, amount) => {
       element.scrollTop += amount;
