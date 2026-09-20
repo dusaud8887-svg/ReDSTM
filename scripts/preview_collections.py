@@ -30,6 +30,22 @@ def preview(source: Path, board_id: str | None = None) -> dict[str, Any]:
             """,
             (board_id, board_id),
         ).fetchone()
+        current_ids = {
+            (str(row["board_id"]), int(row["external_post_id"]))
+            for row in connection.execute(
+                """
+                SELECT c.board_id,
+                       COALESCE(p.external_post_id, ce.source_external_post_id)
+                           AS external_post_id
+                FROM collection_entries AS ce
+                JOIN collections AS c ON c.id = ce.collection_id
+                LEFT JOIN posts AS p ON p.id = ce.post_id
+                WHERE ? IS NULL OR c.board_id = ?
+                """,
+                (board_id, board_id),
+            )
+            if row["external_post_id"] is not None
+        }
         result = preview_collections(
             PostTitle(
                 board_id=str(row["board_id"]),
@@ -44,6 +60,9 @@ def preview(source: Path, board_id: str | None = None) -> dict[str, Any]:
         result.groups,
         key=lambda group: (-len(group.posts), group.board_id, group.base_key),
     )
+    proposed_ids = {
+        (group.board_id, post.external_post_id) for group in groups for post in group.posts
+    }
     return {
         "schema_version": 1,
         "algorithm": "exact-explicit-episode-v1",
@@ -54,6 +73,11 @@ def preview(source: Path, board_id: str | None = None) -> dict[str, Any]:
             "entries": sum(len(group.posts) for group in groups),
             "parsed_posts": result.parsed_posts,
             "rejected": result.rejected,
+        },
+        "overlap": {
+            "in_both": len(current_ids & proposed_ids),
+            "only_current": len(current_ids - proposed_ids),
+            "only_proposed": len(proposed_ids - current_ids),
         },
         "largest": [
             {

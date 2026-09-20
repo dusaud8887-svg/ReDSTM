@@ -31,10 +31,14 @@
    CI와 production 분리, coordinated Cloudflare/Oracle release, rollback과 report 계약
 12. [`13_crawler_comparison_and_adoption.md`](13_crawler_comparison_and_adoption.md)
    ReDSTM·DSOTM·단일 스크립트·Crawlee 비교와 성능/장기운영 채택 기준
+13. [`15_reader_navigation_refresh.md`](15_reader_navigation_refresh.md)
+   Reader 탐색 IA와 이어 읽기 계약
+14. [`16_collection_logic_review_20260920.md`](16_collection_logic_review_20260920.md)
+   작품 묶음 생성·목차·읽기 상태 검토와 1차 구현
 
 `00`이 제품/architecture의 source of truth이고 `04`가 실행 상태의 source of truth다.
 `05`~`13`은 각각 시각, 제품 경험, reader/AA, operations, frontend, runner, 설정, release와 crawler
-채택 기준의 세부 계약이다.
+채택 기준의 세부 계약이다. `15`는 Reader 탐색 IA, `16`은 작품 묶음 검토와 1차 구현이다.
 상충하면 임의 구현하지 않고 `00`/ADR을 먼저 갱신한다.
 
 문서의 상태 표현은 다음처럼 구분한다.

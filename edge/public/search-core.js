@@ -30,6 +30,7 @@ export function prepareSearch(payload) {
   const modes = [];
   const boards = new Set();
   const identities = new Map();
+  const boardAaSeen = new Map();
   for (const row of payload.posts) {
     if (
       !Array.isArray(row) ||
@@ -44,8 +45,19 @@ export function prepareSearch(payload) {
     boards.add(row[0]);
     terms.push(normalize([row[0], row[2], row[3], row[4]].join(" ")));
     categories.push(normalize(row[4]));
-    modes.push(hasIsAa ? Boolean(row[7]) : null);
+    const isAa = hasIsAa ? Boolean(row[7]) : null;
+    modes.push(isAa);
     identities.set(`${row[0]}:${row[1]}`, row);
+    if (hasIsAa) {
+      const seen = boardAaSeen.get(row[0]) ?? { aa: false, prose: false };
+      if (isAa) seen.aa = true;
+      else seen.prose = true;
+      boardAaSeen.set(row[0], seen);
+    }
+  }
+  const boardAa = new Map();
+  for (const [boardId, seen] of boardAaSeen) {
+    boardAa.set(boardId, seen.aa === seen.prose ? null : seen.aa);
   }
   return {
     rows: payload.posts,
@@ -53,6 +65,7 @@ export function prepareSearch(payload) {
     categories,
     modes,
     boards: [...boards].sort(),
+    boardAa,
     hasIsAa,
     identities,
   };

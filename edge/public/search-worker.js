@@ -41,6 +41,7 @@ async function loadIndex(fetcher) {
       name: typeof board.name === "string" ? board.name : boardId,
       group_name: typeof board.group_name === "string" ? board.group_name : "",
       post_count: Number.isInteger(board.post_count) ? board.post_count : null,
+      is_aa: index.boardAa.get(boardId) ?? null,
     };
   });
   return { index, publishedAt, boardMetadata };

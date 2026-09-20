@@ -4,6 +4,7 @@ import test from "node:test";
 import { postIdentity } from "../public/user-state.js";
 import {
   boardDisplayName,
+  boardGroupLabel,
   collectionAvailableCount,
   collectionContinueTarget,
   collectionOccupancy,
@@ -50,6 +51,9 @@ test("uses a human board name and falls back to the id", () => {
   assert.equal(boardDisplayName({ board_id: "write_free21", name: "떠돌이개" }), "떠돌이개");
   assert.equal(boardDisplayName({ board_id: "aa_19", name: "aa_19" }), "aa_19");
   assert.equal(boardDisplayName(null, "board_a"), "board_a");
+  assert.equal(boardGroupLabel("aa"), "AA");
+  assert.equal(boardGroupLabel("창작"), "창작");
+  assert.equal(boardGroupLabel(""), "기타");
 });
 
 test("resumes the latest unfinished episode instead of the first unread gap", () => {
@@ -131,5 +135,18 @@ test("describes collection occupancy for list rows", () => {
     continueTarget: { kind: "resume", entry: { position: 3 } },
   }), {
     occupancy: "reading", progress: "0/2편", action: "3편 이어 읽기", gap: "1편 보존 불가",
+  });
+  assert.equal(collectionOccupancy({ availableCount: 0, finishedCount: 0, readingCount: 0 }), "empty");
+  assert.deepEqual(collectionRowCopy({ entryCount: 2, unavailableCount: 2 }), {
+    occupancy: "empty", progress: "2편", action: "본문 없음", gap: "2편 보존 불가",
+  });
+  assert.deepEqual(collectionRowCopy({
+    entryCount: 3, unavailableCount: 0, finishedCount: 1,
+    continueTarget: { kind: "finished", entry: { position: 3 } },
+  }), {
+    occupancy: "reading", progress: "1/3편", action: "앞쪽 미독 2편", gap: "",
+  });
+  assert.deepEqual(collectionRowCopy({ entryCount: 48, unknown: true }), {
+    occupancy: "unknown", progress: "48편", action: "읽기 상태 미확인", gap: "",
   });
 });

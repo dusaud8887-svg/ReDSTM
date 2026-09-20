@@ -96,7 +96,7 @@ async function useCollectionFixture(page, { collectionV2 = false, largeStandalon
     } : { schema_version: 1, collections: [collection] }],
     ...(collectionV2 ? [
       [collectionDetailKey, { schema_version: 1, shard: 1, collections: [collection] }],
-      [collectionMembershipKey, { schema_version: 1, board_id: "board_a", members: [[1, 1, 1], [2, 1, 3], [99, 1, 2]] }],
+      [collectionMembershipKey, { schema_version: 1, board_id: "board_a", members: [[1, 1, 1], [2, 1, 3], [99, 1, 2]], unavailable: [99] }],
     ] : []),
     [firstKey, aaPostPayload(1, "첫째")],
     [secondKey, postPayload(2, "둘째")],
@@ -193,6 +193,51 @@ async function setSelect(page, id, value) {
     element.value = selected;
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }, value);
+}
+
+function boardFilterLabels(page) {
+  return page.locator("#board-filter option").evaluateAll((options) =>
+    options.map((option) => option.textContent));
+}
+
+async function useBoardFilterFixture(page) {
+  const payloads = new Map([
+    ["release.json", {
+      schema_version: 1,
+      search: { object_key: "search/e2e.json.zst" },
+      collections: { object_key: collectionIndexKey },
+      boards: [
+        { board_id: "aa_19", name: "19금 AA", group_name: "aa", post_count: 1 },
+        { board_id: "board_a", name: "자유게시판", group_name: "창작", post_count: 1 },
+        { board_id: "write_free", name: "창작집담", group_name: "창작", post_count: 1 },
+      ],
+    }],
+    ["search/e2e.json.zst", {
+      schema_version: 1,
+      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
+      posts: [
+        ["write_free", 1, "소설 글", "작성자", null, "2026-07-11", "a".repeat(64), false],
+        ["aa_19", 1, "AA 글", "작성자", null, "2026-07-10", "b".repeat(64), true],
+        ["board_a", 1, "첫째", "작성자", null, "2026-07-09", firstHash, false],
+      ],
+    }],
+    [collectionIndexKey, {
+      schema_version: 1,
+      collections: [{
+        id: 1, board_id: "board_a", kind: "series", title: "테스트 연작",
+        entries: [
+          { position: 1, board_id: "board_a", external_post_id: 1, title: "첫째", object_key: firstKey },
+        ],
+      }],
+    }],
+    [firstKey, postPayload(1, "첫째")],
+  ]);
+  await page.route("**/archive/**", async (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const payload = payloads.get(key);
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
 }
 
 async function openPost(page, key) {
@@ -305,18 +350,85 @@ test("separates board browsing from keyword search", async ({ page }, testInfo) 
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
   await expect(page.locator(".result-item")).toHaveCount(3);
   await expect(page.locator(".result-board")).toHaveText(["자유게시판", "자유게시판", "자유게시판"]);
+  await expect(page.locator("#result-status")).toContainText("자유게시판");
+  if (page.viewportSize().width < 760) {
+    await expect(page.locator("#active-filters")).toContainText("자유게시판");
+  } else {
+    await expect(page.locator("#active-filters")).toBeHidden();
+  }
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-browse.png` });
 
   await page.locator('[data-scope="collections"]').click();
   await expect(page).toHaveURL(/\/browse\?scope=collections/);
   await expect(page.locator("#catalog-title")).toHaveText("작품 둘러보기");
   await expect(page.locator("#search-input")).toBeHidden();
+  await expect(page.locator("#sort-filter")).toHaveValue("updated");
 
   await page.locator('[data-destination="search"]:visible').first().click();
   await expect(page).toHaveURL(/\/search\?board=board_a$/);
   await expect(page.locator("#catalog-title")).toHaveText("글 검색");
   await expect(page.locator("#search-input")).toBeVisible();
   await expect(page.locator("#search-input")).toBeFocused();
+});
+
+test("browse keeps format chips unique and lists only matching boards", async ({ page }) => {
+  await useBoardFilterFixture(page);
+  await page.goto("/browse");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator(".mode-field")).toBeHidden();
+  await expect(page.locator("#mode-chips")).toBeVisible();
+  await expect.poll(() => boardFilterLabels(page)).toEqual([
+    "전체 게시판", "19금 AA", "자유게시판", "창작집담",
+  ]);
+  await expect(page.locator("#board-filter optgroup").first()).toHaveAttribute("label", "AA");
+
+  await page.locator('#mode-chips [data-mode="aa"]').click();
+  await expect.poll(() => boardFilterLabels(page)).toEqual(["전체 게시판", "19금 AA"]);
+  await expect(page).toHaveURL(/mode=aa/);
+  await expect(page.locator(".result-item .result-title")).toHaveText(["AA 글"]);
+
+  await page.locator('#mode-chips [data-mode="prose"]').click();
+  await expect.poll(() => boardFilterLabels(page)).toEqual(["전체 게시판", "자유게시판", "창작집담"]);
+  await expect(page.locator("#board-filter option", { hasText: "19금 AA" })).toHaveCount(0);
+
+  await page.locator('#mode-chips [data-mode="aa"]').click();
+  await setSelect(page, "board-filter", "aa_19");
+  await page.locator('[data-scope="collections"]').click();
+  await expect(page).toHaveURL(/scope=collections/);
+  await expect(page.locator(".collection-kind-field")).toBeHidden();
+  await expect(page.locator("#kind-chips")).toBeVisible();
+  await expect.poll(() => boardFilterLabels(page)).toEqual(["전체 게시판", "자유게시판"]);
+  await expect(page.locator("#board-filter")).toHaveValue("");
+  await expect(page.locator("#sort-filter")).toHaveValue("updated");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toBeVisible();
+});
+
+test("drops browse board and mode when opening the library", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/browse?board=board_a&mode=aa");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await page.locator('[data-destination="bookmarks"]:visible').first().click();
+  await expect(page).toHaveURL(/\/saved$/);
+  await expect(page).not.toHaveURL(/board=/);
+  await expect(page.locator("#board-filter")).toHaveValue("");
+  await expect(page.locator("#mode-filter")).toHaveValue("all");
+  await page.goBack();
+  await expect(page).toHaveURL(/board=board_a/);
+  await expect(page.locator("#board-filter")).toHaveValue("board_a");
+  await expect(page.locator("#mode-filter")).toHaveValue("aa");
+});
+
+test("keeps search format inside filters instead of duplicate chips", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/search?q=첫째&mode=aa&board=board_a");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#mode-chips")).toBeHidden();
+  await expect(page.locator("#active-filters")).toContainText("AA");
+  await expect(page.locator("#active-filters")).toContainText("자유게시판");
+  await expect(page.locator("#mode-filter")).toHaveValue("aa");
+  await expect(page.locator("#result-status")).toContainText("자유게시판");
+  await expect(page.locator("#result-status")).toContainText("AA");
 });
 
 test("restores search controls from the URL and browser history", async ({ page }) => {
@@ -977,7 +1089,7 @@ test("filters collections by kind and reading state and continues at the next un
   await expect(page.locator("#collection-kind-filter")).toHaveValue("series");
   await expect(page.locator("#collection-read-filter")).toHaveValue("reading");
   await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("0/2편");
-  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("1편 이어 읽기");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("이어 읽기");
   await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("1편 보존 불가");
 
   await setSelect(page, "collection-kind-filter", "oneshot");
@@ -1005,9 +1117,12 @@ test("continues a finished chapter at the next available episode, not a skipped 
   await useCollectionFixture(page, { collectionV2: true });
   await page.goto("/collections/1");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
-  await expect(page.locator("#collection-continue")).toBeHidden();
+  await expect(page.locator("#collection-continue")).toHaveText("앞쪽 미독 1편 보기");
   await expect(page.locator('#collection-entry-list [data-position="3"] .collection-entry-state')).toHaveText("완료");
   await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("");
+  await page.locator("#collection-continue").click();
+  await expect(page.locator("#reader")).toBeHidden();
+  await expect(page.locator('.collection-entry[data-position="1"]')).toBeFocused();
 });
 
 test("treats a collection as finished when every available episode is done", async ({ page }) => {
@@ -1027,6 +1142,126 @@ test("treats a collection as finished when every available episode is done", asy
   await expect(row).toContainText("2/2편");
   await expect(row).toContainText("다시 보기");
   await expect(row).toContainText("1편 보존 불가");
+});
+
+test("does not count unavailable finished episodes toward collection occupancy", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2,
+    settings: {},
+    history: {
+      "board_a:2": { readAt: "2026-07-12T00:00:00Z", progress: 1 },
+      "board_a:99": { readAt: "2026-07-12T01:00:00Z", progress: 1 },
+    },
+    bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/browse?scope=collections");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const row = page.locator(".result-item", { hasText: "테스트 연작" });
+  await expect(row).toContainText("1/2편");
+  await expect(row).toContainText("이어 읽기");
+  await expect(row).not.toContainText("다시 보기");
+});
+
+test("keeps older finished history after 500 newer reads", async ({ page }) => {
+  await page.addInitScript(() => {
+    const history = { "board_a:10": { readAt: "2026-01-01T00:00:00.000Z", progress: 1 } };
+    for (let index = 11; index <= 510; index += 1) {
+      history[`board_a:${index}`] = { readAt: `2026-06-01T00:00:00.${String(index).padStart(3, "0")}Z`, progress: 1 };
+    }
+    localStorage.setItem("redstm.userState.v2", JSON.stringify({
+      schema_version: 2,
+      settings: {},
+      history,
+      bookmarks: {},
+      scroll: { "board_a:10": 321 },
+      viewModes: {}, lastCatalogState: null,
+    }));
+  });
+  await useCollectionFixture(page);
+  await page.goto("/read/board_a/3");
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  const preserved = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("redstm.userState.v2"));
+    return {
+      oldest: Boolean(state.history["board_a:10"]),
+      progress: state.history["board_a:10"]?.progress,
+      scroll: state.scroll["board_a:10"],
+      count: Object.keys(state.history).length,
+    };
+  });
+  expect(preserved.oldest).toBe(true);
+  expect(preserved.progress).toBe(1);
+  expect(preserved.scroll).toBe(321);
+  expect(preserved.count).toBe(502);
+});
+
+test("still lists collections when an unrelated membership object fails", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2,
+    settings: {},
+    history: { "board_a:1": { readAt: "2026-07-12T00:00:00Z", progress: 0.4 } },
+    bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.route("**/archive/collections/membership-v2/**", (route) =>
+    route.fulfill({ status: 500, body: "membership failed" }));
+  await page.goto("/browse?scope=collections");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toBeVisible();
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("읽기 상태 미확인");
+  await expect(page.locator("#result-status")).toContainText("일부 읽기 상태 미확인");
+  await page.goto("/browse?scope=collections&read=reading");
+  await expect(page.locator(".result-item")).toHaveCount(0);
+});
+
+test("ignores a late collection response after leaving for home", async ({ page }) => {
+  await useCollectionFixture(page, { collectionV2: true });
+  let releaseDetail;
+  const gate = new Promise((resolve) => { releaseDetail = resolve; });
+  await page.route(`**/${collectionDetailKey}`, async (route) => {
+    await gate;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_version: 1, shard: 1, collections: [{
+          id: 1, board_id: "board_a", kind: "series", title: "테스트 연작",
+          entries: [
+            { position: 1, board_id: "board_a", external_post_id: 1, title: "첫째", object_key: firstKey },
+            { position: 2, board_id: "board_a", external_post_id: 99, title: "보존 불가", object_key: null },
+            { position: 3, board_id: "board_a", external_post_id: 2, title: "둘째", object_key: secondKey },
+          ],
+        }],
+      }),
+    });
+  });
+  await page.goto("/collections/1");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.evaluate(() => document.querySelector('[data-destination="library"]')?.click());
+  await expect(page.locator("#empty-reader")).toBeVisible();
+  releaseDetail();
+  await expect(page.locator("#collection-view")).toBeHidden();
+  await expect(page.locator("#home-title")).toBeVisible();
+});
+
+test("reads legacy three-tuple membership without an unavailable list", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2,
+    settings: {},
+    history: { "board_a:1": { readAt: "2026-07-12T00:00:00Z", progress: 0.4 } },
+    bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.route(`**/${collectionMembershipKey}`, (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1, board_id: "board_a",
+      members: [[1, 1, 1], [2, 1, 3], [99, 1, 2]],
+    }),
+  }));
+  await page.goto("/browse?scope=collections");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toContainText("이어 읽기");
 });
 
 test("marks the current episode finished when moving on from the article end", async ({ page }) => {
@@ -1149,6 +1384,7 @@ test("does not dump the whole archive into an empty search", async ({ page }) =>
   await useCollectionFixture(page);
   await page.goto("/search");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#mode-chips")).toBeHidden();
   await expect(page.locator("#search-empty")).toBeVisible();
   await expect(page.locator(".result-item")).toHaveCount(0);
   await page.locator("#search-input").fill("첫째");

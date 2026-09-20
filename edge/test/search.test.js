@@ -77,11 +77,29 @@ test("accepts is_aa appended to the search tuple", () => {
   assert.equal(searchPosts(extended, { boardId: "aa" }).posts[0].is_aa, true);
   assert.equal(searchPosts(extended, { boardId: "write" }).posts[0].is_aa, false);
   assert.deepEqual(searchPosts(extended, { mode: "prose" }).posts.map((post) => post.external_post_id), [3, 1]);
+  assert.equal(extended.boardAa.get("aa"), true);
+  assert.equal(extended.boardAa.get("write"), false);
   assert.throws(() => prepareSearch({
     ...payload,
     fields: [...SEARCH_FIELDS, "is_aa"],
     posts: [[...payload.posts[0], 2]],
   }), /row/);
+});
+
+test("marks mixed boards as neither exclusive AA nor prose", () => {
+  const mixed = prepareSearch({
+    schema_version: 1,
+    fields: [...SEARCH_FIELDS, "is_aa"],
+    posts: [
+      ["aa", 1, "AA", "작가", null, "2026-03-01", "b".repeat(64), 1],
+      ["write", 1, "글", "작가", null, "2026-03-01", "c".repeat(64), 0],
+      ["mix", 1, "A", "작가", null, "2026-03-01", "d".repeat(64), 1],
+      ["mix", 2, "B", "작가", null, "2026-03-01", "e".repeat(64), 0],
+    ],
+  });
+  assert.equal(mixed.boardAa.get("aa"), true);
+  assert.equal(mixed.boardAa.get("write"), false);
+  assert.equal(mixed.boardAa.get("mix"), null);
 });
 
 test("retries a failed search index load once after two seconds", async () => {
@@ -193,6 +211,7 @@ test("worker exposes release metadata, exact totals, and stable identity resolut
   assert.equal(messages.at(-1).recentPosts.length, 6);
   assert.equal(messages.at(-1).publishedAt, "2026-07-12T00:00:00.000Z");
   assert.equal(messages.at(-1).boardMetadata[1].name, "창작");
+  assert.equal(messages.at(-1).boardMetadata[0].is_aa, null);
 
   await onMessage({ data: { type: "search", id: 2, limit: 1, offset: 1 } });
   assert.equal(messages.at(-1).posts.length, 1);

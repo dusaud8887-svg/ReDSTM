@@ -202,6 +202,7 @@ body.reading-context .catalog { width: 380px; background: var(--surface); border
 .filter-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .active-filters { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 .catalog-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 4px 12px 12px; }
+body.browse-open:not(.collection-scope) .board-field { grid-column: auto; }
 body.search-open:not(.filters-expanded):not(.reading-context) .catalog-controls { display: none; }
 .search-field { position: relative; min-width: 0; display: block; }
 .board-field { grid-column: 1 / -1; }

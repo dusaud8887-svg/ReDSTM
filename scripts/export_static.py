@@ -48,6 +48,7 @@ _COMPRESSION_LEVEL = 15
 _AGGREGATE_COMPRESSION_LEVEL = 6
 _COLLECTION_DETAIL_SHARDS = 64
 _EXPORT_STATE_SCHEMA_VERSION = 1
+COLLECTION_EXPORT_REVISION = 2
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_PROJECTION_VERSION = "source-projection-v1"
 
@@ -236,8 +237,7 @@ def _valid_snapshot(value: object) -> bool:
         and type(value.get("capture_high_water")) is int
         and value["capture_high_water"] >= 0
         and isinstance(fingerprint, dict)
-        and set(fingerprint)
-        == {
+        and {
             "projection_sha256",
             "topology_sha256",
             "board_count",
@@ -246,6 +246,18 @@ def _valid_snapshot(value: object) -> bool:
             "unavailable_comment_count",
             "collection_count",
             "collection_entry_count",
+        }
+        <= set(fingerprint)
+        <= {
+            "projection_sha256",
+            "topology_sha256",
+            "board_count",
+            "post_count",
+            "unavailable_post_count",
+            "unavailable_comment_count",
+            "collection_count",
+            "collection_entry_count",
+            "collection_export_revision",
         }
         and all(
             isinstance(fingerprint.get(key), str)
@@ -261,6 +273,13 @@ def _valid_snapshot(value: object) -> bool:
                 "unavailable_comment_count",
                 "collection_count",
                 "collection_entry_count",
+            )
+        )
+        and (
+            "collection_export_revision" not in fingerprint
+            or (
+                type(fingerprint["collection_export_revision"]) is int
+                and fingerprint["collection_export_revision"] >= 0
             )
         )
     )
@@ -785,6 +804,7 @@ def _snapshot_fingerprint(connection: sqlite3.Connection) -> dict[str, int | str
         "unavailable_comment_count": int(unavailable[1]),
         "collection_count": collection_count,
         "collection_entry_count": collection_entry_count,
+        "collection_export_revision": COLLECTION_EXPORT_REVISION,
     }
 
 
@@ -950,6 +970,47 @@ def _load_base_release(root: Path, release_key: str) -> _BaseRelease:
     return _BaseRelease(release_key, manifest, post_refs)
 
 
+def _validate_collection_membership_availability(root: Path, manifest: dict[str, Any]) -> None:
+    collection_index, _ = _read_ref(root, manifest.get("collections"))
+    if collection_index.get("schema_version") != 2:
+        return
+    details = collection_index.get("detail_shards")
+    memberships = collection_index.get("memberships")
+    if not isinstance(details, list) or not isinstance(memberships, list):
+        raise ValueError("invalid collection index")
+    expected_unavailable: dict[str, set[int]] = {}
+    for detail_ref in details:
+        detail, _ = _read_ref(root, detail_ref)
+        rows = detail.get("collections")
+        if not isinstance(rows, list):
+            raise ValueError("invalid collection detail shard")
+        for collection in rows:
+            if not isinstance(collection, dict) or not isinstance(collection.get("entries"), list):
+                raise ValueError("invalid collection")
+            for entry in collection["entries"]:
+                if not isinstance(entry, dict) or type(entry.get("external_post_id")) is not int:
+                    raise ValueError("invalid collection entry")
+                if entry.get("object_key") is None:
+                    expected_unavailable.setdefault(str(entry["board_id"]), set()).add(
+                        int(entry["external_post_id"])
+                    )
+    for membership_ref in memberships:
+        membership, _ = _read_ref(root, membership_ref)
+        board_id = membership.get("board_id")
+        declared = membership.get("unavailable", None)
+        if declared is None:
+            continue
+        if (
+            not isinstance(board_id, str)
+            or not isinstance(declared, list)
+            or any(type(value) is not int or value <= 0 for value in declared)
+            or len(set(declared)) != len(declared)
+        ):
+            raise ValueError("invalid collection membership availability")
+        if set(declared) != expected_unavailable.get(board_id, set()):
+            raise ValueError("collection membership availability does not match detail objects")
+
+
 def validate_release(root: Path, release: str) -> dict[str, int | str]:
     root = root.expanduser().resolve(strict=True)
     release_key = _release_key(release)
@@ -1080,6 +1141,7 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
             seen_shards.add(shard)
             collection_rows.extend(rows)
         membership_rows = {}
+        membership_unavailable: dict[str, set[int]] = {}
         seen_membership_boards: set[str] = set()
         for membership_ref in memberships:
             assert isinstance(membership_ref, dict)
@@ -1095,19 +1157,40 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
             ):
                 raise ValueError("invalid collection membership")
             seen_membership_boards.add(board_id)
+            declared_unavailable = membership.get("unavailable", None)
+            if declared_unavailable is not None:
+                if (
+                    not isinstance(declared_unavailable, list)
+                    or any(type(value) is not int or value <= 0 for value in declared_unavailable)
+                    or len(set(declared_unavailable)) != len(declared_unavailable)
+                ):
+                    raise ValueError("invalid collection membership availability")
+            member_ids: set[int] = set()
             for member in members:
                 if (
                     not isinstance(member, list)
                     or len(member) != 3
-                    or any(type(value) is not int or value <= 0 for value in member)
+                    or type(member[0]) is not int
+                    or member[0] <= 0
+                    or type(member[1]) is not int
+                    or member[1] <= 0
+                    or type(member[2]) is not int
+                    or member[2] <= 0
                     or (board_id, member[0]) in membership_rows
                 ):
                     raise ValueError("invalid collection membership row")
                 membership_rows[(board_id, member[0])] = (member[1], member[2])
+                member_ids.add(member[0])
+            if declared_unavailable is not None:
+                extra = set(declared_unavailable) - member_ids
+                if extra:
+                    raise ValueError("collection membership availability does not match members")
+                membership_unavailable[board_id] = set(declared_unavailable)
     elif collection_index.get("schema_version") != 1:
         raise ValueError("unsupported collection index")
     entry_count = 0
     expected_memberships: dict[tuple[str, int], tuple[int, int]] = {}
+    expected_unavailable: dict[str, set[int]] = {}
     for collection in collection_rows:
         if (
             not isinstance(collection, dict)
@@ -1143,6 +1226,10 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
             if membership_identity in expected_memberships:
                 raise ValueError("post belongs to multiple collections")
             expected_memberships[membership_identity] = (collection["id"], position)
+            if entry.get("object_key") is None:
+                expected_unavailable.setdefault(str(entry["board_id"]), set()).add(
+                    int(entry["external_post_id"])
+                )
             entry_count += 1
     if collection_summaries is not None and (
         len(collection_rows) != len(collection_summaries)
@@ -1150,6 +1237,10 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
         or membership_rows != expected_memberships
     ):
         raise ValueError("collection index does not match detail objects")
+    if collection_summaries is not None:
+        for board_id, declared in membership_unavailable.items():
+            if declared != expected_unavailable.get(board_id, set()):
+                raise ValueError("collection membership availability does not match detail objects")
 
     expected = {
         "post_count": len(board_posts),
@@ -1219,6 +1310,7 @@ def validate_incremental_release(root: Path, release: str) -> dict[str, int | st
         ):
             if base.manifest.get(key) != fingerprint.get(key):
                 raise ValueError(f"export state {key} does not match release")
+        _validate_collection_membership_availability(root, base.manifest)
         return {
             "release_key": release_key,
             **{
@@ -1533,11 +1625,14 @@ def _stage_collection_objects(
         def membership_chunks(board_id: str = board_id) -> Iterator[bytes]:
             nonlocal membership_count
             written = 0
+            unavailable_ids: list[int] = []
             yield b'{"board_id":' + _json_bytes(board_id)[:-1] + b',"members":['
             for row in connection.execute(
                 """
                 SELECT COALESCE(p.external_post_id, ce.source_external_post_id) AS external_post_id,
-                       c.id AS collection_id, ce.position
+                       c.id AS collection_id, ce.position, ce.post_id, ce.source_external_post_id,
+                       ce.title AS entry_title, c.board_id AS collection_board_id,
+                       p.board_id, p.title AS post_title, p.availability, p.latest_version_id
                 FROM collections AS c
                 JOIN collection_entries AS ce ON ce.collection_id = c.id
                 LEFT JOIN posts AS p ON p.id = ce.post_id
@@ -1548,16 +1643,26 @@ def _stage_collection_objects(
             ):
                 if written:
                     yield b","
+                external_post_id = int(row["external_post_id"])
                 yield _json_bytes(
                     [
-                        int(row["external_post_id"]),
+                        external_post_id,
                         int(row["collection_id"]),
                         int(row["position"]),
                     ]
                 )[:-1]
+                if COLLECTION_EXPORT_REVISION >= 2 and object_key_for_row(row) is None:
+                    unavailable_ids.append(external_post_id)
                 written += 1
                 membership_count += 1
-            yield b'],"schema_version":1}\n'
+            if COLLECTION_EXPORT_REVISION >= 2:
+                yield (
+                    b'],"unavailable":'
+                    + _json_bytes(unavailable_ids)[:-1]
+                    + b',"schema_version":1}\n'
+                )
+            else:
+                yield b'],"schema_version":1}\n'
 
         memberships.append(
             (
@@ -2045,6 +2150,88 @@ def _full_export_static(
     }
 
 
+def _content_fingerprint(fingerprint: dict[str, int | str]) -> dict[str, int | str]:
+    return {key: value for key, value in fingerprint.items() if key != "collection_export_revision"}
+
+
+def _refresh_collection_aggregates(
+    output: Path,
+    state: dict[str, Any],
+    base: _BaseRelease,
+    current_identity: dict[str, object],
+    capture_high_water: int,
+    fingerprint: dict[str, int | str],
+    connection: sqlite3.Connection,
+) -> dict[str, Any]:
+    writer = _ObjectWriter(output)
+
+    def collection_object_key(row: sqlite3.Row) -> str | None:
+        if row["latest_version_id"] is None or row["post_id"] is None:
+            return None
+        board_id = row["board_id"] or row["collection_board_id"]
+        stored = _base_post_ref(base.post_refs, str(board_id), int(row["external_post_id"]))
+        return stored.summary.object_key if stored is not None else None
+
+    details, memberships, summaries, collection_count, entry_count = _stage_collection_objects(
+        connection, writer, collection_object_key
+    )
+    if (
+        collection_count != fingerprint["collection_count"]
+        or entry_count != fingerprint["collection_entry_count"]
+    ):
+        raise IncrementalExportError(
+            "incremental_state_invalid",
+            "collection counts changed while refreshing collection aggregates",
+        )
+    collection_ref = _write_collection_objects(
+        writer, details, memberships, summaries, collection_count, entry_count
+    )
+    counts = {
+        "post_count": int(base.manifest["post_count"]),
+        "comment_count": int(base.manifest["comment_count"]),
+        "unavailable_post_count": int(base.manifest["unavailable_post_count"]),
+        "unavailable_comment_count": int(base.manifest["unavailable_comment_count"]),
+        "board_count": int(base.manifest["board_count"]),
+        "collection_count": collection_count,
+        "collection_entry_count": entry_count,
+    }
+    release_body = _json_bytes(
+        {
+            "schema_version": 1,
+            "canonical_schema_version": SCHEMA_VERSION,
+            "source": "typemoon",
+            **counts,
+            "boards": base.manifest["boards"],
+            "search": base.manifest["search"],
+            "collections": collection_ref,
+        }
+    )
+    release_key = f"releases/{_sha256(release_body)}.json"
+    writer.write(release_key, release_body)
+    _validate_collection_membership_availability(output, json.loads(release_body))
+    activation = _promote_release(
+        output,
+        _state_path(output),
+        current_identity,
+        cast(dict[str, object], state["base"]),
+        _snapshot(release_key, capture_high_water, fingerprint),
+        deep_validate=False,
+    )
+    return {
+        **activation,
+        **counts,
+        "objects_written": writer.written,
+        "objects_reused": sum(len(posts) for posts in base.post_refs.values())
+        + int(base.manifest["board_count"])
+        + 1,
+        "changed_posts": 0,
+        "mode": "incremental_collections",
+        "capture_high_water": capture_high_water,
+        "snapshot_consistent": True,
+        "source_unchanged": True,
+    }
+
+
 def _incremental_export_static(
     source: Path,
     output: Path,
@@ -2096,30 +2283,42 @@ def _incremental_export_static(
             )
         fingerprint = _snapshot_fingerprint(connection)
         next_snapshot = _snapshot(base.key, capture_high_water, fingerprint)
-        if fingerprint == base_fingerprint:
-            _write_state(
-                _state_path(output),
-                {
-                    **state,
-                    "source": current_identity,
-                    "base": next_snapshot,
-                    "pending": None,
-                },
+        if _content_fingerprint(fingerprint) == _content_fingerprint(base_fingerprint):
+            if fingerprint.get("collection_export_revision") == base_fingerprint.get(
+                "collection_export_revision"
+            ):
+                _write_state(
+                    _state_path(output),
+                    {
+                        **state,
+                        "source": current_identity,
+                        "base": next_snapshot,
+                        "pending": None,
+                    },
+                )
+                return {
+                    "release_key": base.key,
+                    "post_count": base.manifest["post_count"],
+                    "comment_count": base.manifest["comment_count"],
+                    "objects_written": 0,
+                    "objects_reused": sum(len(posts) for posts in base.post_refs.values())
+                    + cast(int, base.manifest["board_count"])
+                    + 3,
+                    "changed_posts": 0,
+                    "mode": "incremental_noop",
+                    "capture_high_water": capture_high_water,
+                    "snapshot_consistent": True,
+                    "source_unchanged": True,
+                }
+            return _refresh_collection_aggregates(
+                output,
+                state,
+                base,
+                current_identity,
+                capture_high_water,
+                fingerprint,
+                connection,
             )
-            return {
-                "release_key": base.key,
-                "post_count": base.manifest["post_count"],
-                "comment_count": base.manifest["comment_count"],
-                "objects_written": 0,
-                "objects_reused": sum(len(posts) for posts in base.post_refs.values())
-                + cast(int, base.manifest["board_count"])
-                + 3,
-                "changed_posts": 0,
-                "mode": "incremental_noop",
-                "capture_high_water": capture_high_water,
-                "snapshot_consistent": True,
-                "source_unchanged": True,
-            }
 
         changed_post_ids = _changed_post_ids(
             connection, base, capture_low_water, capture_high_water

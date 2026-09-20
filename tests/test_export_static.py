@@ -15,7 +15,12 @@ from crawler.archive import compress_body, connect_archive, initialize_archive
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.store import ArchiveStore
-from scripts.export_static import activate_release, export_static, validate_release
+from scripts.export_static import (
+    activate_release,
+    export_static,
+    validate_incremental_release,
+    validate_release,
+)
 
 _NOW = datetime(2026, 7, 11, 3, tzinfo=UTC)
 
@@ -284,6 +289,70 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     assert release["unavailable_post_count"] == 1
     assert release["unavailable_comment_count"] == 1
     assert collection_rows[1]["entries"] == []
+    membership = _json_zstd(output / collection_payload["memberships"][0]["object_key"])
+    assert membership["schema_version"] == 1
+    assert all(len(row) == 3 for row in membership["members"])
+    assert membership["unavailable"] == [99]
+
+
+def test_stale_collection_export_revision_restages_collections_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    monkeypatch.setattr(export_static_module, "COLLECTION_EXPORT_REVISION", 1)
+    export_static(source, output)
+    release = json.loads((output / "release.json").read_bytes())
+    index, _ = _collection_rows(output, release)
+    membership = _json_zstd(output / index["memberships"][0]["object_key"])
+    assert "unavailable" not in membership
+    assert all(len(row) == 3 for row in membership["members"])
+
+    monkeypatch.setattr(export_static_module, "COLLECTION_EXPORT_REVISION", 2)
+    second = export_static(source, output, incremental_only=True)
+    assert second["mode"] == "incremental_collections"
+    assert second["changed_posts"] == 0
+    release = json.loads((output / "release.json").read_bytes())
+    index, _ = _collection_rows(output, release)
+    membership = _json_zstd(output / index["memberships"][0]["object_key"])
+    assert all(len(row) == 3 for row in membership["members"])
+    assert membership["unavailable"] == [99]
+    assert validate_release(output, str(second["release_key"]))["collection_count"] == 2
+    assert validate_incremental_release(output, str(second["release_key"]))["collection_count"] == 2
+    third = export_static(source, output, incremental_only=True)
+    assert third["mode"] == "incremental_noop"
+    assert third["release_key"] == second["release_key"]
+
+
+def test_inverted_membership_unavailable_fails_validation(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    export_static(source, output)
+    release = json.loads((output / "release.json").read_bytes())
+    index, _ = _collection_rows(output, release)
+    membership_ref = index["memberships"][0]
+    payload = _json_zstd(output / membership_ref["object_key"])
+    payload["unavailable"] = [payload["members"][0][0]]
+    payload_bytes = export_static_module._json_bytes(payload)
+    body = zstd.compress(payload_bytes, level=export_static_module._AGGREGATE_COMPRESSION_LEVEL)
+    (output / membership_ref["object_key"]).write_bytes(body)
+    membership_ref["payload_sha256"] = hashlib.sha256(payload_bytes).hexdigest()
+    membership_ref["object_sha256"] = hashlib.sha256(body).hexdigest()
+    membership_ref["object_bytes"] = len(body)
+    index_bytes = export_static_module._json_bytes(index)
+    index_body = zstd.compress(index_bytes, level=export_static_module._AGGREGATE_COMPRESSION_LEVEL)
+    (output / release["collections"]["object_key"]).write_bytes(index_body)
+    release["collections"]["payload_sha256"] = hashlib.sha256(index_bytes).hexdigest()
+    release["collections"]["object_sha256"] = hashlib.sha256(index_body).hexdigest()
+    release["collections"]["object_bytes"] = len(index_body)
+    release_body = export_static_module._json_bytes(release)
+    release_key = f"releases/{hashlib.sha256(release_body).hexdigest()}.json"
+    (output / release_key).write_bytes(release_body)
+    (output / "release.json").write_bytes(release_body)
+    with pytest.raises(ValueError, match="availability does not match"):
+        validate_release(output, release_key)
 
 
 def test_corrupt_object_rejects_activation_without_changing_pointer(tmp_path: Path) -> None:

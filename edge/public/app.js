@@ -10,6 +10,7 @@ import {
 } from "/user-state.js";
 import {
   boardDisplayName,
+  boardGroupLabel,
   collectionAvailableCount,
   collectionContinueTarget,
   collectionOccupancy,
@@ -84,6 +85,8 @@ let renderedCollections = [];
 let collectionProgressById = new Map();
 let currentScope = "posts";
 let collectionSearchId = 0;
+let readerViewId = 0;
+let collectionProgressFailedBoards = new Set();
 let currentView = "all";
 let currentDestination = "library";
 let messageId = 0;
@@ -106,6 +109,7 @@ let archiveReady = false;
 let pendingCatalogRestore = userState.lastCatalogState;
 let searchSupportsAa = true;
 let boardById = new Map();
+let collectionBoardIds = null;
 let recentQueries = Array.isArray(userState.lastCatalogState?.recentQueries)
   ? userState.lastCatalogState.recentQueries.filter((query) => typeof query === "string").slice(0, 5)
   : [];
@@ -255,13 +259,23 @@ function appendHighlightedText(target, text, query) {
   if (!target.childNodes.length) target.textContent = raw;
 }
 
+function boardAllowedInFilter(board) {
+  if (currentScope === "collections") {
+    return collectionBoardIds ? collectionBoardIds.has(board.board_id) : true;
+  }
+  const mode = elements["mode-filter"].value;
+  if (mode === "all" || !searchSupportsAa || board.is_aa == null) return true;
+  return mode === "aa" ? board.is_aa === true : board.is_aa === false;
+}
+
 function populateBoardFilter() {
   const select = elements["board-filter"];
   const selected = select.value;
   select.replaceChildren(new Option("전체 게시판", ""));
   const groups = new Map();
   for (const board of boardById.values()) {
-    const group = board.group_name || "기타";
+    if (!boardAllowedInFilter(board)) continue;
+    const group = boardGroupLabel(board.group_name);
     const list = groups.get(group) ?? [];
     list.push(board);
     groups.set(group, list);
@@ -274,7 +288,13 @@ function populateBoardFilter() {
     }
     select.append(optgroup);
   }
-  if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+  const kept = !selected || [...select.options].some((option) => option.value === selected);
+  select.value = kept ? selected : "";
+  return Boolean(selected) && !kept;
+}
+
+function applyBoardFilterOptions() {
+  if (populateBoardFilter()) syncSearchRoute();
 }
 
 function applySettings() {
@@ -520,9 +540,12 @@ async function renderReadingWorks() {
   if (!section || !list || currentDestination !== "library") return;
   try {
     const index = await collectionIndex();
-    const progress = await collectionReadingProgress(index);
+    const { progress, failedBoards } = await collectionReadingProgress(index);
+    if (currentDestination !== "library") return;
+    collectionProgressFailedBoards = failedBoards;
     const items = [];
     for (const collection of index.summaries) {
+      if (failedBoards.has(collection.board_id)) continue;
       const state = progress.get(collection.id);
       const occupancy = collectionOccupancy({
         availableCount: collectionAvailableCount(collection),
@@ -537,17 +560,21 @@ async function renderReadingWorks() {
           unavailableCount: collection.unavailable_count ?? 0,
           finishedCount: state?.finished ?? 0,
           readingCount: state?.reading ?? 0,
-          continueTarget: state?.lastPosition
-            ? { kind: (state.reading ?? 0) > 0 ? "resume" : "next", entry: { position: (state.reading ?? 0) > 0 ? state.lastPosition : state.lastPosition + 1 } }
-            : null,
+          continueTarget: null,
         }),
         readAt: state?.lastReadAt ?? "",
       });
     }
     items.sort((left, right) => Date.parse(right.readAt || 0) - Date.parse(left.readAt || 0));
     const shown = items.slice(0, 3);
-    section.hidden = shown.length === 0;
+    section.hidden = shown.length === 0 && failedBoards.size === 0;
     list.replaceChildren();
+    if (failedBoards.size && shown.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "home-empty";
+      empty.textContent = "읽기 상태를 확인하지 못했습니다.";
+      list.append(empty);
+    }
     for (const item of shown) {
       const row = document.createElement("li");
       const button = document.createElement("button");
@@ -561,6 +588,12 @@ async function renderReadingWorks() {
       button.addEventListener("click", () => void openCollectionDetail(item.collection.id));
       row.append(button);
       list.append(row);
+    }
+    if (failedBoards.size && shown.length) {
+      const note = document.createElement("li");
+      note.className = "home-empty";
+      note.textContent = "일부 읽기 상태 미확인";
+      list.append(note);
     }
   } catch {
     section.hidden = true;
@@ -638,14 +671,16 @@ function setScope(scope) {
     button.setAttribute("aria-pressed", active);
   }
   const collectionScope = currentScope === "collections";
+  const previousSort = elements["sort-filter"].value;
   const options = collectionScope
-    ? [["가나다순", "title"], ["최근 글순", "updated"], ["편수 많은순", "longest"]]
+    ? [["최근 글순", "updated"], ["가나다순", "title"], ["편수 많은순", "longest"]]
     : [["최신순", "latest"], ["오래된순", "oldest"]];
   elements["sort-filter"].replaceChildren(...options.map(([label, value]) => new Option(label, value)));
-  elements["mode-filter"].closest("label").hidden = collectionScope;
+  elements["sort-filter"].value = collectionScope
+    ? (["title", "updated", "longest"].includes(previousSort) ? previousSort : "updated")
+    : (["latest", "oldest"].includes(previousSort) ? previousSort : "latest");
   document.querySelector(".search-target-field").hidden = collectionScope;
   document.querySelector(".search-match-field").hidden = collectionScope;
-  document.querySelector(".collection-kind-field").hidden = !collectionScope;
   document.querySelector(".collection-read-field").hidden = !collectionScope;
   elements["search-input"].placeholder = collectionScope ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
 }
@@ -673,7 +708,7 @@ function searchUrl(state = currentSearchState(), destination = currentDestinatio
   if (currentScope === "posts" && state.match !== "and") params.set("match", state.match);
   if (currentScope === "collections" && state.collectionKind !== "all") params.set("kind", state.collectionKind);
   if (currentScope === "collections" && state.collectionRead !== "all") params.set("read", state.collectionRead);
-  const defaultSort = currentScope === "collections" ? "title" : "latest";
+  const defaultSort = currentScope === "collections" ? "updated" : "latest";
   if (state.sort !== defaultSort) params.set("sort", state.sort);
   const query = params.toString();
   const path = destination === "browse" ? "/browse" : "/search";
@@ -685,10 +720,6 @@ function savedUrl(state = currentSearchState(), view = currentView) {
   if (view === "history") params.set("view", "recent");
   if (view === "reading") params.set("view", "reading");
   if (state.query) params.set("q", state.query);
-  if (state.boardId) params.set("board", state.boardId);
-  if (state.mode !== "all") params.set("mode", state.mode);
-  if (state.target !== "all") params.set("target", state.target);
-  if (state.match !== "and") params.set("match", state.match);
   const query = params.toString();
   return query ? `/saved?${query}` : "/saved";
 }
@@ -705,10 +736,18 @@ function applyCatalogRoute(destination) {
   elements["search-match"].value = params.get("match") === "or" ? "or" : "and";
   const sort = params.get("sort");
   elements["sort-filter"].value = currentScope === "collections"
-    ? (["updated", "longest"].includes(sort) ? sort : "title")
-    : (destination === "search" && sort === "oldest" ? sort : "latest");
+    ? (["title", "longest"].includes(sort) ? sort : "updated")
+    : (sort === "oldest" ? "oldest" : "latest");
   elements["collection-kind-filter"].value = ["series", "oneshot"].includes(params.get("kind")) ? params.get("kind") : "all";
   elements["collection-read-filter"].value = ["unread", "reading", "finished"].includes(params.get("read")) ? params.get("read") : "all";
+  if (destination === "bookmarks") {
+    elements["board-filter"].value = "";
+    elements["mode-filter"].value = "all";
+    elements["search-target"].value = "all";
+    elements["search-match"].value = "and";
+    elements["collection-kind-filter"].value = "all";
+    elements["collection-read-filter"].value = "all";
+  }
   currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
     destination === "bookmarks" && params.get("view") === "reading" ? "reading" :
     destination === "bookmarks" ? "bookmarks" : "all";
@@ -733,13 +772,13 @@ function updateDestinationLayout() {
   document.querySelector(".saved-tabs").hidden = !saved;
   elements["catalog-search-row"].hidden = !searching && !saved;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
-  elements["mode-chips"].hidden = saved || collections;
-  elements["kind-chips"].hidden = saved || !collections;
+  elements["mode-chips"].hidden = saved || collections || searching;
+  elements["kind-chips"].hidden = saved || !collections || searching;
   document.querySelector(".sort-field").hidden = saved;
-  elements["mode-filter"].closest("label").hidden = saved || collections;
+  elements["mode-filter"].closest("label").hidden = !searching || collections;
   document.querySelector(".search-target-field").hidden = !searching || collections;
   document.querySelector(".search-match-field").hidden = !searching || collections;
-  document.querySelector(".collection-kind-field").hidden = saved || !collections;
+  document.querySelector(".collection-kind-field").hidden = !searching || !collections;
   document.querySelector(".collection-read-field").hidden = saved || !collections;
   document.querySelector(".board-field").hidden = saved;
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
@@ -751,6 +790,7 @@ function updateDestinationLayout() {
     ? (currentView === "history" ? "최근 읽음" : currentView === "reading" ? "읽는 중" : "저장한 글")
     : collections ? "연재·번역·AA 목차"
     : browsing ? "게시판별 보존 글" : "제목·작성자·분류로 찾기";
+  applyBoardFilterOptions();
   syncFilterChips();
   renderActiveFilters();
   elements["search-clear"].hidden = !elements["search-input"].value;
@@ -792,13 +832,16 @@ function activeFilterItems() {
   return items;
 }
 
-function renderActiveFilters() {
+function sheetFilterItems() {
   const items = activeFilterItems();
-  const count = items.length;
-  elements["filter-toggle"].textContent = count ? `필터 ${count}` : "필터";
-  const shown = currentDestination === "browse"
-    ? items.filter((item) => item.key !== "mode" && item.key !== "kind")
-    : items;
+  if (currentDestination !== "browse") return items;
+  return items.filter((item) => item.key !== "mode" && item.key !== "kind");
+}
+
+function renderActiveFilters() {
+  const sheetItems = sheetFilterItems();
+  elements["filter-toggle"].textContent = sheetItems.length ? `필터 ${sheetItems.length}` : "필터";
+  const shown = currentDestination === "browse" && !isNarrowScreen() ? [] : sheetItems;
   elements["active-filters"].hidden = !shown.length;
   elements["active-filters"].replaceChildren();
   for (const item of shown) {
@@ -829,7 +872,7 @@ function resetFilters({ clearQuery = false } = {}) {
   elements["search-match"].value = "and";
   elements["collection-kind-filter"].value = "all";
   elements["collection-read-filter"].value = "all";
-  elements["sort-filter"].value = currentScope === "collections" ? "title" : "latest";
+  elements["sort-filter"].value = currentScope === "collections" ? "updated" : "latest";
   if (clearQuery) elements["search-input"].value = "";
   syncSearchRoute();
   updateDestinationLayout();
@@ -922,6 +965,11 @@ function restoreCatalogPosition() {
   });
 }
 
+function cancelReaderSelection() {
+  readerViewId += 1;
+  postController?.abort();
+}
+
 function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all") {
   if (destination === "settings") {
     openSettings();
@@ -931,10 +979,21 @@ function showDestination(destination, navigate = true, view = destination === "b
     }
     return;
   }
+  cancelReaderSelection();
   if (currentSummary) persistReadingPosition();
   else if (currentDestination !== "library") persistCatalogState();
   setImmersive(false, false);
+  const leavingCatalog = ["browse", "search"].includes(currentDestination);
   if (!["browse", "search"].includes(destination)) setScope("posts");
+  if (destination === "bookmarks" && leavingCatalog) {
+    elements["board-filter"].value = "";
+    elements["mode-filter"].value = "all";
+    elements["search-target"].value = "all";
+    elements["search-match"].value = "and";
+    elements["collection-kind-filter"].value = "all";
+    elements["collection-read-filter"].value = "all";
+    elements["search-input"].value = "";
+  }
   currentDestination = destination;
   currentView = view;
   const catalogLabel = currentScope === "collections" ? "작품" : "글";
@@ -1188,10 +1247,11 @@ function updateLoadMore() {
 
 function localResults(entries) {
   const tokens = normalized(elements["search-input"].value).trim().split(/\s+/).filter(Boolean);
-  const board = elements["board-filter"].value;
-  const mode = elements["mode-filter"].value;
-  const target = elements["search-target"].value;
-  const match = elements["search-match"].value;
+  const saved = currentDestination === "bookmarks";
+  const board = saved ? "" : elements["board-filter"].value;
+  const mode = saved ? "all" : elements["mode-filter"].value;
+  const target = saved ? "all" : elements["search-target"].value;
+  const match = saved ? "and" : elements["search-match"].value;
   return entries
     .map((entry) => entry.summary)
     .filter((post) => !board || post.board_id === board)
@@ -1221,13 +1281,18 @@ async function renderReadingView() {
   let collections = [];
   try {
     const index = await collectionIndex();
-    const progress = await collectionReadingProgress(index);
-    collections = index.summaries.filter((collection) => collectionOccupancy({
-      availableCount: collectionAvailableCount(collection),
-      finishedCount: progress.get(collection.id)?.finished ?? 0,
-      readingCount: progress.get(collection.id)?.reading ?? 0,
-    }) === "reading");
+    const { progress, failedBoards } = await collectionReadingProgress(index);
+    if (currentView !== "reading") return;
+    collectionProgressFailedBoards = failedBoards;
     collectionProgressById = progress;
+    collections = index.summaries.filter((collection) => {
+      if (failedBoards.has(collection.board_id)) return false;
+      return collectionOccupancy({
+        availableCount: collectionAvailableCount(collection),
+        finishedCount: progress.get(collection.id)?.finished ?? 0,
+        readingCount: progress.get(collection.id)?.reading ?? 0,
+      }) === "reading";
+    });
   } catch {
     collections = [];
   }
@@ -1243,9 +1308,10 @@ async function renderReadingView() {
   inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, read, saved)));
   for (const collection of collections) fragment.append(collectionItemElement(collection));
   elements["result-list"].append(fragment);
+  const failedNote = collectionProgressFailedBoards.size ? " · 일부 읽기 상태 미확인" : "";
   elements["result-status"].textContent = resultTotal
-    ? `읽는 중 ${resultTotal}건 · 이 브라우저`
-    : "읽는 중인 글이나 작품이 없습니다";
+    ? `읽는 중 ${resultTotal}건 · 이 브라우저${failedNote}`
+    : (failedNote ? "읽기 상태를 확인하지 못했습니다" : "읽는 중인 글이나 작품이 없습니다");
   updateLoadMore();
 }
 
@@ -1380,10 +1446,16 @@ function renderWidenActions(empty) {
   }
 }
 
+function catalogStatus(countText) {
+  if (!["browse", "search"].includes(currentDestination)) return countText;
+  const labels = activeFilterItems().map((item) => item.label);
+  return labels.length ? `${labels.join(" · ")} · ${countText}` : countText;
+}
+
 function renderResults(posts, status) {
   renderedResults = posts;
   elements["search-empty"].hidden = true;
-  elements["result-status"].textContent = status;
+  elements["result-status"].textContent = catalogStatus(status);
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
   const { read, saved } = stateIdentities();
@@ -1404,7 +1476,7 @@ function appendResults(posts) {
   posts.forEach((post, index) => fragment.append(resultItemElement(post, base + index, read, saved)));
   elements["result-list"].append(fragment);
   renderedResults = renderedResults.concat(posts);
-  elements["result-status"].textContent = `${resultTotal.toLocaleString("ko-KR")}건`;
+  elements["result-status"].textContent = catalogStatus(`${resultTotal.toLocaleString("ko-KR")}건`);
   updateLoadMore();
   restoreCatalogPosition();
 }
@@ -1418,8 +1490,11 @@ async function renderCollectionCatalog(offset = 0) {
   }
   try {
     const index = await collectionIndex();
-    const progress = await collectionReadingProgress(index);
+    collectionBoardIds = new Set(index.summaries.map((collection) => collection.board_id));
+    applyBoardFilterOptions();
+    const { progress, failedBoards } = await collectionReadingProgress(index);
     if (requestId !== collectionSearchId || currentScope !== "collections") return;
+    collectionProgressFailedBoards = failedBoards;
     const query = normalized(elements["search-input"].value).trim();
     if (currentDestination === "search" && !query) {
       renderSearchEmpty();
@@ -1440,6 +1515,9 @@ async function renderCollectionCatalog(offset = 0) {
           finishedCount: state?.finished ?? 0,
           readingCount: state?.reading ?? 0,
         });
+        if (collectionProgressFailedBoards.has(collection.board_id) && readState !== "all") {
+          return false;
+        }
         if (readState === "unread") return occupancy === "unread";
         if (readState === "reading") return occupancy === "reading";
         if (readState === "finished") return occupancy === "finished";
@@ -1475,18 +1553,12 @@ function collectionItemElement(collection) {
   const meta = document.createElement("span");
   meta.className = "result-meta";
   const progress = collectionProgressById.get(collection.id);
-  const continueGuess = progress?.lastPosition && (progress.reading ?? 0) > 0
-    ? {
-      kind: "resume",
-      entry: { position: progress.lastPosition },
-    }
-    : null;
   const copy = collectionRowCopy({
     entryCount: collection.entry_count,
     unavailableCount: collection.unavailable_count ?? 0,
     finishedCount: progress?.finished ?? 0,
     readingCount: progress?.reading ?? 0,
-    continueTarget: continueGuess,
+    unknown: collectionProgressFailedBoards.has(collection.board_id),
   });
   const updated = Number.isFinite(Date.parse(collection.latest_created_at))
     ? `최근 글 ${collectionDateFormatter.format(new Date(collection.latest_created_at))}` : null;
@@ -1517,9 +1589,12 @@ function renderCollectionResults() {
   elements["result-list"].append(fragment);
   const shown = renderedCollections.length;
   renderWidenActions(!shown);
-  elements["result-status"].textContent = shown < resultTotal
+  const countText = shown < resultTotal
     ? `${resultTotal.toLocaleString("ko-KR")}개 작품 중 ${shown.toLocaleString("ko-KR")}개`
     : `${resultTotal.toLocaleString("ko-KR")}개 작품`;
+  elements["result-status"].textContent = catalogStatus(
+    collectionProgressFailedBoards.size ? `${countText} · 일부 읽기 상태 미확인` : countText,
+  );
   updateLoadMore();
   restoreCatalogPosition();
 }
@@ -1545,14 +1620,16 @@ async function collectionReadingProgress(index) {
     progress.set(collectionId, current);
   };
   const historyByIdentity = historyByIdentityMap();
+  const failedBoards = new Set();
   if (index.schemaVersion === 1) {
     for (const collection of index.legacy) {
       for (const entry of collection.entries) {
+        if (!entry.object_key) continue;
         const history = historyByIdentity.get(postIdentity(entry));
         if (history) record(collection.id, entry.position, history.readAt, history.progress);
       }
     }
-    return progress;
+    return { progress, failedBoards };
   }
   const byBoard = new Map();
   for (const entry of historyEntries) {
@@ -1561,19 +1638,28 @@ async function collectionReadingProgress(index) {
     byBoard.set(entry.summary.board_id, boardEntries);
   }
   await Promise.all([...byBoard].map(async ([boardId, entries]) => {
-    const membership = await loadCollectionMembership(boardId);
-    for (const entry of entries) {
-      const member = membership.get(entry.summary.external_post_id);
-      if (member) record(member.collectionId, member.position, entry.readAt, entry.progress);
+    try {
+      const membership = await loadCollectionMembership(boardId);
+      for (const entry of entries) {
+        const member = membership.get(entry.summary.external_post_id);
+        if (member?.available === false) continue;
+        if (member) record(member.collectionId, member.position, entry.readAt, entry.progress);
+      }
+    } catch {
+      failedBoards.add(boardId);
     }
   }));
-  return progress;
+  return { progress, failedBoards };
 }
 
 async function openCollectionDetail(collectionId, navigate = true) {
+  if (currentSummary) persistReadingPosition();
+  const viewId = ++readerViewId;
+  postController?.abort();
   elements["reader-pane"].setAttribute("aria-busy", "true");
   try {
     const collection = await loadCollectionDetail(collectionId);
+    if (viewId !== readerViewId) return;
     if (!collection) throw new Error("현재 보존본에서 작품을 찾을 수 없습니다");
     currentSummary = null;
     currentPayload = null;
@@ -1606,15 +1692,21 @@ async function openCollectionDetail(collectionId, navigate = true) {
       `읽음 ${finishedEntries.length.toLocaleString("ko-KR")}/${available.length.toLocaleString("ko-KR")}`,
       readingEntries.length ? `읽는 중 ${readingEntries.length}` : null,
     ].filter(Boolean).join(" · ");
+    const skippedUnread = available.filter((entry) =>
+      postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) !== "finished");
     const continueEntry = continueTarget.kind === "finished" || continueTarget.kind === "empty" ? null : continueTarget.entry;
-    elements["collection-continue"].hidden = !continueEntry;
-    elements["collection-continue"].dataset.position = continueEntry?.position ?? "";
+    const unreadFocus = continueTarget.kind === "finished" ? skippedUnread[0] : null;
+    elements["collection-continue"].hidden = !continueEntry && !unreadFocus;
+    elements["collection-continue"].dataset.action = unreadFocus ? "unread" : "read";
+    elements["collection-continue"].dataset.position = (continueEntry ?? unreadFocus)?.position ?? "";
     elements["collection-continue"].textContent = continueTarget.kind === "start"
       ? `시작하기 · ${continueEntry.position}편 ${continueEntry.title || "제목 없음"}`
       : continueTarget.kind === "resume"
       ? `${continueEntry.position}편부터 이어 읽기`
       : continueTarget.kind === "next"
       ? `${continueEntry.position}편부터 이어 읽기`
+      : unreadFocus
+      ? `앞쪽 미독 ${skippedUnread.length.toLocaleString("ko-KR")}편 보기`
       : "";
     const fragment = document.createDocumentFragment();
     for (const entry of collection.entries) {
@@ -1648,9 +1740,10 @@ async function openCollectionDetail(collectionId, navigate = true) {
     openMobileReader();
     requestAnimationFrame(() => elements["collection-title"].focus({ preventScroll: true }));
   } catch (error) {
+    if (viewId !== readerViewId) return;
     renderArchiveError(error, "작품 목차를 열 수 없음");
   } finally {
-    elements["reader-pane"].removeAttribute("aria-busy");
+    if (viewId === readerViewId) elements["reader-pane"].removeAttribute("aria-busy");
   }
 }
 
@@ -1791,10 +1884,24 @@ async function loadCollectionMembership(boardId) {
       const memberships = new Map();
       for (const member of payload.members) {
         if (!Array.isArray(member) || member.length !== 3 ||
-            member.some((value) => !Number.isInteger(value) || value <= 0) || memberships.has(member[0])) {
+            !Number.isInteger(member[0]) || member[0] <= 0 ||
+            !Number.isInteger(member[1]) || member[1] <= 0 ||
+            !Number.isInteger(member[2]) || member[2] <= 0 ||
+            memberships.has(member[0])) {
           throw new Error("잘못된 컬렉션 소속 글");
         }
-        memberships.set(member[0], { collectionId: member[1], position: member[2] });
+        memberships.set(member[0], { collectionId: member[1], position: member[2], available: true });
+      }
+      if (payload.unavailable !== undefined) {
+        if (!Array.isArray(payload.unavailable)) throw new Error("잘못된 컬렉션 소속 글");
+        const seen = new Set();
+        for (const id of payload.unavailable) {
+          if (!Number.isInteger(id) || id <= 0 || !memberships.has(id) || seen.has(id)) {
+            throw new Error("잘못된 컬렉션 소속 글");
+          }
+          seen.add(id);
+          memberships.get(id).available = false;
+        }
       }
       return memberships;
     }).catch((error) => {
@@ -1856,6 +1963,7 @@ async function updateCollection() {
 }
 
 async function loadPost(summary, navigate = true) {
+  const viewId = ++readerViewId;
   if (currentSummary) persistReadingPosition();
   postController?.abort();
   postController = new AbortController();
@@ -1865,20 +1973,21 @@ async function loadPost(summary, navigate = true) {
   }
   try {
     const resolved = summary?.object_key ? summary : (await resolvePosts([summary]))[0];
+    if (viewId !== readerViewId) return;
     if (!resolved?.object_key) throw new Error("현재 보존본에서 글을 찾을 수 없습니다");
     const response = await fetch(`/archive/${resolved.object_key}`, { signal: postController.signal });
     requireArchiveResponse(response, response.status === 404 ? "보존 객체가 없습니다" : `본문 응답 ${response.status}`);
     const payload = await responseJsonWithProgress(response, "본문");
+    if (viewId !== readerViewId) return;
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
     elements["archive-state"].textContent = "보존본";
     showPost(payload, resolved, navigate);
   } catch (error) {
-    if (error.name !== "AbortError") {
-      renderArchiveError(error, "본문을 열 수 없음");
-      if (error.code !== "access_expired" && navigator.onLine) elements["archive-state"].textContent = "본문 오류";
-    }
+    if (viewId !== readerViewId || error.name === "AbortError") return;
+    renderArchiveError(error, "본문을 열 수 없음");
+    if (error.code !== "access_expired" && navigator.onLine) elements["archive-state"].textContent = "본문 오류";
   } finally {
-    elements["reader-pane"].removeAttribute("aria-busy");
+    if (viewId === readerViewId) elements["reader-pane"].removeAttribute("aria-busy");
   }
 }
 
@@ -2024,7 +2133,6 @@ function rememberHistory(summary) {
   const previous = historyEntries.find((entry) => samePost(entry.summary, summary));
   historyEntries = historyEntries.filter((entry) => !samePost(entry.summary, summary));
   historyEntries.unshift({ summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0, progress: previous?.progress ?? 0 });
-  historyEntries = historyEntries.slice(0, 500);
   persistUserState();
 }
 
@@ -2267,8 +2375,8 @@ elements["active-filters"].addEventListener("click", (event) => {
 for (const button of elements["mode-chips"].querySelectorAll("[data-mode]")) {
   button.addEventListener("click", () => {
     elements["mode-filter"].value = button.dataset.mode;
-    syncSearchRoute();
     updateDestinationLayout();
+    syncSearchRoute();
     renderCurrentView();
   });
 }
@@ -2289,6 +2397,7 @@ for (const filter of [
   elements["collection-kind-filter"], elements["collection-read-filter"],
 ]) {
   filter.addEventListener("change", () => {
+    if (filter === elements["mode-filter"]) applyBoardFilterOptions();
     syncSearchRoute();
     renderCurrentView();
   });
@@ -2332,6 +2441,14 @@ elements["collection-entry-list"].addEventListener("click", async (event) => {
   if (entry?.object_key) loadPost(entry);
 });
 elements["collection-continue"].addEventListener("click", async () => {
+  if (elements["collection-continue"].dataset.action === "unread") {
+    const target = elements["collection-entry-list"].querySelector(
+      `.collection-entry[data-position="${elements["collection-continue"].dataset.position}"]`,
+    );
+    target?.focus({ preventScroll: false });
+    target?.scrollIntoView({ block: "center" });
+    return;
+  }
   const collection = await loadCollectionDetail(Number(elements["collection-entry-list"].dataset.collectionId));
   const entry = collection?.entries[Number(elements["collection-continue"].dataset.position) - 1];
   if (entry?.object_key) loadPost(entry);

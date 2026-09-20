@@ -36,6 +36,12 @@ export function boardSelectLabel(board, fallbackId = "") {
   return boardDisplayName(board, fallbackId) || fallbackId;
 }
 
+export function boardGroupLabel(name) {
+  const raw = String(name ?? "").trim();
+  if (!raw) return "기타";
+  return raw.toLowerCase() === "aa" ? "AA" : raw;
+}
+
 export function collectionContinueTarget(entries, historyByIdentity) {
   const available = (entries ?? []).filter((entry) => entry?.object_key);
   if (!available.length) return { kind: "empty", entry: null };
@@ -68,8 +74,9 @@ export function collectionContinueTarget(entries, historyByIdentity) {
 }
 
 export function collectionOccupancy({ availableCount, finishedCount, readingCount }) {
+  if (availableCount <= 0) return "empty";
   if (readingCount > 0 || (finishedCount > 0 && finishedCount < availableCount)) return "reading";
-  if (availableCount > 0 && finishedCount >= availableCount) return "finished";
+  if (finishedCount >= availableCount) return "finished";
   return "unread";
 }
 
@@ -85,16 +92,28 @@ export function collectionRowCopy({
   finishedCount = 0,
   readingCount = 0,
   continueTarget = null,
+  unknown = false,
 }) {
   const total = Number(entryCount) || 0;
   const unavailable = Math.max(0, Number(unavailableCount) || 0);
   const available = Math.max(0, total - Math.min(unavailable, total));
+  const gap = unavailable ? `${unavailable.toLocaleString("ko-KR")}편 보존 불가` : "";
+  if (unknown) {
+    return {
+      occupancy: "unknown",
+      progress: `${available.toLocaleString("ko-KR")}편`,
+      action: "읽기 상태 미확인",
+      gap,
+    };
+  }
   const occupancy = collectionOccupancy({
     availableCount: available,
     finishedCount,
     readingCount,
   });
-  const gap = unavailable ? `${unavailable.toLocaleString("ko-KR")}편 보존 불가` : "";
+  if (occupancy === "empty") {
+    return { occupancy, progress: `${total.toLocaleString("ko-KR")}편`, action: "본문 없음", gap };
+  }
   if (occupancy === "unread") {
     return {
       occupancy,
@@ -108,6 +127,15 @@ export function collectionRowCopy({
       occupancy,
       progress: `${available.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편`,
       action: "다시 보기",
+      gap,
+    };
+  }
+  const skipped = Math.max(0, available - finishedCount - readingCount);
+  if (continueTarget?.kind === "finished") {
+    return {
+      occupancy,
+      progress: `${finishedCount.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편`,
+      action: skipped ? `앞쪽 미독 ${skipped.toLocaleString("ko-KR")}편` : "다음 편 없음",
       gap,
     };
   }
