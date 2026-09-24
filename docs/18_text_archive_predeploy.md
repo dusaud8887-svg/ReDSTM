@@ -86,7 +86,7 @@ DB 연결 시 숫자 source ID로 보완한다.
   제한된 큐에 편입한다. 명시적 가격>0/locked도 `waiting`이며 자동 구매·쿠키/계정 회피는 없다.
   알 수 없는 `bodyJson` block, HTML, 빈/과대
   본문은 `parse_review`/held로 끝나며 성공 본문이 되지 않는다. 본문 최대 2MiB, HTTP 응답 최대 8MiB.
-- 코드의 canary 상한: 총 100개 work-detail 요청 및 소설 회차 detail 확인 1,000회(유료 placeholder 포함).
+- 작품 목록 페이지를 상세보다 먼저 체크포인트하고, 작품·회차 목록 색인은 5분 timer와 공통 출처 쿨다운으로 계속 진행한다. 소설 회차 본문 detail은 별도 body source를 지정해도 총 1,000회 canary 상한을 유지한다(유료 placeholder 포함). 본문 전수 수집·게시 상한 해제는 아직 승인하지 않았다.
   소설 publisher는 1,000개를 넘으면 빌드/업로드 전에 중지한다. 이미 PC에 보관된
   아카라이브 글은 별도 20,000건 상한으로 게시하며, 변경이 없으면 검증된 원격 pointer만
   읽어 확인해 15분마다 전체 파일을 다시 빌드하지 않는다.

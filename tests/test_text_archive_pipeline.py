@@ -480,6 +480,52 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
     assert body_path.read_text(encoding="utf-8") == "sample chapter\n"
 
 
+def test_collector_keeps_indexing_work_after_first_hundred_attempts(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    try:
+        db.executescript(collector._SCHEMA)
+        db.execute(
+            "INSERT INTO text_collector_queue"
+            "(source,kind,entity_id,status,attempts,updated_at) "
+            "VALUES('blacktoon','work','24753','pending',100,'now')"
+        )
+        db.executemany(
+            "INSERT INTO text_collector_state"
+            "(source,next_page,total_count,page_size,next_check_at,updated_at) "
+            "VALUES(?,0,0,96,100,'now')",
+            [("blacktoon:list",), ("marumaru:list",)],
+        )
+        unit = collector._next_unit(db, collector.configured_sources({}), 1, None)
+        assert (unit.source.name, unit.kind, unit.entity_id) == ("blacktoon", "work", "24753")
+    finally:
+        db.close()
+
+
+def test_collector_finishes_due_catalog_pages_before_work_details(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    try:
+        db.executescript(collector._SCHEMA)
+        db.execute(
+            "INSERT INTO text_collector_queue"
+            "(source,kind,entity_id,status,updated_at) "
+            "VALUES('blacktoon','work','24753','pending','now')"
+        )
+        db.execute(
+            "INSERT INTO text_collector_state"
+            "(source,next_page,total_count,page_size,next_check_at,updated_at) "
+            "VALUES('blacktoon:list',1,8000,96,0,'now')"
+        )
+        db.execute(
+            "INSERT INTO text_collector_state"
+            "(source,next_page,total_count,page_size,next_check_at,updated_at) "
+            "VALUES('marumaru:list',0,0,96,100,'now')"
+        )
+        unit = collector._next_unit(db, collector.configured_sources({}), 1, None)
+        assert (unit.source.name, unit.kind, unit.entity_id) == ("blacktoon", "list", "1")
+    finally:
+        db.close()
+
+
 def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

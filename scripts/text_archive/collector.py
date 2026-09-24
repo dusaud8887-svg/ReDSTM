@@ -256,9 +256,6 @@ def _next_unit(
         "SELECT last_source FROM text_collector_groups WHERE group_id=?", (_SHARED_GROUP,)
     ).fetchone()
     last_source = str(group[0]) if group else ""
-    work_requests = db.execute(
-        "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue WHERE kind='work'"
-    ).fetchone()[0]
     episode_requests = db.execute(
         "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue WHERE kind='episode'"
     ).fetchone()[0]
@@ -267,29 +264,29 @@ def _next_unit(
         queued = db.execute(
             """SELECT kind,entity_id FROM text_collector_queue
                WHERE source=? AND status IN ('pending','retry') AND next_check_at<=?
-                 AND NOT (kind='work' AND ?>=100)
                  AND NOT (kind='episode' AND ?>=1000)
                  AND (kind!='episode' OR ?=source)
                ORDER BY updated_at,kind,entity_id LIMIT 1""",
-            (source.name, now, work_requests, episode_requests, body_source),
+            (source.name, now, episode_requests, body_source),
         ).fetchone()
         if queued is not None:
             kind, entity_id = str(queued["kind"]), str(queued["entity_id"])
             path = f"/api/works/{entity_id}" if kind == "work" else f"/api/episodes/{entity_id}"
             candidates.append(
-                (0, source.name, kind, RequestUnit(source, kind, entity_id, source.base_url + path))
+                (1, source.name, kind, RequestUnit(source, kind, entity_id, source.base_url + path))
             )
-            continue
         state = _state(db, f"{source.name}:list")
         page = int(state["next_page"]) if state else 0
         next_check = int(state["next_check_at"]) if state else 0
         if next_check <= now:
             url = f"{source.base_url}/api/works?mediaType=NOVEL&page={page}&size={_PAGE_SIZE}"
-            candidates.append((1, source.name, "list", RequestUnit(source, "list", str(page), url)))
+            candidates.append((0, source.name, "list", RequestUnit(source, "list", str(page), url)))
     if not candidates:
         raise CollectorError("no_due_collector_work")
-    other_source = [row for row in candidates if row[1] != last_source]
-    selected = min(other_source or candidates, key=lambda row: (row[0], row[1], row[2]))
+    highest_priority = min(row[0] for row in candidates)
+    eligible = [row for row in candidates if row[0] == highest_priority]
+    other_source = [row for row in eligible if row[1] != last_source]
+    selected = min(other_source or eligible, key=lambda row: (row[1], row[2]))
     return selected[3]
 
 
