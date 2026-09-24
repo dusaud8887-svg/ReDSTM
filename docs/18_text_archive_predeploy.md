@@ -276,3 +276,13 @@ control·schedule timer 상태도 정상으로 확인했다. 이번 후속 변�
 Worker/D1/TypeMoon 배포는 변경하지 않았고 `scripts.release status`의 Cloudflare pending migration은 0이다.
 상세 목록이 완료된 양쪽 작품 23쌍 중 회차 라벨 집합이 다른 2쌍이 있어 본문 출처 지정과
 자동 링크 승격은 여전히 비활성이다. 소설 본문 1,000회 canary·게시 1,000개 상한도 유지한다.
+
+2026-09-24 본문 canary 운영 갱신: 20개 대응 작품의 첫 무료 본문 SHA-256은 전부 일치했다.
+그러나 일부 작품은 두 출처의 회차 목록 수가 달라 자동 mirror/canonical 승격은 하지 않는다.
+`REDSTM_TEXT_BODY_SOURCE=blacktoon` 전용 환경 파일을 설치하고 작품 100개·회차 1,000개
+큐 상한을 적용했다. 목록·상세·본문의 단발 실행을 교차시키는 릴리스
+`/opt/redstm-text/releases/20260924T133718Z`에서 포인트 회차는 `waiting`, 무료 본문
+2화는 SHA-256 검증 후 원본 저장됐다. `redstm-text-publish.service`는 종료 코드 0으로
+소설 2화의 availability snapshot과 R2 release를 게시했고, 기존 아카라이브 349건도
+계속 게시됐다. 서비스는 전용 메모리·디스크·락 조건과 5초 그룹 텀을 유지한다. 현재 결과는
+단발 실측이며 24시간 재개/1,000화 처리량·실비용·로그인 Reader 본문 열람은 별도 검증 전이다.

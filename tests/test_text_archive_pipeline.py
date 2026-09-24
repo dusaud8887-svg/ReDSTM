@@ -18,6 +18,34 @@ from scripts.text_archive import collector, compare_sources, importer, publisher
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
 
+def test_body_canary_queue_caps_works_and_episodes(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    db.executescript(collector._SCHEMA)
+    try:
+        with db:
+            db.executemany(
+                "INSERT INTO text_novel_sources(site,source_work_id,last_seen_at) "
+                "VALUES('marumaru',?,?)",
+                [(str(work), "now") for work in range(101)],
+            )
+            db.executemany(
+                """INSERT INTO text_novel_chapters(
+                   site,source_work_id,source_chapter_id,access,status,last_seen_at)
+                   VALUES('marumaru',?,?,'free','discovered','now')""",
+                [(str(work), str(work * 100 + episode))
+                 for work in range(101) for episode in range(11)],
+            )
+            collector._fill_body_queue(db, "marumaru")
+            collector._fill_body_queue(db, "marumaru")
+        rows = db.execute(
+            "SELECT parent_work_id FROM text_collector_queue WHERE kind='episode'"
+        ).fetchall()
+        assert len(rows) == 1000
+        assert {row[0] for row in rows} <= {str(work) for work in range(100)}
+    finally:
+        db.close()
+
+
 class FakeResponse:
     def __init__(self, value: object, status: int = 200, headers: dict[str, str] | None = None):
         self.status_code = status
@@ -526,6 +554,34 @@ def test_collector_finishes_due_catalog_pages_before_work_details(tmp_path: Path
         db.close()
 
 
+def test_body_canary_is_not_starved_by_work_details(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    try:
+        db.executescript(collector._SCHEMA)
+        db.executemany(
+            "INSERT INTO text_collector_queue"
+            "(source,kind,entity_id,status,attempts,updated_at) VALUES(?,?,?,?,?,'now')",
+            [
+                ("blacktoon", "work", "24753", "pending", 0),
+                ("blacktoon", "episode", "914174", "pending", 0),
+            ],
+        )
+        db.executemany(
+            "INSERT INTO text_collector_state"
+            "(source,next_page,total_count,page_size,next_check_at,updated_at) "
+            "VALUES(?,0,0,96,100,'now')",
+            [("blacktoon:list",), ("marumaru:list",)],
+        )
+        sources = collector.configured_sources({})
+        assert collector._next_unit(db, sources, 1, "blacktoon").kind == "episode"
+        db.execute(
+            "UPDATE text_collector_queue SET attempts=1 WHERE kind='episode'"
+        )
+        assert collector._next_unit(db, sources, 1, "blacktoon").kind == "work"
+    finally:
+        db.close()
+
+
 def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -836,6 +892,9 @@ def test_source_comparison_matches_unique_free_chapter_without_storing_body(
         tmp_path / "unused.sqlite", "24753", collector.configured_sources({}), session
     )
     assert result["status"] == "compared" and result["same_body"] is True
+    assert result["same_chapter_labels"] is True
+    assert result["chapter_counts"] == [1, 1]
+    assert result["shared_unique_labels"] == 1
     assert len(calls) == 4
 
 

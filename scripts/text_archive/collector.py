@@ -30,6 +30,8 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _PAGE_SIZE = 96
 _REQUEST_GAP = 5
+_CANARY_BODY_WORKS = 100
+_CANARY_BODY_EPISODES = 1000
 _SHARED_GROUP = "blacktoon-marumaru-novel"
 _HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d+\.com\Z", re.I),
@@ -277,6 +279,17 @@ def _next_unit(
     episode_requests = db.execute(
         "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue WHERE kind='episode'"
     ).fetchone()[0]
+    total_requests = db.execute(
+        "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue "
+        "WHERE kind IN ('work','episode')"
+    ).fetchone()[0]
+    listed_pages = db.execute(
+        "SELECT COALESCE(SUM(next_page),0) FROM text_collector_state "
+        "WHERE source IN ('blacktoon:list','marumaru:list')"
+    ).fetchone()[0]
+    slot = (total_requests + listed_pages) % 4
+    preferred_kind = "list" if slot < 2 else "episode" if slot == 2 and body_source else "work"
+    fallback_kind = "episode" if body_source and slot in (0, 2) else "work"
     candidates: list[tuple[int, str, str, RequestUnit]] = []
     for source in sources:
         queued = db.execute(
@@ -284,21 +297,27 @@ def _next_unit(
                WHERE source=? AND status IN ('pending','retry') AND next_check_at<=?
                  AND NOT (kind='episode' AND ?>=1000)
                  AND (kind!='episode' OR ?=source)
-               ORDER BY updated_at,kind,entity_id LIMIT 1""",
-            (source.name, now, episode_requests, body_source),
+               ORDER BY CASE WHEN kind=? THEN 0 WHEN kind=? THEN 1 ELSE 2 END,
+                        updated_at,kind,entity_id LIMIT 1""",
+            (source.name, now, episode_requests, body_source, preferred_kind, fallback_kind),
         ).fetchone()
         if queued is not None:
             kind, entity_id = str(queued["kind"]), str(queued["entity_id"])
             path = f"/api/works/{entity_id}" if kind == "work" else f"/api/episodes/{entity_id}"
             candidates.append(
-                (1, source.name, kind, RequestUnit(source, kind, entity_id, source.base_url + path))
+                (0 if kind == preferred_kind else 1 if kind == fallback_kind else 2,
+                 source.name, kind,
+                 RequestUnit(source, kind, entity_id, source.base_url + path))
             )
         state = _state(db, f"{source.name}:list")
         page = int(state["next_page"]) if state else 0
         next_check = int(state["next_check_at"]) if state else 0
         if next_check <= now:
             url = f"{source.base_url}/api/works?mediaType=NOVEL&page={page}&size={_PAGE_SIZE}"
-            candidates.append((0, source.name, "list", RequestUnit(source, "list", str(page), url)))
+            candidates.append(
+                (0 if preferred_kind == "list" else 1, source.name, "list",
+                 RequestUnit(source, "list", str(page), url))
+            )
     if not candidates:
         raise CollectorError("no_due_collector_work")
     highest_priority = min(row[0] for row in candidates)
@@ -431,6 +450,32 @@ def _enqueue(
     )
 
 
+def _fill_body_queue(db: sqlite3.Connection, source: str) -> None:
+    queued = db.execute(
+        "SELECT COUNT(*) FROM text_collector_queue WHERE source=? AND kind='episode'",
+        (source,),
+    ).fetchone()[0]
+    remaining = max(0, _CANARY_BODY_EPISODES - int(queued))
+    if not remaining:
+        return
+    db.execute(
+        """INSERT OR IGNORE INTO text_collector_queue(
+           source,kind,entity_id,parent_work_id,status,next_check_at,
+           attempts,last_error,updated_at)
+           SELECT c.site,'episode',c.source_chapter_id,c.source_work_id,'pending',0,0,'',?
+           FROM text_novel_chapters c
+           JOIN (SELECT source_work_id FROM text_novel_sources WHERE site=?
+                 ORDER BY rowid LIMIT ?) w ON w.source_work_id=c.source_work_id
+           WHERE c.site=? AND c.access IN ('free','unknown')
+             AND c.status IN ('discovered','unknown_access')
+             AND NOT EXISTS (
+                 SELECT 1 FROM text_collector_queue q WHERE q.source=c.site
+                   AND q.kind='episode' AND q.entity_id=c.source_chapter_id)
+           ORDER BY c.last_seen_at,c.source_work_id,c.source_chapter_id LIMIT ?""",
+        (_now(), source, _CANARY_BODY_WORKS, source, remaining),
+    )
+
+
 def _apply_list(db: sqlite3.Connection, unit: RequestUnit, value: Any) -> dict[str, Any]:
     works, total, page_size = parse_catalog_page(value)
     now = int(time.time())
@@ -541,8 +586,8 @@ def _apply_work(
                     now,
                 ),
             )
-            if episode["access"] in {"free", "unknown"} and unit.source.name == body_source:
-                _enqueue(db, unit.source.name, "episode", episode["id"], work_id)
+        if unit.source.name == body_source:
+            _fill_body_queue(db, unit.source.name)
         mark_cross_source_covered(db, unit.source.name, work_id)
         db.execute(
             "UPDATE text_collector_queue SET status='done',attempts=attempts+1,"
@@ -840,16 +885,7 @@ def run_one(
             raise CollectorError("body_source_invalid")
         if body_source is not None:
             with db:
-                db.execute(
-                    "INSERT OR IGNORE INTO text_collector_queue"
-                    "(source,kind,entity_id,parent_work_id,status,next_check_at,"
-                    "attempts,last_error,updated_at) "
-                    "SELECT site,'episode',source_chapter_id,source_work_id,'pending',0,0,'',? "
-                    "FROM text_novel_chapters WHERE site=? AND access IN ('free','unknown') "
-                    "AND status IN ('discovered','unknown_access') "
-                    "ORDER BY source_work_id,source_chapter_id LIMIT 1000",
-                    (_now(), body_source),
-                )
+                _fill_body_queue(db, body_source)
         unit = _next_unit(db, sources, int(clock()), body_source)
     finally:
         db.close()

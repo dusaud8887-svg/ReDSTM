@@ -57,6 +57,13 @@ def compare_work(
             raise CollectorError("comparison_work_id_mismatch")
         chapters.append(episodes)
     counts = [Counter(_key(row) for row in rows) for rows in chapters]
+    comparison = {
+        "chapter_counts": [len(rows) for rows in chapters],
+        "shared_unique_labels": sum(
+            1 for key, count in counts[0].items() if count == counts[1][key] == 1
+        ),
+        "same_chapter_labels": counts[0] == counts[1],
+    }
     right = {_key(row): row for row in chapters[1]}
     candidates = [
         (left, right[_key(left)])
@@ -88,11 +95,12 @@ def compare_work(
             return {
                 "work_id": work_id,
                 "status": "compared",
+                **comparison,
                 "chapter_ids": [row["id"] for row in pair],
                 "same_body": digests[0] == digests[1],
                 "sha256": digests,
             }
-    return {"work_id": work_id, "status": "no_comparable_free_episode"}
+    return {"work_id": work_id, "status": "no_comparable_free_episode", **comparison}
 
 
 def main() -> None:
