@@ -75,7 +75,8 @@ DB 연결 시 숫자 source ID로 보완한다.
   `marumaru` 중 하나를 명시한다. 선택하지 않은 쪽은 본문 backup source로 자동 호출하지 않는다.
 - 작품 API의 회차에는 실제로 가격/무료 필드가 없는 경우가 있어 `unknown_access`로 보존한다.
   body source를 명시한 canary에서만 공개 회차 detail을 읽어 `narration` 본문이면 무료로 확정하고,
-  `paid` placeholder면 `waiting`으로 둔다. 명시적 가격>0/locked도 `waiting`이며 자동 구매·쿠키/계정 회피는 없다.
+  `paid` placeholder면 `waiting`으로 둔다. 이미 색인된 판정 불명 회차도 canary를 켠 뒤
+  제한된 큐에 편입한다. 명시적 가격>0/locked도 `waiting`이며 자동 구매·쿠키/계정 회피는 없다.
   알 수 없는 `bodyJson` block, HTML, 빈/과대
   본문은 `parse_review`/held로 끝나며 성공 본문이 되지 않는다. 본문 최대 2MiB, HTTP 응답 최대 8MiB.
 - 코드의 canary 상한: 총 100개 work-detail 요청 및 소설 회차 detail 확인 1,000회(유료 placeholder 포함).

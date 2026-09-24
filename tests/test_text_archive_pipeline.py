@@ -515,6 +515,34 @@ def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
         )
 
 
+def test_enabling_body_canary_queues_already_indexed_unknown_chapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    sources = collector.configured_sources({})
+    session: Any = FakeSession(
+        FakeResponse({"content": [{"id": 24743, "title": "Novel"}], "total": 1, "size": 96}),
+        FakeResponse({"content": [], "total": 0, "size": 96}),
+        FakeResponse({"work": {"id": 24743, "title": "Novel"}, "episodes": [{"id": 31027}]}),
+        FakeResponse({"id": 31027, "bodyJson": '[{"kind":"narration","text":"free text"}]'}),
+    )
+    for _ in range(3):
+        collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute("SELECT COUNT(*) FROM text_collector_queue WHERE kind='episode'").fetchone()[
+                0
+            ]
+            == 0
+        )
+    result = collector.run_one(
+        db_path, tmp_path / "objects", sources, body_source="blacktoon", session=session
+    )
+    assert result["status"] == "chapter_saved"
+
+
 def test_approved_novel_link_is_used_for_future_collector_chapters(tmp_path: Path) -> None:
     db_path = tmp_path / "text.sqlite"
     db = importer._connect(db_path)

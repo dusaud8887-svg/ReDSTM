@@ -752,6 +752,18 @@ def run_one(
         db.executescript(_SCHEMA)
         if body_source is not None and body_source not in _HOSTS:
             raise CollectorError("body_source_invalid")
+        if body_source is not None:
+            with db:
+                db.execute(
+                    "INSERT OR IGNORE INTO text_collector_queue"
+                    "(source,kind,entity_id,parent_work_id,status,next_check_at,"
+                    "attempts,last_error,updated_at) "
+                    "SELECT site,'episode',source_chapter_id,source_work_id,'pending',0,0,'',? "
+                    "FROM text_novel_chapters WHERE site=? AND access IN ('free','unknown') "
+                    "AND status IN ('discovered','unknown_access') "
+                    "ORDER BY source_work_id,source_chapter_id LIMIT 1000",
+                    (_now(), body_source),
+                )
         unit = _next_unit(db, sources, int(clock()), body_source)
     finally:
         db.close()
