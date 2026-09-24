@@ -4,8 +4,13 @@ const READER_URL = "https://redstm-edge.redstm-archive-private.workers.dev/text"
 
 function redirect(request) {
   const target = new URL(READER_URL);
-  const lane = new URL(request.url).searchParams.get("lane");
+  const source = new URL(request.url).searchParams;
+  const lane = source.get("lane");
   if (["novel", "arcalive", "saved"].includes(lane)) target.searchParams.set("lane", lane);
+  for (const key of ["q", "work", "chapter", "item"]) {
+    const value = source.get(key);
+    if (value && value.length <= 256) target.searchParams.set(key, value);
+  }
   return new Response(null, {
     status: 302,
     headers: {

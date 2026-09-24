@@ -59,11 +59,11 @@ function request(path, token = accessToken, method = "GET") {
 }
 
 test("legacy viewer redirects into the authenticated shared Reader", async () => {
-  const response = await worker.fetch(request("/?lane=novel"), environment());
+  const response = await worker.fetch(request("/?lane=novel&work=63211&chapter=8771444&q=%ED%85%8C%EC%8A%A4%ED%8A%B8&ignored=1"), environment());
   assert.equal(response.status, 302);
   assert.equal(
     response.headers.get("Location"),
-    "https://redstm-edge.redstm-archive-private.workers.dev/text?lane=novel",
+    "https://redstm-edge.redstm-archive-private.workers.dev/text?lane=novel&q=%ED%85%8C%EC%8A%A4%ED%8A%B8&work=63211&chapter=8771444",
   );
   assert.equal(response.headers.get("Cache-Control"), "private, no-store");
   assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
