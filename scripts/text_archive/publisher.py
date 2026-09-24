@@ -47,6 +47,19 @@ def _write_immutable(path: Path, body: bytes) -> None:
     _write(path, body)
 
 
+def _share_availability(path: Path, receipts_root: Path) -> None:
+    """Make snapshot paths readable to the inbox SFTP group, never writable by it."""
+    if os.name != "posix":
+        return
+    parent = path.parent
+    while parent != receipts_root:
+        if not parent.is_relative_to(receipts_root) or parent.is_symlink():
+            raise OSError("availability path escaped receipts root")
+        parent.chmod(0o2750)
+        parent = parent.parent
+    path.chmod(0o640)
+
+
 def _indexed_file(root: Path, prefix: str, value: Any) -> tuple[str, bytes]:
     body = _json_bytes(value)
     digest = hashlib.sha256(body).hexdigest()
@@ -385,6 +398,7 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         filename = f"page-{page_number:06d}.json"
         key = f"receipts/{snapshot_rel.as_posix()}/{filename}"
         _write_immutable(receipts_root / snapshot_rel / filename, body)
+        _share_availability(receipts_root / snapshot_rel / filename, receipts_root)
         page_refs.append(
             {
                 "page": page_number,
@@ -406,6 +420,7 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
     manifest_body = _json_bytes(manifest)
     manifest_key = f"receipts/{snapshot_rel.as_posix()}/manifest.json"
     _write_immutable(receipts_root / snapshot_rel / "manifest.json", manifest_body)
+    _share_availability(receipts_root / snapshot_rel / "manifest.json", receipts_root)
     pointer = {
         "schema": 1,
         "lane": "novel",
@@ -414,6 +429,7 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         "manifest_sha256": hashlib.sha256(manifest_body).hexdigest(),
     }
     _write(receipts_root / "availability" / "novel" / "current.json", _json_bytes(pointer))
+    _share_availability(receipts_root / "availability" / "novel" / "current.json", receipts_root)
     return {"status": "published", "snapshot_id": snapshot_id, "item_count": len(items)}
 
 

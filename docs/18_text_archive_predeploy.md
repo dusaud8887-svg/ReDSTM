@@ -300,3 +300,9 @@ Worker/D1/TypeMoon 배포는 변경하지 않았고 `scripts.release status`의 
 메모리·디스크 양보선, 파일·batch 검증 상한은 유지한다. 게시 작업은 backlog 처리 도중
 15분에 강제 종료하지 않고 작업별 양보 조건에서 중단·재개된다. 이는 무한 처리량 보증이
 아니며, 수백만 회차 규모의 재게시·snapshot 비용은 실제 성장에 따라 별도로 관찰한다.
+
+2026-09-25 availability 권한 수정: 첫 snapshot의 하위 디렉터리가 `2700`, JSON이 `0600`으로
+생성되어 PC의 읽기 전용 SFTP 계정이 `current.json`을 열 수 없었다. 새 snapshot writer는
+전용 `redstm-inbox-read` 그룹에 디렉터리 읽기·탐색(`2750`), 파일 읽기(`0640`)만 부여한다.
+기존 availability 트리도 동일한 읽기 권한으로 보정했고, PC SFTP 키로 현재 목록 851건·2페이지의
+manifest 해시 검증까지 실측했다. 수집/게시 원본의 쓰기 권한은 부여하지 않았다.
