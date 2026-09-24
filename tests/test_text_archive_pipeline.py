@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from scripts.text_archive import collector, importer, publisher
+from scripts.text_archive import collector, compare_sources, importer, publisher
 
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
@@ -805,6 +805,31 @@ def test_oracle_does_not_promote_challenged_candidate(
         assert db.execute(
             "SELECT blocked FROM text_collector_hosts WHERE source='blacktoon'"
         ).fetchone()[0] == 1
+
+
+def test_source_comparison_matches_unique_free_chapter_without_storing_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payloads = iter(
+        [
+            {"work": {"id": 24753}, "episodes": [{"id": 914174, "title": "1화", "isFree": True}]},
+            {"work": {"id": 24753}, "episodes": [{"id": 1472536, "title": "1화", "isFree": True}]},
+            {"id": 914174, "bodyJson": [{"type": "paragraph", "text": "same text"}]},
+            {"id": 1472536, "bodyJson": [{"type": "paragraph", "text": "same text"}]},
+        ]
+    )
+    calls: list[str] = []
+
+    def fetch(_session: object, unit: collector.RequestUnit, _path: Path):
+        calls.append(unit.url)
+        return 200, json.dumps(next(payloads)).encode(), {}
+
+    monkeypatch.setattr(compare_sources, "_get", fetch)
+    result = compare_sources.compare_work(
+        tmp_path / "unused.sqlite", "24753", collector.configured_sources({}), FakeSession()
+    )
+    assert result["status"] == "compared" and result["same_body"] is True
+    assert len(calls) == 4
 
 
 def test_retry_after_http_date_is_bounded_and_invalid_date_uses_default() -> None:

@@ -210,6 +210,14 @@ Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 version
 1,000화 canary의 RSS/차단/비용 측정이다. 그 전에는 `REDSTM_TEXT_BODY_SOURCE`를 비워 Oracle의
 소설 본문 요청을 만들지 않는다. 수백만 화 전수 백필과 자동 링크 승격은 켜지 않았다.
 
+2026-09-24 추가 실측: `scripts.text_archive.compare_sources`로 동일 ID·제목·작가의
+20작품 중 10작품(24743, 24744, 24746, 24747, 24749, 24750, 24751, 24752,
+24753, 24754)의 대응 회차 본문 SHA-256이 일치했다. 비교 도구는 기존 요청 그룹의
+5초 간격·TypeMoon 작업 창을 재사용하고 본문을 저장하지 않는다. 24755·24756은
+TypeMoon 게시 잠금 및 출처의 15초 읽기 시간 초과가 섞여 아직 판정하지 못했다.
+나머지 8작품은 요청하지 않았다. 연속 시간 초과가 발생해 수동 비교를 멈췄으며,
+20작품 검증이 끝나지 않았으므로 body source와 대량 게시 상한은 변경하지 않았다.
+
 2026-09-24 Reader 운영 갱신: `redstm-edge` Worker `a1a5ac4` / version
 `99f030a7-e65d-465f-915b-06dc21d9734b`를 공식 `scripts.release deploy-cloudflare`로 배포했다.
 272개 브라우저 E2E·원격 D1 호환성·배포 후 TypeMoon D1/R2/version smoke가 통과했다. 로그인 Chrome에서
