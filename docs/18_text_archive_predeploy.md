@@ -225,3 +225,17 @@ Worker는 version `92e401a7-f0ec-46af-97e3-d8d0027f2edb`의 Access-protected red
 본문 객체와 기존 receipt는 수정하지 않는다. `/text?lane=arcalive`는 게시판 → 분류 → 글로 탐색하고
 실제 글 제목을 목록/뷰어 제목으로 쓴다. 본문에서는 생성된 기계용 머리말만 감추며 Markdown은 계속
 비실행 텍스트로 표시한다. 배포 검사는 아래에 갱신할 테스트 결과와 운영 pointer를 기록한다.
+
+2026-09-24 재검증: commit `5bd62dd15515dec5493f35dfa5eca49067defd7a`를 push했고 release
+preflight 전체(Python 품질 검사, 68개 Edge 단위 테스트, 272개 반응형 E2E, 빈 DB/upgrade D1
+fixture, Wrangler strict dry-run)가 통과했다. `scripts.release status`와 원격 D1 읽기 전용
+검사도 재시도에서 통과했으며, 기준 시점의 active Worker는 이전 version
+`99f030a7-e65d-465f-915b-06dc21d9734b`다.
+
+새 publisher의 기존 글 분류 backfill은 아직 production에 반영하지 않았다. 운영 SSH 계정은 root
+SSH가 거부되고 `sudo -n`도 비밀번호를 요구해 공식 `update_oracle.sh`가 실행되지 않았다. 변경된
+텍스트 모듈은 `/tmp/redstm-text-stage-title-category-20260924`에만 준비되어 있고, 운영 symlink·
+service·R2 pointer는 바뀌지 않았다. ReDSTM 배포 자격도 현재 workstation 환경에 없어 Worker
+배포를 시작하지 않았다. 재개 시 해당 stage를 root로 설치하고 게시 timer 결과를 확인한 뒤,
+Control Access 환경을 제공해 공식 `scripts.release deploy-cloudflare`와 authenticated smoke를
+실행한다. 그 전까지 새 계층 탐색은 저장소에 push된 상태일 뿐 라이브 기능이 아니다.
