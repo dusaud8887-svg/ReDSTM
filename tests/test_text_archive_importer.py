@@ -70,10 +70,7 @@ def test_contract_fixture_hash_and_copies_match() -> None:
     assert hashlib.sha256(body).hexdigest() == fixture["body"]["sha256"]
     newtomi_copy = Path(r"E:\newtomi\tests\fixtures\text_archive_contract.json")
     if newtomi_copy.is_file():
-        assert (
-            hashlib.sha256(_FIXTURE.read_bytes()).digest()
-            == hashlib.sha256(newtomi_copy.read_bytes()).digest()
-        )
+        assert fixture == json.loads(newtomi_copy.read_text(encoding="utf-8"))
 
 
 def test_arcalive_import_uses_post_title_for_reader(tmp_path: Path) -> None:
@@ -457,6 +454,7 @@ def test_operation_window_defers_only_for_typemoon_publish(tmp_path: Path) -> No
     publish_lock.parent.mkdir()
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n")
+
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
 

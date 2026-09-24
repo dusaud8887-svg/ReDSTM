@@ -178,6 +178,38 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     assert receipt["revision"] == 2
     assert receipt["items"][0]["published_at"]
     assert remote["published/arcalive/release.json"]
+    calls.clear()
+    assert (
+        publisher.publish_lane(
+            db_path, tmp_path / "objects", tmp_path / "build", receipts, "arcalive", runner=rclone
+        )["status"]
+        == "noop"
+    )
+    assert calls == [("cat", "published/arcalive/release.json")]
+
+
+def test_arcalive_catalog_can_pass_novel_canary_limit(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_batch(inbox)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        original = dict(db.execute("SELECT * FROM text_archive_items").fetchone())
+        columns = ",".join(original)
+        placeholders = ",".join("?" for _ in original)
+        for post_id in range(109, 1109):
+            row = original.copy()
+            row["identity"] = f"arcalive:novel:{post_id}:text"
+            row["source_post_id"] = str(post_id)
+            db.execute(
+                f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+                tuple(row.values()),
+            )
+    tree = publisher.build_publish_tree(
+        db_path, tmp_path / "objects", tmp_path / "build", "arcalive"
+    )
+    assert tree["item_count"] == 1001
 
 
 def test_publisher_readback_failure_never_switches_pointer(

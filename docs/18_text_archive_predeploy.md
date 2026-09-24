@@ -76,8 +76,10 @@ DB 연결 시 숫자 source ID로 보완한다.
 - 무료임이 명시된 회차만 선택된 body source에서 queue된다. 가격>0/locked는 `waiting`, 판정 불명은
   `unknown_access`; 자동 구매·쿠키/계정 회피는 없다. 알 수 없는 `bodyJson` block, HTML, 빈/과대
   본문은 `parse_review`/held로 끝나며 성공 본문이 되지 않는다. 본문 최대 2MiB, HTTP 응답 최대 8MiB.
-- 코드의 canary 상한: 총 100개 work-detail 요청 및 Oracle 소유 본문 1,000화. publisher는 lane별
-  1,000개 수입 항목을 넘으면 빌드/업로드 전에 중지한다. 상한 변경은 비용·복구 gate 이후 별도 수정이다.
+- 코드의 canary 상한: 총 100개 work-detail 요청 및 Oracle 소유 소설 본문 1,000화.
+  소설 publisher는 1,000개를 넘으면 빌드/업로드 전에 중지한다. 이미 PC에 보관된
+  아카라이브 글은 별도 20,000건 상한으로 게시하며, 변경이 없으면 검증된 원격 pointer만
+  읽어 확인해 15분마다 전체 파일을 다시 빌드하지 않는다.
 - 모든 페이지/작품/회차 요청 전 runtime window를 다시 평가하고 TypeMoon publish lock을 요청 중에만 잡는다.
   장기 TypeMoon 수집이 보유하는 control lock은 텍스트 수집을 막지 않으며 실제 가용 메모리·디스크로 양보한다.
   수집기 timer가 TypeMoon 작업 창을 오래 막지 않는다. timer가 비활성 상태인 기간/락 점유 시간은 장애가 아니다.

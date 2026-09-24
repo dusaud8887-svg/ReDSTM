@@ -14,7 +14,8 @@ from scripts.text_archive.importer import _connect, _write_receipt
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _INDEX_PAGE_SIZE = 500
-_MAX_CANARY_ITEMS = 1000
+_MAX_NOVEL_ITEMS = 1000
+_MAX_ARCALIVE_ITEMS = 20000
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
 _AVAILABILITY_PAGE_SIZE = 500
 
@@ -73,7 +74,7 @@ def build_publish_tree(
         ]
         if not rows:
             raise ValueError("no_publishable_items")
-        if len(rows) > _MAX_CANARY_ITEMS:
+        if len(rows) > (_MAX_NOVEL_ITEMS if lane == "novel" else _MAX_ARCALIVE_ITEMS):
             raise ValueError("text_publish_canary_cap_exceeded")
         if lane == "novel":
             groups: dict[str, dict[str, Any]] = {}
@@ -324,7 +325,7 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         db.close()
     if not items:
         return {"status": "idle", "item_count": 0}
-    if len(items) > _MAX_CANARY_ITEMS:
+    if len(items) > _MAX_NOVEL_ITEMS:
         raise ValueError("text_publish_canary_cap_exceeded")
 
     snapshot_id = hashlib.sha256(_json_bytes(items)).hexdigest()
@@ -397,10 +398,33 @@ def publish_lane(
         )
     if item_count == 0:
         return {"lane": lane, "item_count": 0, "status": "idle"}
-    if item_count > _MAX_CANARY_ITEMS:
+    if item_count > (_MAX_NOVEL_ITEMS if lane == "novel" else _MAX_ARCALIVE_ITEMS):
         raise ValueError("text_publish_canary_cap_exceeded")
     with operation_window():
         pass
+    if lane == "arcalive":
+        with sqlite3.connect(db_path) as db:
+            pending = db.execute(
+                "SELECT 1 FROM text_archive_items i LEFT JOIN text_archive_publications p "
+                "ON p.key='item:'||i.identity AND p.sha256=i.content_sha256 "
+                "WHERE i.lane='arcalive' AND p.key IS NULL LIMIT 1"
+            ).fetchone()
+            pointer_hash = _published_hash(db, "published/arcalive/release.json")
+        if pending is None and pointer_hash:
+            with operation_window():
+                pointer = _run(
+                    [
+                        "rclone",
+                        "--config",
+                        _RCLONE_CONFIG,
+                        "cat",
+                        f"{remote}/published/arcalive/release.json",
+                    ],
+                    runner,
+                )
+            if hashlib.sha256(pointer).hexdigest() == pointer_hash:
+                _finalize_receipts(db_path, receipts_root)
+                return {"lane": lane, "item_count": item_count, "status": "noop"}
     tree = build_publish_tree(db_path, object_root, build_root, lane)
     db = _connect(db_path)
     try:
