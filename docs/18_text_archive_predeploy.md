@@ -73,10 +73,12 @@ DB 연결 시 숫자 source ID로 보완한다.
 - `REDSTM_TEXT_BODY_SOURCE`가 비어 있으면 목록/작품/회차 상태만 조사하고 본문 요청을 만들지 않는다.
   **첫 20작품의 양쪽 대응·본문 SHA 비교 canary가 수동 통과한 뒤에만** `blacktoon` 또는
   `marumaru` 중 하나를 명시한다. 선택하지 않은 쪽은 본문 backup source로 자동 호출하지 않는다.
-- 무료임이 명시된 회차만 선택된 body source에서 queue된다. 가격>0/locked는 `waiting`, 판정 불명은
-  `unknown_access`; 자동 구매·쿠키/계정 회피는 없다. 알 수 없는 `bodyJson` block, HTML, 빈/과대
+- 작품 API의 회차에는 실제로 가격/무료 필드가 없는 경우가 있어 `unknown_access`로 보존한다.
+  body source를 명시한 canary에서만 공개 회차 detail을 읽어 `narration` 본문이면 무료로 확정하고,
+  `paid` placeholder면 `waiting`으로 둔다. 명시적 가격>0/locked도 `waiting`이며 자동 구매·쿠키/계정 회피는 없다.
+  알 수 없는 `bodyJson` block, HTML, 빈/과대
   본문은 `parse_review`/held로 끝나며 성공 본문이 되지 않는다. 본문 최대 2MiB, HTTP 응답 최대 8MiB.
-- 코드의 canary 상한: 총 100개 work-detail 요청 및 Oracle 소유 소설 본문 1,000화.
+- 코드의 canary 상한: 총 100개 work-detail 요청 및 소설 회차 detail 확인 1,000회(유료 placeholder 포함).
   소설 publisher는 1,000개를 넘으면 빌드/업로드 전에 중지한다. 이미 PC에 보관된
   아카라이브 글은 별도 20,000건 상한으로 게시하며, 변경이 없으면 검증된 원격 pointer만
   읽어 확인해 15분마다 전체 파일을 다시 빌드하지 않는다.

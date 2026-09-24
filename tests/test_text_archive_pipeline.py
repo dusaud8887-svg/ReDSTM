@@ -458,6 +458,54 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
         ).fetchall()
         assert rows == [("914174", "free", "complete"), ("914175", "point", "waiting")]
         assert db.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 1
+    body_path = objects / "objects" / "sha256" / chapter["sha256"][:2] / f"{chapter['sha256']}.md"
+    assert body_path.read_text(encoding="utf-8") == "sample chapter\n"
+
+
+def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    sources = collector.configured_sources({})
+    session: Any = FakeSession(
+        FakeResponse({"content": [{"id": 24743, "title": "Novel"}], "total": 1, "size": 96}),
+        FakeResponse({"content": [], "total": 0, "size": 96}),
+        FakeResponse(
+            {
+                "work": {"id": 24743, "title": "Novel"},
+                "episodes": [{"id": 31027, "number": 1}, {"id": 31028, "number": 2}],
+            }
+        ),
+        FakeResponse({"id": 31027, "bodyJson": '[{"kind":"paid","text":"locked"}]'}),
+        FakeResponse({"id": 31028, "bodyJson": '[{"kind":"narration","text":"free text"}]'}),
+    )
+    results = [
+        collector.run_one(
+            db_path, tmp_path / "objects", sources, body_source="blacktoon", session=session
+        )
+        for _ in range(5)
+    ]
+    assert [result["status"] for result in results] == [
+        "listed",
+        "listed",
+        "work_indexed",
+        "waiting",
+        "chapter_saved",
+    ]
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "SELECT source_chapter_id,access,status FROM text_novel_chapters "
+            "ORDER BY source_chapter_id"
+        ).fetchall() == [("31027", "point", "waiting"), ("31028", "free", "complete")]
+        assert db.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 1
+        assert (
+            db.execute(
+                "SELECT SUM(attempts) FROM text_collector_queue WHERE kind='episode'"
+            ).fetchone()[0]
+            == 2
+        )
         assert (
             db.execute(
                 "SELECT COUNT(*) FROM text_collector_queue "
@@ -465,8 +513,6 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
             ).fetchone()[0]
             == 0
         )
-    body_path = objects / "objects" / "sha256" / chapter["sha256"][:2] / f"{chapter['sha256']}.md"
-    assert body_path.read_text(encoding="utf-8") == "sample chapter\n"
 
 
 def test_approved_novel_link_is_used_for_future_collector_chapters(tmp_path: Path) -> None:

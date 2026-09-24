@@ -259,8 +259,8 @@ def _next_unit(
     work_requests = db.execute(
         "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue WHERE kind='work'"
     ).fetchone()[0]
-    oracle_chapters = db.execute(
-        "SELECT COUNT(*) FROM text_archive_items WHERE batch_id LIKE 'oracle:%'"
+    episode_requests = db.execute(
+        "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue WHERE kind='episode'"
     ).fetchone()[0]
     candidates: list[tuple[int, str, str, RequestUnit]] = []
     for source in sources:
@@ -271,7 +271,7 @@ def _next_unit(
                  AND NOT (kind='episode' AND ?>=1000)
                  AND (kind!='episode' OR ?=source)
                ORDER BY updated_at,kind,entity_id LIMIT 1""",
-            (source.name, now, work_requests, oracle_chapters, body_source),
+            (source.name, now, work_requests, episode_requests, body_source),
         ).fetchone()
         if queued is not None:
             kind, entity_id = str(queued["kind"]), str(queued["entity_id"])
@@ -524,7 +524,7 @@ def _apply_work(
                     now,
                 ),
             )
-            if episode["access"] == "free" and unit.source.name == body_source:
+            if episode["access"] in {"free", "unknown"} and unit.source.name == body_source:
                 _enqueue(db, unit.source.name, "episode", episode["id"], work_id)
         mark_cross_source_covered(db, unit.source.name, work_id)
         db.execute(
@@ -549,9 +549,6 @@ def _apply_episode(
     body_host: str,
 ) -> dict[str, Any]:
     chapter_id, title, body_json = _episode_detail(value)
-    body = (_plain_text(body_json) + "\n").encode("utf-8")
-    if len(body) > _MAX_FILE_BYTES:
-        raise CollectorError("chapter_body_too_large")
     queue_row = db.execute(
         "SELECT parent_work_id FROM text_collector_queue "
         "WHERE source=? AND kind='episode' AND entity_id=?",
@@ -560,6 +557,29 @@ def _apply_episode(
     if queue_row is None:
         raise CollectorError("episode_queue_entry_missing")
     parent_id = str(queue_row[0])
+    try:
+        blocks = json.loads(body_json) if isinstance(body_json, str) else body_json
+    except json.JSONDecodeError:
+        blocks = body_json
+    if any(
+        isinstance(block, dict) and block.get("kind", block.get("type")) == "paid"
+        for block in (blocks if isinstance(blocks, list) else [blocks])
+    ):
+        with db:
+            db.execute(
+                "UPDATE text_novel_chapters SET access='point',status='waiting',last_seen_at=? "
+                "WHERE site=? AND source_work_id=? AND source_chapter_id=?",
+                (_now(), unit.source.name, parent_id, chapter_id),
+            )
+            db.execute(
+                "UPDATE text_collector_queue SET status='done',attempts=attempts+1,"
+                "last_error='',updated_at=? WHERE source=? AND kind='episode' AND entity_id=?",
+                (_now(), unit.source.name, chapter_id),
+            )
+        return {"status": "waiting", "source": unit.source.name, "chapter_id": chapter_id}
+    body = (_plain_text(body_json) + "\n").encode("utf-8")
+    if len(body) > _MAX_FILE_BYTES:
+        raise CollectorError("chapter_body_too_large")
     source_row = db.execute(
         "SELECT title,author FROM text_novel_sources WHERE site=? AND source_work_id=?",
         (unit.source.name, parent_id),
@@ -636,12 +656,14 @@ def _apply_episode(
                 ),
             )
         db.execute(
-            """UPDATE text_novel_chapters SET content_sha256=?,status='complete',last_seen_at=?
-               WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
+            "UPDATE text_novel_chapters SET content_sha256=?,access='free',"
+            "status='complete',last_seen_at=? "
+            "WHERE site=? AND source_work_id=? AND source_chapter_id=?",
             (digest, now, unit.source.name, parent_id, chapter_id),
         )
         db.execute(
-            "UPDATE text_collector_queue SET status='done',last_error='',updated_at=? "
+            "UPDATE text_collector_queue SET status='done',attempts=attempts+1,"
+            "last_error='',updated_at=? "
             "WHERE source=? AND kind='episode' AND entity_id=?",
             (now, unit.source.name, chapter_id),
         )
