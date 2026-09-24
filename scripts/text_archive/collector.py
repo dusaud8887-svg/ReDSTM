@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS text_collector_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_text_collector_queue_due
   ON text_collector_queue(status,next_check_at,updated_at);
+CREATE TABLE IF NOT EXISTS text_collector_hosts (
+  source TEXT PRIMARY KEY, host TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0,
+  next_offset INTEGER NOT NULL DEFAULT 1, blocked INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -70,11 +74,23 @@ class CollectorError(ValueError):
     pass
 
 
-def configured_sources(env: dict[str, str] | None = None) -> tuple[Source, Source]:
+def configured_sources(
+    env: dict[str, str] | None = None, db_path: Path | None = None
+) -> tuple[Source, Source]:
     values = os.environ if env is None else env
+    remembered: dict[str, str] = {}
+    if db_path is not None and db_path.exists():
+        db = _connect(db_path)
+        try:
+            db.executescript(_SCHEMA)
+            remembered = dict(db.execute("SELECT source,host FROM text_collector_hosts"))
+        finally:
+            db.close()
     sources: list[Source] = []
     for name, default in (("blacktoon", "blacktoon452.com"), ("marumaru", "marumaru102.com")):
-        host = values.get(f"REDSTM_TEXT_{name.upper()}_HOST", default).strip().lower()
+        host = values.get(
+            f"REDSTM_TEXT_{name.upper()}_HOST", remembered.get(name, default)
+        ).strip().lower()
         if not _HOSTS[name].fullmatch(host):
             raise CollectorError(f"invalid configured host for {name}")
         sources.append(Source(name, host))
@@ -468,6 +484,8 @@ def _apply_work(
     db: sqlite3.Connection, unit: RequestUnit, value: Any, body_source: str | None
 ) -> dict[str, Any]:
     work_id, title, author, episodes = parse_work_detail(value)
+    if work_id != unit.entity_id:
+        raise CollectorError("work_id_mismatch")
     now = _now()
     with db:
         source_row = db.execute(
@@ -546,6 +564,8 @@ def _apply_episode(
     body_host: str,
 ) -> dict[str, Any]:
     chapter_id, title, body_json = _episode_detail(value)
+    if chapter_id != unit.entity_id:
+        raise CollectorError("episode_id_mismatch")
     queue_row = db.execute(
         "SELECT parent_work_id FROM text_collector_queue "
         "WHERE source=? AND kind='episode' AND entity_id=?",
@@ -735,6 +755,71 @@ def _note_failure(db_path: Path, unit: RequestUnit, error: str, retry_at: int) -
         db.close()
 
 
+def _host_failure(db_path: Path, unit: RequestUnit) -> RequestUnit | None:
+    db = _connect(db_path)
+    try:
+        with db:
+            db.execute(
+                "INSERT OR IGNORE INTO text_collector_hosts(source,host) VALUES(?,?)",
+                (unit.source.name, unit.source.host),
+            )
+            row = db.execute(
+                "SELECT failures,next_offset,blocked FROM text_collector_hosts WHERE source=?",
+                (unit.source.name,),
+            ).fetchone()
+            failures, offset, blocked = int(row[0]) + 1, int(row[1]), int(row[2])
+            db.execute(
+                "UPDATE text_collector_hosts SET failures=? WHERE source=?",
+                (failures, unit.source.name),
+            )
+            if failures < 2 or blocked or offset > 5:
+                return None
+            match = re.fullmatch(r"([a-z]+)(\d+)(\.com)", unit.source.host)
+            if match is None:
+                return None
+            host = f"{match[1]}{int(match[2]) + offset}{match[3]}"
+            db.execute(
+                "UPDATE text_collector_hosts SET next_offset=? WHERE source=?",
+                (offset + 1, unit.source.name),
+            )
+        source = Source(unit.source.name, host)
+        return RequestUnit(
+            source, unit.kind, unit.entity_id,
+            unit.url.replace(unit.source.base_url, source.base_url, 1),
+        )
+    finally:
+        db.close()
+
+
+def _host_success(db: sqlite3.Connection, unit: RequestUnit) -> None:
+    with db:
+        db.execute(
+            """INSERT INTO text_collector_hosts(source,host) VALUES(?,?)
+               ON CONFLICT(source) DO UPDATE SET host=excluded.host,
+               failures=0,next_offset=1,blocked=0""",
+            (unit.source.name, unit.source.host),
+        )
+
+
+def _fetch_with_rotation(
+    session: requests.Session, unit: RequestUnit, db_path: Path
+) -> tuple[RequestUnit, int, bytes, dict[str, str]]:
+    try:
+        status, raw, headers = _get(session, unit, db_path)
+    except requests.RequestException:
+        candidate = _host_failure(db_path, unit)
+        if candidate is None:
+            raise
+        status, raw, headers = _get(session, candidate, db_path)
+        return candidate, status, raw, headers
+    if 500 <= status <= 599:
+        candidate = _host_failure(db_path, unit)
+        if candidate is not None:
+            status, raw, headers = _get(session, candidate, db_path)
+            return candidate, status, raw, headers
+    return unit, status, raw, headers
+
+
 def run_one(
     db_path: Path,
     object_root: Path,
@@ -768,9 +853,18 @@ def run_one(
     owns_session = session is None
     http.trust_env = False
     try:
-        status_code, raw, headers = _get(http, unit, db_path)
+        unit, status_code, raw, headers = _fetch_with_rotation(http, unit, db_path)
         now = int(clock())
         if status_code in {403, 429, 509}:
+            db = _connect(db_path)
+            try:
+                with db:
+                    db.execute(
+                        "UPDATE text_collector_hosts SET blocked=1 WHERE source=? AND host!=?",
+                        (unit.source.name, unit.source.host),
+                    )
+            finally:
+                db.close()
             default = 6 * 3600 if status_code in {403, 509} else 3600
             retry_header = next(
                 (value for key, value in headers.items() if key.lower() == "retry-after"), None
@@ -814,6 +908,7 @@ def run_one(
                    last_status=excluded.last_status,last_error=''""",
                 (_SHARED_GROUP, now, status_code),
             )
+            _host_success(db, unit)
             return result
         finally:
             db.close()
@@ -851,7 +946,7 @@ def main() -> None:
         result = run_one(
             Path("/srv/redstm-text/text-archive.sqlite"),
             Path("/srv/redstm-text/objects"),
-            configured_sources(),
+            configured_sources(db_path=Path("/srv/redstm-text/text-archive.sqlite")),
             body_source=configured_body_source(),
         )
     except RuntimeWindowError as exc:

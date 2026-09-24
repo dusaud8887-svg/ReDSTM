@@ -746,6 +746,67 @@ def test_shared_origin_cooldown_blocks_sibling_domain_and_unknown_blocks_need_re
         collector._plain_text([{"type": "image", "src": "not-followed"}])
 
 
+def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    session: Any = FakeSession(
+        FakeResponse({}, status=503),
+        FakeResponse({}, status=503),
+        FakeResponse({"content": [{"id": 24753, "title": "Novel"}], "total": 1, "size": 96}),
+    )
+    sources = collector.configured_sources({})
+    first = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert first["status"] == "held"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE text_collector_state SET next_check_at=0 WHERE source='blacktoon:list'"
+        )
+        db.execute(
+            "INSERT INTO text_collector_state(source,next_check_at,updated_at) "
+            "VALUES('marumaru:list',9999999999,'test')"
+        )
+    second = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert second["status"] == "listed"
+    assert ["blacktoon452.com" in url for url in session.calls] == [True, True, False]
+    assert "blacktoon453.com" in session.calls[-1]
+    assert collector.configured_sources({}, db_path)[0].host == "blacktoon453.com"
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "SELECT source_url FROM text_novel_sources WHERE site='blacktoon'"
+        ).fetchone()[0] == "https://blacktoon453.com/novel/24753"
+
+
+def test_oracle_does_not_promote_challenged_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    session: Any = FakeSession(
+        FakeResponse({}, status=503),
+        FakeResponse({}, status=503),
+        FakeResponse({}, status=403),
+    )
+    sources = collector.configured_sources({})
+    collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE text_collector_state SET next_check_at=0 WHERE source='blacktoon:list'")
+        db.execute(
+            "INSERT INTO text_collector_state(source,next_check_at,updated_at) "
+            "VALUES('marumaru:list',9999999999,'test')"
+        )
+    result = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert result["status"] == "cooldown"
+    assert collector.configured_sources({}, db_path)[0].host == "blacktoon452.com"
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "SELECT blocked FROM text_collector_hosts WHERE source='blacktoon'"
+        ).fetchone()[0] == 1
+
+
 def test_retry_after_http_date_is_bounded_and_invalid_date_uses_default() -> None:
     now = int(datetime(2026, 9, 23, tzinfo=UTC).timestamp())
     far_future = format_datetime(datetime.fromtimestamp(now, UTC) + timedelta(days=30), usegmt=True)
