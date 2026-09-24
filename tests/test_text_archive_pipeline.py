@@ -824,13 +824,16 @@ def test_source_comparison_matches_unique_free_chapter_without_storing_body(
     )
     calls: list[str] = []
 
-    def fetch(_session: object, unit: collector.RequestUnit, _path: Path):
+    def fetch(
+        _session: object, unit: collector.RequestUnit, _path: Path
+    ) -> tuple[int, bytes, dict[str, str]]:
         calls.append(unit.url)
         return 200, json.dumps(next(payloads)).encode(), {}
 
     monkeypatch.setattr(compare_sources, "_get", fetch)
+    session: Any = FakeSession()
     result = compare_sources.compare_work(
-        tmp_path / "unused.sqlite", "24753", collector.configured_sources({}), FakeSession()
+        tmp_path / "unused.sqlite", "24753", collector.configured_sources({}), session
     )
     assert result["status"] == "compared" and result["same_body"] is True
     assert len(calls) == 4
