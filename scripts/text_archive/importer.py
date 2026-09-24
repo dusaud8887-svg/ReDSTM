@@ -552,8 +552,10 @@ def _safe_batch(
                 body_path = files_dir / posix.name
         if not reason and set(item) - _ITEM_FIELDS:
             reason = "item_fields_unknown"
-        if not reason and "title" in item and (
-            not isinstance(item["title"], str) or len(item["title"]) > 500
+        if (
+            not reason
+            and "title" in item
+            and (not isinstance(item["title"], str) or len(item["title"]) > 500)
         ):
             reason = "item_title_invalid"
         identity_ok, lane, source_site, source_work_id, source_chapter_id = _identity_matches(item)
