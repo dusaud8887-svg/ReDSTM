@@ -183,6 +183,9 @@ TypeMoon control은 active, schedule은 inactive, 루트 여유는 약 57GiB였�
 control lock이나 과거 swap 사용량만으로 텍스트 작업을 막지 않고, 새 단발 작업 시 실제
 `MemAvailable≥350MiB`, 디스크 ≥40GiB, schedule inactive, publish lock 획득을 요구한다.
 서비스 `MemoryMax=150M`, `MemorySwapMax=0`; collector/import는 5분, publisher는 15분 timer다.
+2026-09-24 실제 첫 목록 96작품은 양쪽 제목·작가와 작품 ID가 대응했고, 한 작품의 931개
+회차 라벨 및 대표 공개 본문 SHA-256이 같았다. 다음 표본의 한 회차 API는 HTTP 500을 반환했으므로
+20작품 본문 canary는 아직 통과하지 않았다. `REDSTM_TEXT_BODY_SOURCE`는 계속 비워 둔다.
 
 Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 versioned release를 설치한다.
 계정·마운트·SSH의 최초 설치 계약은 같은 디렉터리의 `install_oracle.sh`, 자격 설치 계약은
