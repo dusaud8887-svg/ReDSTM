@@ -464,8 +464,8 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .app-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
   .app-home { padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 18px; font-weight: 750; letter-spacing: -.03em; cursor: pointer; }
   .app-nav { display: flex; gap: 2px; }
-  .app-nav button { min-height: 40px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; }
-  .app-nav button:hover { color: var(--ink); background: var(--page); }
+  .app-nav :is(button, a) { min-height: 40px; display: inline-flex; align-items: center; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .app-nav :is(button, a):hover { color: var(--ink); background: var(--page); }
   .app-nav button.active { color: var(--accent); background: var(--accent-soft); }
   .catalog-toggle, .app-settings { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
   .catalog-toggle:hover, .app-settings:hover { color: var(--ink); background: var(--page); }
@@ -523,12 +523,12 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .continue-toc { min-height: 44px; }
   .home-grid { grid-template-columns: 1fr; gap: 28px; margin-top: 28px; }
   .bottom-nav, .reader-bottom { position: fixed; inset: auto 0 0; z-index: 20; height: calc(56px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid var(--line); background: var(--surface); }
-  .bottom-nav { grid-template-columns: repeat(4, 1fr); }
+  .bottom-nav { grid-template-columns: repeat(5, 1fr); }
   .reader-bottom { grid-template-columns: repeat(5, 1fr); }
   .reader-bottom { transition: transform 160ms ease-in-out; }
   .bottom-nav { display: grid; }
-  .bottom-nav button, .reader-bottom button { min-width: 0; min-height: 56px; display: grid; place-items: center; align-content: center; gap: 2px; padding: 2px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
-  .bottom-nav button span, .reader-bottom button span { font-size: 11px; font-weight: 550; white-space: nowrap; }
+  .bottom-nav :is(button, a), .reader-bottom button { min-width: 0; min-height: 56px; display: grid; place-items: center; align-content: center; gap: 2px; padding: 2px; border: 0; background: transparent; color: var(--muted); text-decoration: none; cursor: pointer; }
+  .bottom-nav :is(button, a) span, .reader-bottom button span { font-size: 11px; font-weight: 550; white-space: nowrap; }
   .bottom-nav button.active { color: var(--accent); }
   body.reader-open .bottom-nav, body.keyboard-open .bottom-nav { display: none; }
   body.reader-open .reader-bottom { display: grid; }

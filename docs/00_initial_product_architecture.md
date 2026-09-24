@@ -50,7 +50,7 @@ Cloudflare D1: 작은 control plane
 
 핵심 결정은 다음과 같다.
 
-1. **TypeMoon만 지원한다.** BookToki, 범용 source plugin, anti-bot ladder는 v2 제품 범위에서 제거한다.
+1. **핵심 TypeMoon 아카이브는 TypeMoon만 지원한다.** BookToki, 범용 source plugin, anti-bot ladder는 v2 핵심 제품 범위에서 제거한다. 개인 텍스트 장서는 별도 adjacent product이며 그 구현·배포 단위는 TypeMoon 경계에 들어오지 않는다.
 2. **SQLite를 single-writer canonical 원장으로 유지한다.** active 원장은 Oracle runner에 두고
    현재 검증된 로컬 E 사본을 보존한다. 실측 26.8GiB도 PostgreSQL 전환 사유가 아니며 viewer
    serving path에는 DB를 올리지 않는다.
@@ -65,6 +65,27 @@ Cloudflare D1: 작은 control plane
 10. **D1은 작은 운영 제어면으로만 쓴다.** systemd 자동 스케줄은 D1 없이도 계속 돌고,
     Oracle이 Access service token으로 outbound poll/heartbeat/event를 수행한다. 임의 shell,
     경로, 인자, restore/delete 명령은 원격에서 실행하지 않는다.
+
+### 0.1 분리된 텍스트 장서 경계
+
+2026-09-23 decision: 별도 텍스트 장서의 로컬 구현과 배포 전 검증은 허용한다. 이는 TypeMoon
+core product의 확대나 TypeMoon 자료의 변경을 뜻하지 않는다. TypeMoon canonical SQLite, D1,
+`redstm-archive`, `/archive/release.json`, `/ops`, `redstm.userState.v2`, 해당
+배포·복구 명령은 변경하지 않는다. `redstm-edge`에는 텍스트 메뉴와 인증 후 별도 뷰어로 이동하는
+`/text` 경로만 추가한다. 텍스트 본문·R2 binding·뷰어 코드는 기존 Worker에 넣지 않는다.
+
+텍스트 장서는 별도 `scripts.text_archive` 단발 작업, `/srv/redstm-text` SQLite·원본 객체,
+제한된 SFTP inbox/receipt, 별도 `redstm-text-archive` R2 binding과 `text-edge/` Worker,
+Cloudflare Access 앱·호스트·배포·rollback, 별도 사용자 상태 공간만 사용한다. PC에는 R2 자격을
+주지 않고 TypeMoon credential/config/group에도 접근시키지 않는다. 이 격리만으로 Cloudflare
+계정 요금이나 Oracle 자원이 분리되는 것은 아니다.
+
+이 결정은 코드·fixture·local test·Wrangler dry-run 및 설정 템플릿까지다. SSH 계정·ACL·quota,
+timer enable, R2 bucket/key, Access policy/hostname, Worker deploy, canary, 반복 백필, 금액은
+이 결정으로 승인되지 않는다. 새 장서 비용은 별도 예산 승인 대상이며, 1,000-item canary cap과
+40GiB Oracle 양보선이 유지된다. canary/복구·비용 결과와 별도 승인 전에는 대량 수집·게시·자동
+삭제를 시작하지 않는다.
+구현 상태·사전 배포 검사·운영 gate는 [`18_text_archive_predeploy.md`](18_text_archive_predeploy.md)가 관리한다.
 
 이 결정은 초기 Northflank + PostgreSQL + RabbitMQ + Pages 분산안과 Django persistent-volume
 배포안을 폐기한다. Cloudflare는 viewer gate, object storage와 작은 운영 제어면만 담당한다. crawler와 active

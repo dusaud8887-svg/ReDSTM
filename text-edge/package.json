@@ -1,0 +1,19 @@
+{
+  "name": "redstm-text-edge",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/access.js && node --check public/app.js && node --test",
+    "test": "node --test",
+    "deploy:dry-run": "wrangler deploy --config wrangler.jsonc --dry-run --strict"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
+  },
+  "devDependencies": {
+    "wrangler": "4.136.3"
+  }
+}

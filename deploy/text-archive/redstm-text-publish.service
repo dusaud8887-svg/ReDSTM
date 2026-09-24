@@ -1,0 +1,34 @@
+[Unit]
+Description=Publish the independent text archive to its R2 bucket
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=redstm-text
+Group=redstm-text
+SupplementaryGroups=redstm-inbox-read
+WorkingDirectory=/opt/redstm-text/current
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.publisher both
+SuccessExitStatus=75
+Restart=no
+TimeoutStartSec=15min
+MemoryMax=150M
+MemorySwapMax=0
+CPUWeight=10
+IOWeight=10
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/srv/redstm-text /srv/redstm-text-inbox/receipts
+ReadWritePaths=/srv/redstm/static/.publish.lock

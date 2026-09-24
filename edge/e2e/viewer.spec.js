@@ -317,6 +317,9 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   for (const destination of ["library", "browse", "search", "bookmarks"]) {
     await expect(page.locator(`${navigation} [data-destination="${destination}"]`)).toBeVisible();
   }
+  const textLibrary = page.locator(`${navigation} a[href="/text"]`);
+  await expect(textLibrary).toBeVisible();
+  await expect(textLibrary).toHaveAccessibleName(/텍스트/);
   const settings = page.locator(width >= 1200 ? ".rail-secondary [data-destination='settings']" : ".app-settings");
   await expect(settings).toBeVisible();
   await expect(page.locator(width >= 1200 ? ".wordmark" : ".app-home")).toBeVisible();

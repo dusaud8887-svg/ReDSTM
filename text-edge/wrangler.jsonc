@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "redstm-text-edge",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-23",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "r2_buckets": [
+    { "binding": "TEXT_ARCHIVE", "bucket_name": "redstm-text-archive" }
+  ],
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "redstm-archive-private.cloudflareaccess.com",
+    "ACCESS_AUD": "24b6ee36ec39ff6c0d226aa56bd7bb5684af1fc28cc27119fe24bf3eeb8ec1c2"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1
+  }
+}

@@ -1,0 +1,35 @@
+[Unit]
+Description=Import one committed Newtomi text batch
+After=local-fs.target
+ConditionPathIsMountPoint=/srv/redstm-text-inbox/drop
+
+[Service]
+Type=oneshot
+User=redstm-text
+Group=redstm-text
+SupplementaryGroups=redstm-inbox-read
+WorkingDirectory=/opt/redstm-text/current
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.importer
+SuccessExitStatus=75
+Restart=no
+TimeoutStartSec=5min
+MemoryMax=150M
+MemorySwapMax=0
+CPUWeight=10
+IOWeight=10
+Nice=10
+IOSchedulingClass=idle
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadOnlyPaths=/srv/redstm-text-inbox/drop
+ReadWritePaths=/srv/redstm-text /srv/redstm-text-inbox/receipts
+ReadWritePaths=/srv/redstm/static/.publish.lock

@@ -1,0 +1,11 @@
+[Unit]
+Description=Bounded Newtomi SFTP drop filesystem
+
+[Mount]
+What=/srv/redstm-text-inbox/drop.img
+Where=/srv/redstm-text-inbox/drop
+Type=ext4
+Options=loop,nosuid,nodev,noexec,noatime
+
+[Install]
+WantedBy=multi-user.target

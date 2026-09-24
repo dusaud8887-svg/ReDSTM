@@ -262,6 +262,25 @@ test("serves authenticated static assets with security headers", async () => {
   assert.match(operations.headers.get("Content-Security-Policy"), /connect-src 'self'/);
 });
 
+test("text menu stays authenticated and opens the configured viewer", async () => {
+  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.equal((html.match(/href="\/text"/g) || []).length, 3);
+
+  const env = environment({ TEXT_VIEWER_URL: "https://text.example.com/" });
+  const denied = await workerFetch(new Request("https://archive.example/text"), env);
+  assert.equal(denied.status, 401);
+
+  const redirect = await workerFetch(request("/text"), env);
+  assert.equal(redirect.status, 302);
+  assert.equal(redirect.headers.get("Location"), "https://text.example.com/");
+  assert.equal(redirect.headers.get("Cache-Control"), "private, no-store");
+  assert.equal((await workerFetch(request("/text/"), env)).status, 302);
+  assert.equal((await workerFetch(request("/text", { method: "POST" }), env)).status, 405);
+
+  assert.equal((await workerFetch(request("/text"), environment())).status, 503);
+  assert.equal((await workerFetch(request("/text"), environment({ TEXT_VIEWER_URL: "http://text.example.com/" }))).status, 503);
+});
+
 test("scheduled maintenance reconciles stale runs and retains terminal evidence by outcome", async () => {
   const statements = [];
   const env = {

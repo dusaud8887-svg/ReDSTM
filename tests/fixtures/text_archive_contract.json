@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "limits": {
+    "batch_items": 20,
+    "file_bytes": 2097152,
+    "manifest_bytes": 262144
+  },
+  "body": {
+    "encoding": "utf-8",
+    "text": "fixture body",
+    "bytes": 12,
+    "sha256": "ca260f20e9412d1ac5e1e30014e8592c75e07ad93446586497e04863084b52a3"
+  },
+  "item": {
+    "identity": "arcalive:novel:108:text",
+    "kind": "arcalive_post",
+    "board": "novel",
+    "post_id": "108",
+    "category": "소설",
+    "content_lane": "text",
+    "source_url": "https://arca.live/b/novel/108",
+    "bytes": 12,
+    "sha256": "ca260f20e9412d1ac5e1e30014e8592c75e07ad93446586497e04863084b52a3",
+    "relative_path": "files/000001.md"
+  },
+  "expected": {
+    "first_import": "accepted",
+    "same_identity_same_sha": "duplicate",
+    "same_identity_different_sha": "held_conflict",
+    "same_body_different_identity": "accepted_shared_object",
+    "same_slug_title_author": "candidate_same_work",
+    "different_author": "separate_work",
+    "no_explicit_link": "separate_work",
+    "ambiguous_chapter": "separate_chapter",
+    "rejected_paths": ["../escape.md", "/absolute.md", "C:/absolute.md"]
+  }
+}
