@@ -10,6 +10,7 @@ const releaseDate = document.querySelector("#release-date");
 let lane = "novel";
 let catalog = [];
 let activeWork = null;
+let firstLoad = true;
 
 function reportError(error) {
   status.textContent = error instanceof Error ? `열지 못했습니다 · ${error.message}` : "열지 못했습니다.";
@@ -133,7 +134,18 @@ async function loadLane(nextLane) {
   label.textContent = nextLane === "novel" ? "NOVEL INDEX" : "ARCALIVE TEXT";
   title.textContent = nextLane === "novel" ? "작품" : "글";
   try {
-    const pointer = await json(`/api/v1/release/${nextLane}`);
+    let pointer;
+    try {
+      pointer = await json(`/api/v1/release/${nextLane}`);
+    } catch (error) {
+      if (firstLoad && lane === "novel" && error instanceof Error && error.message === "request_404") {
+        firstLoad = false;
+        controls.find((button) => button.dataset.lane === "arcalive")?.click();
+        return;
+      }
+      throw error;
+    }
+    firstLoad = false;
     if (pointer.schema !== 1 || pointer.lane !== nextLane || !/^[a-f0-9]{64}$/.test(pointer.sha256)) {
       throw new Error("release_pointer_invalid");
     }
