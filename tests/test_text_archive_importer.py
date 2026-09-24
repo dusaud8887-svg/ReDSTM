@@ -85,7 +85,9 @@ def test_arcalive_import_uses_post_title_for_reader(tmp_path: Path) -> None:
     )
     assert receipt is not None and receipt["items"][0]["status"] == "accepted"
     with importer._connect(db_path) as db:
-        assert db.execute("SELECT title FROM text_archive_items").fetchone()[0] == "실제 글 제목"
+        assert tuple(
+            db.execute("SELECT title,source_category FROM text_archive_items").fetchone()
+        ) == ("실제 글 제목", "소설")
 
 
 def test_next_ready_batch_skips_already_imported_batch(tmp_path: Path) -> None:

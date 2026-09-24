@@ -123,7 +123,8 @@ def build_publish_tree(
                     "identity": row["identity"],
                     "board": row["source_board"],
                     "post_id": row["source_post_id"],
-                    "category": row["title"],
+                    "category": row["source_category"],
+                    "title": row["title"],
                     "content_lane": row["content_lane"],
                     "sha256": row["content_sha256"],
                     "bytes": row["bytes"],
@@ -241,6 +242,50 @@ def _published_hash(db: sqlite3.Connection, key: str) -> str | None:
         return None
     row = db.execute("SELECT sha256 FROM text_archive_publications WHERE key=?", (key,)).fetchone()
     return str(row[0]) if row else None
+
+
+def _backfill_arcalive_metadata(db_path: Path, object_root: Path) -> int:
+    """Correct legacy catalog rows from their hash-verified Markdown headers."""
+    db = _connect(db_path)
+    try:
+        rows = db.execute(
+            """SELECT identity,content_sha256,bytes,object_key
+               FROM text_archive_items WHERE lane='arcalive' AND source_category=''"""
+        ).fetchall()
+        changed = 0
+        with db:
+            for row in rows:
+                body = (object_root / str(row["object_key"])).read_bytes()
+                digest = hashlib.sha256(body).hexdigest()
+                if len(body) != row["bytes"] or digest != row["content_sha256"]:
+                    raise OSError(f"Arcalive object failed verification: {row['identity']}")
+                lines = body.decode("utf-8-sig", errors="strict").splitlines()
+                title = lines[0][2:].strip() if lines and lines[0].startswith("# ") else ""
+                separator = next(
+                    (index for index, line in enumerate(lines[:16]) if line == "---"),
+                    -1,
+                )
+                category_line = (
+                    next(
+                        (line for line in lines[1:separator] if line.startswith("- category:")),
+                        None,
+                    )
+                    if separator > 0
+                    else None
+                )
+                if not title or category_line is None:
+                    raise ValueError(f"Arcalive Markdown header is invalid: {row['identity']}")
+                category = category_line.partition(":")[2].strip()
+                if category in {"", "-"}:
+                    category = "미분류"
+                db.execute(
+                    "UPDATE text_archive_items SET title=?,source_category=? WHERE identity=?",
+                    (title[:500], category[:500], row["identity"]),
+                )
+                changed += 1
+        return changed
+    finally:
+        db.close()
 
 
 def _finalize_receipts(db_path: Path, receipts_root: Path) -> None:
@@ -400,6 +445,10 @@ def publish_lane(
         return {"lane": lane, "item_count": 0, "status": "idle"}
     if item_count > (_MAX_NOVEL_ITEMS if lane == "novel" else _MAX_ARCALIVE_ITEMS):
         raise ValueError("text_publish_canary_cap_exceeded")
+    metadata_updated = 0
+    if lane == "arcalive":
+        with operation_window():
+            metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
     with operation_window():
         pass
     if lane == "arcalive":
@@ -410,7 +459,7 @@ def publish_lane(
                 "WHERE i.lane='arcalive' AND p.key IS NULL LIMIT 1"
             ).fetchone()
             pointer_hash = _published_hash(db, "published/arcalive/release.json")
-        if pending is None and pointer_hash:
+        if pending is None and pointer_hash and not metadata_updated:
             with operation_window():
                 pointer = _run(
                     [

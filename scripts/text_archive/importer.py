@@ -55,6 +55,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS text_archive_items (
   identity TEXT PRIMARY KEY, lane TEXT NOT NULL, source_site TEXT NOT NULL,
   source_work_id TEXT, source_chapter_id TEXT, source_board TEXT, source_post_id TEXT,
+  source_category TEXT NOT NULL DEFAULT '',
   content_lane TEXT, source_url TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
   author TEXT NOT NULL DEFAULT '', chapter_label TEXT NOT NULL DEFAULT '',
   chapter_kind TEXT NOT NULL DEFAULT '', access TEXT NOT NULL DEFAULT 'unknown',
@@ -642,6 +643,11 @@ def _connect(path: Path) -> sqlite3.Connection:
     source_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_sources)")}
     if "source_url" not in source_columns:
         db.execute("ALTER TABLE text_novel_sources ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
+    item_columns = {row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")}
+    if "source_category" not in item_columns:
+        db.execute(
+            "ALTER TABLE text_archive_items ADD COLUMN source_category TEXT NOT NULL DEFAULT ''"
+        )
     with db:
         legacy_pc_sources = db.execute(
             """SELECT site,source_work_id FROM text_novel_sources
@@ -814,10 +820,10 @@ def import_batch(
                     db.execute(
                         """INSERT INTO text_archive_items(
                            identity,lane,source_site,source_work_id,source_chapter_id,
-                           source_board,source_post_id,content_lane,source_url,title,author,
+                           source_board,source_post_id,source_category,content_lane,source_url,title,author,
                            chapter_label,chapter_kind,access,content_sha256,bytes,object_key,
                            canonical_work_id,canonical_chapter_id,batch_id,imported_at)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             identity,
                             candidate["lane"],
@@ -826,6 +832,7 @@ def import_batch(
                             candidate["source_chapter_id"],
                             board,
                             post_id,
+                            data.get("category", "") if candidate["lane"] == "arcalive" else "",
                             lane,
                             data["source_url"],
                             data.get("work_title", data.get("title") or data.get("category", "")),

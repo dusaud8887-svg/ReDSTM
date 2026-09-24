@@ -53,12 +53,17 @@ def _incoming_batch(inbox: Path) -> None:
     batch = inbox / "drop" / _BATCH_ID
     files = batch / "files"
     files.mkdir(parents=True)
-    body = b"fixture article\n"
+    body = (
+        "# fixture article title\n\n- channel: novel\n- category: 소설\n"
+        "- author: 작가\n- created: 2026-09-23\n- id: 108\n"
+        "- url: https://arca.live/b/novel/108\n\n---\n\nfixture article\n"
+    ).encode()
     item = {
         "identity": "arcalive:novel:108:text",
         "kind": "arcalive_post",
         "board": "novel",
         "post_id": "108",
+        "title": "소설",
         "category": "소설",
         "content_lane": "text",
         "source_url": "https://arca.live/b/novel/108",
@@ -145,6 +150,10 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
         receipts,
     )
     assert result is not None and result["revision"] == 1
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE text_archive_items SET title='소설',source_category='' WHERE lane='arcalive'"
+        )
 
     remote: dict[str, bytes] = {}
     calls: list[tuple[str, str]] = []
@@ -175,6 +184,15 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     assert pointer_events[0] == len(calls) - 2
     receipt = json.loads((receipts / f"{_BATCH_ID}.json").read_text(encoding="utf-8"))
     assert outcome["item_count"] == 1
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT title,source_category FROM text_archive_items").fetchone() == (
+            "fixture article title",
+            "소설",
+        )
+    catalog_file = next((tmp_path / "build" / "published" / "indexes" / "arcalive").glob("*.json"))
+    published_item = json.loads(catalog_file.read_text(encoding="utf-8"))["items"][0]
+    assert published_item["title"] == "fixture article title"
+    assert published_item["category"] == "소설"
     assert receipt["revision"] == 2
     assert receipt["items"][0]["published_at"]
     assert remote["published/arcalive/release.json"]

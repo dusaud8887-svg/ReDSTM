@@ -25,6 +25,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   let visible = [];
   let work = null;
   let chapters = [];
+  let folderBoard = null;
+  let folderCategory = null;
   let current = null;
   let saveTimer;
   let requestId = 0;
@@ -45,6 +47,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     params.set("lane", lane);
     if (search.value.trim()) params.set("q", search.value.trim());
     if (work) params.set("work", work.work_id);
+    if (lane === "arcalive" && folderBoard) params.set("board", folderBoard);
+    if (lane === "arcalive" && folderCategory) params.set("category", folderCategory);
     if (current?.lane === "novel") params.set("chapter", current.entry.chapter_id);
     if (current) params.set("item", current.identity);
     return `/text?${params}`;
@@ -65,7 +69,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     onChange();
   }
 
-  function renderRows(rows, { chaptersMode = false } = {}) {
+  function renderRows(rows, { chaptersMode = false, folderMode = null } = {}) {
     visible = rows;
     list.replaceChildren();
     rows.forEach((entry, index) => {
@@ -77,7 +81,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       line.className = "result-title-line";
       const name = document.createElement("span");
       name.className = "result-title";
-      name.textContent = chaptersMode ? (entry.label || "회차")
+      name.textContent = folderMode ? entry.folder_label
+        : chaptersMode ? (entry.label || "회차")
         : lane === "novel" ? (entry.title || entry.work_id)
           : lane === "saved" ? (entry.title || entry.entry?.label || entry.identity)
             : (entry.title || entry.category || entry.identity);
@@ -88,7 +93,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         const saved = history.history[identity(entry)];
         meta.textContent = `${entry.kind || "회차"}${saved?.progress ? ` · ${Math.round(saved.progress * 100)}%` : ""}${history.bookmarks[identity(entry)] ? " · 저장됨" : ""}`;
       } else {
-        meta.textContent = lane === "novel"
+        meta.textContent = folderMode
+          ? `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`
+          : lane === "novel"
           ? `${entry.author || "작가 미상"} · ${entry.chapter_count ?? 0}화`
           : lane === "saved"
             ? `${entry.lane === "novel" ? entry.work?.author || "소설" : entry.entry?.board || "아카라이브"} · 저장한 자료`
@@ -101,7 +108,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     });
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
-    status.textContent = `${rows.length.toLocaleString("ko-KR")}개 ${chaptersMode ? "회차" : "자료"}`;
+    status.textContent = `${rows.length.toLocaleString("ko-KR")}개 ${chaptersMode ? "회차" : folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
@@ -118,9 +125,34 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       return;
     }
     const query = search.value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR");
-    renderRows(catalog.filter((item) =>
+    const matching = catalog.filter((item) =>
       `${item.title || item.category || ""} ${item.author || ""} ${item.board || ""}`
-        .normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query)));
+        .normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query));
+    if (lane === "arcalive") {
+      const group = (items, key) => {
+        const grouped = new Map();
+        for (const item of items) {
+          const label = String(item[key] || "미분류");
+          const entry = grouped.get(label) || { folder_label: label, folder_count: 0, board: folderBoard || "" };
+          entry.folder_count += 1;
+          grouped.set(label, entry);
+        }
+        return [...grouped.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR"));
+      };
+      if (!folderBoard) return renderRows(group(matching, "board"), { folderMode: "board" });
+      const inBoard = matching.filter((item) => String(item.board) === folderBoard);
+      if (!folderCategory) return renderRows(group(inBoard, "category"), { folderMode: "category" });
+      return renderRows(inBoard.filter((item) => String(item.category || "미분류") === folderCategory));
+    }
+    renderRows(matching);
+  }
+
+  function syncBackButton() {
+    const button = document.querySelector("#text-work-back");
+    const visible = Boolean(work || folderBoard);
+    button.hidden = !visible;
+    button.textContent = work ? "← 작품 목록"
+      : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
   }
 
   async function json(path) {
@@ -170,8 +202,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     search.value = params.get("q") || "";
     work = null;
     chapters = [];
+    folderBoard = lane === "arcalive" ? params.get("board") : null;
+    folderCategory = lane === "arcalive" ? params.get("category") : null;
     current = null;
-    document.querySelector("#text-work-back").hidden = true;
+    syncBackButton();
     setReader(false);
     status.textContent = "목록을 불러오는 중…";
     try {
@@ -220,7 +254,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     }
     if (activeRequest !== requestId) return;
     work = item;
-    document.querySelector("#text-work-back").hidden = false;
+    syncBackButton();
     chapters = detail.chapters;
     current = null;
     renderCatalog();
@@ -247,11 +281,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     const entryIdentity = savedIdentity || identity(entry, currentLane, itemWork);
     current = { lane: currentLane, viewLane, entry, identity: entryIdentity, work: itemWork };
     document.querySelector("#text-reader-kicker").textContent = isNovel ? "소설" : "아카라이브";
-    document.querySelector("#text-reader-title").textContent = isNovel ? (itemWork?.title || "소설") : (entry.title || entry.category || "아카라이브 글");
+    document.querySelector("#text-reader-title").textContent = isNovel ? (itemWork?.title || "소설") : (entry.title || "아카라이브 글");
     document.querySelector("#text-reader-meta").textContent = isNovel
       ? `${itemWork?.author || "작가 미상"} · ${entry.label || "회차"}`
-      : `${entry.board || "아카라이브"} · ${entry.post_id || ""} · ${entry.content_lane || "text"}`;
-    body.textContent = text;
+      : `${entry.board || "아카라이브"} · ${entry.category || "미분류"} · ${entry.post_id || ""} · ${entry.content_lane || "text"}`;
+    body.textContent = isNovel ? text : arcaliveBody(text);
     const record = history.history[entryIdentity] || {};
     history.history[entryIdentity] = { readAt: new Date().toISOString(), ...record };
     history.history[entryIdentity].readAt = new Date().toISOString();
@@ -271,6 +305,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     readerPane.scrollTop = record.scroll || 0;
     requestAnimationFrame(() => document.querySelector("#text-reader-title").focus({ preventScroll: true }));
     if (shouldNavigate) navigate();
+  }
+
+  function arcaliveBody(text) {
+    const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+    if (!lines[0]?.startsWith("# ")) return text;
+    const separator = lines.findIndex((line, index) => index > 0 && index < 16 && line === "---");
+    return separator < 0 ? text : lines.slice(separator + 1).join("\n").replace(/^\n+/, "");
   }
 
   function updateBookmark() {
@@ -294,9 +335,19 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     } else if (work) {
       work = null;
       chapters = [];
-      document.querySelector("#text-work-back").hidden = true;
+      syncBackButton();
       renderCatalog();
       status.textContent = `${catalog.length.toLocaleString("ko-KR")}개 작품`;
+      navigate();
+    } else if (folderCategory) {
+      folderCategory = null;
+      syncBackButton();
+      renderCatalog();
+      navigate();
+    } else if (folderBoard) {
+      folderBoard = null;
+      syncBackButton();
+      renderCatalog();
       navigate();
     }
   }
@@ -305,6 +356,20 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     const index = Number(button.dataset.index);
     if (Number.isInteger(index) && index >= 0 && index < visible.length) {
       const saved = visible[index];
+      if (lane === "arcalive" && !folderBoard) {
+        folderBoard = saved.folder_label;
+        syncBackButton();
+        renderCatalog();
+        navigate();
+        return;
+      }
+      if (lane === "arcalive" && !folderCategory) {
+        folderCategory = saved.folder_label;
+        syncBackButton();
+        renderCatalog();
+        navigate();
+        return;
+      }
       const action = lane === "saved"
         ? openBody(saved.entry, true, saved.lane, saved.work, saved.identity)
         : work ? openBody(saved) : lane === "novel" ? openWork(saved) : openBody(saved);
@@ -324,6 +389,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     lane = nextLane;
     work = null;
     chapters = [];
+    folderBoard = null;
+    folderCategory = null;
     current = null;
     setReader(false);
     void open(new URLSearchParams({ lane, q: search.value }));
@@ -352,7 +419,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (button) changeLane(button.dataset.textLane);
   });
   document.querySelector("#text-work-back").addEventListener("click", () => {
-    if (!current && work) back();
+    if (!current && (work || folderBoard)) back();
   });
   document.querySelector("#text-reader-back").addEventListener("click", back);
   document.querySelector("#text-reader-bottom-list").addEventListener("click", back);
@@ -402,7 +469,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     current = null;
     work = null;
     chapters = [];
-    document.querySelector("#text-work-back").hidden = true;
+    folderBoard = null;
+    folderCategory = null;
+    syncBackButton();
     reader.hidden = true;
     document.body.classList.remove("reader-open");
   }

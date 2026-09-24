@@ -218,3 +218,10 @@ Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 version
 Worker는 version `92e401a7-f0ec-46af-97e3-d8d0027f2edb`의 Access-protected redirect로 배포했고,
 기존 브라우저 탭을 다시 열어 메인 `/text` 이동을 확인했다. 검증되지 않은 text pointer rollback,
 소설 본문 canary·장기 비용 측정 및 수백만 화 백필은 계속 비활성이다.
+
+2026-09-24 아카라이브 목록 계층 보완: 게시 색인은 `board → saved category → post title`을 각각
+별도 필드로 제공한다. `source_category`는 기존 SQLite에도 추가되며, 이전 글은 원문 Markdown의
+제목/분류 머리말을 읽기 전에 기존 SHA-256·크기를 다시 검증한 뒤 색인 pointer만 재게시한다.
+본문 객체와 기존 receipt는 수정하지 않는다. `/text?lane=arcalive`는 게시판 → 분류 → 글로 탐색하고
+실제 글 제목을 목록/뷰어 제목으로 쓴다. 본문에서는 생성된 기계용 머리말만 감추며 Markdown은 계속
+비실행 텍스트로 표시한다. 배포 검사는 아래에 갱신할 테스트 결과와 운영 pointer를 기록한다.

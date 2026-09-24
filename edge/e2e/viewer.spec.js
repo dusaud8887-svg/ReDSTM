@@ -355,8 +355,12 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
       schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${catalogHash}.json`, sha256: catalogHash }],
     };
     else if (path.endsWith(`/index/arcalive/${catalogHash}.json`)) payload = {
-      schema: 1, lane: "arcalive", items: [{ identity: "arcalive:novel:108:text", title: "보관된 글", board: "novel", post_id: 108, sha256: "a".repeat(64) }],
+      schema: 1, lane: "arcalive", items: [{ identity: "arcalive:0765:108:text", title: "대담한 합성 (Worm/The Gamer) 2부 파트 16", category: "WORM", board: "0765", post_id: 108, sha256: "a".repeat(64) }],
     };
+    else if (path.endsWith(`/object/${"a".repeat(64)}`)) return route.fulfill({
+      contentType: "text/markdown",
+      body: "# 대담한 합성 (Worm/The Gamer) 2부 파트 16\n\n- channel: 0765\n- category: WORM\n- author: D4Cwest\n- created: 2026-09-22\n- id: 108\n- url: https://arca.live/b/0765/108\n\n---\n\n대담한 융합",
+    });
     else return route.fulfill({ status: 404 });
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
@@ -372,10 +376,19 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
 
   await page.locator('button[data-destination="text"]:visible').first().click();
   await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
-  await expect(page.locator("#result-list .result-title").first()).toHaveText("보관된 글");
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
   await page.locator('[data-text-lane="novel"]').click();
   await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
-  await expect(page.locator("#result-list .result-title").first()).toHaveText("보관된 글");
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page).toHaveURL(/board=0765/);
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("WORM");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page).toHaveURL(/category=WORM/);
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("대담한 합성 (Worm/The Gamer) 2부 파트 16");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#text-reader-title")).toHaveText("대담한 합성 (Worm/The Gamer) 2부 파트 16");
+  await expect(page.locator("#text-reader-body")).toHaveText("대담한 융합");
 });
 
 test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {
