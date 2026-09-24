@@ -34,6 +34,7 @@ def _resident_memory(status: str) -> int:
 @contextmanager
 def operation_window(
     *,
+    lock_wait_seconds: float = 0,
     publish_lock: Path = Path("/srv/redstm/static/.publish.lock"),
     meminfo_path: Path = Path("/proc/meminfo"),
     status_path: Path = Path("/proc/self/status"),
@@ -44,7 +45,7 @@ def operation_window(
     with ExitStack() as stack:
         lock = FileLock(str(publish_lock))
         try:
-            lock.acquire(timeout=0)
+            lock.acquire(timeout=lock_wait_seconds)
         except (Timeout, OSError) as exc:
             raise RuntimeWindowError("typemoon_publish_busy") from exc
         stack.callback(lock.release)

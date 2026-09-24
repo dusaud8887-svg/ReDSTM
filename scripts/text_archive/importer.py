@@ -984,7 +984,7 @@ def main() -> None:
         print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
         return
     try:
-        with operation_window():
+        with operation_window(lock_wait_seconds=30):
             result = import_batch(
                 inbox_root,
                 batch_id,

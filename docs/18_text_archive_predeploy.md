@@ -306,3 +306,8 @@ Worker/D1/TypeMoon 배포는 변경하지 않았고 `scripts.release status`의 
 전용 `redstm-inbox-read` 그룹에 디렉터리 읽기·탐색(`2750`), 파일 읽기(`0640`)만 부여한다.
 기존 availability 트리도 동일한 읽기 권한으로 보정했고, PC SFTP 키로 현재 목록 851건·2페이지의
 manifest 해시 검증까지 실측했다. 수집/게시 원본의 쓰기 권한은 부여하지 않았다.
+
+2026-09-25 동시 수입 회복: 아카라이브 5,554건 수입 중 텍스트 publisher가 TypeMoon publish lock을
+짧게 반복 획득하면서 importer의 즉시 획득이 연속 실패했다. importer만 최대 30초 기다려
+빈 창을 잡게 하고, collector/publisher의 즉시 양보 조건은 유지했다. 실제 운영에서 publisher
+가동 중 100건 배치를 `revision 1`로 수입했고, 실패한 배치는 삭제하지 않고 다음 timer가 재시도한다.
