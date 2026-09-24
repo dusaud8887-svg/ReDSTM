@@ -217,6 +217,10 @@ Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 version
 TypeMoon 게시 잠금 및 출처의 15초 읽기 시간 초과가 섞여 아직 판정하지 못했다.
 나머지 8작품은 요청하지 않았다. 연속 시간 초과가 발생해 수동 비교를 멈췄으며,
 20작품 검증이 끝나지 않았으므로 body source와 대량 게시 상한은 변경하지 않았다.
+비교 도구 commit `bea9731`은 Oracle 전용 릴리스
+`/opt/redstm-text/releases/20260924T085532Z`에 설치했고 현재 symlink·도구 import·세 timer
+active를 확인했다. 같은 시점 Cloudflare Worker version은
+`c6648d26-69f7-4fbe-888e-6d0f9473696e`이며 pending migration은 0이다.
 
 2026-09-24 Reader 운영 갱신: `redstm-edge` Worker `a1a5ac4` / version
 `99f030a7-e65d-465f-915b-06dc21d9734b`를 공식 `scripts.release deploy-cloudflare`로 배포했다.
