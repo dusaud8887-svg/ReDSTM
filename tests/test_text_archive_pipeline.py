@@ -32,8 +32,11 @@ def test_body_queue_window_refills_beyond_canary(tmp_path: Path) -> None:
                 """INSERT INTO text_novel_chapters(
                    site,source_work_id,source_chapter_id,access,status,last_seen_at)
                    VALUES('marumaru',?,?,'free','discovered','now')""",
-                [(str(work), str(work * 100 + episode))
-                 for work in range(101) for episode in range(11)],
+                [
+                    (str(work), str(work * 100 + episode))
+                    for work in range(101)
+                    for episode in range(11)
+                ],
             )
             collector._fill_body_queue(db, "marumaru")
             collector._fill_body_queue(db, "marumaru")
@@ -43,8 +46,10 @@ def test_body_queue_window_refills_beyond_canary(tmp_path: Path) -> None:
         assert len(rows) == 1000
         assert {row[0] for row in rows} <= {str(work) for work in range(101)}
         with db:
-            db.execute("UPDATE text_collector_queue SET status='done' WHERE entity_id IN "
-                       "(SELECT entity_id FROM text_collector_queue LIMIT 100)")
+            db.execute(
+                "UPDATE text_collector_queue SET status='done' WHERE entity_id IN "
+                "(SELECT entity_id FROM text_collector_queue LIMIT 100)"
+            )
             collector._fill_body_queue(db, "marumaru")
         assert db.execute("SELECT COUNT(*) FROM text_collector_queue").fetchone()[0] == 1100
     finally:
@@ -170,7 +175,7 @@ def _incoming_novel_batch(inbox: Path, batch_id: str) -> None:
 def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(publisher, "operation_window", nullcontext)
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
     inbox = tmp_path / "inbox"
     _incoming_batch(inbox)
     db_path = tmp_path / "state" / "text.sqlite"
@@ -282,16 +287,14 @@ def test_novel_catalog_can_pass_old_canary_limit(tmp_path: Path) -> None:
                 f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
                 tuple(row.values()),
             )
-    tree = publisher.build_publish_tree(
-        db_path, tmp_path / "objects", tmp_path / "build", "novel"
-    )
+    tree = publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
     assert tree["item_count"] == 1001
 
 
 def test_publisher_readback_failure_never_switches_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(publisher, "operation_window", nullcontext)
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
     inbox = tmp_path / "inbox"
     _incoming_batch(inbox)
     db_path = tmp_path / "state" / "text.sqlite"
@@ -321,10 +324,43 @@ def test_publisher_readback_failure_never_switches_pointer(
     assert json.loads((receipts / f"{_BATCH_ID}.json").read_text())["revision"] == 1
 
 
+def test_object_batch_uses_downloaded_sha256_before_accepting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    objects = []
+    for content in (b"first", b"second"):
+        digest = hashlib.sha256(content).hexdigest()
+        key = f"published/objects/sha256/{digest[:2]}/{digest}.md"
+        path = tmp_path / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        objects.append((key, digest))
+    calls: list[str] = []
+
+    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        calls.append(argv[3])
+        if argv[3] == "copy":
+            assert argv[argv.index("--transfers") + 1] == "2"
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        assert argv[3:5] == ["hashsum", "SHA256"]
+        assert "--download" in argv
+        checkfile = Path(argv[argv.index("--checkfile") + 1]).read_text()
+        assert all(
+            f"{digest}  {key.removeprefix('published/objects/sha256/')}" in checkfile
+            for key, digest in objects
+        )
+        raise subprocess.CalledProcessError(1, argv)
+
+    with pytest.raises(OSError, match="readback mismatch"):
+        publisher._publish_object_batch(tmp_path, "r2text:redstm-text-archive", objects, rclone)
+    assert calls == ["copy", "hashsum"]
+
+
 def test_novel_publisher_writes_a_paged_receipt_snapshot_after_r2_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(publisher, "operation_window", nullcontext)
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
     inbox = tmp_path / "inbox"
     batch_id = "20260923T140000Z-pc-00000002"
     _incoming_novel_batch(inbox, batch_id)
@@ -419,7 +455,7 @@ def test_novel_publisher_writes_a_paged_receipt_snapshot_after_r2_pointer(
 def test_publisher_does_not_claim_an_item_imported_after_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(publisher, "operation_window", nullcontext)
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
     inbox = tmp_path / "inbox"
     batch_id = "20260923T140000Z-pc-00000003"
     _incoming_novel_batch(inbox, batch_id)
@@ -604,9 +640,7 @@ def test_body_canary_is_not_starved_by_work_details(tmp_path: Path) -> None:
         )
         sources = collector.configured_sources({})
         assert collector._next_unit(db, sources, 1, "blacktoon").kind == "episode"
-        db.execute(
-            "UPDATE text_collector_queue SET attempts=1 WHERE kind='episode'"
-        )
+        db.execute("UPDATE text_collector_queue SET attempts=1 WHERE kind='episode'")
         assert collector._next_unit(db, sources, 1, "blacktoon").kind == "work"
     finally:
         db.close()

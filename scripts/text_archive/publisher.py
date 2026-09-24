@@ -51,12 +51,15 @@ def _share_availability(path: Path, receipts_root: Path) -> None:
     """Make snapshot paths readable to the inbox SFTP group, never writable by it."""
     if os.name != "posix":
         return
+    read_group = receipts_root.stat().st_gid
     parent = path.parent
     while parent != receipts_root:
         if not parent.is_relative_to(receipts_root) or parent.is_symlink():
             raise OSError("availability path escaped receipts root")
-        parent.chmod(0o2750)
+        os.chown(parent, -1, read_group)
+        parent.chmod(0o750)
         parent = parent.parent
+    os.chown(path, -1, read_group)
     path.chmod(0o640)
 
 
@@ -197,7 +200,7 @@ def build_publish_tree(
                 raise ValueError(
                     f"local content object failed verification: {row['content_sha256']}"
                 )
-            _write(target, body)
+            _write_immutable(target, body)
         return {
             "lane": lane,
             "item_count": len(rows),
@@ -227,6 +230,66 @@ def _run(argv: list[str], runner: Any) -> bytes:
     result = runner(argv, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output = result.stdout
     return output if isinstance(output, bytes) else str(output).encode()
+
+
+def _publish_object_batch(
+    build_root: Path,
+    remote: str,
+    objects: list[tuple[str, str]],
+    runner: Any,
+) -> None:
+    """Transfer a small immutable group, then SHA-256-check every R2 body."""
+    source = build_root / "published/objects/sha256"
+    names = [key.removeprefix("published/objects/sha256/") for key, _ in objects]
+    selection = build_root / "pending-objects.txt"
+    checksums = build_root / "pending-objects.sha256"
+    _write(selection, ("\n".join(names) + "\n").encode())
+    _write(
+        checksums,
+        ("".join(f"{digest}  {name}\n" for name, (_, digest) in zip(names, objects))).encode(),
+    )
+    destination = f"{remote}/published/objects/sha256"
+    with operation_window(lock_wait_seconds=30):
+        _run(
+            [
+                "rclone",
+                "--config",
+                _RCLONE_CONFIG,
+                "copy",
+                str(source),
+                destination,
+                "--files-from-raw",
+                str(selection),
+                "--ignore-times",
+                "--transfers",
+                "2",
+                "--checkers",
+                "2",
+            ],
+            runner,
+        )
+    try:
+        with operation_window(lock_wait_seconds=30):
+            _run(
+                [
+                    "rclone",
+                    "--config",
+                    _RCLONE_CONFIG,
+                    "hashsum",
+                    "SHA256",
+                    destination,
+                    "--download",
+                    "--checkfile",
+                    str(checksums),
+                    "--files-from-raw",
+                    str(selection),
+                    "--checkers",
+                    "2",
+                ],
+                runner,
+            )
+    except subprocess.CalledProcessError as exc:
+        raise OSError("R2 readback mismatch for object batch") from exc
 
 
 def _record_publication(db_path: Path, key: str, digest: str) -> None:
@@ -456,9 +519,9 @@ def publish_lane(
         return {"lane": lane, "item_count": 0, "status": "idle"}
     metadata_updated = 0
     if lane == "arcalive":
-        with operation_window():
+        with operation_window(lock_wait_seconds=30):
             metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
-    with operation_window():
+    with operation_window(lock_wait_seconds=30):
         pass
     if lane == "arcalive":
         with sqlite3.connect(db_path) as db:
@@ -469,7 +532,7 @@ def publish_lane(
             ).fetchone()
             pointer_hash = _published_hash(db, "published/arcalive/release.json")
         if pending is None and pointer_hash and not metadata_updated:
-            with operation_window():
+            with operation_window(lock_wait_seconds=30):
                 pointer = _run(
                     [
                         "rclone",
@@ -486,18 +549,29 @@ def publish_lane(
     tree = build_publish_tree(db_path, object_root, build_root, lane)
     db = _connect(db_path)
     try:
+        pending_objects = [
+            (key, Path(key).stem)
+            for key in tree["object_keys"]
+            if _published_hash(db, key) != Path(key).stem
+        ]
+        if len(pending_objects) > 1:
+            for offset in range(0, len(pending_objects), 8):
+                batch = pending_objects[offset : offset + 8]
+                _publish_object_batch(build_root, remote, batch, runner)
+                for key, digest in batch:
+                    _record_publication(db_path, key, digest)
         for key in tree["immutable_keys"]:
             local = build_root / key
             body = local.read_bytes()
             digest = hashlib.sha256(body).hexdigest()
             if _published_hash(db, key) == digest:
                 continue
-            with operation_window():
+            with operation_window(lock_wait_seconds=30):
                 _run(
                     ["rclone", "--config", _RCLONE_CONFIG, "copyto", str(local), f"{remote}/{key}"],
                     runner,
                 )
-            with operation_window():
+            with operation_window(lock_wait_seconds=30):
                 readback = _run(
                     ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
                     runner,
@@ -509,7 +583,7 @@ def publish_lane(
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
         pointer_hash = hashlib.sha256(pointer_body).hexdigest()
-        with operation_window():
+        with operation_window(lock_wait_seconds=30):
             _run(
                 [
                     "rclone",
@@ -521,7 +595,7 @@ def publish_lane(
                 ],
                 runner,
             )
-        with operation_window():
+        with operation_window(lock_wait_seconds=30):
             pointer_readback = _run(
                 ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{pointer_key}"],
                 runner,

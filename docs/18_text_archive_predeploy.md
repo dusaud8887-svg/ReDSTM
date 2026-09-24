@@ -303,11 +303,24 @@ Worker/D1/TypeMoon 배포는 변경하지 않았고 `scripts.release status`의 
 
 2026-09-25 availability 권한 수정: 첫 snapshot의 하위 디렉터리가 `2700`, JSON이 `0600`으로
 생성되어 PC의 읽기 전용 SFTP 계정이 `current.json`을 열 수 없었다. 새 snapshot writer는
-전용 `redstm-inbox-read` 그룹에 디렉터리 읽기·탐색(`2750`), 파일 읽기(`0640`)만 부여한다.
+전용 `redstm-inbox-read` 그룹에 디렉터리 읽기·탐색(`0750`), 파일 읽기(`0640`)만 부여한다.
 기존 availability 트리도 동일한 읽기 권한으로 보정했고, PC SFTP 키로 현재 목록 851건·2페이지의
 manifest 해시 검증까지 실측했다. 수집/게시 원본의 쓰기 권한은 부여하지 않았다.
 
 2026-09-25 동시 수입 회복: 아카라이브 5,554건 수입 중 텍스트 publisher가 TypeMoon publish lock을
 짧게 반복 획득하면서 importer의 즉시 획득이 연속 실패했다. importer만 최대 30초 기다려
-빈 창을 잡게 하고, collector/publisher의 즉시 양보 조건은 유지했다. 실제 운영에서 publisher
+빈 창을 잡게 하고, collector의 즉시 양보 조건은 유지했다. 실제 운영에서 publisher
 가동 중 100건 배치를 `revision 1`로 수입했고, 실패한 배치는 삭제하지 않고 다음 timer가 재시도한다.
+
+2026-09-25 게시 백로그 개선: 아카라이브 수천 건 수입 이후 R2 `copyto`·`cat`을 객체마다
+새 프로세스로 실행해 분당 수 건만 검증되는 병목을 확인했다. 새 publisher는 미게시 원문
+객체를 최대 8개씩 `rclone copy`하고 `hashsum SHA256 --download --checkfile`로 각 객체의
+원격 본문을 확인한 배치만 게시 원장에 기록한다. 인덱스·release·pointer는 기존의
+개별 readback과 pointer-last 계약을 유지한다. TypeMoon publish lock은 무시하지 않고
+최대 30초 기다린 뒤 작업을 미루며, 기존 150MiB 메모리·40GiB 디스크 양보선을 유지한다.
+전체 아카라이브 pointer 갱신과 대량 처리량은 아직 실측 완료 전이다.
+서비스에는 `RestrictSUIDSGID=yes`가 있으므로 새 snapshot의 setgid 비트 설정은 허용되지
+않는다. writer가 수신 그룹 GID로 소유 그룹을 명시하고 `0750/0640`만 설정하도록 수정했다.
+새 배치 경로의 실제 R2 SHA-256 readback 뒤 게시 원장 건수 증가와 소설 availability
+`current.json`의 그룹 읽기 갱신을 확인했다. 재실행 때 이미 검증된 원문 build 파일은
+다시 쓰지 않고 동일 바이트 여부만 확인한다. 전체 아카라이브 backfill은 진행 중이다.
