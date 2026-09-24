@@ -1,7 +1,7 @@
 # Newtomi 텍스트 장서 — ReDSTM 사전 배포 구현·운영 명세
 
 - 기준일: 2026-09-24
-- 상태: **Newtomi PC·전용 R2·Oracle SFTP/수집/게시 연결 완료; Reader 통합 코드·회귀검증 완료, ReDSTM 배포 전; 소설 본문 canary 전**
+- 상태: **Newtomi PC·전용 R2·Oracle SFTP/수집/게시 연결 완료; 통합 Reader·호환 redirect 배포 및 로그인 열람 확인; 소설 본문 canary 전**
 - Newtomi 교환 정본: `E:\newtomi\docs\REDSTM_TEXT_ARCHIVE_INTEGRATION_SPEC.md`
 - Newtomi PC 소설 정본: `E:\newtomi\docs\NOVEL_ARCHIVE_PLAN.md`
 - TypeMoon 운영·복구 정본: [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md), [`12_release_and_recovery.md`](12_release_and_recovery.md)
@@ -208,3 +208,13 @@ Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 version
 남은 단계는 양쪽 20작품의 목록·회차·본문 SHA 비교, 한 body source 선택, 100작품/최대
 1,000화 canary의 RSS/차단/비용 측정이다. 그 전에는 `REDSTM_TEXT_BODY_SOURCE`를 비워 Oracle의
 소설 본문 요청을 만들지 않는다. 수백만 화 전수 백필과 자동 링크 승격은 켜지 않았다.
+
+2026-09-24 Reader 운영 갱신: `redstm-edge` Worker `a1a5ac4` / version
+`99f030a7-e65d-465f-915b-06dc21d9734b`를 공식 `scripts.release deploy-cloudflare`로 배포했다.
+272개 브라우저 E2E·원격 D1 호환성·배포 후 TypeMoon D1/R2/version smoke가 통과했다. 로그인 Chrome에서
+`/text?lane=arcalive`의 40개 목록·실제 본문, TypeMoon 홈 복귀, 소설 pointer 미게시 시 아카라이브
+대체를 확인했다. 메인 Access reusable policy에는 Gmail과 Naver 두 주소가 저장돼 있다. Naver 계정의
+별도 로그인 시도는 하지 않았으므로 계정별 접근 실측은 Gmail에 한정된다. 과거 `redstm-text-edge`
+Worker는 version `92e401a7-f0ec-46af-97e3-d8d0027f2edb`의 Access-protected redirect로 배포했고,
+기존 브라우저 탭을 다시 열어 메인 `/text` 이동을 확인했다. 검증되지 않은 text pointer rollback,
+소설 본문 canary·장기 비용 측정 및 수백만 화 백필은 계속 비활성이다.
