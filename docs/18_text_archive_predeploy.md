@@ -254,3 +254,13 @@ control·schedule timer 상태도 정상으로 확인했다. 이번 후속 변�
 `SuccessExitStatus=75`에 따라 systemd 실패가 아니며, 다음 timer 주기에 다시 평가한다. 이는 수집/게시
 데이터 손실이 아니라 시작 gate가 메모리 여유 부족을 감지한 결과다. 최신 publisher 실행 결과는
 `Result=success`, `ExecMainStatus=75`; 마지막 성공 pointer는 위의 120개 아카라이브 색인이다.
+
+2026-09-24 운영 점검 릴리스 `efb8e9b`는 작품 상세 총 100회라는 영구 canary 제한을 제거하고,
+목록 페이지를 상세보다 먼저 체크포인트하도록 조정했다. Oracle 전용 릴리스
+`/opt/redstm-text/releases/20260924T073111Z`를 설치한 뒤 collector 단발 실행으로 마루마루
+목록 2페이지(총 8,032작품)를 저장했다. 로컬·Oracle collector SHA-256이 일치하고,
+운영 SQLite `quick_check=ok`이며 출처 작품 287개·회차 메타데이터 16,902개·게시된 아카라이브
+120개를 확인했다. 메모리 약 401MiB, 루트 여유 약 56GiB, 전용 타이머 셋은 active다.
+Worker/D1/TypeMoon 배포는 변경하지 않았고 `scripts.release status`의 Cloudflare pending migration은 0이다.
+상세 목록이 완료된 양쪽 작품 23쌍 중 회차 라벨 집합이 다른 2쌍이 있어 본문 출처 지정과
+자동 링크 승격은 여전히 비활성이다. 소설 본문 1,000회 canary·게시 1,000개 상한도 유지한다.
