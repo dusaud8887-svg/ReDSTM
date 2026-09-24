@@ -33,10 +33,10 @@
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg>
           <span>보관함</span>
         </button>
-        <a href="/text" aria-label="텍스트 장서: 소설과 아카라이브">
+        <button type="button" data-destination="text" aria-pressed="false" aria-label="텍스트 장서: 소설과 아카라이브">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM14 3v5h5M9 12h6M9 16h6"/></svg>
           <span>텍스트</span>
-        </a>
+        </button>
       </nav>
       <div class="rail-secondary">
         <button type="button" data-destination="settings" aria-pressed="false">
@@ -64,7 +64,7 @@
         <button type="button" data-destination="browse" aria-pressed="false">둘러보기</button>
         <button type="button" data-destination="search" aria-pressed="false">검색</button>
         <button type="button" data-destination="bookmarks" aria-pressed="false">보관함</button>
-        <a href="/text">텍스트</a>
+        <button type="button" data-destination="text" aria-pressed="false">텍스트</button>
       </nav>
       <a class="archive-facts" href="/ops">
         <span class="sr-only">운영 및 수집 상태:</span>
@@ -88,6 +88,12 @@
             <button type="button" class="active" data-scope="posts" aria-pressed="true">게시판 글</button>
             <button type="button" data-scope="collections" aria-pressed="false">작품</button>
           </nav>
+          <nav class="view-tabs text-lanes" id="text-lanes" aria-label="텍스트 장서 종류" hidden>
+            <button type="button" class="active" data-text-lane="novel" aria-pressed="true">소설</button>
+            <button type="button" data-text-lane="arcalive" aria-pressed="false">아카라이브</button>
+            <button type="button" data-text-lane="saved" aria-pressed="false">저장함</button>
+          </nav>
+          <button class="catalog-back text-work-back" id="text-work-back" type="button" hidden>← 작품 목록</button>
           <nav class="view-tabs saved-tabs" aria-label="보관함 보기" hidden>
             <button type="button" data-view="reading" aria-pressed="false">읽는 중</button>
             <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장한 글</button>
@@ -247,6 +253,30 @@
             <button id="end-next" type="button"><span>다음 글</span><strong id="end-next-title">다음 글이 없습니다</strong></button>
           </nav>
         </article>
+        <article class="reader text-reader" id="text-reader" hidden aria-label="텍스트 본문">
+          <div class="reading-progress" id="text-reading-progress" role="progressbar" aria-label="읽기 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+          <header class="reader-header">
+            <button class="catalog-back" id="text-reader-back" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg><span>목록</span></button>
+            <div class="reader-kicker" id="text-reader-kicker"></div>
+            <h1 id="text-reader-title" tabindex="-1"></h1>
+            <p class="reader-meta" id="text-reader-meta"></p>
+          </header>
+          <div class="reader-toolbar text-reader-toolbar" aria-label="텍스트 읽기 도구">
+            <button class="icon-button" id="text-reader-previous" type="button" aria-label="이전 회차" title="이전 회차">‹</button>
+            <button class="icon-button" id="text-reader-bookmark" type="button" aria-label="저장" aria-pressed="false">☆</button>
+            <span class="toolbar-spacer"></span>
+            <button class="text-command" id="text-reader-settings" type="button">읽기 설정</button>
+            <button class="icon-button" id="text-reader-next" type="button" aria-label="다음 회차" title="다음 회차">›</button>
+          </div>
+          <div class="text-reader-body" id="text-reader-body" tabindex="0" aria-label="텍스트 본문"></div>
+          <nav class="text-reader-bottom" aria-label="텍스트 읽기 도구">
+            <button id="text-reader-bottom-list" type="button">목록</button>
+            <button id="text-reader-bottom-previous" type="button">이전</button>
+            <button id="text-reader-bottom-bookmark" type="button">저장</button>
+            <button id="text-reader-bottom-next" type="button">다음</button>
+            <button id="text-reader-bottom-settings" type="button">Aa</button>
+          </nav>
+        </article>
       </section>
     </main>
 
@@ -255,7 +285,7 @@
       <button type="button" data-destination="browse" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>둘러보기</span></button>
       <button type="button" data-destination="search" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg><span>검색</span></button>
       <button type="button" data-destination="bookmarks" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg><span>보관함</span></button>
-      <a href="/text" aria-label="텍스트 장서: 소설과 아카라이브"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM14 3v5h5M9 12h6M9 16h6"/></svg><span>텍스트</span></a>
+      <button type="button" data-destination="text" aria-pressed="false" aria-label="텍스트 장서: 소설과 아카라이브"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM14 3v5h5M9 12h6M9 16h6"/></svg><span>텍스트</span></button>
     </nav>
 
     <nav class="reader-bottom" aria-label="읽기 도구">

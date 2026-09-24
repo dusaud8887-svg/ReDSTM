@@ -19,6 +19,7 @@ import {
   postReadingLabel,
   postReadingState,
 } from "/reading-model.js";
+import { createTextLibrary } from "/text-library.js";
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const collectionObjectKeyPattern = /^collections\/[a-z0-9_/-]+-[a-f0-9]{64}\.json\.zst$/;
@@ -43,7 +44,7 @@ const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
+    "scope-tabs", "text-lanes", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comment-count", "comment-list", "previous-post", "next-post", "bookmark-post", "source-link",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "aa-size-output", "reset-settings",
@@ -120,6 +121,10 @@ let immersiveOpener = null;
 let editingBookmarkSummary = null;
 const workerRequests = new Map();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const textLibrary = createTextLibrary({
+  readerPane: elements["reader-pane"],
+  onChange: () => updateShellMode(),
+});
 
 const searchWorker = new Worker("/search-worker.js", { type: "module" });
 searchWorker.addEventListener("message", handleWorkerMessage);
@@ -221,12 +226,12 @@ function historyByIdentityMap() {
 
 function updateShellMode() {
   const collectionOpen = !elements["collection-view"].hidden;
-  const reading = Boolean(currentSummary) || collectionOpen;
+  const reading = Boolean(currentSummary) || collectionOpen || (currentDestination === "text" && textLibrary.isReading());
   const home = currentDestination === "library" && !reading;
   document.body.classList.toggle("home-open", home);
   document.body.classList.toggle("discovery", !home && !reading);
   document.body.classList.toggle("reading", reading);
-  document.body.classList.toggle("reading-context", reading && ["browse", "search", "bookmarks"].includes(currentDestination));
+  document.body.classList.toggle("reading-context", reading && ["browse", "search", "bookmarks", "text"].includes(currentDestination));
   document.body.classList.toggle("browse-open", currentDestination === "browse");
   document.body.classList.toggle("search-open", currentDestination === "search");
   document.body.classList.toggle("saved-open", currentDestination === "bookmarks");
@@ -766,11 +771,13 @@ function updateDestinationLayout() {
   const browsing = currentDestination === "browse";
   const searching = currentDestination === "search";
   const saved = currentDestination === "bookmarks";
+  const text = currentDestination === "text";
   const collections = currentScope === "collections";
   updateShellMode();
   elements["scope-tabs"].hidden = !browsing && !searching;
+  elements["text-lanes"].hidden = !text;
   document.querySelector(".saved-tabs").hidden = !saved;
-  elements["catalog-search-row"].hidden = !searching && !saved;
+  elements["catalog-search-row"].hidden = !searching && !saved && !text;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
   elements["mode-chips"].hidden = saved || collections || searching;
   elements["kind-chips"].hidden = saved || !collections || searching;
@@ -782,12 +789,15 @@ function updateDestinationLayout() {
   document.querySelector(".collection-read-field").hidden = saved || !collections;
   document.querySelector(".board-field").hidden = saved;
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
+    : text ? "소설·아카라이브 제목 검색"
     : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
   elements["catalog-title"].textContent = saved ? "내 보관함"
+    : text ? "텍스트 장서"
     : collections ? (browsing ? "작품 둘러보기" : "작품 검색")
     : browsing ? "게시판 둘러보기" : "글 검색";
   elements["catalog-subtitle"].textContent = saved
     ? (currentView === "history" ? "최근 읽음" : currentView === "reading" ? "읽는 중" : "저장한 글")
+    : text ? "소설 · 아카라이브"
     : collections ? "연재·번역·AA 목차"
     : browsing ? "게시판별 보존 글" : "제목·작성자·분류로 찾기";
   applyBoardFilterOptions();
@@ -979,6 +989,8 @@ function showDestination(destination, navigate = true, view = destination === "b
     }
     return;
   }
+  const wasText = currentDestination === "text";
+  if (wasText && destination !== "text") textLibrary.leave();
   cancelReaderSelection();
   if (currentSummary) persistReadingPosition();
   else if (currentDestination !== "library") persistCatalogState();
@@ -997,12 +1009,13 @@ function showDestination(destination, navigate = true, view = destination === "b
   currentDestination = destination;
   currentView = view;
   const catalogLabel = currentScope === "collections" ? "작품" : "글";
-  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : "내 보관함"} — ReDSTM`;
+  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : destination === "text" ? "텍스트 장서" : "내 보관함"} — ReDSTM`;
   currentSummary = null;
   currentPayload = null;
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
   elements["catalog-toggle"].setAttribute("aria-expanded", "true");
   elements["post-settings-actions"].hidden = true;
+  document.body.classList.toggle("text-library-open", destination === "text");
   updateDestinationLayout();
   if (destination === "library") renderCover();
   else {
@@ -1012,7 +1025,10 @@ function showDestination(destination, navigate = true, view = destination === "b
     document.body.classList.remove("collection-detail-open");
   }
   closeMobileReader(destination === "search");
-  if (destination === "bookmarks") {
+  if (destination === "text") {
+    const params = navigate && !wasText ? new URLSearchParams() : new URLSearchParams(location.search);
+    void textLibrary.open(params);
+  } else if (destination === "bookmarks") {
     updateTabs();
     renderCurrentView();
   } else {
@@ -1022,7 +1038,7 @@ function showDestination(destination, navigate = true, view = destination === "b
     else requestSearch();
   }
   updateDestinationButtons();
-  const path = destination === "library" ? "/" : destination === "bookmarks" ? savedUrl() : searchUrl();
+  const path = destination === "library" ? "/" : destination === "text" ? textLibrary.currentRoute() : destination === "bookmarks" ? savedUrl() : searchUrl();
   if (navigate && `${location.pathname}${location.search}` !== path) {
     const state = destination === "search" ? { redstmSearch: currentSearchState() } :
       destination === "bookmarks" ? { redstmSaved: { ...currentSearchState(), view: currentView } } : null;
@@ -1086,11 +1102,16 @@ function routeCollectionId() {
 
 async function handleRoute() {
   const summary = routeSummary();
+  if (summary && currentDestination === "text") {
+    textLibrary.leave();
+    document.body.classList.remove("text-library-open");
+  }
   if (!summary) {
     const collectionId = routeCollectionId();
     const settingsRoute = location.pathname === "/settings";
     const destination = location.pathname === "/saved" ? "bookmarks" :
       location.pathname === "/search" ? "search" :
+      location.pathname === "/text" ? "text" :
       (location.pathname === "/browse" || location.pathname.startsWith("/collections")) ? "browse" : "library";
     if (destination !== "library") applyCatalogRoute(destination);
     if (collectionId !== null) {
@@ -1150,7 +1171,7 @@ function handleWorkerMessage({ data }) {
     void handleRoute();
     return;
   }
-  if (data.type === "results" && data.id === searchRequestId && currentView === "all" && currentScope === "posts") {
+  if (data.type === "results" && data.id === searchRequestId && currentDestination !== "text" && currentView === "all" && currentScope === "posts") {
     resultTotal = data.total;
     if (searchAppend) appendResults(data.posts);
     else {
@@ -1267,6 +1288,7 @@ function localResults(entries) {
 }
 
 function renderCurrentView() {
+  if (currentDestination === "text") return void textLibrary.searchChanged(elements["search-input"].value);
   if (currentView === "reading") return void renderReadingView();
   if (currentScope === "collections") return void renderCollectionCatalog();
   if (currentView === "all") return requestSearch();
@@ -2294,6 +2316,10 @@ elements["result-list"].addEventListener("click", (event) => {
   }
   const button = event.target.closest(".result-item");
   if (button) {
+    if (currentDestination === "text") {
+      textLibrary.activate(button);
+      return;
+    }
     if (button.dataset.collectionId) {
       persistCatalogState();
       void openCollectionDetail(Number(button.dataset.collectionId));
@@ -2325,7 +2351,7 @@ elements["catalog-back"].addEventListener("click", () => {
   else {
     const destination = currentDestination;
     const view = currentView;
-    const path = destination === "library" ? "/" : destination === "bookmarks" ? savedUrl() : searchUrl();
+    const path = destination === "library" ? "/" : destination === "text" ? textLibrary.currentRoute() : destination === "bookmarks" ? savedUrl() : searchUrl();
     history.replaceState(null, "", path);
     showDestination(destination, false, view);
   }
@@ -2345,18 +2371,31 @@ elements["search-input"].addEventListener("input", () => {
   elements["search-clear"].hidden = !elements["search-input"].value;
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
+    if (currentDestination === "text") {
+      textLibrary.searchChanged(elements["search-input"].value);
+      return;
+    }
     syncSearchRoute();
     renderCurrentView();
   }, 250);
 });
 elements["search-input"].addEventListener("search", () => {
   clearTimeout(searchTimer);
+  if (currentDestination === "text") {
+    textLibrary.searchChanged(elements["search-input"].value);
+    return;
+  }
   syncSearchRoute();
   renderCurrentView();
 });
 elements["search-clear"].addEventListener("click", () => {
   elements["search-input"].value = "";
   elements["search-clear"].hidden = true;
+  if (currentDestination === "text") {
+    textLibrary.searchChanged("");
+    elements["search-input"].focus();
+    return;
+  }
   syncSearchRoute();
   renderCurrentView();
   elements["search-input"].focus();

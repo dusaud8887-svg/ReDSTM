@@ -66,25 +66,27 @@ Cloudflare D1: 작은 control plane
     Oracle이 Access service token으로 outbound poll/heartbeat/event를 수행한다. 임의 shell,
     경로, 인자, restore/delete 명령은 원격에서 실행하지 않는다.
 
-### 0.1 분리된 텍스트 장서 경계
+### 0.1 텍스트 장서와 Reader 통합 경계
 
-2026-09-23 decision: 별도 텍스트 장서의 로컬 구현과 배포 전 검증은 허용한다. 이는 TypeMoon
-core product의 확대나 TypeMoon 자료의 변경을 뜻하지 않는다. TypeMoon canonical SQLite, D1,
-`redstm-archive`, `/archive/release.json`, `/ops`, `redstm.userState.v2`, 해당
-배포·복구 명령은 변경하지 않는다. `redstm-edge`에는 텍스트 메뉴와 인증 후 별도 뷰어로 이동하는
-`/text` 경로만 추가한다. 텍스트 본문·R2 binding·뷰어 코드는 기존 Worker에 넣지 않는다.
+2026-09-23의 초기 결정은 텍스트 Reader를 별도 Worker로 분리했다. 2026-09-24 재검토에서
+사용자 동선과 TypeMoon Reader의 검색·설정·반응형 UI 재사용을 우선해 **읽기 화면을 기존
+`redstm-edge` Reader shell 안으로 통합**했다. `/text`는 별도 사이트로 나가지 않고 같은 로그인,
+탐색 메뉴, 검색창, 설정, 모바일 레이아웃을 사용한다. 예전 `redstm-text-edge` 주소는 기존 Access
+보호를 유지한 채 `/text`로 보내는 호환용 redirect만 제공하며 독립 뷰어는 제공하지 않는다.
 
-텍스트 장서는 별도 `scripts.text_archive` 단발 작업, `/srv/redstm-text` SQLite·원본 객체,
-제한된 SFTP inbox/receipt, 별도 `redstm-text-archive` R2 binding과 `text-edge/` Worker,
-Cloudflare Access 앱·호스트·배포·rollback, 별도 사용자 상태 공간만 사용한다. PC에는 R2 자격을
-주지 않고 TypeMoon credential/config/group에도 접근시키지 않는다. 이 격리만으로 Cloudflare
-계정 요금이나 Oracle 자원이 분리되는 것은 아니다.
+통합은 장서 데이터나 상태를 합치지 않는다. TypeMoon canonical SQLite, D1, `redstm-archive`,
+`/archive/release.json`, `/ops`, `redstm.userState.v2`와 그 schema/명령은 그대로 둔다. Reader
+Worker에는 `redstm-text-archive` binding과 고정된 인증 GET/HEAD route만 추가한다. 텍스트 import,
+별도 `/srv/redstm-text` SQLite·원본, 제한 SFTP inbox/receipt, 게시자와 R2 pointer는 분리 유지한다.
+텍스트 읽기 위치/저장은 `redstm.textState.v1`이며 TypeMoon 읽기 상태와 공유하지 않는다.
 
-이 결정은 코드·fixture·local test·Wrangler dry-run 및 설정 템플릿까지다. SSH 계정·ACL·quota,
-timer enable, R2 bucket/key, Access policy/hostname, Worker deploy, canary, 반복 백필, 금액은
-이 결정으로 승인되지 않는다. 새 장서 비용은 별도 예산 승인 대상이며, 1,000-item canary cap과
-40GiB Oracle 양보선이 유지된다. canary/복구·비용 결과와 별도 승인 전에는 대량 수집·게시·자동
-삭제를 시작하지 않는다.
+공유 shell은 Worker 코드 배포 단위를 함께 쓰는 절충이다. 본문 bucket, pointer, publisher rollback은
+분리되지만 UI/API 코드 변경은 `redstm-edge` release·rollback 단위에 포함된다. PC에는 R2 자격을 주지
+않고 TypeMoon credential/config/group에도 접근시키지 않는다. 이 격리만으로 Cloudflare 계정 요금이나
+Oracle 자원이 분리되는 것은 아니다.
+
+운영 자료수집/게시와 비용·canary 승인 경계는 바뀌지 않는다. 소설 본문 수집은 출처 비교 canary가
+통과하기 전 비활성이고, 유료 회차 구매·차단 우회·대량 백필·자동 삭제는 시작하지 않는다.
 구현 상태·사전 배포 검사·운영 gate는 [`18_text_archive_predeploy.md`](18_text_archive_predeploy.md)가 관리한다.
 
 이 결정은 초기 Northflank + PostgreSQL + RabbitMQ + Pages 분산안과 Django persistent-volume

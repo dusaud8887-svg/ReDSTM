@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { controlApiResponse } from "./control-api.js";
 import { runControlMaintenance } from "./control-read.js";
+import { textArchiveResponse } from "./text-archive.js";
 
 const encoder = new TextEncoder();
 const keyPattern = /^[a-zA-Z0-9_./-]+$/;
@@ -172,6 +173,9 @@ export default {
         accessMode ? {} : { "WWW-Authenticate": 'Basic realm="ReDSTM", charset="UTF-8"' },
       );
     }
+    if (url.pathname.startsWith("/api/v1/text/")) {
+      return textArchiveResponse(request, env);
+    }
     if (url.pathname.startsWith("/api/v1/")) {
       return controlApiResponse(request, env, isAuthorized);
     }
@@ -183,20 +187,9 @@ export default {
       return Response.json({ status: "ok" });
     }
     if (url.pathname === "/text" || url.pathname === "/text/") {
-      let target;
-      try {
-        target = new URL(env.TEXT_VIEWER_URL);
-      } catch {
-        return response("텍스트 장서 연결 전", 503, { "Cache-Control": "no-store" });
-      }
-      if (target.protocol !== "https:" || target.username || target.password) {
-        return response("텍스트 장서 주소 오류", 503, { "Cache-Control": "no-store" });
-      }
-      return response(null, 302, {
-        Location: target.href,
-        "Cache-Control": "private, no-store",
-        "Referrer-Policy": "no-referrer",
-      });
+      const shellUrl = new URL(request.url);
+      shellUrl.pathname = "/";
+      return staticAssetResponse(new Request(shellUrl, request), env);
     }
     if (url.pathname === "/ops" || url.pathname === "/ops/") {
       return staticAssetResponse(request, env);

@@ -271,6 +271,110 @@ test("shows a row skeleton until the archive index is ready", async ({ page }) =
   await expect(page.locator("#result-list")).not.toHaveClass(/loading/);
 });
 
+test("keeps text reading, search, settings, and bookmarks inside the shared Reader", async ({ page }) => {
+  await useCollectionFixture(page);
+  const releaseHash = "d".repeat(64);
+  const catalogHash = "e".repeat(64);
+  const detailHash = "c".repeat(64);
+  const firstBodyHash = "a".repeat(64);
+  const secondBodyHash = "b".repeat(64);
+  const workId = "novel:fixture:1";
+  const chapters = [
+    { chapter_id: "1", label: "1화", kind: "main", source_site: "fixture", source_chapter_id: "1", sha256: firstBodyHash },
+    { chapter_id: "2", label: "2화", kind: "main", source_site: "fixture", source_chapter_id: "2", sha256: secondBodyHash },
+  ];
+  await page.route("**/api/v1/text/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let payload;
+    if (path.endsWith("/release/novel")) payload = { schema: 1, lane: "novel", sha256: releaseHash };
+    else if (path.endsWith(`/release-manifest/novel/${releaseHash}.json`)) payload = {
+      schema: 1, lane: "novel", generated_at: "2026-09-24", item_count: 1,
+      catalog_pages: [{ key: `published/indexes/novel/${catalogHash}.json`, sha256: catalogHash }],
+    };
+    else if (path.endsWith(`/index/novel/${catalogHash}.json`)) payload = {
+      schema: 1, lane: "novel", page: 0,
+      items: [{ work_id: workId, title: "통합 테스트 작품", author: "테스트 작가", chapter_count: 2, detail_key: `published/indexes/novel/${detailHash}.json` }],
+    };
+    else if (path.endsWith(`/index/novel/${detailHash}.json`)) payload = { schema: 1, lane: "novel", work: { work_id: workId }, chapters };
+    else if (path.endsWith(`/object/${firstBodyHash}`)) return route.fulfill({ contentType: "text/markdown", body: "첫 회차 본문\n안전한 텍스트" });
+    else if (path.endsWith(`/object/${secondBodyHash}`)) return route.fulfill({ contentType: "text/markdown", body: "둘째 회차 본문" });
+    else return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+
+  await page.goto("/");
+  await page.locator('button[data-destination="text"]:visible').first().click();
+  await expect(page).toHaveURL(/\/text(?:\?|$)/);
+  await expect(page.locator("#text-lanes")).toBeVisible();
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#text-work-back")).toBeVisible();
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#text-reader")).toBeVisible();
+  await expect(page.locator("#text-reader-body")).toContainText("안전한 텍스트");
+  await expect(page.locator("#text-reader-body p")).toHaveCount(0);
+  const textSettings = page.locator("#text-reader-settings");
+  await (await textSettings.isVisible() ? textSettings : page.locator("#text-reader-bottom-settings")).click();
+  await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
+  await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  const textBookmark = page.locator("#text-reader-bookmark");
+  await (await textBookmark.isVisible() ? textBookmark : page.locator("#text-reader-bottom-bookmark")).click();
+  const textBack = page.locator("#text-reader-back");
+  if (await textBack.isVisible()) await textBack.click();
+  await page.locator('[data-text-lane="saved"]').click();
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#text-reader-body")).toContainText("첫 회차 본문");
+  const textListButton = page.locator("#text-reader-bottom-list");
+  if (await textListButton.isVisible()) await textListButton.click();
+  const browseButton = page.locator('button[data-destination="browse"]:visible').first();
+  if (await browseButton.count()) await browseButton.click();
+  else await page.locator(".bottom-nav button[data-destination='browse']").click();
+  await expect(page).toHaveURL(/\/browse(?:\?|$)/);
+  await expect(page.locator("#text-reader")).toBeHidden();
+});
+
+test("opens the published text lane and keeps a late response out of TypeMoon browsing", async ({ page }) => {
+  await useCollectionFixture(page);
+  const releaseHash = "d".repeat(64);
+  const catalogHash = "e".repeat(64);
+  let releaseNovel;
+  let novelRequested;
+  const novelGate = new Promise((resolve) => { releaseNovel = resolve; });
+  const requestStarted = new Promise((resolve) => { novelRequested = resolve; });
+  await page.route("**/api/v1/text/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/release/novel")) {
+      novelRequested();
+      await novelGate;
+      return route.fulfill({ status: 404 });
+    }
+    let payload;
+    if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
+    else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${catalogHash}.json`, sha256: catalogHash }],
+    };
+    else if (path.endsWith(`/index/arcalive/${catalogHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", items: [{ identity: "arcalive:novel:108:text", title: "보관된 글", board: "novel", post_id: 108, sha256: "a".repeat(64) }],
+    };
+    else return route.fulfill({ status: 404 });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+
+  await page.goto("/");
+  await page.locator('button[data-destination="text"]:visible').first().click();
+  await requestStarted;
+  await page.locator('button[data-destination="browse"]:visible').first().click();
+  releaseNovel();
+  await expect(page).toHaveURL(/\/browse$/);
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("비소속");
+  await expect(page.locator("#text-lanes")).toBeHidden();
+
+  await page.locator('button[data-destination="text"]:visible').first().click();
+  await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("보관된 글");
+});
+
 test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {
   await usePaginationFixture(page, 150);
   await page.goto("/browse");
@@ -317,9 +421,11 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   for (const destination of ["library", "browse", "search", "bookmarks"]) {
     await expect(page.locator(`${navigation} [data-destination="${destination}"]`)).toBeVisible();
   }
-  const textLibrary = page.locator(`${navigation} a[href="/text"]`);
+  const textLibrary = page.locator(`${navigation} [data-destination="text"]`);
   await expect(textLibrary).toBeVisible();
   await expect(textLibrary).toHaveAccessibleName(/텍스트/);
+  await textLibrary.click();
+  await expect(page).toHaveURL(/\/text(?:\?lane=(?:novel|arcalive))?$/);
   const settings = page.locator(width >= 1200 ? ".rail-secondary [data-destination='settings']" : ".app-settings");
   await expect(settings).toBeVisible();
   await expect(page.locator(width >= 1200 ? ".wordmark" : ".app-home")).toBeVisible();

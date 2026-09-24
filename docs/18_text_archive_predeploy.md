@@ -1,17 +1,21 @@
 # Newtomi 텍스트 장서 — ReDSTM 사전 배포 구현·운영 명세
 
 - 기준일: 2026-09-24
-- 상태: **Newtomi PC·전용 R2·Text Worker·Access·Oracle SFTP/수집/게시 연결 완료; 소설 본문 canary 전**
+- 상태: **Newtomi PC·전용 R2·Oracle SFTP/수집/게시 연결 완료; Reader 통합 코드·회귀검증 완료, ReDSTM 배포 전; 소설 본문 canary 전**
 - Newtomi 교환 정본: `E:\newtomi\docs\REDSTM_TEXT_ARCHIVE_INTEGRATION_SPEC.md`
 - Newtomi PC 소설 정본: `E:\newtomi\docs\NOVEL_ARCHIVE_PLAN.md`
 - TypeMoon 운영·복구 정본: [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md), [`12_release_and_recovery.md`](12_release_and_recovery.md)
 
 ## 1. 경계와 결정
 
-TypeMoon은 ReDSTM core product로 계속 단독 유지한다. 텍스트 장서는 별도 인접 제품이다. 이 구현은
-TypeMoon canonical SQLite, D1, `redstm-archive`, `/archive/release.json`, `redstm-edge`, `/ops`,
-`redstm.userState.v2`, TypeMoon 배포/rollback 명령을 변경하지 않는다. 이 문서가 `docs/00`의
-분리 결정을 구체화하며, 새 버킷·Access 앱·호스트·서비스 계정·timer를 만들거나 켜는 승인서는 아니다.
+TypeMoon은 ReDSTM core product로 계속 유지한다. 2026-09-24에 텍스트 읽기 화면을 기존 Reader
+shell로 통합해 같은 Access 로그인, 검색창, 설정과 반응형 탐색을 사용하도록 결정했다. 통합 Worker는
+두 private R2 bucket을 읽지만 TypeMoon canonical SQLite, D1 schema/data, `redstm-archive`,
+`/archive/release.json`, `/ops`, `redstm.userState.v2` 및 text state를 서로 바꾸지 않는다. 별도
+텍스트 SQLite, SFTP inbox/receipt, 수집기와 publisher는 그대로 분리한다. `/text`가 메인 앱 진입점이고,
+기존 `redstm-text-edge` 호스트는 같은 화면으로 보내는 Access-protected compatibility redirect다.
+이 변경은 Reader/API Worker 배포 단위를 공유한다는 점에서 초기 분리 결정(문서 `00`)을 좁게
+대체하며, 자료 수집·게시·비용 승인을 확대하지 않는다.
 
 ```text
 Newtomi PC ──manifest-검증 본문──▶ 제한 SFTP inbox ──▶ ReDSTM text importer ─┐
@@ -20,14 +24,16 @@ Oracle JSON collector ──저속 요청·체크포인트───────�
           │
           └─▶ 별도 publisher ──readback 후 pointer-last──▶ redstm-text-archive
                                                           │
-                                                          └─▶ text-edge + Access-only viewer
+                                  redstm-edge Reader shell ├─ fixed GET/HEAD text API
+                                  TypeMoon R2 + D1 ────────┘   redstm.textState.v1 분리
 
-TypeMoon canonical / D1 / Worker / publisher / reader / status: 그대로
+TypeMoon canonical / D1 schema / publisher / user state: 그대로
 ```
 
 Oracle에는 전용 계정·SFTP chroot·2GiB quota·단발 systemd 서비스/타이머를 설치했다.
 전용 R2 자격은 텍스트 버킷 한 곳의 Object Read & Write만 허용하며 PC와 TypeMoon에는 제공하지 않는다.
-Cloudflare의 Text Worker/Access에서 로그인 후 실제 아카라이브 본문 열람까지 확인했다.
+별도 Text Worker/Access 호스트에서 로그인 후 실제 아카라이브 본문 열람을 확인했다. Reader 통합
+배포 후에는 같은 기능이 기존 Reader shell에서 동작하고, 과거 호스트는 호환 redirect만 제공한다.
 
 ## 2. 코드 소유권과 데이터
 
@@ -37,7 +43,8 @@ Cloudflare의 Text Worker/Access에서 로그인 후 실제 아카라이브 본�
 | `scripts/text_archive/collector.py` | 블랙툰/마루마루의 페이지·작품·무료 회차 JSON 한 요청 실행 | 표준 `requests`, `trust_env=False`, redirect 거부, 5초 그룹 간격, 영속 checkpoint/cooldown |
 | `scripts/text_archive/publisher.py` | 별도 R2용 immutable object/index/release와 pointer-last 게시 | `r2text:` 및 `/etc/redstm-text/rclone.conf`만 명시, readback SHA 필수 |
 | `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | `MemAvailable≥350MiB`, `/` 여유 `≥40GiB`, cgroup `MemoryMax=150M`, `MemorySwapMax=0` |
-| `text-edge/` | Access 사용자만 읽는 비공개 text UI/Worker | 별도 R2 binding, D1 없음, GET/HEAD만, URL proxy·write route 없음 |
+| `edge/public/text-library.js`, `edge/src/text-archive.js` | 기존 Reader 안의 텍스트 탐색/읽기와 고정 R2 read route | 같은 Access·검색/설정 shell, `redstm.textState.v1`, GET/HEAD만 |
+| `text-edge/` | 기존 주소 호환용 redirect | R2 binding/UI 없음, 사람 Access 확인 후 `/text`로 이동 |
 | `deploy/text-archive/` | 격리된 sshd/systemd 설치·갱신 스크립트와 템플릿 | Oracle에 설치·enable 완료 |
 
 별도 SQLite는 `/srv/redstm-text/text-archive.sqlite`, 원본/객체는 `/srv/redstm-text/` 아래 둔다.
@@ -123,20 +130,23 @@ DB 연결 시 숫자 source ID로 보완한다.
 아카라이브 2개 배치 40건은 실제 신규 bucket에 게시·readback·revision 2 receipt까지 확인했다. PC 전송은 SFTP의 SSH 압축(`-C`)을 사용하므로 원본 바이트/SHA 검증 계약은 바뀌지 않는다. R2 Class A/B, 1,000화 압축 크기,
 작품 단위 묶음 여부, 텍스트 bucket 비용/중단선은 아직 측정되지 않아 대량 게시를 지원한다고 주장하지 않는다.
 
-## 5. 별도 Text Worker
+## 5. 기존 Reader 안의 텍스트 장서
 
-- `text-edge/`는 `jose`로 `Cf-Access-Jwt-Assertion`의 signature/issuer/audience를 확인하고 `sub`와
-  `email`이 있는 사람 identity만 통과시킨다. Access service token처럼 email이 없는 identity는 deny.
-- `/api/v1/release/{novel|arcalive}`, versioned release/index, SHA-addressed Markdown object만
-  허용한다. key prefix와 hex length는 코드에서 고정하며 traversal, arbitrary proxy, PUT/DELETE는 없다.
-- Worker Static Assets도 먼저 인증한다 (`run_worker_first`). response는 private; mutable pointer는
-  `no-store`, immutable object/index/release는 `private, immutable`; CSP `img-src 'none'`, no external
-  font/media. 본문은 browser `textContent`로만 렌더하고 raw Markdown HTML을 실행하지 않는다.
-- `workers_dev`는 전용 `redstm-text-edge.redstm-archive-private.workers.dev` 주소용으로 켰고 preview URL은 꺼져 있다. R2 binding은 전용 버킷에만 연결했다. Access app은 `redstm-text-edge` Worker만 보호하며 `dusaud8887@gmail.com`, `dusaud8887@naver.com`만 허용한다. Worker의 audience는 발급된 앱 태그와 일치한다.
-  Wrangler dry-run은 번들·config만 검증한다. TypeMoon Worker version ID를 조회/변경하지 않았다.
-- 기존 Reader의 데스크톱·태블릿·모바일 메뉴는 인증된 `/text`로 이동한다. 기존 Worker는
-  `TEXT_VIEWER_URL`이 유효한 HTTPS 주소일 때만 별도 Text Worker 주소로 302를 보낸다.
-  값이 비어 있으면 503으로 연결 전 상태를 알린다. 운영 연결은 별도 Text Worker 주소로 설정했다.
+- `/text`는 기존 `redstm-edge`의 인증·정적 자산을 사용한다. 메뉴와 내부 뒤로가기, 기존 검색창,
+  공통 설정·테마·본문 너비/글꼴 설정을 공유하고 화면 전환 없이 TypeMoon 탐색으로 돌아온다.
+  별도 텍스트 진행률·북마크는 `redstm.textState.v1`에 저장되어 TypeMoon 상태 key와 섞이지 않는다.
+- `edge/src/index.js`는 인증 통과 후 `/api/v1/text/`를 전용 고정 route로 넘긴다. release pointer,
+  versioned manifest/index, SHA-256 object만 읽으며 R2 binding 호출은 `head/get`뿐이다. key lane와
+  hash 형식을 검증하고 arbitrary proxy·write route는 없다. 본문은 `textContent`로 렌더하고 raw
+  Markdown HTML이나 이미지를 실행/요청하지 않는다.
+- 텍스트 route response는 private; mutable pointer는 `no-store`, hash-addressed object/index/release는
+  private immutable이며 CSP에서 이미지 로드를 막는다. 기존 TypeMoon CSP·R2 응답 경로는 그대로다.
+- Worker binding은 TypeMoon과 텍스트 R2를 같은 `redstm-edge` 코드 배포 단위에 둔다. 이로써 UI,
+  로그인, 검색, 설정을 재사용하지만 Reader/API 변경은 TypeMoon Worker release·rollback 단위도
+  공유한다. 반면 text data pointer와 text publisher rollback은 여전히 별도 버킷 안에서 독립이다.
+- 예전 `redstm-text-edge` hostname과 Access 정책은 호환 기간에 유지한다. Worker는 본문/API나 정적
+  뷰어를 더 제공하지 않고 인증된 GET/HEAD를 메인 `/text`로 redirect한다. 기존 주소 진입은 두 Access
+  hostname 인증을 연속 요구할 수 있으므로 일상 동선에서는 메인 Reader의 `텍스트` 메뉴를 쓴다.
 
 ## 6. 사전 배포 검사와 운영 gate
 
@@ -144,7 +154,9 @@ DB 연결 시 숫자 source ID로 보완한다.
 
 1. `D:\ReDSTM`: `uv run ruff check scripts/text_archive tests/test_text_archive_importer.py tests/test_text_archive_pipeline.py`
    및 `uv run pytest tests/test_text_archive_importer.py tests/test_text_archive_pipeline.py -q`.
-2. `D:\ReDSTM\text-edge`: `npm ci`, `npm run check`, `npm run deploy:dry-run`. Dry-run은 배포가 아니다.
+2. `D:\ReDSTM\edge`: `npm run check`, `npm test`, `npm run test:e2e`, `npm run test:d1`,
+   `npx wrangler deploy --dry-run --strict`. `D:\ReDSTM\text-edge`는 compatibility redirect만 확인하고
+   `npm run check`, `npm run deploy:dry-run`을 실행한다. Dry-run은 배포가 아니다.
 3. `E:\newtomi`: `uv run ruff check src tests tools`, `uv run mypy --strict --platform win32 src`,
    `uv run python tools/architecture_guard_v55.py`, `uv run pytest -q`, fixture SHA/파일 동일성 검사.
 4. `docs/00`과 이 문서를 확인하고, `edge` 변경이 메뉴·`/text` 이동 경로·설정·해당 테스트에만
