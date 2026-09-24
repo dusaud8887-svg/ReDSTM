@@ -50,12 +50,12 @@ Oracle에는 전용 계정·SFTP chroot·2GiB quota·단발 systemd 서비스/�
 별도 SQLite는 `/srv/redstm-text/text-archive.sqlite`, 원본/객체는 `/srv/redstm-text/` 아래 둔다.
 본문 identity는 Newtomi 소설의 `novel_chapter:{site}:{work_id}:{chapter_id}` 및 아카라이브의
 `arcalive:{board}:{post_id}:{content_lane}`이다. Oracle 직접 수집 identity도 출처별 site ID를
-보존한다. PC의 Toki 계열 `source_work_id`와 Oracle의 slug, NFKC/대소문자/공백 정규화 제목,
+보존한다. 서로 다른 사이트의 ID·slug가 달라도 NFKC/대소문자/공백 정규화 제목과
 **비어 있지 않은 동일 작가**가 맞으면
 `text_novel_link_candidates`에 후보만 만든다. 자동 승격은 없다. `python -m scripts.text_archive.links`
 는 검토 후보를 출력하고, 20작품 양쪽 목록·본문 hash canary를 사람이 확인한 뒤에만
 `--accept LEFT_SITE LEFT_WORK_ID RIGHT_SITE RIGHT_WORK_ID --canary-verified`로 승인한다. 승인 시
-slug·정규화 제목·작가를 다시 검사하고, 이미 다른 canonical group에 속한 작품은 재배치하지 않는다.
+정규화 제목·작가를 다시 검사하고, 이미 다른 canonical group에 속한 작품은 재배치하지 않는다.
 확정 work group은 모든 수입/Oracle 수집 chapter의 canonical work ID와 publisher catalog에 반영된다.
 source/chapter ID와 기존 객체는 유지하며 회차 간 canonical merge는 하지 않는다. 기존 receipt는
 불변으로 두고 다음 availability snapshot이 최신 work group ID를 전달한다. 기존 PC source row의 빈 slug는

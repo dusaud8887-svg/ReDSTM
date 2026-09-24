@@ -965,7 +965,7 @@ def test_live_json_shape_keeps_unknown_access_and_rejects_paid_placeholder() -> 
         collector._plain_text('[{"kind":"paid","text":"locked"}]')
 
 
-def test_work_linking_needs_same_slug_title_and_nonempty_author(tmp_path: Path) -> None:
+def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     try:
         works = [
@@ -999,7 +999,8 @@ def test_work_linking_needs_same_slug_title_and_nonempty_author(tmp_path: Path) 
             "FROM text_novel_link_candidates"
         ).fetchall()
         assert [tuple(row) for row in rows] == [
-            ("blacktoon", "24753", "marumaru", "31004", "slug_title_author", "candidate")
+            ("blacktoon", "24753", "marumaru", "31004", "title_author", "candidate"),
+            ("blacktoon", "24753", "marumaru", "31006", "title_author", "candidate"),
         ]
         assert db.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 0
     finally:

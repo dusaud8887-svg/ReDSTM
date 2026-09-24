@@ -149,7 +149,7 @@ def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path:
                 """INSERT INTO text_novel_sources(
                        site,source_work_id,source_url,slug,title,author,title_key,author_key,last_seen_at)
                    VALUES(?,?,?,?,?,?,?,?,?)""",
-                (site, work_id, source_url, "63670", "에피소드", "작가", "에피소드", "작가", now),
+                (site, work_id, source_url, work_id, "에피소드", "작가", "에피소드", "작가", now),
             )
             db.execute(
                 """INSERT INTO text_archive_items(
@@ -183,6 +183,7 @@ def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path:
 
     candidates = importer.list_novel_link_candidates(db_path)
     assert len(candidates) == 1
+    assert candidates[0]["match_basis"] == "title_author"
     candidate = candidates[0]
     assert (candidate["left_site"], candidate["left_work_id"]) == ("blacktoon", "24753")
     assert (candidate["right_site"], candidate["right_work_id"]) == ("toki", "63670")
@@ -229,6 +230,24 @@ def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path:
         )
     finally:
         db.close()
+
+
+def test_existing_cross_site_works_are_listed_without_shared_slug(tmp_path: Path) -> None:
+    db_path = tmp_path / "text.sqlite"
+    db = importer._connect(db_path)
+    with db:
+        for site, work_id in (("blacktoon", "24753"), ("toki", "63670")):
+            db.execute(
+                """INSERT INTO text_novel_sources(
+                   site,source_work_id,slug,title,author,title_key,author_key,last_seen_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (site, work_id, work_id, "에피소드", "작가", "에피소드", "작가", "now"),
+            )
+    db.close()
+    candidates = importer.list_novel_link_candidates(db_path)
+    assert [(row["left_site"], row["right_site"], row["match_basis"]) for row in candidates] == [
+        ("blacktoon", "toki", "title_author")
+    ]
 
 
 def test_novel_link_rejection_does_not_create_group(tmp_path: Path) -> None:

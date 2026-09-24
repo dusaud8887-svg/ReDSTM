@@ -215,7 +215,7 @@ def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -
 
 def _refresh_link_candidates(db: sqlite3.Connection, site: str, work_id: str) -> None:
     current = db.execute(
-        "SELECT slug,title_key,author_key FROM text_novel_sources "
+        "SELECT title_key,author_key FROM text_novel_sources "
         "WHERE site=? AND source_work_id=?",
         (site, work_id),
     ).fetchone()
@@ -227,12 +227,12 @@ def _refresh_link_candidates(db: sqlite3.Connection, site: str, work_id: str) ->
                  ((left_site=? AND left_work_id=?) OR (right_site=? AND right_work_id=?))""",
         (site, work_id, site, work_id),
     )
-    if not current["slug"] or not current["title_key"] or not current["author_key"]:
+    if not current["title_key"] or not current["author_key"]:
         return
     matches = db.execute(
         """SELECT site,source_work_id FROM text_novel_sources
-           WHERE site<>? AND slug=? AND title_key=? AND author_key=? AND author_key<>''""",
-        (site, current["slug"], current["title_key"], current["author_key"]),
+           WHERE site<>? AND title_key=? AND author_key=? AND author_key<>''""",
+        (site, current["title_key"], current["author_key"]),
     ).fetchall()
     for match in matches:
         left = sorted(((site, work_id), (str(match["site"]), str(match["source_work_id"]))))
@@ -240,7 +240,7 @@ def _refresh_link_candidates(db: sqlite3.Connection, site: str, work_id: str) ->
             """INSERT OR IGNORE INTO text_novel_link_candidates(
                left_site,left_work_id,right_site,right_work_id,match_basis,status,updated_at)
                VALUES(?,?,?,?,?,'candidate',?)""",
-            (left[0][0], left[0][1], left[1][0], left[1][1], "slug_title_author", _now()),
+            (left[0][0], left[0][1], left[1][0], left[1][1], "title_author", _now()),
         )
 
 
@@ -349,6 +349,18 @@ def _canonical_work_id(db: sqlite3.Connection | None, site: str, work_id: str) -
 def list_novel_link_candidates(db_path: Path) -> list[dict[str, str]]:
     db = _connect(db_path)
     try:
+        with db:
+            db.execute(
+                """INSERT OR IGNORE INTO text_novel_link_candidates(
+                   left_site,left_work_id,right_site,right_work_id,match_basis,status,updated_at)
+                   SELECT l.site,l.source_work_id,r.site,r.source_work_id,
+                          'title_author','candidate',?
+                   FROM text_novel_sources l JOIN text_novel_sources r
+                     ON l.site<r.site AND l.title_key=r.title_key
+                    AND l.author_key=r.author_key
+                   WHERE l.title_key<>'' AND l.author_key<>''""",
+                (_now(),),
+            )
         return [
             dict(row)
             for row in db.execute(
@@ -395,7 +407,7 @@ def resolve_novel_link_candidate(
             group_id = ""
             if accept:
                 sources = db.execute(
-                    """SELECT site,source_work_id,slug,title_key,author_key FROM text_novel_sources
+                    """SELECT site,source_work_id,title_key,author_key FROM text_novel_sources
                        WHERE (site=? AND source_work_id=?) OR (site=? AND source_work_id=?)""",
                     (left_site, left_work_id, right_site, right_work_id),
                 ).fetchall()
@@ -408,15 +420,13 @@ def resolve_novel_link_candidate(
                 )
                 right = next(row for row in sources if row is not left)
                 if (
-                    not left["slug"]
-                    or left["slug"] != right["slug"]
-                    or not left["title_key"]
+                    not left["title_key"]
                     or left["title_key"] != right["title_key"]
                     or not left["author_key"]
                     or left["author_key"] != right["author_key"]
                 ):
                     raise ValueError(
-                        "novel link candidate no longer has matching slug, title, and author"
+                        "novel link candidate no longer has matching title and author"
                     )
                 mapped = db.execute(
                     """SELECT site,source_work_id,canonical_work_id
