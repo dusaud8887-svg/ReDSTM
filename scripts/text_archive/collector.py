@@ -144,7 +144,9 @@ def parse_catalog_page(value: Any) -> tuple[list[dict[str, Any]], int, int]:
 
 def parse_work_detail(value: Any) -> tuple[str, str, str, list[dict[str, Any]]]:
     data = _payload(value)
+    episodes: Any = None
     if isinstance(data, dict) and isinstance(data.get("work"), dict):
+        episodes = data.get("episodes", data.get("chapters"))
         data = data["work"]
     if not isinstance(data, dict):
         raise CollectorError("work_shape_unknown")
@@ -153,7 +155,8 @@ def parse_work_detail(value: Any) -> tuple[str, str, str, list[dict[str, Any]]]:
         raise CollectorError("work_id_invalid")
     title = str(data.get("title") or "")[:500]
     author = str(data.get("authorName") or data.get("author") or "")[:300]
-    episodes = data.get("episodes", data.get("chapters"))
+    if episodes is None:
+        episodes = data.get("episodes", data.get("chapters"))
     if not isinstance(episodes, list):
         raise CollectorError("work_episodes_unknown")
     normalized: list[dict[str, Any]] = []
@@ -195,14 +198,22 @@ def _plain_text(body_json: Any) -> str:
     elif isinstance(body_json, list):
         parts: list[str] = []
         for block in body_json:
-            if not isinstance(block, dict) or block.get("type") not in {"text", "paragraph"}:
+            if not isinstance(block, dict) or block.get("type", block.get("kind")) not in {
+                "text",
+                "paragraph",
+                "narration",
+            }:
                 raise CollectorError("body_block_requires_review")
             text_value = block.get("text", block.get("content"))
             if not isinstance(text_value, str):
                 raise CollectorError("body_block_requires_review")
             parts.append(text_value)
         text = "\n\n".join(parts)
-    elif isinstance(body_json, dict) and body_json.get("type") in {"text", "paragraph"}:
+    elif isinstance(body_json, dict) and body_json.get("type", body_json.get("kind")) in {
+        "text",
+        "paragraph",
+        "narration",
+    }:
         text_value = body_json.get("text", body_json.get("content"))
         if not isinstance(text_value, str):
             raise CollectorError("body_block_requires_review")

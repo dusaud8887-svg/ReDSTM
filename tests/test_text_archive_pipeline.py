@@ -418,15 +418,15 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
         FakeResponse({"data": {"content": [], "total": 0, "size": 96}}),
         FakeResponse(
             {
-                "data": {
+                "work": {
                     "id": 24753,
                     "title": "T",
                     "author": "A",
-                    "episodes": [
-                        {"id": 914174, "title": "1화", "isFree": True},
-                        {"id": 914175, "title": "2화", "price": 5},
-                    ],
-                }
+                },
+                "episodes": [
+                    {"id": 914174, "title": "1화", "isFree": True},
+                    {"id": 914175, "title": "2화", "price": 5},
+                ],
             }
         ),
         FakeResponse(
@@ -630,6 +630,19 @@ def test_conflicting_episode_access_metadata_never_queues_as_free() -> None:
         }
     )
     assert [episode["access"] for episode in episodes] == ["unknown", "unknown", "free"]
+
+
+def test_live_json_shape_keeps_unknown_access_and_rejects_paid_placeholder() -> None:
+    work_id, _title, _author, episodes = collector.parse_work_detail(
+        {"work": {"id": 24743, "title": "Novel"}, "episodes": [{"id": 31027, "number": 1}]}
+    )
+    assert work_id == "24743"
+    assert episodes == [{"id": "31027", "label": "1", "kind": "main", "access": "unknown"}]
+    assert (
+        collector._plain_text('[{"kind":"narration","text":"sample chapter"}]') == "sample chapter"
+    )
+    with pytest.raises(collector.CollectorError, match="requires_review"):
+        collector._plain_text('[{"kind":"paid","text":"locked"}]')
 
 
 def test_work_linking_needs_same_slug_title_and_nonempty_author(tmp_path: Path) -> None:
