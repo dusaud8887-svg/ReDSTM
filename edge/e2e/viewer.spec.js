@@ -373,6 +373,9 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   await page.locator('button[data-destination="text"]:visible').first().click();
   await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("보관된 글");
+  await page.locator('[data-text-lane="novel"]').click();
+  await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("보관된 글");
 });
 
 test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {

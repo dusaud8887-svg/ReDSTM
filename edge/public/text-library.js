@@ -26,7 +26,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   let work = null;
   let chapters = [];
   let current = null;
-  let firstLoad = true;
   let saveTimer;
   let requestId = 0;
 
@@ -132,7 +131,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
 
   async function loadCatalog(selectedLane) {
     if (catalogs.has(selectedLane)) return catalogs.get(selectedLane);
-    const pointer = await json(`/api/v1/text/release/${selectedLane}`);
+    const pointer = await json(`/api/v1/text/release/${selectedLane}`).catch((error) => {
+      if (selectedLane === "novel" && error.message === "request_404") throw new Error("novel_unpublished");
+      throw error;
+    });
     if (pointer.schema !== 1 || pointer.lane !== selectedLane || !HASH.test(pointer.sha256)) {
       throw new Error("release_pointer_invalid");
     }
@@ -179,7 +181,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         : await loadCatalog(lane);
       if (activeRequest !== requestId) return;
       catalog = loaded;
-      firstLoad = false;
       renderCatalog();
       const workId = params.get("work");
       if (workId && lane === "novel") {
@@ -194,8 +195,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       }
     } catch (error) {
       if (activeRequest !== requestId) return;
-      if (firstLoad && lane === "novel" && error.message === "request_404") {
-        firstLoad = false;
+      if (lane === "novel" && error.message === "novel_unpublished") {
         const fallback = new URLSearchParams(params);
         fallback.set("lane", "arcalive");
         await open(fallback);
