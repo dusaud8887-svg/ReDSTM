@@ -248,3 +248,9 @@ Cloudflare read-only 운영 상태는 `redstm-edge` version
 control·schedule timer 상태도 정상으로 확인했다. 이번 후속 변경은 Oracle 단발 텍스트 작업의
 메모리 가용량 계산 및 문서만 포함하며, Worker 코드는 바꾸지 않아 재배포하지 않았다. 기존
 `systemd-analyze`의 snapd `RestartMode` 경고는 text service 판정과 무관한 전역 경고로 남았다.
+
+2026-09-24 후속 timer 확인: `redstm-text-publish.timer`는 active다. canary 뒤 다음 주기 실행은
+`memory_below_floor`로 안전하게 defer되어 서비스가 종료됐다. 이 oneshot의 종료 코드는 설정된
+`SuccessExitStatus=75`에 따라 systemd 실패가 아니며, 다음 timer 주기에 다시 평가한다. 이는 수집/게시
+데이터 손실이 아니라 시작 gate가 메모리 여유 부족을 감지한 결과다. 최신 publisher 실행 결과는
+`Result=success`, `ExecMainStatus=75`; 마지막 성공 pointer는 위의 120개 아카라이브 색인이다.
