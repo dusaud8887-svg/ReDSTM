@@ -170,6 +170,7 @@ test("reader assets render archive data as text and contain no remote media", as
     readFile(new URL("../public/style.css", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(html, /<img\b/i);
+  assert.match(html, /href="https:\/\/redstm-edge\.redstm-archive-private\.workers\.dev\/"/);
   assert.match(app, /\.textContent\s*=/);
   assert.doesNotMatch(app, /\.innerHTML\s*=|\.outerHTML\s*=/);
   assert.doesNotMatch(style, /https?:\/\//i);

@@ -14,6 +14,9 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .masthead, main, footer { width: min(1100px, calc(100% - 48px)); margin-inline: auto; }
 .masthead { height: 76px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .wordmark { color: var(--ink); text-decoration: none; font: 700 13px/1 var(--sans); letter-spacing: .18em; }
+.header-links { display: flex; align-items: center; gap: 22px; }
+.header-links a { color: var(--accent); font-size: 12px; text-decoration: none; }
+.header-links a:hover { text-decoration: underline; }
 .privacy, .eyebrow, footer { color: var(--muted); font-size: 11px; letter-spacing: .12em; }
 .intro { padding: 76px 0 58px; border-bottom: 1px solid var(--line); }
 .eyebrow { margin: 0 0 16px; font-weight: 700; }
@@ -50,6 +53,8 @@ footer { display: flex; justify-content: space-between; padding: 18px 0 28px; bo
 }
 @media (max-width: 700px) {
   .masthead, main, footer { width: min(100% - 32px, 1100px); }
+  .header-links { gap: 10px; }
+  .privacy { display: none; }
   .intro { padding: 54px 0 42px; }
   .toolbar { align-items: start; flex-direction: column; }
   .search, .search input { width: 100%; }
