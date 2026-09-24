@@ -68,8 +68,12 @@ for kind in collector import publish; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.timer" \
     "/etc/systemd/system/redstm-text-$kind.timer"
 done
-systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish}.{service,timer}
+install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-import.path" \
+  /etc/systemd/system/redstm-text-import.path
+systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish}.{service,timer} \
+  /etc/systemd/system/redstm-text-import.path
 systemctl daemon-reload
+systemctl enable --now redstm-text-import.path
 
 install -o root -g root -m 0644 "$stage/deploy/text-archive/sshd-match.conf" \
   /etc/ssh/redstm-inbox-match.conf

@@ -16,8 +16,12 @@ for kind in collector import publish; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.service" \
     "/etc/systemd/system/redstm-text-$kind.service"
 done
-systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish}.service
+install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-import.path" \
+  /etc/systemd/system/redstm-text-import.path
+systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish}.service \
+  /etc/systemd/system/redstm-text-import.path
 systemctl daemon-reload
+systemctl enable --now redstm-text-import.path
 ln -s "$release" /opt/redstm-text/current.next
 mv -Tf /opt/redstm-text/current.next /opt/redstm-text/current
 setfacl -x u:redstm-text /srv/redstm/state/control.lock /srv/redstm/state

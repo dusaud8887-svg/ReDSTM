@@ -18,7 +18,7 @@ from scripts.text_archive import collector, compare_sources, importer, publisher
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
 
-def test_body_canary_queue_caps_works_and_episodes(tmp_path: Path) -> None:
+def test_body_queue_window_refills_beyond_canary(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     db.executescript(collector._SCHEMA)
     try:
@@ -41,7 +41,12 @@ def test_body_canary_queue_caps_works_and_episodes(tmp_path: Path) -> None:
             "SELECT parent_work_id FROM text_collector_queue WHERE kind='episode'"
         ).fetchall()
         assert len(rows) == 1000
-        assert {row[0] for row in rows} <= {str(work) for work in range(100)}
+        assert {row[0] for row in rows} <= {str(work) for work in range(101)}
+        with db:
+            db.execute("UPDATE text_collector_queue SET status='done' WHERE entity_id IN "
+                       "(SELECT entity_id FROM text_collector_queue LIMIT 100)")
+            collector._fill_body_queue(db, "marumaru")
+        assert db.execute("SELECT COUNT(*) FROM text_collector_queue").fetchone()[0] == 1100
     finally:
         db.close()
 
@@ -254,6 +259,31 @@ def test_arcalive_catalog_can_pass_novel_canary_limit(tmp_path: Path) -> None:
             )
     tree = publisher.build_publish_tree(
         db_path, tmp_path / "objects", tmp_path / "build", "arcalive"
+    )
+    assert tree["item_count"] == 1001
+
+
+def test_novel_catalog_can_pass_old_canary_limit(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        original = dict(db.execute("SELECT * FROM text_archive_items").fetchone())
+        columns = ",".join(original)
+        placeholders = ",".join("?" for _ in original)
+        for chapter_id in range(9000000, 9001000):
+            row = original.copy()
+            row["identity"] = f"novel_chapter:toki:63670:{chapter_id}"
+            row["canonical_chapter_id"] = row["identity"]
+            row["source_chapter_id"] = str(chapter_id)
+            db.execute(
+                f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+                tuple(row.values()),
+            )
+    tree = publisher.build_publish_tree(
+        db_path, tmp_path / "objects", tmp_path / "build", "novel"
     )
     assert tree["item_count"] == 1001
 

@@ -1,0 +1,9 @@
+[Unit]
+Description=Import committed Newtomi text batches when inbox changes
+
+[Path]
+PathChanged=/srv/redstm-text-inbox/drop
+Unit=redstm-text-import.service
+
+[Install]
+WantedBy=multi-user.target

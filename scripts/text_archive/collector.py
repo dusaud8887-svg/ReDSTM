@@ -30,8 +30,7 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _PAGE_SIZE = 96
 _REQUEST_GAP = 5
-_CANARY_BODY_WORKS = 100
-_CANARY_BODY_EPISODES = 1000
+_BODY_QUEUE_WINDOW = 1000
 _SHARED_GROUP = "blacktoon-marumaru-novel"
 _HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d+\.com\Z", re.I),
@@ -47,6 +46,10 @@ CREATE TABLE IF NOT EXISTS text_collector_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_text_collector_queue_due
   ON text_collector_queue(status,next_check_at,updated_at);
+CREATE INDEX IF NOT EXISTS idx_text_collector_episode_window
+  ON text_collector_queue(source,kind,status);
+CREATE INDEX IF NOT EXISTS idx_text_novel_chapters_body_queue
+  ON text_novel_chapters(site,status,last_seen_at);
 CREATE TABLE IF NOT EXISTS text_collector_hosts (
   source TEXT PRIMARY KEY, host TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0,
   next_offset INTEGER NOT NULL DEFAULT 1, blocked INTEGER NOT NULL DEFAULT 0
@@ -276,9 +279,6 @@ def _next_unit(
         "SELECT last_source FROM text_collector_groups WHERE group_id=?", (_SHARED_GROUP,)
     ).fetchone()
     last_source = str(group[0]) if group else ""
-    episode_requests = db.execute(
-        "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue WHERE kind='episode'"
-    ).fetchone()[0]
     total_requests = db.execute(
         "SELECT COALESCE(SUM(attempts),0) FROM text_collector_queue "
         "WHERE kind IN ('work','episode')"
@@ -295,11 +295,10 @@ def _next_unit(
         queued = db.execute(
             """SELECT kind,entity_id FROM text_collector_queue
                WHERE source=? AND status IN ('pending','retry') AND next_check_at<=?
-                 AND NOT (kind='episode' AND ?>=1000)
                  AND (kind!='episode' OR ?=source)
                ORDER BY CASE WHEN kind=? THEN 0 WHEN kind=? THEN 1 ELSE 2 END,
                         updated_at,kind,entity_id LIMIT 1""",
-            (source.name, now, episode_requests, body_source, preferred_kind, fallback_kind),
+            (source.name, now, body_source, preferred_kind, fallback_kind),
         ).fetchone()
         if queued is not None:
             kind, entity_id = str(queued["kind"]), str(queued["entity_id"])
@@ -452,10 +451,11 @@ def _enqueue(
 
 def _fill_body_queue(db: sqlite3.Connection, source: str) -> None:
     queued = db.execute(
-        "SELECT COUNT(*) FROM text_collector_queue WHERE source=? AND kind='episode'",
+        "SELECT COUNT(*) FROM text_collector_queue WHERE source=? AND kind='episode' "
+        "AND status IN ('pending','retry')",
         (source,),
     ).fetchone()[0]
-    remaining = max(0, _CANARY_BODY_EPISODES - int(queued))
+    remaining = max(0, _BODY_QUEUE_WINDOW - int(queued))
     if not remaining:
         return
     db.execute(
@@ -464,15 +464,13 @@ def _fill_body_queue(db: sqlite3.Connection, source: str) -> None:
            attempts,last_error,updated_at)
            SELECT c.site,'episode',c.source_chapter_id,c.source_work_id,'pending',0,0,'',?
            FROM text_novel_chapters c
-           JOIN (SELECT source_work_id FROM text_novel_sources WHERE site=?
-                 ORDER BY rowid LIMIT ?) w ON w.source_work_id=c.source_work_id
            WHERE c.site=? AND c.access IN ('free','unknown')
              AND c.status IN ('discovered','unknown_access')
              AND NOT EXISTS (
                  SELECT 1 FROM text_collector_queue q WHERE q.source=c.site
                    AND q.kind='episode' AND q.entity_id=c.source_chapter_id)
            ORDER BY c.last_seen_at,c.source_work_id,c.source_chapter_id LIMIT ?""",
-        (_now(), source, _CANARY_BODY_WORKS, source, remaining),
+        (_now(), source, remaining),
     )
 
 

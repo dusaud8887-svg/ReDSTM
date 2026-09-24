@@ -15,8 +15,9 @@ from urllib.parse import urlsplit
 
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
-_MAX_ITEMS = 20
+_MAX_ITEMS = 100
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+_MAX_BATCH_BYTES = 32 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 256 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BATCH_ID = re.compile(r"\d{8}T\d{6}Z-pc-[a-f0-9]{8}\Z")
@@ -527,6 +528,7 @@ def _safe_batch(
         if len(actual_names) > _MAX_ITEMS:
             raise BatchRejectedError("too_many_batch_files")
     candidates: list[dict[str, Any]] = []
+    batch_bytes = 0
     identities: set[str] = set()
     expected_names: set[str] = set()
     for raw_item in manifest["items"]:
@@ -571,6 +573,10 @@ def _safe_batch(
             or not _SHA256.fullmatch(digest)
         ):
             reason = "content_metadata_invalid"
+        if not reason:
+            batch_bytes += size
+            if batch_bytes > _MAX_BATCH_BYTES:
+                raise BatchRejectedError("batch_too_large")
         body: bytes | None = None
         if not reason and body_path is not None:
             if body_path.is_symlink() or not body_path.is_file():

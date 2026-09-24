@@ -13,7 +13,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.publisher both
 SuccessExitStatus=75
 Restart=no
-TimeoutStartSec=15min
+TimeoutStartSec=infinity
 MemoryMax=150M
 MemorySwapMax=0
 CPUWeight=10

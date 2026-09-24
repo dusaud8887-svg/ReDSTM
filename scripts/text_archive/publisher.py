@@ -14,8 +14,6 @@ from scripts.text_archive.importer import _connect, _write_receipt
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _INDEX_PAGE_SIZE = 500
-_MAX_NOVEL_ITEMS = 1000
-_MAX_ARCALIVE_ITEMS = 20000
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
 _AVAILABILITY_PAGE_SIZE = 500
 
@@ -74,12 +72,12 @@ def build_publish_tree(
         ]
         if not rows:
             raise ValueError("no_publishable_items")
-        if len(rows) > (_MAX_NOVEL_ITEMS if lane == "novel" else _MAX_ARCALIVE_ITEMS):
-            raise ValueError("text_publish_canary_cap_exceeded")
         if lane == "novel":
             groups: dict[str, dict[str, Any]] = {}
+            chapters_by_work: dict[str, list[dict[str, Any]]] = {}
             for row in rows:
                 work_id = str(row["canonical_work_id"])
+                chapters_by_work.setdefault(work_id, []).append(row)
                 work = groups.setdefault(
                     work_id,
                     {
@@ -96,7 +94,7 @@ def build_publish_tree(
                 work["chapter_count"] += 1
                 work["latest_label"] = row["chapter_label"]
             for work in groups.values():
-                chapters = [row for row in rows if row["canonical_work_id"] == work["work_id"]]
+                chapters = chapters_by_work[work["work_id"]]
                 detail = {
                     "schema": 1,
                     "lane": "novel",
@@ -370,9 +368,6 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         db.close()
     if not items:
         return {"status": "idle", "item_count": 0}
-    if len(items) > _MAX_NOVEL_ITEMS:
-        raise ValueError("text_publish_canary_cap_exceeded")
-
     snapshot_id = hashlib.sha256(_json_bytes(items)).hexdigest()
     snapshot_rel = Path("availability") / "novel" / "snapshots" / snapshot_id
     page_refs: list[dict[str, Any]] = []
@@ -443,8 +438,6 @@ def publish_lane(
         )
     if item_count == 0:
         return {"lane": lane, "item_count": 0, "status": "idle"}
-    if item_count > (_MAX_NOVEL_ITEMS if lane == "novel" else _MAX_ARCALIVE_ITEMS):
-        raise ValueError("text_publish_canary_cap_exceeded")
     metadata_updated = 0
     if lane == "arcalive":
         with operation_window():

@@ -79,6 +79,37 @@ def test_contract_fixture_hash_and_copies_match() -> None:
         assert fixture == json.loads(newtomi_copy.read_text(encoding="utf-8"))
 
 
+def test_importer_accepts_more_than_twenty_items_but_caps_total_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inbox = tmp_path / "inbox"
+    batch = _batch(inbox, _BATCHES[0])
+    manifest_path = batch / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    first = manifest["items"][0]
+    for number in range(2, 22):
+        item = dict(first)
+        item.update(
+            identity=f"arcalive:novel:{1000 + number}:text",
+            post_id=str(1000 + number),
+            source_url=f"https://arca.live/b/novel/{1000 + number}",
+            relative_path=f"files/{number:06d}.md",
+        )
+        (batch / item["relative_path"]).write_bytes(b"fixture body")
+        manifest["items"].append(item)
+    raw = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
+    manifest_path.write_bytes(raw)
+    (batch / "ready.json").write_text(
+        json.dumps({"schema": 1, "batch_id": _BATCHES[0],
+                    "manifest_sha256": hashlib.sha256(raw).hexdigest()}),
+        encoding="utf-8",
+    )
+    assert len(importer._safe_batch(inbox, _BATCHES[0])[3]["candidates"]) == 21
+    monkeypatch.setattr(importer, "_MAX_BATCH_BYTES", 20 * len(b"fixture body"))
+    with pytest.raises(importer.BatchRejectedError, match="batch_too_large"):
+        importer._safe_batch(inbox, _BATCHES[0])
+
+
 def test_arcalive_import_uses_post_title_for_reader(tmp_path: Path) -> None:
     fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     item = dict(fixture["item"])
