@@ -208,6 +208,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     current = null;
     syncBackButton();
     setReader(false);
+    catalog = [];
+    visible = [];
+    list.replaceChildren();
     status.textContent = "목록을 불러오는 중…";
     try {
       const loaded = lane === "saved"
