@@ -296,7 +296,7 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
       items: [{ work_id: workId, title: "통합 테스트 작품", author: "테스트 작가", chapter_count: 2, detail_key: `published/indexes/novel/${detailHash}.json` }],
     };
     else if (path.endsWith(`/index/novel/${detailHash}.json`)) payload = { schema: 1, lane: "novel", work: { work_id: workId }, chapters };
-    else if (path.endsWith(`/object/${firstBodyHash}`)) return route.fulfill({ contentType: "text/markdown", body: "첫 회차 본문\n안전한 텍스트" });
+    else if (path.endsWith(`/object/${firstBodyHash}`)) return route.fulfill({ contentType: "text/markdown", body: `첫 회차 본문\n안전한 텍스트\n${"긴 본문\n".repeat(300)}` });
     else if (path.endsWith(`/object/${secondBodyHash}`)) return route.fulfill({ contentType: "text/markdown", body: "둘째 회차 본문" });
     else return route.fulfill({ status: 404, body: "not found" });
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
@@ -319,8 +319,10 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   const textBookmark = page.locator("#text-reader-bookmark");
   await (await textBookmark.isVisible() ? textBookmark : page.locator("#text-reader-bottom-bookmark")).click();
-  const textBack = page.locator("#text-reader-back");
-  if (await textBack.isVisible()) await textBack.click();
+  await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = element.scrollHeight / 2; });
+  await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await page.locator("#text-reader-bottom-list").evaluate((button) => button.click());
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.textState.v1")).history["novel:novel:fixture:1:1"]?.progress ?? 0)).toBeGreaterThan(0);
   await page.locator('[data-text-lane="saved"]').click();
   await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
   await page.locator("#result-list .result-item").first().click();
@@ -338,6 +340,9 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   await useCollectionFixture(page);
   const releaseHash = "d".repeat(64);
   const catalogHash = "e".repeat(64);
+  const nextReleaseHash = "f".repeat(64);
+  const nextCatalogHash = "b".repeat(64);
+  let publishedRelease = releaseHash;
   let releaseNovel;
   let novelRequested;
   const novelGate = new Promise((resolve) => { releaseNovel = resolve; });
@@ -350,11 +355,11 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
       return route.fulfill({ status: 404 });
     }
     let payload;
-    if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
-    else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
-      schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${catalogHash}.json`, sha256: catalogHash }],
+    if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: publishedRelease };
+    else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`) || path.endsWith(`/release-manifest/arcalive/${nextReleaseHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${publishedRelease === releaseHash ? catalogHash : nextCatalogHash}.json`, sha256: publishedRelease === releaseHash ? catalogHash : nextCatalogHash }],
     };
-    else if (path.endsWith(`/index/arcalive/${catalogHash}.json`)) payload = {
+    else if (path.endsWith(`/index/arcalive/${catalogHash}.json`) || path.endsWith(`/index/arcalive/${nextCatalogHash}.json`)) payload = {
       schema: 1, lane: "arcalive", items: [{ identity: "arcalive:0765:108:text", title: "대담한 합성 (Worm/The Gamer) 2부 파트 16", category: "WORM", board: "0765", post_id: 108, sha256: "a".repeat(64) }],
     };
     else if (path.endsWith(`/object/${"a".repeat(64)}`)) return route.fulfill({
@@ -362,6 +367,7 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
       body: "# 대담한 합성 (Worm/The Gamer) 2부 파트 16\n\n- channel: 0765\n- category: WORM\n- author: D4Cwest\n- created: 2026-09-22\n- id: 108\n- url: https://arca.live/b/0765/108\n\n---\n\n대담한 융합",
     });
     else return route.fulfill({ status: 404 });
+    if (path.endsWith(`/index/arcalive/${nextCatalogHash}.json`)) payload.items.push({ identity: "arcalive:9999:109:text", title: "신규 글", category: "기타", board: "9999", post_id: 109, sha256: "a".repeat(64) });
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
 
@@ -378,7 +384,12 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
   await page.locator('[data-text-lane="novel"]').click();
-  await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
+  await expect(page).toHaveURL(/\/text\?lane=novel$/);
+  await expect(page.locator("#result-status")).toContainText("소설은 아직 게시되지 않았습니다");
+  await expect(page.locator("#result-list .empty-row")).toContainText("아직 게시된 자료가 없습니다");
+  publishedRelease = nextReleaseHash;
+  await page.locator('[data-text-lane="arcalive"]').click();
+  await expect(page.locator("#result-status")).toContainText("2개 게시판");
   await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
   await page.locator("#result-list .result-item").first().click();
   await expect(page).toHaveURL(/board=0765/);

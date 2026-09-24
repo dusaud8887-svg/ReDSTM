@@ -162,7 +162,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   }
 
   async function loadCatalog(selectedLane) {
-    if (catalogs.has(selectedLane)) return catalogs.get(selectedLane);
     const pointer = await json(`/api/v1/text/release/${selectedLane}`).catch((error) => {
       if (selectedLane === "novel" && error.message === "request_404") throw new Error("novel_unpublished");
       throw error;
@@ -170,6 +169,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (pointer.schema !== 1 || pointer.lane !== selectedLane || !HASH.test(pointer.sha256)) {
       throw new Error("release_pointer_invalid");
     }
+    if (catalogs.get(selectedLane)?.sha256 === pointer.sha256) return catalogs.get(selectedLane).items;
     const release = await json(`/api/v1/text/release-manifest/${selectedLane}/${pointer.sha256}.json`);
     if (release.schema !== 1 || release.lane !== selectedLane || !Array.isArray(release.catalog_pages)) {
       throw new Error("release_manifest_invalid");
@@ -184,13 +184,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       }
       items.push(...page.items);
     }
-    catalogs.set(selectedLane, items);
+    catalogs.set(selectedLane, { sha256: pointer.sha256, items });
+    if (selectedLane === "novel") details.clear();
     return items;
   }
 
   async function open(options = {}) {
     const activeRequest = ++requestId;
-    if (current) savePosition();
+    flushPosition();
     const params = options instanceof URLSearchParams ? options : new URLSearchParams();
     const requestedLane = params.get("lane");
     lane = VIEWS.has(requestedLane) ? requestedLane : "novel";
@@ -230,10 +231,16 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     } catch (error) {
       if (activeRequest !== requestId) return;
       if (lane === "novel" && error.message === "novel_unpublished") {
-        const fallback = new URLSearchParams(params);
-        fallback.set("lane", "arcalive");
-        await open(fallback);
-        if (location.pathname === "/text" && lane === "arcalive") historyReplace();
+        if (!params.has("lane")) {
+          const fallback = new URLSearchParams(params);
+          fallback.set("lane", "arcalive");
+          await open(fallback);
+          if (location.pathname === "/text" && lane === "arcalive") historyReplace();
+          return;
+        }
+        catalog = [];
+        renderCatalog();
+        status.textContent = "소설은 아직 게시되지 않았습니다 · 아카라이브는 열람할 수 있습니다.";
         return;
       }
       status.textContent = `텍스트 목록을 불러오지 못했습니다 · ${error.message}`;
@@ -268,6 +275,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   }
 
   async function openBody(entry, shouldNavigate = true, sourceLane = lane, sourceWork = work, savedIdentity = "", activeRequest = ++requestId) {
+    flushPosition();
     const viewLane = lane;
     const currentLane = viewLane === "saved" ? sourceLane : viewLane;
     const itemWork = viewLane === "saved" ? sourceWork : work;
@@ -328,6 +336,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   function back() {
     ++requestId;
     if (current) {
+      flushPosition();
       current = null;
       setReader(false);
       renderCatalog();
@@ -386,6 +395,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
 
   function changeLane(nextLane) {
     if (!VIEWS.has(nextLane) || nextLane === lane) return;
+    flushPosition();
     lane = nextLane;
     work = null;
     chapters = [];
@@ -412,6 +422,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     progress.style.width = `${percent}%`;
     progress.setAttribute("aria-valuenow", String(percent));
     persist();
+  }
+
+  function flushPosition() {
+    clearTimeout(saveTimer);
+    if (current) savePosition();
   }
 
   document.querySelector("#text-lanes").addEventListener("click", (event) => {
@@ -464,8 +479,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   function currentRoute() { return route(); }
   function leave() {
     ++requestId;
-    clearTimeout(saveTimer);
-    savePosition();
+    flushPosition();
     current = null;
     work = null;
     chapters = [];

@@ -224,7 +224,11 @@ body.search-open:not(.filters-expanded):not(.reading-context) .catalog-controls 
 .view-tabs button { min-height: 44px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 550; cursor: pointer; transition: color 160ms ease, border-color 160ms ease; }
 .view-tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
 .text-lanes { grid-template-columns: repeat(3, 1fr); }
-.text-work-back { margin: 8px 14px 0; }
+.text-work-back {
+  min-height: 44px; align-items: center; margin: 8px 14px 0; padding: 0 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--accent); font-weight: 650; cursor: pointer;
+}
+.text-work-back:hover { background: var(--accent-soft); }
 body.text-library-open .catalog-toolbar,
 body.text-library-open .catalog-controls { display: none; }
 .scope-tabs { padding-inline: 12px; }
