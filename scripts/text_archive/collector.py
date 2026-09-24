@@ -88,9 +88,11 @@ def configured_sources(
             db.close()
     sources: list[Source] = []
     for name, default in (("blacktoon", "blacktoon452.com"), ("marumaru", "marumaru102.com")):
-        host = values.get(
-            f"REDSTM_TEXT_{name.upper()}_HOST", remembered.get(name, default)
-        ).strip().lower()
+        host = (
+            values.get(f"REDSTM_TEXT_{name.upper()}_HOST", remembered.get(name, default))
+            .strip()
+            .lower()
+        )
         if not _HOSTS[name].fullmatch(host):
             raise CollectorError(f"invalid configured host for {name}")
         sources.append(Source(name, host))
@@ -784,7 +786,9 @@ def _host_failure(db_path: Path, unit: RequestUnit) -> RequestUnit | None:
             )
         source = Source(unit.source.name, host)
         return RequestUnit(
-            source, unit.kind, unit.entity_id,
+            source,
+            unit.kind,
+            unit.entity_id,
             unit.url.replace(unit.source.base_url, source.base_url, 1),
         )
     finally:

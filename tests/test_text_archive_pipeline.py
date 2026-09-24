@@ -761,9 +761,7 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
     first = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
     assert first["status"] == "held"
     with sqlite3.connect(db_path) as db:
-        db.execute(
-            "UPDATE text_collector_state SET next_check_at=0 WHERE source='blacktoon:list'"
-        )
+        db.execute("UPDATE text_collector_state SET next_check_at=0 WHERE source='blacktoon:list'")
         db.execute(
             "INSERT INTO text_collector_state(source,next_check_at,updated_at) "
             "VALUES('marumaru:list',9999999999,'test')"
@@ -774,9 +772,12 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
     assert "blacktoon453.com" in session.calls[-1]
     assert collector.configured_sources({}, db_path)[0].host == "blacktoon453.com"
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "SELECT source_url FROM text_novel_sources WHERE site='blacktoon'"
-        ).fetchone()[0] == "https://blacktoon453.com/novel/24753"
+        assert (
+            db.execute(
+                "SELECT source_url FROM text_novel_sources WHERE site='blacktoon'"
+            ).fetchone()[0]
+            == "https://blacktoon453.com/novel/24753"
+        )
 
 
 def test_oracle_does_not_promote_challenged_candidate(
@@ -802,9 +803,12 @@ def test_oracle_does_not_promote_challenged_candidate(
     assert result["status"] == "cooldown"
     assert collector.configured_sources({}, db_path)[0].host == "blacktoon452.com"
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "SELECT blocked FROM text_collector_hosts WHERE source='blacktoon'"
-        ).fetchone()[0] == 1
+        assert (
+            db.execute(
+                "SELECT blocked FROM text_collector_hosts WHERE source='blacktoon'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_source_comparison_matches_unique_free_chapter_without_storing_body(
