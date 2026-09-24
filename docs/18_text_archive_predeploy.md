@@ -42,7 +42,7 @@ Oracle에는 전용 계정·SFTP chroot·2GiB quota·단발 systemd 서비스/�
 | `scripts/text_archive/importer.py` | Newtomi ready batch 검증, idempotent 수입, 안전한 receipt | 고정 production 경로, revision 1→2만 허용, 본문 충돌 보류 |
 | `scripts/text_archive/collector.py` | 블랙툰/마루마루의 페이지·작품·무료 회차 JSON 한 요청 실행 | 표준 `requests`, `trust_env=False`, redirect 거부, 5초 그룹 간격, 영속 checkpoint/cooldown |
 | `scripts/text_archive/publisher.py` | 별도 R2용 immutable object/index/release와 pointer-last 게시 | `r2text:` 및 `/etc/redstm-text/rclone.conf`만 명시, readback SHA 필수 |
-| `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | `MemAvailable≥350MiB`, `/` 여유 `≥40GiB`, cgroup `MemoryMax=150M`, `MemorySwapMax=0` |
+| `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | `MemAvailable + redstm-text 자체 VmRSS ≥350MiB`(자체 RSS 차감 보정), `/` 여유 `≥40GiB`, cgroup `MemoryMax=150M`, `MemorySwapMax=0` |
 | `edge/public/text-library.js`, `edge/src/text-archive.js` | 기존 Reader 안의 텍스트 탐색/읽기와 고정 R2 read route | 같은 Access·검색/설정 shell, `redstm.textState.v1`, GET/HEAD만 |
 | `text-edge/` | 기존 주소 호환용 redirect | R2 binding/UI 없음, 사람 Access 확인 후 `/text`로 이동 |
 | `deploy/text-archive/` | 격리된 sshd/systemd 설치·갱신 스크립트와 템플릿 | Oracle에 설치·enable 완료 |
@@ -193,7 +193,8 @@ Windows `os.replace` 권한 오류로 한 번 실패했으나, 단독 실행과 
 Oracle collector는 블랙툰과 마루마루 목록 첫 페이지에서 각각 8,032작품 응답을 받았다. 당시
 TypeMoon control은 active, schedule은 inactive, 루트 여유는 약 57GiB였다. 오래 유지되는
 control lock이나 과거 swap 사용량만으로 텍스트 작업을 막지 않고, 새 단발 작업 시 실제
-`MemAvailable≥350MiB`, 디스크 ≥40GiB, schedule inactive, publish lock 획득을 요구한다.
+`MemAvailable + redstm-text 자체 VmRSS ≥350MiB`(프로세스가 시작 전 차지하지 않던 메모리 여유 추정),
+디스크 ≥40GiB, schedule inactive, publish lock 획득을 요구한다.
 서비스 `MemoryMax=150M`, `MemorySwapMax=0`; collector/import는 5분, publisher는 15분 timer다.
 2026-09-24 실제 첫 목록 96작품은 양쪽 제목·작가와 작품 ID가 대응했고, 한 작품의 931개
 회차 라벨 및 대표 공개 본문 SHA-256이 같았다. 추가 표본에서는 전체 회차 라벨 집합이 다른
@@ -232,10 +233,18 @@ fixture, Wrangler strict dry-run)가 통과했다. `scripts.release status`와 �
 검사도 재시도에서 통과했으며, 기준 시점의 active Worker는 이전 version
 `99f030a7-e65d-465f-915b-06dc21d9734b`다.
 
-새 publisher의 기존 글 분류 backfill은 아직 production에 반영하지 않았다. 운영 SSH 계정은 root
-SSH가 거부되고 `sudo -n`도 비밀번호를 요구해 공식 `update_oracle.sh`가 실행되지 않았다. 변경된
-텍스트 모듈은 `/tmp/redstm-text-stage-title-category-20260924`에만 준비되어 있고, 운영 symlink·
-service·R2 pointer는 바뀌지 않았다. ReDSTM 배포 자격도 현재 workstation 환경에 없어 Worker
-배포를 시작하지 않았다. 재개 시 해당 stage를 root로 설치하고 게시 timer 결과를 확인한 뒤,
-Control Access 환경을 제공해 공식 `scripts.release deploy-cloudflare`와 authenticated smoke를
-실행한다. 그 전까지 새 계층 탐색은 저장소에 push된 상태일 뿐 라이브 기능이 아니다.
+2026-09-24 운영 후속 확인: stage의 `runtime.py` SHA-256을 로컬과 대조한 뒤 공식
+`deploy/text-archive/update_oracle.sh`를 실행했고, current symlink는
+`/opt/redstm-text/releases/20260924T064743Z`를 가리킨다. `redstm-text-publish.service`는 전용
+`redstm-text` 계정, 150MiB memory limit, swap 비활성의 oneshot으로 성공했다. 실행 전 TypeMoon
+schedule service 비활성 및 게시 조건을 확인했다. 이어진 `both` canary에서 novel은 idle이고
+아카라이브 120개 항목의 색인 pointer를 갱신했다. SQLite read-only 집계에서 아카라이브 identity
+중복 0건, 빈 category 0건이 확인됐다. 운영 로그의 40→80→120 증가는 신규 별도 출처 identity이며,
+중복 재게시가 아니다. R2 pointer hash는 `199121560bc24b1c709e4acae686ade0d5ce0d3172df30daba0517b4b7b78f3d`다.
+
+Cloudflare read-only 운영 상태는 `redstm-edge` version
+`c6648d26-69f7-4fbe-888e-6d0f9473696e`, deployment
+`a4614bfc-2fc8-41db-874b-a57169ca3ce7`이며 pending migration은 없다. TypeMoon current/previous,
+control·schedule timer 상태도 정상으로 확인했다. 이번 후속 변경은 Oracle 단발 텍스트 작업의
+메모리 가용량 계산 및 문서만 포함하며, Worker 코드는 바꾸지 않아 재배포하지 않았다. 기존
+`systemd-analyze`의 snapd `RestartMode` 경고는 text service 판정과 무관한 전역 경고로 남았다.

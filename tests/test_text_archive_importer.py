@@ -62,6 +62,12 @@ def _batch(
     return batch_dir
 
 
+def _process_status(tmp_path: Path, rss_kb: int = 100_000) -> Path:
+    status = tmp_path / "proc-status"
+    status.write_text(f"VmRSS: {rss_kb} kB\n", encoding="ascii")
+    return status
+
+
 def test_contract_fixture_hash_and_copies_match() -> None:
     fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     body = fixture["body"]["text"].encode(fixture["body"]["encoding"])
@@ -379,7 +385,8 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     publish_lock = tmp_path / "static" / ".publish.lock"
     publish_lock.parent.mkdir()
     meminfo = tmp_path / "meminfo"
-    meminfo.write_text("MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3000000 kB\n")
+    meminfo.write_text("MemAvailable: 300000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3000000 kB\n")
+    status = _process_status(tmp_path)
     monkeypatch.setattr(
         runtime.shutil, "disk_usage", lambda _path: SimpleNamespace(free=41 * 1024**3)
     )
@@ -390,6 +397,7 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     with runtime.operation_window(
         publish_lock=publish_lock,
         meminfo_path=meminfo,
+        status_path=status,
         root_path=tmp_path,
         run=inactive,
     ):
@@ -402,6 +410,7 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
+            status_path=status,
             root_path=tmp_path,
             run=active,
         ):
@@ -412,7 +421,7 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     ("meminfo_text", "disk_free", "reason"),
     [
         (
-            "MemAvailable: 350000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
+            "MemAvailable: 250000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
             41 * 1024**3,
             "memory_below_floor",
         ),
@@ -434,6 +443,7 @@ def test_operation_window_defers_below_resource_floors(
     publish_lock.parent.mkdir()
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(meminfo_text)
+    status = _process_status(tmp_path)
     monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _path: SimpleNamespace(free=disk_free))
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -443,6 +453,7 @@ def test_operation_window_defers_below_resource_floors(
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
+            status_path=status,
             root_path=tmp_path,
             run=inactive,
         ):
@@ -456,6 +467,7 @@ def test_operation_window_defers_only_for_typemoon_publish(tmp_path: Path) -> No
     publish_lock.parent.mkdir()
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n")
+    status = _process_status(tmp_path)
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
@@ -464,6 +476,7 @@ def test_operation_window_defers_only_for_typemoon_publish(tmp_path: Path) -> No
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
+            status_path=status,
             root_path=tmp_path,
             run=inactive,
         ):
@@ -473,6 +486,7 @@ def test_operation_window_defers_only_for_typemoon_publish(tmp_path: Path) -> No
             with runtime.operation_window(
                 publish_lock=publish_lock,
                 meminfo_path=meminfo,
+                status_path=status,
                 root_path=tmp_path,
                 run=inactive,
             ):

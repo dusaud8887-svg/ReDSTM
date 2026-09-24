@@ -24,11 +24,19 @@ def _available_memory(meminfo: str) -> int:
     return int(match.group(1)) * 1024
 
 
+def _resident_memory(status: str) -> int:
+    match = re.search(r"^VmRSS:\s+(\d+) kB$", status, re.M)
+    if match is None:
+        raise RuntimeWindowError("memory_metrics_unavailable")
+    return int(match.group(1)) * 1024
+
+
 @contextmanager
 def operation_window(
     *,
     publish_lock: Path = Path("/srv/redstm/static/.publish.lock"),
     meminfo_path: Path = Path("/proc/meminfo"),
+    status_path: Path = Path("/proc/self/status"),
     root_path: Path = Path("/"),
     run: object = subprocess.run,
 ) -> Iterator[None]:
@@ -61,9 +69,12 @@ def operation_window(
 
         try:
             available = _available_memory(meminfo_path.read_text(encoding="ascii"))
+            resident = _resident_memory(status_path.read_text(encoding="ascii"))
         except OSError as exc:
             raise RuntimeWindowError("memory_metrics_unavailable") from exc
-        if available < 350 * _MIB:
+        # /proc/meminfo already excludes this process; add it back to estimate
+        # host headroom before the bounded text service started.
+        if available + resident < 350 * _MIB:
             raise RuntimeWindowError("memory_below_floor")
         try:
             free = shutil.disk_usage(root_path).free
