@@ -15,6 +15,7 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
+_RCLONE_TIMEOUT_S = 30 * 60
 _AVAILABILITY_PAGE_SIZE = 500
 
 
@@ -227,7 +228,13 @@ def build_publish_tree(
 
 
 def _run(argv: list[str], runner: Any) -> bytes:
-    result = runner(argv, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = runner(
+        argv,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=_RCLONE_TIMEOUT_S,
+    )
     output = result.stdout
     return output if isinstance(output, bytes) else str(output).encode()
 

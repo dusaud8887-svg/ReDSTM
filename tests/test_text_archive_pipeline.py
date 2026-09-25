@@ -338,7 +338,8 @@ def test_object_batch_uses_downloaded_sha256_before_accepting(
         objects.append((key, digest))
     calls: list[str] = []
 
-    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+    def rclone(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs["timeout"] == 30 * 60
         calls.append(argv[3])
         if argv[3] == "copy":
             assert argv[argv.index("--transfers") + 1] == "2"
