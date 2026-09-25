@@ -338,3 +338,12 @@ Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-
 `/opt/redstm-text/releases/20260925T071855Z`에 설치했고, 그 디렉터리에서
 `crawler.collections`와 publisher import를 확인했다. 브라우저에서 회차 순서를
 다시 눌러 보지는 않았다. 소설 본문 출처 지정과 대량 백필 실측은 그대로 남아 있다.
+
+2026-09-25 계약 복구 배포: `13383974ef0bd2a974eba42c44e6c552f28b9a29`를
+`scripts.release deploy-cloudflare`로 배포했다. Worker version은
+`676d2ce9-a278-4c17-8bc8-29e4ac6e581e`, deployment는
+`41bc6217-4273-43a5-9ab6-4493b7758cf3`이다. 배포 후 smoke에서 D1 스키마, R2 release,
+Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-library.js`다.
+텍스트 수집·수입·게시 스크립트는 Oracle 릴리스
+`/opt/redstm-text/releases/20260925T082552Z`에 설치했다. 브라우저에서 첫 화면과
+회차 누락 안내를 다시 눌러 보지는 않았다.
