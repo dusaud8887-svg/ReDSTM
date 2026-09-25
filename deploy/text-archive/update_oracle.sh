@@ -3,14 +3,20 @@ set -Eeuo pipefail
 
 stage="${1:?staged package directory required}"
 [[ $EUID -eq 0 && "$stage" == /tmp/redstm-text-stage-* ]] || exit 2
-[[ -d /opt/redstm-text/current/.venv && -f "$stage/scripts/text_archive/runtime.py" ]] || exit 2
+[[ -d /opt/redstm-text/current/.venv && -f "$stage/scripts/text_archive/runtime.py" \
+   && -f "$stage/crawler/collections.py" ]] || exit 2
 
 release="/opt/redstm-text/releases/$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -o root -g root -m 0755 "$release"
 cp -a /opt/redstm-text/current/. "$release/"
 cp -a "$stage/scripts/text_archive/"*.py "$release/scripts/text_archive/"
+install -d -o root -g root -m 0755 "$release/crawler"
+install -o root -g root -m 0644 "$stage/crawler/__init__.py" "$stage/crawler/collections.py" \
+  "$release/crawler/"
 (cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.collector --help >/dev/null)
+  -m scripts.text_archive.collector --help >/dev/null && \
+  sudo -u redstm-text "$release/.venv/bin/python" \
+  -m scripts.text_archive.publisher --help >/dev/null)
 
 for kind in collector import publish; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.service" \

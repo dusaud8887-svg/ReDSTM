@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 stage="${1:?staged package directory required}"
 [[ $EUID -eq 0 && "$stage" == /tmp/redstm-text-stage-* ]] || exit 2
-[[ -f "$stage/scripts/text_archive/runtime.py" && -f "$stage/redstm-inbox.pub" ]] || exit 2
+[[ -f "$stage/scripts/text_archive/runtime.py" && -f "$stage/crawler/collections.py" \
+   && -f "$stage/redstm-inbox.pub" ]] || exit 2
 [[ -f "$stage/sshd_config.base" && -f "$stage/sshd_config.patched" ]] || exit 2
 cmp -s /etc/ssh/sshd_config "$stage/sshd_config.base" || {
   echo 'sshd_config changed since staging' >&2
@@ -54,11 +55,17 @@ version="$(date -u +%Y%m%dT%H%M%SZ)"
 release="/opt/redstm-text/releases/$version"
 install -d -o root -g root -m 0755 "$release"
 cp -r "$stage/scripts" "$release/scripts"
+install -d -o root -g root -m 0755 "$release/crawler"
+install -o root -g root -m 0644 "$stage/crawler/__init__.py" "$stage/crawler/collections.py" \
+  "$release/crawler/"
 uv python install 3.14.2 --install-dir /opt/redstm-text/python
 uv venv --python /opt/redstm-text/python/cpython-3.14.2-linux-x86_64-gnu/bin/python3.14 \
   "$release/.venv"
 uv pip install --python "$release/.venv/bin/python" filelock==3.32.2 requests==2.34.2
-(cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" -m scripts.text_archive.collector --help >/dev/null)
+(cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" \
+  -m scripts.text_archive.collector --help >/dev/null && \
+  sudo -u redstm-text "$release/.venv/bin/python" \
+  -m scripts.text_archive.publisher --help >/dev/null)
 ln -s "$release" /opt/redstm-text/current.next
 mv -Tf /opt/redstm-text/current.next /opt/redstm-text/current
 
