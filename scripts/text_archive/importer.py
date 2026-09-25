@@ -475,16 +475,20 @@ def _auto_link_basis(
             return None
     signatures: list[set[tuple[tuple[str, str], str]]] = []
     for site, work_id in ((left_site, left_work_id), (right_site, right_work_id)):
-        signatures.append({
-            (_chapter_key(str(row["chapter_label"]), str(row["chapter_kind"])),
-             str(row["text_sha256"]))
-            for row in db.execute(
-                """SELECT chapter_label,chapter_kind,text_sha256 FROM text_novel_chapters
+        signatures.append(
+            {
+                (
+                    _chapter_key(str(row["chapter_label"]), str(row["chapter_kind"])),
+                    str(row["text_sha256"]),
+                )
+                for row in db.execute(
+                    """SELECT chapter_label,chapter_kind,text_sha256 FROM text_novel_chapters
                    WHERE site=? AND source_work_id=? AND status='complete'
                      AND text_sha256 IS NOT NULL""",
-                (site, work_id),
-            )
-        })
+                    (site, work_id),
+                )
+            }
+        )
     hashes = len(signatures[0] & signatures[1])
     left_slug = str(left["slug"] or "").casefold()
     right_slug = str(right["slug"] or "").casefold()
@@ -944,8 +948,13 @@ def _migrate_weak_novel_links(db: sqlite3.Connection) -> None:
             """UPDATE text_novel_link_candidates SET status='candidate',
                match_basis='normalized_title_author',updated_at=?
                WHERE left_site=? AND left_work_id=? AND right_site=? AND right_work_id=?""",
-            (_now(), row["left_site"], row["left_work_id"],
-             row["right_site"], row["right_work_id"]),
+            (
+                _now(),
+                row["left_site"],
+                row["left_work_id"],
+                row["right_site"],
+                row["right_work_id"],
+            ),
         )
     db.execute("UPDATE text_novel_chapters SET status='discovered' WHERE status='covered'")
     if db.execute(
@@ -1330,8 +1339,12 @@ def import_batch(
                         db.execute(
                             """UPDATE text_novel_chapters SET text_sha256=?
                                WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
-                            (text_digest, candidate["source_site"], candidate["source_work_id"],
-                             candidate["source_chapter_id"]),
+                            (
+                                text_digest,
+                                candidate["source_site"],
+                                candidate["source_work_id"],
+                                candidate["source_chapter_id"],
+                            ),
                         )
                         _refresh_link_candidates(
                             db, candidate["source_site"], candidate["source_work_id"]

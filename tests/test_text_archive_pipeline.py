@@ -23,13 +23,19 @@ def test_novel_publisher_collapses_same_body_with_different_source_headers() -> 
     rows = []
     for site in ("toki", "blacktoon"):
         raw = f"# Chapter 1\n# https://{site}.example/novel/1/1\n\n".encode() + prose
-        rows.append({
-            "chapter_label": "1화", "chapter_kind": "main", "source_site": site,
-            "source_chapter_id": "1", "source_url": f"https://{site}.example/novel/1/1",
-            "content_sha256": hashlib.sha256(raw).hexdigest(),
-            "text_sha256": importer.novel_text_sha256(raw),
-            "imported_at": "now", "identity": f"novel_chapter:{site}:1:1",
-        })
+        rows.append(
+            {
+                "chapter_label": "1화",
+                "chapter_kind": "main",
+                "source_site": site,
+                "source_chapter_id": "1",
+                "source_url": f"https://{site}.example/novel/1/1",
+                "content_sha256": hashlib.sha256(raw).hexdigest(),
+                "text_sha256": importer.novel_text_sha256(raw),
+                "imported_at": "now",
+                "identity": f"novel_chapter:{site}:1:1",
+            }
+        )
     assert rows[0]["content_sha256"] != rows[1]["content_sha256"]
     assert len(publisher._unique_novel_chapters(rows)) == 1
 

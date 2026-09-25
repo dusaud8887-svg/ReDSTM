@@ -153,16 +153,29 @@ class ArchiveStore:
                        run_id,url,entity_type,post_id,fetched_at,http_status,outcome,
                        raw_sha256,warc_file,warc_record_id,error_code)
                        VALUES (?,?,'post',?,?,?,'parse_failed',?,?,?,'incomplete_comments')""",
-                    (run_id, post.canonical_url, existing_post["id"], captured_at_text,
-                     http_status, raw_sha256, warc_file, post.warc_record_id),
+                    (
+                        run_id,
+                        post.canonical_url,
+                        existing_post["id"],
+                        captured_at_text,
+                        http_status,
+                        raw_sha256,
+                        warc_file,
+                        post.warc_record_id,
+                    ),
                 )
                 transition_lease(
-                    connection, lease, state="retry", error_code="incomplete_comments",
+                    connection,
+                    lease,
+                    state="retry",
+                    error_code="incomplete_comments",
                     next_attempt_at=retry_backoff(max(lease.attempts, 1), captured_at),
                 )
                 return StoreResult(
-                    int(existing_post["id"]), int(existing_post["latest_version_id"]),
-                    int(connection.execute("SELECT last_insert_rowid()").fetchone()[0]), False,
+                    int(existing_post["id"]),
+                    int(existing_post["latest_version_id"]),
+                    int(connection.execute("SELECT last_insert_rowid()").fetchone()[0]),
+                    False,
                 )
             effective_author = (
                 post.author

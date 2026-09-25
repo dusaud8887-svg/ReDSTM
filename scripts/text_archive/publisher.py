@@ -182,8 +182,12 @@ def build_publish_tree(
                     db.execute(
                         """UPDATE text_novel_chapters SET text_sha256=?
                            WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
-                        (digest, row["source_site"], row["source_work_id"],
-                         row["source_chapter_id"]),
+                        (
+                            digest,
+                            row["source_site"],
+                            row["source_work_id"],
+                            row["source_chapter_id"],
+                        ),
                     )
         # Keep catalog, object and item passes on one imported snapshot in WAL mode.
         db.execute("BEGIN")

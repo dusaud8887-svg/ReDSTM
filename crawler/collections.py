@@ -85,8 +85,9 @@ def parse_title(title: str) -> ParsedTitle:
         side_story = bool(re.search(r"(?:^|\s)(?:외전|특별편)\s*$", base))
         if side_story:
             base = re.sub(r"(?:^|\s)(?:외전|특별편)\s*$", "", base).strip()
-        return ParsedTitle(base, match.group("label").strip(),
-                           (season, volume, 2 if side_story else 1, start, end))
+        return ParsedTitle(
+            base, match.group("label").strip(), (season, volume, 2 if side_story else 1, start, end)
+        )
     if special:
         ranks = {
             "프롤로그": 0,

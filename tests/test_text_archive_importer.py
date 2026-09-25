@@ -282,16 +282,24 @@ def test_punctuation_and_label_overlap_do_not_auto_link_editions(tmp_path: Path)
                            site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
                            access,content_sha256,status,last_seen_at)
                            VALUES(?,?,?,?,'main','free',?,'complete','now')""",
-                        (site, work_id, str(number), f"{number}화",
-                         hashlib.sha256(f"{site}:{number}".encode()).hexdigest()),
+                        (
+                            site,
+                            work_id,
+                            str(number),
+                            f"{number}화",
+                            hashlib.sha256(f"{site}:{number}".encode()).hexdigest(),
+                        ),
                     )
                 importer._refresh_link_candidates(db, site, work_id)
-        assert db.execute(
-            "SELECT status FROM text_novel_link_candidates"
-        ).fetchone()[0] == "candidate"
-        assert db.execute(
-            "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
-        ).fetchone()[0] == 2
+        assert (
+            db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == "candidate"
+        )
+        assert (
+            db.execute(
+                "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
+            ).fetchone()[0]
+            == 2
+        )
     finally:
         db.close()
 
@@ -317,9 +325,9 @@ def test_matching_body_hashes_at_different_chapter_positions_do_not_link(tmp_pat
                         (site, work_id, str(number), f"{number + offset}화", digest, digest),
                     )
                 importer._refresh_link_candidates(db, site, work_id)
-        assert db.execute(
-            "SELECT status FROM text_novel_link_candidates"
-        ).fetchone()[0] == "candidate"
+        assert (
+            db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == "candidate"
+        )
     finally:
         db.close()
 
@@ -347,13 +355,16 @@ def test_old_label_only_link_is_split_and_covered_requeued(tmp_path: Path) -> No
     db.close()
     db = importer._connect(path)
     try:
-        assert db.execute(
-            "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
-        ).fetchone()[0] == 2
+        assert (
+            db.execute(
+                "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
+            ).fetchone()[0]
+            == 2
+        )
         assert db.execute("SELECT status FROM text_novel_chapters").fetchone()[0] == "discovered"
-        assert db.execute(
-            "SELECT status FROM text_novel_link_candidates"
-        ).fetchone()[0] == "candidate"
+        assert (
+            db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == "candidate"
+        )
     finally:
         db.close()
 
