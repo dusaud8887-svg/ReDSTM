@@ -70,7 +70,7 @@ export function serialWorks(posts) {
     blocks.set(key, rows);
   }
   const works = [];
-  const grouped = new Set();
+  const members = new Set();
   for (const key of [...blocks.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     const rows = blocks.get(key);
     if (rows.length < 2) continue;
@@ -78,16 +78,11 @@ export function serialWorks(posts) {
     if (orders.size !== rows.length) continue;
     rows.sort((left, right) => compareOrder(left.parsed.order, right.parsed.order)
       || Number(left.post.post_id) - Number(right.post.post_id));
-    grouped.add(key);
+    for (const row of rows) members.add(row.post);
     works.push({
       title: rows[0].parsed.base,
       posts: rows.map((row) => ({ ...row.post, label: row.parsed.label, order: row.parsed.order })),
     });
   }
-  const loose = posts.filter((post) => {
-    const parsed = parseTitle(post.title);
-    const key = `${post.board || ""}\u0000${parsed.base}`;
-    return !grouped.has(key);
-  });
-  return { works, loose };
+  return { works, loose: posts.filter((post) => !members.has(post)) };
 }

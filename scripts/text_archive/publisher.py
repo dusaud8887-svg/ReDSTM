@@ -28,6 +28,15 @@ def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
     return (*order, parsed.base_key, identity)
 
 
+def _latest_label(chapters: list[dict[str, Any]]) -> str:
+    """Last numbered episode. A trailing prologue or epilogue is not the newest chapter."""
+    for row in reversed(chapters):
+        parsed = parse_title(str(row.get("chapter_label") or ""))
+        if parsed.order_key is not None and parsed.order_key[2] == 1:
+            return str(row.get("chapter_label") or "")
+    return str(chapters[-1].get("chapter_label") or "") if chapters else ""
+
+
 def _json_bytes(value: Any) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
@@ -120,7 +129,7 @@ def build_publish_tree(
                 work["chapter_count"] += 1
             for work in groups.values():
                 chapters = sorted(chapters_by_work[work["work_id"]], key=_chapter_sort_key)
-                work["latest_label"] = str(chapters[-1]["chapter_label"]) if chapters else ""
+                work["latest_label"] = _latest_label(chapters)
                 detail = {
                     "schema": 1,
                     "lane": "novel",

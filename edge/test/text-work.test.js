@@ -26,6 +26,8 @@ test("serial groups follow preview_collections membership and order", () => {
     { board: "board", post_id: 10, title: "기나긴 서사 프롤로그" },
     { board: "board", post_id: 11, title: "기나긴 서사 1화" },
     { board: "board", post_id: 12, title: "기나긴 서사 에필로그" },
+    { board: "board", post_id: 13, title: "기나긴 서사" },
+    { board: "board", post_id: 14, title: "[연재] Fate: 달빛" },
   ];
   const { works, loose } = serialWorks(posts);
   assert.deepEqual(works.map((work) => work.posts.map((post) => post.post_id)), [
@@ -33,5 +35,5 @@ test("serial groups follow preview_collections membership and order", () => {
     [10, 11, 12],
     [5, 6],
   ]);
-  assert.deepEqual(loose.map((post) => post.post_id), [3, 4, 7, 8, 9]);
+  assert.deepEqual(loose.map((post) => post.post_id), [3, 4, 7, 8, 9, 13, 14]);
 });

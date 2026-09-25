@@ -215,8 +215,7 @@ def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -
 
 def _refresh_link_candidates(db: sqlite3.Connection, site: str, work_id: str) -> None:
     current = db.execute(
-        "SELECT title_key,author_key FROM text_novel_sources "
-        "WHERE site=? AND source_work_id=?",
+        "SELECT title_key,author_key FROM text_novel_sources WHERE site=? AND source_work_id=?",
         (site, work_id),
     ).fetchone()
     if current is None:
@@ -425,9 +424,7 @@ def resolve_novel_link_candidate(
                     or not left["author_key"]
                     or left["author_key"] != right["author_key"]
                 ):
-                    raise ValueError(
-                        "novel link candidate no longer has matching title and author"
-                    )
+                    raise ValueError("novel link candidate no longer has matching title and author")
                 mapped = db.execute(
                     """SELECT site,source_work_id,canonical_work_id
                        FROM text_novel_work_group_sources

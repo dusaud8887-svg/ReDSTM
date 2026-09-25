@@ -100,8 +100,13 @@ def test_importer_accepts_more_than_twenty_items_but_caps_total_bytes(
     raw = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
     manifest_path.write_bytes(raw)
     (batch / "ready.json").write_text(
-        json.dumps({"schema": 1, "batch_id": _BATCHES[0],
-                    "manifest_sha256": hashlib.sha256(raw).hexdigest()}),
+        json.dumps(
+            {
+                "schema": 1,
+                "batch_id": _BATCHES[0],
+                "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+            }
+        ),
         encoding="utf-8",
     )
     assert len(importer._safe_batch(inbox, _BATCHES[0])[3]["candidates"]) == 21

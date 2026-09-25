@@ -293,13 +293,29 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
             f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
             tuple(earlier.values()),
         )
+        for label, source_id, imported_at in (
+            ("프롤로그", "prologue", "2098-01-01T00:00:00Z"),
+            ("에필로그", "epilogue", "2100-01-01T00:00:00Z"),
+        ):
+            extra = earlier.copy()
+            extra["identity"] = f"novel_chapter:toki:63670:{source_id}"
+            extra["canonical_chapter_id"] = extra["identity"]
+            extra["source_chapter_id"] = source_id
+            extra["chapter_label"] = label
+            extra["imported_at"] = imported_at
+            db.execute(
+                f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+                tuple(extra.values()),
+            )
     publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
     details = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in (tmp_path / "build" / "published" / "indexes" / "novel").glob("*.json")
     ]
     chapters = next(page["chapters"] for page in details if "chapters" in page)
-    assert [chapter["label"] for chapter in chapters] == ["42화", "252화"]
+    assert [chapter["label"] for chapter in chapters] == ["프롤로그", "42화", "252화", "에필로그"]
+    catalog = next(page["items"] for page in details if "items" in page)
+    assert catalog[0]["latest_label"] == "252화"
 
 
 def test_novel_catalog_can_pass_old_canary_limit(tmp_path: Path) -> None:

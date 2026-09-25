@@ -304,9 +304,12 @@ def _next_unit(
             kind, entity_id = str(queued["kind"]), str(queued["entity_id"])
             path = f"/api/works/{entity_id}" if kind == "work" else f"/api/episodes/{entity_id}"
             candidates.append(
-                (0 if kind == preferred_kind else 1 if kind == fallback_kind else 2,
-                 source.name, kind,
-                 RequestUnit(source, kind, entity_id, source.base_url + path))
+                (
+                    0 if kind == preferred_kind else 1 if kind == fallback_kind else 2,
+                    source.name,
+                    kind,
+                    RequestUnit(source, kind, entity_id, source.base_url + path),
+                )
             )
         state = _state(db, f"{source.name}:list")
         page = int(state["next_page"]) if state else 0
@@ -314,8 +317,12 @@ def _next_unit(
         if next_check <= now:
             url = f"{source.base_url}/api/works?mediaType=NOVEL&page={page}&size={_PAGE_SIZE}"
             candidates.append(
-                (0 if preferred_kind == "list" else 1, source.name, "list",
-                 RequestUnit(source, "list", str(page), url))
+                (
+                    0 if preferred_kind == "list" else 1,
+                    source.name,
+                    "list",
+                    RequestUnit(source, "list", str(page), url),
+                )
             )
     if not candidates:
         raise CollectorError("no_due_collector_work")
