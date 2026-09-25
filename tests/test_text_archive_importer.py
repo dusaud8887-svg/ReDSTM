@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,33 @@ _BATCHES = (
     "20260923T120002Z-pc-00000003",
     "20260923T120003Z-pc-00000004",
 )
+
+
+def test_concurrent_connections_serialize_identity_migrations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "text.sqlite"
+    with sqlite3.connect(path) as db:
+        db.executescript(importer._SCHEMA)
+        db.execute(
+            "INSERT INTO text_novel_sources(site,source_work_id,last_seen_at) VALUES(?,?,?)",
+            ("blacktoon", "1", "2026-09-25T00:00:00Z"),
+        )
+    migrate = importer._migrate_stable_work_ids
+
+    def check_migration_lock(db: sqlite3.Connection) -> None:
+        assert db.in_transaction
+        migrate(db)
+
+    def connect_and_close(path: Path) -> None:
+        importer._connect(path).close()
+
+    monkeypatch.setattr(importer, "_migrate_stable_work_ids", check_migration_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(connect_and_close, (path, path)))
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM text_novel_work_group_sources").fetchone() == (1,)
+        assert db.execute("SELECT COUNT(*) FROM text_novel_identity_migrations").fetchone() == (3,)
 
 
 def _batch(

@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import time
 import unicodedata
 import uuid
 from datetime import UTC, datetime
@@ -857,31 +858,41 @@ def _safe_batch(
 
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=5)
+    db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
-    db.execute("PRAGMA busy_timeout=5000")
-    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=30000")
+    for attempt in range(5):
+        try:
+            db.execute("PRAGMA journal_mode=WAL")
+            break
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == 4:
+                raise
+            time.sleep(0.1 * (attempt + 1))
     db.executescript(_SCHEMA)
-    group_columns = {row[1] for row in db.execute("PRAGMA table_info(text_collector_groups)")}
-    if "last_source" not in group_columns:
-        db.execute(
-            "ALTER TABLE text_collector_groups ADD COLUMN last_source TEXT NOT NULL DEFAULT ''"
-        )
-    source_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_sources)")}
-    if "source_url" not in source_columns:
-        db.execute("ALTER TABLE text_novel_sources ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
-    item_columns = {row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")}
-    if "source_category" not in item_columns:
-        db.execute(
-            "ALTER TABLE text_archive_items ADD COLUMN source_category TEXT NOT NULL DEFAULT ''"
-        )
-    if "text_sha256" not in item_columns:
-        db.execute("ALTER TABLE text_archive_items ADD COLUMN text_sha256 TEXT")
-    chapter_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_chapters)")}
-    if "text_sha256" not in chapter_columns:
-        db.execute("ALTER TABLE text_novel_chapters ADD COLUMN text_sha256 TEXT")
+    db.execute("BEGIN IMMEDIATE")
     with db:
+        group_columns = {row[1] for row in db.execute("PRAGMA table_info(text_collector_groups)")}
+        if "last_source" not in group_columns:
+            db.execute(
+                "ALTER TABLE text_collector_groups ADD COLUMN last_source TEXT NOT NULL DEFAULT ''"
+            )
+        source_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_sources)")}
+        if "source_url" not in source_columns:
+            db.execute(
+                "ALTER TABLE text_novel_sources ADD COLUMN source_url TEXT NOT NULL DEFAULT ''"
+            )
+        item_columns = {row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")}
+        if "source_category" not in item_columns:
+            db.execute(
+                "ALTER TABLE text_archive_items ADD COLUMN source_category TEXT NOT NULL DEFAULT ''"
+            )
+        if "text_sha256" not in item_columns:
+            db.execute("ALTER TABLE text_archive_items ADD COLUMN text_sha256 TEXT")
+        chapter_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_chapters)")}
+        if "text_sha256" not in chapter_columns:
+            db.execute("ALTER TABLE text_novel_chapters ADD COLUMN text_sha256 TEXT")
         _migrate_stable_work_ids(db)
         _migrate_normalized_titles(db)
         _migrate_weak_novel_links(db)
