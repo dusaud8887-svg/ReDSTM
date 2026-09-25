@@ -296,9 +296,10 @@ def test_receipt_finalization_pages_more_than_one_hundred_batches(tmp_path: Path
         )
     publisher._finalize_receipts(db_path, receipts)
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "SELECT COUNT(*) FROM text_archive_batches WHERE revision=2"
-        ).fetchone()[0] == 101
+        assert (
+            db.execute("SELECT COUNT(*) FROM text_archive_batches WHERE revision=2").fetchone()[0]
+            == 101
+        )
     assert (receipts / "20260923T130000Z-pc-00000100.json").is_file()
 
 

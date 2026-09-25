@@ -246,9 +246,7 @@ def build_publish_tree(
             ):
                 digest = row["content_sha256"]
                 target_key = f"published/objects/sha256/{digest[:2]}/{digest}.md"
-                _plan_write(
-                    object_plan, target_key, digest, row["object_key"], str(row["bytes"])
-                )
+                _plan_write(object_plan, target_key, digest, row["object_key"], str(row["bytes"]))
             for stream in (item_plan, object_plan, index_plan):
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -429,7 +427,8 @@ def _finalize_receipts(db_path: Path, receipts_root: Path) -> None:
             for batch in batches:
                 receipt = json.loads(batch["receipt_json"])
                 eligible = [
-                    item for item in receipt["items"]
+                    item
+                    for item in receipt["items"]
                     if item.get("status") in {"accepted", "duplicate"}
                 ]
                 if not eligible:
@@ -668,8 +667,12 @@ def publish_lane(
                 with operation_window(lock_wait_seconds=30):
                     _run(
                         [
-                            "rclone", "--config", _RCLONE_CONFIG, "copyto",
-                            str(local), f"{remote}/{key}",
+                            "rclone",
+                            "--config",
+                            _RCLONE_CONFIG,
+                            "copyto",
+                            str(local),
+                            f"{remote}/{key}",
                         ],
                         runner,
                     )
