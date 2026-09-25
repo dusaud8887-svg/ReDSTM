@@ -37,7 +37,9 @@ def test_precision_first_collection_preview_is_normalized_ordered_and_determinis
 def test_decimal_and_side_story_have_distinct_chapter_order() -> None:
     main = [parse_title(f"긴 작품 {label}") for label in ("1화", "1.5화", "2화")]
     assert [chapter.base_key for chapter in main] == ["긴 작품"] * 3
-    assert [chapter.order_key for chapter in main] == sorted(chapter.order_key for chapter in main)
+    keys = [chapter.order_key for chapter in main]
+    assert all(key is not None for key in keys)
+    assert keys == sorted(key for key in keys if key is not None)
     side = parse_title("긴 작품 외전 1화")
     assert side.base_key == "긴 작품"
     assert side.order_key != main[0].order_key
