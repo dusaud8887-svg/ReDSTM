@@ -328,3 +328,13 @@ manifest 해시 검증까지 실측했다. 수집/게시 원본의 쓰기 권한
 새 배치 경로의 실제 R2 SHA-256 readback 뒤 게시 원장 건수 증가와 소설 availability
 `current.json`의 그룹 읽기 갱신을 확인했다. 재실행 때 이미 검증된 원문 build 파일은
 다시 쓰지 않고 동일 바이트 여부만 확인한다. 전체 아카라이브 backfill은 진행 중이다.
+
+2026-09-25 텍스트 뷰어 배포: `74a5f367260a9d3b27b83fc890c5a2316c374a26`를
+`scripts.release deploy-cloudflare`로 배포했다. Worker version은
+`b529376e-3b81-414d-9fb4-439c2f417be8`, deployment는
+`9098ff1d-d055-416c-876b-a7bd2781f5d8`이다. 배포 후 smoke에서 D1 스키마, R2 release,
+Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-work.js`,
+`text-library.js`, `app.js`다. 같은 커밋의 텍스트 publisher는 Oracle 릴리스
+`/opt/redstm-text/releases/20260925T071855Z`에 설치했고, 그 디렉터리에서
+`crawler.collections`와 publisher import를 확인했다. 브라우저에서 회차 순서를
+다시 눌러 보지는 않았다. 소설 본문 출처 지정과 대량 백필 실측은 그대로 남아 있다.
