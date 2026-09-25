@@ -13,14 +13,14 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Review source-ID-preserving novel links; no automatic merge is performed"
+        description="Review ambiguous novel links; high-confidence matches link automatically"
     )
     decision = parser.add_mutually_exclusive_group()
     decision.add_argument(
         "--accept",
         nargs=4,
         metavar=("LEFT_SITE", "LEFT_WORK_ID", "RIGHT_SITE", "RIGHT_WORK_ID"),
-        help="explicitly promote one listed candidate after the 20-work canary",
+        help="explicitly promote one ambiguous candidate",
     )
     decision.add_argument(
         "--reject",
@@ -28,16 +28,7 @@ def main() -> None:
         metavar=("LEFT_SITE", "LEFT_WORK_ID", "RIGHT_SITE", "RIGHT_WORK_ID"),
         help="reject one listed candidate without linking source works",
     )
-    parser.add_argument(
-        "--canary-verified",
-        action="store_true",
-        help="required with --accept after recording the canary comparison",
-    )
     args = parser.parse_args()
-    if args.canary_verified and not args.accept:
-        parser.error("--canary-verified is only valid with --accept")
-    if args.accept and not args.canary_verified:
-        parser.error("--accept requires --canary-verified")
 
     db_path = Path("/srv/redstm-text/text-archive.sqlite")
     result: dict[str, str] | list[dict[str, str]]
@@ -52,7 +43,6 @@ def main() -> None:
                     right_site,
                     right_work_id,
                     accept=bool(args.accept),
-                    canary_verified=bool(args.canary_verified),
                 )
             else:
                 result = list_novel_link_candidates(db_path)

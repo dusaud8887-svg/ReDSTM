@@ -1,4 +1,4 @@
-import { parseTitle, serialWorks } from "/text-work.js";
+import { migrateNovelState, parseTitle, serialWorks } from "/text-work.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
@@ -362,12 +362,17 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         });
       if (activeRequest !== requestId) return;
       catalog = loaded;
+      if (lane === "novel" && migrateNovelState(history, catalog)) persist();
       renderCatalog();
       onChange();
       const workId = params.get("work");
       if (workId && lane === "novel") {
-        const found = catalog.find((item) => item.work_id === workId);
-        if (found) await openWork(found, false, params.get("chapter"), activeRequest);
+        const found = catalog.find((item) => item.work_id === workId
+          || item.legacy_work_ids?.includes(workId));
+        if (found) {
+          await openWork(found, false, params.get("chapter"), activeRequest);
+          if (found.work_id !== workId) historyReplace();
+        }
       } else if (params.has("item") && lane === "arcalive") {
         const found = catalog.find((item) => item.identity === params.get("item"));
         if (found) await openBody(found, false, lane, work, "", activeRequest);

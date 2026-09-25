@@ -19,10 +19,11 @@ from scripts.text_archive.importer import (
     BatchRejectedError,
     _canonical_work_id,
     _connect,
+    _equivalent_novel_text,
     _now,
     _refresh_link_candidates,
     _store_object,
-    _text_key,
+    _title_key,
     mark_cross_source_covered,
 )
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
@@ -517,15 +518,17 @@ def _apply_list(db: sqlite3.Connection, unit: RequestUnit, value: Any) -> dict[s
         raise CollectorError("catalog_page_mismatch")
     state_key = f"{unit.source.name}:list"
     previous = db.execute(
-        "SELECT total_count,next_page FROM text_collector_state WHERE source=?",
+        "SELECT total_count,next_page,last_error FROM text_collector_state WHERE source=?",
         (state_key,),
     ).fetchone()
-    if (
+    scan_changed = bool(
         previous is not None
         and int(previous["next_page"]) > 0
-        and int(previous["total_count"]) not in {0, total}
-    ):
-        raise CollectorError("catalog_total_changed")
+        and (
+            int(previous["total_count"]) not in {0, total}
+            or previous["last_error"] == "catalog_changed_during_scan"
+        )
+    )
     if not works and page * page_size < total:
         raise CollectorError("catalog_empty_before_end")
     with db:
@@ -545,16 +548,17 @@ def _apply_list(db: sqlite3.Connection, unit: RequestUnit, value: Any) -> dict[s
                     work["slug"],
                     work["title"],
                     work["author"],
-                    _text_key(work["title"]),
-                    _text_key(work["author"]),
+                    _title_key(work["title"]),
+                    _title_key(work["author"]),
                     _now(),
                 ),
             )
+            _canonical_work_id(db, unit.source.name, str(work["id"]))
             _refresh_link_candidates(db, unit.source.name, work["id"])
             _enqueue(db, unit.source.name, "work", work["id"], refresh_done=True)
         done = not works or (page + 1) * page_size >= total
         next_page = 0 if done else page + 1
-        next_check = now + 7 * 24 * 3600 if done else now
+        next_check = now + (900 if scan_changed else 7 * 24 * 3600) if done else now
         db.execute(
             """INSERT INTO text_collector_state(
                source,next_page,total_count,page_size,next_check_at,last_error,updated_at)
@@ -564,8 +568,15 @@ def _apply_list(db: sqlite3.Connection, unit: RequestUnit, value: Any) -> dict[s
                last_error='',updated_at=excluded.updated_at""",
             (f"{unit.source.name}:list", next_page, total, page_size, next_check, _now()),
         )
+        if scan_changed:
+            db.execute(
+                "UPDATE text_collector_state "
+                "SET last_error='catalog_changed_during_scan' WHERE source=?",
+                (state_key,),
+            )
     return {
         "status": "listed",
+        "consistency": "observed_partial" if scan_changed else "observed",
         "source": unit.source.name,
         "page": page,
         "works": len(works),
@@ -600,12 +611,12 @@ def _apply_work(
                 slug,
                 title,
                 author,
-                _text_key(title),
-                _text_key(author),
+                _title_key(title),
+                _title_key(author),
                 now,
             ),
         )
-        _refresh_link_candidates(db, unit.source.name, work_id)
+        _canonical_work_id(db, unit.source.name, work_id)
         for episode in episodes:
             status = (
                 "discovered"
@@ -632,7 +643,8 @@ def _apply_work(
                     now,
                 ),
             )
-        json_owner = os.environ.get("REDSTM_TEXT_JSON_OWNER", "oracle").strip().lower()
+        _refresh_link_candidates(db, unit.source.name, work_id)
+        json_owner = os.environ.get("REDSTM_TEXT_JSON_OWNER", "pc").strip().lower()
         if unit.source.name == body_source and json_owner != "pc":
             _fill_body_queue(db, unit.source.name)
         mark_cross_source_covered(db, unit.source.name, work_id)
@@ -708,9 +720,19 @@ def _apply_episode(
     digest = hashlib.sha256(body).hexdigest()
     url = f"https://{body_host}/novel/{parent_id}/{chapter_id}"
     old = db.execute(
-        "SELECT content_sha256 FROM text_archive_items WHERE identity=?", (identity,)
+        "SELECT content_sha256,object_key FROM text_archive_items WHERE identity=?", (identity,)
     ).fetchone()
     now = _now()
+    if (
+        old is not None
+        and old["content_sha256"] != digest
+        and _equivalent_novel_text(object_root, old["object_key"], body)
+    ):
+        # Use the already verified object's bytes/hash consistently in all tables.
+        body = (object_root / old["object_key"]).read_bytes()
+        digest = hashlib.sha256(body).hexdigest()
+        if digest != old["content_sha256"]:
+            raise CollectorError("stored_object_integrity_changed")
     if old is not None and old["content_sha256"] != digest:
         with db:
             db.execute(
@@ -772,6 +794,7 @@ def _apply_episode(
             "WHERE site=? AND source_work_id=? AND source_chapter_id=?",
             (digest, now, unit.source.name, parent_id, chapter_id),
         )
+        _refresh_link_candidates(db, unit.source.name, parent_id)
         db.execute(
             "UPDATE text_collector_queue SET status='done',attempts=attempts+1,"
             "last_error='',updated_at=? "
@@ -925,6 +948,11 @@ def run_one(
     session: requests.Session | None = None,
     clock: Any = time.time,
 ) -> dict[str, Any]:
+    owner = os.environ.get("REDSTM_TEXT_JSON_OWNER", "pc").strip().lower()
+    if owner not in {"pc", "oracle", "both"}:
+        raise CollectorError("invalid_json_owner")
+    if owner == "pc":
+        body_source = None
     db = _connect(db_path)
     try:
         db.executescript(_SCHEMA)

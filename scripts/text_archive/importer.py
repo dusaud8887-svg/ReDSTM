@@ -8,6 +8,7 @@ import re
 import sqlite3
 import tempfile
 import unicodedata
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -110,6 +111,14 @@ CREATE TABLE IF NOT EXISTS text_novel_work_group_sources (
   canonical_work_id TEXT NOT NULL REFERENCES text_novel_work_groups(canonical_work_id),
   PRIMARY KEY(site,source_work_id)
 );
+CREATE TABLE IF NOT EXISTS text_novel_work_aliases (
+  alias_work_id TEXT PRIMARY KEY,
+  canonical_work_id TEXT NOT NULL REFERENCES text_novel_work_groups(canonical_work_id),
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS text_novel_identity_migrations (
+  version INTEGER PRIMARY KEY, completed_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS text_collector_state (
   source TEXT PRIMARY KEY, next_page INTEGER NOT NULL DEFAULT 0,
   total_count INTEGER NOT NULL DEFAULT 0, page_size INTEGER NOT NULL DEFAULT 0,
@@ -141,6 +150,10 @@ def _now() -> str:
 
 def _text_key(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _title_key(value: str) -> str:
+    return re.sub(r"[^\w]+", "", unicodedata.normalize("NFKC", value).casefold())
 
 
 def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -> int:
@@ -230,18 +243,33 @@ def _refresh_link_candidates(db: sqlite3.Connection, site: str, work_id: str) ->
     if not current["title_key"] or not current["author_key"]:
         return
     matches = db.execute(
-        """SELECT site,source_work_id FROM text_novel_sources
-           WHERE site<>? AND title_key=? AND author_key=? AND author_key<>''""",
-        (site, current["title_key"], current["author_key"]),
+        """SELECT source.site,source.source_work_id FROM text_novel_sources source
+           WHERE source.site<>? AND source.title_key=? AND source.author_key=?
+             AND source.author_key<>''
+             AND (SELECT COUNT(*) FROM text_novel_sources same_source
+                  WHERE same_source.site=source.site AND same_source.title_key=source.title_key
+                    AND same_source.author_key=source.author_key)=1
+             AND (SELECT COUNT(*) FROM text_novel_sources same_current
+                  WHERE same_current.site=? AND same_current.title_key=?
+                    AND same_current.author_key=?)=1""",
+        (
+            site,
+            current["title_key"],
+            current["author_key"],
+            site,
+            current["title_key"],
+            current["author_key"],
+        ),
     ).fetchall()
     for match in matches:
         left = sorted(((site, work_id), (str(match["site"]), str(match["source_work_id"]))))
         db.execute(
             """INSERT OR IGNORE INTO text_novel_link_candidates(
                left_site,left_work_id,right_site,right_work_id,match_basis,status,updated_at)
-               VALUES(?,?,?,?,?,'candidate',?)""",
-            (left[0][0], left[0][1], left[1][0], left[1][1], "title_author", _now()),
+                   VALUES(?,?,?,?,?,'candidate',?)""",
+            (left[0][0], left[0][1], left[1][0], left[1][1], "normalized_title_author", _now()),
         )
+        _auto_link_candidate(db, left[0][0], left[0][1], left[1][0], left[1][1])
 
 
 def _json_file(path: Path, limit: int) -> tuple[dict[str, Any], bytes]:
@@ -252,7 +280,10 @@ def _json_file(path: Path, limit: int) -> tuple[dict[str, Any], bytes]:
     raw = path.read_bytes()
     if len(raw) != path.stat().st_size:
         raise BatchRejectedError("batch_file_too_large")
-    value = json.loads(raw)
+    try:
+        value = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        raise BatchRejectedError("batch_json_invalid") from exc
     if not isinstance(value, dict):
         raise BatchRejectedError("batch_json_invalid")
     return value, raw
@@ -322,7 +353,7 @@ def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None,
 
 
 def _canonical_ids(
-    item: dict[str, Any], lane: str, source_site: str, db: sqlite3.Connection | None = None
+    item: dict[str, Any], lane: str, source_site: str, db: sqlite3.Connection
 ) -> tuple[str | None, str | None]:
     if lane == "novel":
         work_id = str(item["source_work_id"])
@@ -334,16 +365,215 @@ def _canonical_ids(
     return None, str(item["identity"])
 
 
-def _canonical_work_id(db: sqlite3.Connection | None, site: str, work_id: str) -> str:
-    if db is not None:
-        row = db.execute(
-            """SELECT canonical_work_id FROM text_novel_work_group_sources
+def _new_work_id() -> str:
+    return f"novel:{uuid.uuid4()}"
+
+
+def _record_work_alias(db: sqlite3.Connection, alias: str, canonical: str) -> None:
+    if alias and alias != canonical:
+        db.execute(
+            """INSERT INTO text_novel_work_aliases(alias_work_id,canonical_work_id,created_at)
+               VALUES(?,?,?) ON CONFLICT(alias_work_id) DO UPDATE SET
+               canonical_work_id=excluded.canonical_work_id""",
+            (alias, canonical, _now()),
+        )
+
+
+def _ensure_work_group(db: sqlite3.Connection, site: str, work_id: str) -> str:
+    row = db.execute(
+        """SELECT canonical_work_id FROM text_novel_work_group_sources
+           WHERE site=? AND source_work_id=?""",
+        (site, work_id),
+    ).fetchone()
+    if row is None:
+        canonical = _new_work_id()
+        db.execute(
+            "INSERT INTO text_novel_work_groups(canonical_work_id,created_at) VALUES(?,?)",
+            (canonical, _now()),
+        )
+        db.execute(
+            """INSERT INTO text_novel_work_group_sources(site,source_work_id,canonical_work_id)
+               VALUES(?,?,?)""",
+            (site, work_id, canonical),
+        )
+        _record_work_alias(db, f"novel:{site}:{work_id}", canonical)
+        db.execute(
+            """UPDATE text_archive_items SET canonical_work_id=?
+               WHERE lane='novel' AND source_site=? AND source_work_id=?""",
+            (canonical, site, work_id),
+        )
+        return canonical
+    canonical = str(row["canonical_work_id"])
+    alias = db.execute(
+        "SELECT canonical_work_id FROM text_novel_work_aliases WHERE alias_work_id=?",
+        (canonical,),
+    ).fetchone()
+    if alias is not None:
+        canonical = str(alias["canonical_work_id"])
+        db.execute(
+            """UPDATE text_novel_work_group_sources SET canonical_work_id=?
                WHERE site=? AND source_work_id=?""",
-            (site, work_id),
-        ).fetchone()
-        if row is not None:
-            return str(row["canonical_work_id"])
-    return f"novel:{site}:{work_id}"
+            (canonical, site, work_id),
+        )
+    _record_work_alias(db, f"novel:{site}:{work_id}", canonical)
+    return canonical
+
+
+def _canonical_work_id(db: sqlite3.Connection, site: str, work_id: str) -> str:
+    return _ensure_work_group(db, site, work_id)
+
+
+def _merge_work_groups(
+    db: sqlite3.Connection, sources: tuple[tuple[str, str], tuple[str, str]]
+) -> str:
+    groups = {_ensure_work_group(db, site, work_id) for site, work_id in sources}
+    ordered = sorted(
+        groups,
+        key=lambda group_id: (
+            str(
+                db.execute(
+                    "SELECT created_at FROM text_novel_work_groups WHERE canonical_work_id=?",
+                    (group_id,),
+                ).fetchone()[0]
+            ),
+            group_id,
+        ),
+    )
+    canonical = ordered[0]
+    for obsolete in ordered[1:]:
+        db.execute(
+            "UPDATE text_novel_work_group_sources SET canonical_work_id=? "
+            "WHERE canonical_work_id=?",
+            (canonical, obsolete),
+        )
+        db.execute(
+            "UPDATE text_archive_items SET canonical_work_id=? WHERE canonical_work_id=?",
+            (canonical, obsolete),
+        )
+        db.execute(
+            "UPDATE text_novel_work_aliases SET canonical_work_id=? WHERE canonical_work_id=?",
+            (canonical, obsolete),
+        )
+        _record_work_alias(db, obsolete, canonical)
+        db.execute("DELETE FROM text_novel_work_groups WHERE canonical_work_id=?", (obsolete,))
+    for site, work_id in sources:
+        db.execute(
+            "UPDATE text_archive_items SET canonical_work_id=? "
+            "WHERE lane='novel' AND source_site=? AND source_work_id=?",
+            (canonical, site, work_id),
+        )
+    return canonical
+
+
+def _chapter_key(label: str, kind: str) -> tuple[str, str]:
+    normalized = unicodedata.normalize("NFKC", label).casefold()
+    return re.sub(r"[^\w]+", "", normalized), _text_key(kind)
+
+
+def _auto_link_basis(
+    db: sqlite3.Connection,
+    left_site: str,
+    left_work_id: str,
+    right_site: str,
+    right_work_id: str,
+) -> str | None:
+    rows = db.execute(
+        """SELECT site,source_work_id,slug,title_key,author_key FROM text_novel_sources
+           WHERE (site=? AND source_work_id=?) OR (site=? AND source_work_id=?)""",
+        (left_site, left_work_id, right_site, right_work_id),
+    ).fetchall()
+    if len(rows) != 2:
+        return None
+    left = next(
+        (row for row in rows if row["site"] == left_site and row["source_work_id"] == left_work_id),
+        None,
+    )
+    right = next(
+        (
+            row
+            for row in rows
+            if row["site"] == right_site and row["source_work_id"] == right_work_id
+        ),
+        None,
+    )
+    if (
+        left is None
+        or right is None
+        or left["site"] == right["site"]
+        or not left["title_key"]
+        or left["title_key"] != right["title_key"]
+        or not left["author_key"]
+        or left["author_key"] != right["author_key"]
+    ):
+        return None
+    for site in (left_site, right_site):
+        matches = db.execute(
+            """SELECT COUNT(*) FROM text_novel_sources
+               WHERE site=? AND title_key=? AND author_key=?""",
+            (site, left["title_key"], left["author_key"]),
+        ).fetchone()[0]
+        if matches != 1:
+            return None
+    hashes = db.execute(
+        """SELECT COUNT(DISTINCT l.content_sha256) FROM text_novel_chapters l
+           JOIN text_novel_chapters r ON r.content_sha256=l.content_sha256
+           WHERE l.site=? AND l.source_work_id=? AND r.site=? AND r.source_work_id=?
+             AND l.content_sha256 IS NOT NULL AND l.status='complete' AND r.status='complete'""",
+        (left_site, left_work_id, right_site, right_work_id),
+    ).fetchone()[0]
+    left_slug = str(left["slug"] or "").casefold()
+    right_slug = str(right["slug"] or "").casefold()
+    external_id_match = (
+        left_slug == right_work_id.casefold() or right_slug == left_work_id.casefold()
+    )
+    if hashes >= 2:
+        return "normalized_title_author+body_sha256"
+    if hashes >= 1 and external_id_match:
+        return "normalized_title_author+source_alias+body_sha256"
+    chapter_sets: list[set[tuple[str, str]]] = []
+    for site, work_id in ((left_site, left_work_id), (right_site, right_work_id)):
+        chapter_sets.append(
+            {
+                _chapter_key(str(row[0]), str(row[1]))
+                for row in db.execute(
+                    """SELECT chapter_label,chapter_kind FROM text_novel_chapters
+                       WHERE site=? AND source_work_id=? AND chapter_label<>''""",
+                    (site, work_id),
+                )
+            }
+        )
+    smaller = min(map(len, chapter_sets))
+    overlap = len(chapter_sets[0] & chapter_sets[1])
+    if smaller >= 10 and overlap >= 10 and overlap / smaller >= 0.8:
+        return "normalized_title_author+chapter_sequence"
+    return None
+
+
+def _auto_link_candidate(
+    db: sqlite3.Connection, left_site: str, left_work_id: str, right_site: str, right_work_id: str
+) -> str | None:
+    candidate = db.execute(
+        """SELECT status FROM text_novel_link_candidates
+           WHERE left_site=? AND left_work_id=? AND right_site=? AND right_work_id=?""",
+        (left_site, left_work_id, right_site, right_work_id),
+    ).fetchone()
+    if candidate is None or candidate["status"] != "candidate":
+        return None
+    basis = _auto_link_basis(db, left_site, left_work_id, right_site, right_work_id)
+    if basis is None:
+        return None
+    canonical = _merge_work_groups(db, ((left_site, left_work_id), (right_site, right_work_id)))
+    db.execute(
+        """UPDATE text_novel_link_candidates SET status='auto_accepted',match_basis=?,updated_at=?
+           WHERE left_site=? AND left_work_id=? AND right_site=? AND right_work_id=?""",
+        (basis, _now(), left_site, left_work_id, right_site, right_work_id),
+    )
+    for row in db.execute(
+        "SELECT site,source_work_id FROM text_novel_work_group_sources WHERE canonical_work_id=?",
+        (canonical,),
+    ).fetchall():
+        mark_cross_source_covered(db, str(row["site"]), str(row["source_work_id"]))
+    return canonical
 
 
 def list_novel_link_candidates(db_path: Path) -> list[dict[str, str]]:
@@ -354,11 +584,15 @@ def list_novel_link_candidates(db_path: Path) -> list[dict[str, str]]:
                 """INSERT OR IGNORE INTO text_novel_link_candidates(
                    left_site,left_work_id,right_site,right_work_id,match_basis,status,updated_at)
                    SELECT l.site,l.source_work_id,r.site,r.source_work_id,
-                          'title_author','candidate',?
+                          'normalized_title_author','candidate',?
                    FROM text_novel_sources l JOIN text_novel_sources r
                      ON l.site<r.site AND l.title_key=r.title_key
                     AND l.author_key=r.author_key
-                   WHERE l.title_key<>'' AND l.author_key<>''""",
+                   WHERE l.title_key<>'' AND l.author_key<>''
+                     AND (SELECT COUNT(*) FROM text_novel_sources ls WHERE ls.site=l.site
+                          AND ls.title_key=l.title_key AND ls.author_key=l.author_key)=1
+                     AND (SELECT COUNT(*) FROM text_novel_sources rs WHERE rs.site=r.site
+                          AND rs.title_key=r.title_key AND rs.author_key=r.author_key)=1""",
                 (_now(),),
             )
         return [
@@ -391,9 +625,8 @@ def resolve_novel_link_candidate(
     accept: bool,
     canary_verified: bool = False,
 ) -> dict[str, str]:
-    """Apply an explicit operator decision; acceptance requires canary confirmation."""
-    if accept and not canary_verified:
-        raise ValueError("cross-source acceptance requires a verified 20-work canary")
+    """Resolve an ambiguous match; strong matches are linked automatically during indexing."""
+    del canary_verified  # Retained for compatibility with older operator commands.
     db = _connect(db_path)
     try:
         with db:
@@ -426,49 +659,15 @@ def resolve_novel_link_candidate(
                     or left["author_key"] != right["author_key"]
                 ):
                     raise ValueError("novel link candidate no longer has matching title and author")
-                mapped = db.execute(
-                    """SELECT site,source_work_id,canonical_work_id
-                       FROM text_novel_work_group_sources
-                       WHERE (site=? AND source_work_id=?) OR (site=? AND source_work_id=?)""",
-                    (left_site, left_work_id, right_site, right_work_id),
-                ).fetchall()
-                group_ids = {str(row["canonical_work_id"]) for row in mapped}
-                if len(group_ids) > 1:
-                    raise ValueError("sources already belong to different canonical work groups")
-                if group_ids:
-                    group_id = next(iter(group_ids))
-                else:
-                    members = sorted(((left_site, left_work_id), (right_site, right_work_id)))
-                    seed = "\n".join(f"{site}:{work_id}" for site, work_id in members)
-                    group_id = f"novel:linked:{hashlib.sha256(seed.encode()).hexdigest()}"
-                    db.execute(
-                        """INSERT INTO text_novel_work_groups(
-                               canonical_work_id,created_at) VALUES(?,?)""",
-                        (group_id, _now()),
-                    )
-                for site, work_id in ((left_site, left_work_id), (right_site, right_work_id)):
-                    prior = db.execute(
-                        """SELECT canonical_work_id FROM text_novel_work_group_sources
-                           WHERE site=? AND source_work_id=?""",
-                        (site, work_id),
-                    ).fetchone()
-                    if prior is None:
-                        db.execute(
-                            """INSERT INTO text_novel_work_group_sources(
-                                   site,source_work_id,canonical_work_id) VALUES(?,?,?)""",
-                            (site, work_id, group_id),
-                        )
-                    elif str(prior["canonical_work_id"]) != group_id:
-                        raise ValueError(
-                            "source work is already assigned to another canonical group"
-                        )
-                    db.execute(
-                        """UPDATE text_archive_items SET canonical_work_id=?
-                           WHERE lane='novel' AND source_site=? AND source_work_id=?""",
-                        (group_id, site, work_id),
-                    )
-                for site, work_id in ((left_site, left_work_id), (right_site, right_work_id)):
-                    mark_cross_source_covered(db, site, work_id)
+                group_id = _merge_work_groups(
+                    db, ((left_site, left_work_id), (right_site, right_work_id))
+                )
+                for row in db.execute(
+                    """SELECT site,source_work_id FROM text_novel_work_group_sources
+                       WHERE canonical_work_id=?""",
+                    (group_id,),
+                ).fetchall():
+                    mark_cross_source_covered(db, str(row["site"]), str(row["source_work_id"]))
             status = "accepted" if accept else "rejected"
             db.execute(
                 """UPDATE text_novel_link_candidates SET status=?,updated_at=?
@@ -522,6 +721,9 @@ def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes |
     incoming_text = canonical_novel_bytes(incoming)
     if incoming_text is None or not object_key:
         return False
+    match = re.fullmatch(r"objects/sha256/([a-f0-9]{2})/([a-f0-9]{64})\.md", object_key)
+    if match is None or match[1] != match[2][:2]:
+        return False
     stored_path = object_root / object_key
     if stored_path.is_symlink() or not stored_path.is_file():
         return False
@@ -529,7 +731,10 @@ def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes |
         stored = stored_path.read_bytes()
     except OSError:
         return False
-    return canonical_novel_bytes(stored) == incoming_text
+    return (
+        hashlib.sha256(stored).hexdigest() == match[2]
+        and canonical_novel_bytes(stored) == incoming_text
+    )
 
 
 def _safe_batch(
@@ -715,6 +920,8 @@ def _connect(path: Path) -> sqlite3.Connection:
             "ALTER TABLE text_archive_items ADD COLUMN source_category TEXT NOT NULL DEFAULT ''"
         )
     with db:
+        _migrate_stable_work_ids(db)
+        _migrate_normalized_titles(db)
         legacy_pc_sources = db.execute(
             """SELECT site,source_work_id FROM text_novel_sources
                WHERE site IN ('toki','newtoki','sbxh') AND slug=''"""
@@ -727,6 +934,117 @@ def _connect(path: Path) -> sqlite3.Connection:
             )
             _refresh_link_candidates(db, str(source["site"]), str(source["source_work_id"]))
     return db
+
+
+def _migrate_stable_work_ids(db: sqlite3.Connection) -> None:
+    if db.execute("SELECT 1 FROM text_novel_identity_migrations WHERE version=1").fetchone():
+        return
+    now = _now()
+    old_groups = [
+        str(row[0])
+        for row in db.execute(
+            "SELECT canonical_work_id FROM text_novel_work_groups ORDER BY canonical_work_id"
+        )
+    ]
+    for old_id in old_groups:
+        new_id = _new_work_id()
+        db.execute(
+            "INSERT INTO text_novel_work_groups(canonical_work_id,created_at) VALUES(?,?)",
+            (new_id, now),
+        )
+        db.execute(
+            "UPDATE text_novel_work_group_sources SET canonical_work_id=? "
+            "WHERE canonical_work_id=?",
+            (new_id, old_id),
+        )
+        db.execute(
+            "UPDATE text_archive_items SET canonical_work_id=? WHERE canonical_work_id=?",
+            (new_id, old_id),
+        )
+        db.execute(
+            "UPDATE text_novel_work_aliases SET canonical_work_id=? WHERE canonical_work_id=?",
+            (new_id, old_id),
+        )
+        _record_work_alias(db, old_id, new_id)
+        db.execute("DELETE FROM text_novel_work_groups WHERE canonical_work_id=?", (old_id,))
+
+    sources = db.execute(
+        """SELECT site,source_work_id FROM text_novel_sources
+           UNION SELECT source_site,source_work_id FROM text_archive_items
+             WHERE lane='novel' AND source_work_id IS NOT NULL
+           ORDER BY 1,2"""
+    ).fetchall()
+    for source in sources:
+        site, work_id = str(source[0]), str(source[1])
+        row = db.execute(
+            """SELECT canonical_work_id FROM text_novel_work_group_sources
+               WHERE site=? AND source_work_id=?""",
+            (site, work_id),
+        ).fetchone()
+        if row is None:
+            canonical = _new_work_id()
+            db.execute(
+                "INSERT INTO text_novel_work_groups(canonical_work_id,created_at) VALUES(?,?)",
+                (canonical, now),
+            )
+            db.execute(
+                """INSERT INTO text_novel_work_group_sources(
+                   site,source_work_id,canonical_work_id) VALUES(?,?,?)""",
+                (site, work_id, canonical),
+            )
+        else:
+            canonical = str(row[0])
+        _record_work_alias(db, f"novel:{site}:{work_id}", canonical)
+        db.execute(
+            """UPDATE text_archive_items SET canonical_work_id=?
+               WHERE lane='novel' AND source_site=? AND source_work_id=?""",
+            (canonical, site, work_id),
+        )
+    db.execute(
+        "INSERT INTO text_novel_identity_migrations(version,completed_at) VALUES(1,?)", (now,)
+    )
+
+
+def _migrate_normalized_titles(db: sqlite3.Connection) -> None:
+    if db.execute("SELECT 1 FROM text_novel_identity_migrations WHERE version=2").fetchone():
+        return
+    sources = db.execute(
+        "SELECT site,source_work_id,title,author FROM text_novel_sources"
+    ).fetchall()
+    for source in sources:
+        db.execute(
+            """UPDATE text_novel_sources SET title_key=?,author_key=?
+               WHERE site=? AND source_work_id=?""",
+            (
+                _title_key(str(source["title"])),
+                _title_key(str(source["author"])),
+                source["site"],
+                source["source_work_id"],
+            ),
+        )
+    db.execute("DELETE FROM text_novel_link_candidates WHERE status='candidate'")
+    db.execute(
+        """INSERT OR IGNORE INTO text_novel_link_candidates(
+           left_site,left_work_id,right_site,right_work_id,match_basis,status,updated_at)
+           SELECT l.site,l.source_work_id,r.site,r.source_work_id,
+                  'normalized_title_author','candidate',?
+           FROM text_novel_sources l JOIN text_novel_sources r
+             ON l.site<r.site AND l.title_key=r.title_key AND l.author_key=r.author_key
+           WHERE l.title_key<>'' AND l.author_key<>''
+             AND (SELECT COUNT(*) FROM text_novel_sources ls WHERE ls.site=l.site
+                  AND ls.title_key=l.title_key AND ls.author_key=l.author_key)=1
+             AND (SELECT COUNT(*) FROM text_novel_sources rs WHERE rs.site=r.site
+                  AND rs.title_key=r.title_key AND rs.author_key=r.author_key)=1""",
+        (_now(),),
+    )
+    for candidate in db.execute(
+        """SELECT left_site,left_work_id,right_site,right_work_id
+           FROM text_novel_link_candidates WHERE status='candidate'"""
+    ).fetchall():
+        _auto_link_candidate(db, *map(str, candidate))
+    db.execute(
+        "INSERT INTO text_novel_identity_migrations(version,completed_at) VALUES(2,?)", (_now(),)
+    )
 
 
 def _store_object(root: Path, body: bytes, digest: str) -> str:
@@ -837,7 +1155,7 @@ def import_batch(
                     (identity,),
                 ).fetchone()
                 if existing is not None and existing["content_sha256"] != digest:
-                    if _equivalent_novel_text(
+                    if candidate["lane"] == "novel" and _equivalent_novel_text(
                         object_root, str(existing["object_key"]), candidate["body"]
                     ):
                         canonical_work_id = existing["canonical_work_id"]
@@ -849,6 +1167,12 @@ def import_batch(
                                 "canonical_work_id": canonical_work_id,
                                 "canonical_chapter_id": canonical_chapter_id,
                                 "content_sha256": existing["content_sha256"],
+                                "submitted_raw_sha256": digest,
+                                "stored_object_sha256": existing["content_sha256"],
+                                "text_sha256": hashlib.sha256(
+                                    canonical_novel_bytes(candidate["body"]) or b""
+                                ).hexdigest(),
+                                "equivalence_version": 1,
                             }
                         )
                         continue
@@ -951,13 +1275,10 @@ def import_batch(
                                 candidate["source_work_id"],
                                 title,
                                 author,
-                                _text_key(title),
-                                _text_key(author),
+                                _title_key(title),
+                                _title_key(author),
                                 now,
                             ),
-                        )
-                        _refresh_link_candidates(
-                            db, candidate["source_site"], candidate["source_work_id"]
                         )
                         db.execute(
                             """INSERT INTO text_novel_chapters(
@@ -979,6 +1300,9 @@ def import_batch(
                                 "complete",
                                 now,
                             ),
+                        )
+                        _refresh_link_candidates(
+                            db, candidate["source_site"], candidate["source_work_id"]
                         )
                     status = "accepted"
                 results.append(
@@ -1028,6 +1352,9 @@ def _record_batch_rejection(inbox_root: Path, batch_id: str, reason: str) -> Non
     """Keep the original batch and remember a terminal rejection so later batches run."""
     if not _BATCH_ID.fullmatch(batch_id):
         raise BatchRejectedError("batch_id_invalid")
+    from scripts.text_archive.recovery_status import write_rejection_status
+
+    write_rejection_status(inbox_root, batch_id, reason)
     batch_dir = inbox_root / "drop" / batch_id
     if any(path.is_symlink() for path in (inbox_root, inbox_root / "drop", batch_dir)):
         raise BatchRejectedError("batch_path_symlink")

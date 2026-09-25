@@ -347,3 +347,9 @@ Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-
 텍스트 수집·수입·게시 스크립트는 Oracle 릴리스
 `/opt/redstm-text/releases/20260925T082552Z`에 설치했다. 브라우저에서 첫 화면과
 회차 누락 안내를 다시 눌러 보지는 않았다.
+
+## 2026-09-25 ID·자동 연결 최종 보완
+
+작품 ID는 출처 ID를 재사용하지 않는다. ReDSTM DB가 작품마다 `novel:<UUIDv4>`를 발급하고 `(site, source_work_id)` 관계 및 이전 canonical ID alias를 보존한다. UUID migration은 과거 alias 참조를 새 그룹으로 이동한 뒤 기존 그룹을 제거한다. 정규화 제목·작가가 출처마다 유일한 후보에 대해 본문 SHA 두 회차 일치, 명시적 slug↔상대 ID와 본문 SHA 일치, 또는 10개 이상 회차 라벨의 80% 이상 일치가 확보되면 무인 자동 연결한다. 증거가 약하거나 모호하면 작품만 분리해 두며 수집은 계속한다.
+
+연결된 작품의 출처별 원본 회차 row와 availability는 모두 유지한다. Reader용 상세에서만 정규화 회차 라벨/종류와 본문 SHA-256이 모두 같은 교차 출처 사본을 한 회차로 표시하고 `source_variants`에 출처 ID·URL을 보존한다. 본문 SHA가 다르면 별도 회차다. 자동 이관·연결·표시 계약을 importer/publisher 테스트로 검증했다. 운영 규모 처리량·요금은 라이브 지표를 별도로 관찰하며, 미측정 상태를 완료 판정으로 부르지 않는다.

@@ -141,7 +141,7 @@ def test_next_ready_batch_skips_already_imported_batch(tmp_path: Path) -> None:
     assert importer._next_ready_batch(tmp_path) == _BATCHES[1]
 
 
-def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path: Path) -> None:
+def test_ambiguous_novel_link_can_be_promoted_without_canary(tmp_path: Path) -> None:
     db_path = tmp_path / "text.sqlite"
     db = importer._connect(db_path)
     now = "2026-09-23T12:00:00Z"
@@ -188,15 +188,10 @@ def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path:
 
     candidates = importer.list_novel_link_candidates(db_path)
     assert len(candidates) == 1
-    assert candidates[0]["match_basis"] == "title_author"
+    assert candidates[0]["match_basis"] == "normalized_title_author"
     candidate = candidates[0]
     assert (candidate["left_site"], candidate["left_work_id"]) == ("blacktoon", "24753")
     assert (candidate["right_site"], candidate["right_work_id"]) == ("toki", "63670")
-    with pytest.raises(ValueError, match="canary"):
-        importer.resolve_novel_link_candidate(
-            db_path, "blacktoon", "24753", "toki", "63670", accept=True
-        )
-
     result = importer.resolve_novel_link_candidate(
         db_path,
         "blacktoon",
@@ -204,10 +199,10 @@ def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path:
         "toki",
         "63670",
         accept=True,
-        canary_verified=True,
     )
     assert result["status"] == "accepted"
-    assert result["canonical_work_id"].startswith("novel:linked:")
+    assert result["canonical_work_id"].startswith("novel:")
+    assert len(result["canonical_work_id"].removeprefix("novel:")) == 36
     db = importer._connect(db_path)
     try:
         mappings = db.execute(
@@ -237,6 +232,125 @@ def test_novel_link_promotion_requires_canary_and_preserves_source_ids(tmp_path:
         db.close()
 
 
+def test_unique_title_author_and_matching_body_hashes_auto_link(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    with db:
+        for site, work_id in (("blacktoon", "24753"), ("toki", "63670")):
+            db.execute(
+                """INSERT INTO text_novel_sources(
+                   site,source_work_id,slug,title,author,title_key,author_key,last_seen_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (site, work_id, work_id, "고유 작품", "작가", "고유 작품", "작가", "now"),
+            )
+            importer._canonical_work_id(db, site, work_id)
+            for chapter_id, digest in (("1", "a" * 64), ("2", "b" * 64)):
+                db.execute(
+                    """INSERT INTO text_novel_chapters(
+                       site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+                       access,content_sha256,status,last_seen_at)
+                       VALUES(?,?,?,?,'main','free',?,'complete','now')""",
+                    (site, work_id, chapter_id, f"{chapter_id}화", digest),
+                )
+            importer._refresh_link_candidates(db, site, work_id)
+    rows = db.execute(
+        "SELECT canonical_work_id FROM text_novel_work_group_sources ORDER BY site"
+    ).fetchall()
+    assert len(rows) == 2 and rows[0][0] == rows[1][0]
+    assert db.execute("SELECT status,match_basis FROM text_novel_link_candidates").fetchone()[
+        :
+    ] == ("auto_accepted", "normalized_title_author+body_sha256")
+    db.close()
+
+
+def test_same_title_without_distinguishing_evidence_stays_unlinked(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    with db:
+        for site, work_id in (("blacktoon", "24753"), ("toki", "63670")):
+            db.execute(
+                """INSERT INTO text_novel_sources(
+                   site,source_work_id,slug,title,author,title_key,author_key,last_seen_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (site, work_id, work_id, "동명 작품", "작가", "동명 작품", "작가", "now"),
+            )
+            importer._canonical_work_id(db, site, work_id)
+            db.execute(
+                """INSERT INTO text_novel_chapters(
+                   site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+                   access,status,last_seen_at)
+                   VALUES(?,?,?,'1화','main','free','discovered','now')""",
+                (site, work_id, "1"),
+            )
+            importer._refresh_link_candidates(db, site, work_id)
+    assert db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == "candidate"
+    assert (
+        len(
+            {
+                row[0]
+                for row in db.execute("SELECT canonical_work_id FROM text_novel_work_group_sources")
+            }
+        )
+        == 2
+    )
+    db.close()
+
+
+def test_title_key_folds_width_spacing_and_punctuation() -> None:
+    assert importer._title_key("［Ｒead　Me］ - 외전!") == "readme외전"
+
+
+def test_legacy_work_ids_migrate_to_stable_ids_and_keep_aliases(tmp_path: Path) -> None:
+    db_path = tmp_path / "text.sqlite"
+    db = importer._connect(db_path)
+    with db:
+        db.execute("DELETE FROM text_novel_identity_migrations WHERE version=1")
+        db.execute("INSERT INTO text_novel_work_groups VALUES('novel:linked:legacy','now')")
+        for site, work_id in (("toki", "63670"), ("blacktoon", "24753")):
+            db.execute(
+                """INSERT INTO text_novel_sources(
+                   site,source_work_id,title,author,title_key,author_key,last_seen_at)
+                   VALUES(?,?, '작품','작가','작품','작가','now')""",
+                (site, work_id),
+            )
+            db.execute(
+                "INSERT INTO text_novel_work_group_sources VALUES(?,?,?)",
+                (site, work_id, "novel:linked:legacy"),
+            )
+        db.execute(
+            """INSERT INTO text_archive_items(
+               identity,lane,source_site,source_work_id,source_chapter_id,source_url,title,
+               author,chapter_label,chapter_kind,access,content_sha256,bytes,object_key,
+               canonical_work_id,canonical_chapter_id,batch_id,imported_at)
+               VALUES('novel_chapter:toki:63670:1','novel','toki','63670','1',
+               'https://toki31.com/novel/63670/1','작품','작가','1화','main','free',
+               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,
+               'objects/sha256/aa/fixture.md','novel:linked:legacy',
+               'novel_chapter:toki:63670:1','fixture','now')"""
+        )
+    db.close()
+    db = importer._connect(db_path)
+    try:
+        canonical = db.execute(
+            "SELECT canonical_work_id FROM text_novel_work_group_sources"
+        ).fetchone()[0]
+        assert canonical.startswith("novel:") and canonical != "novel:toki:63670"
+        aliases = {
+            row[0]
+            for row in db.execute(
+                "SELECT alias_work_id FROM text_novel_work_aliases WHERE canonical_work_id=?",
+                (canonical,),
+            )
+        }
+        assert {"novel:linked:legacy", "novel:toki:63670"} <= aliases
+        assert (
+            db.execute(
+                "SELECT canonical_work_id FROM text_archive_items WHERE lane='novel'"
+            ).fetchone()[0]
+            == canonical
+        )
+    finally:
+        db.close()
+
+
 def test_existing_cross_site_works_are_listed_without_shared_slug(tmp_path: Path) -> None:
     db_path = tmp_path / "text.sqlite"
     db = importer._connect(db_path)
@@ -251,7 +365,7 @@ def test_existing_cross_site_works_are_listed_without_shared_slug(tmp_path: Path
     db.close()
     candidates = importer.list_novel_link_candidates(db_path)
     assert [(row["left_site"], row["right_site"], row["match_basis"]) for row in candidates] == [
-        ("blacktoon", "toki", "title_author")
+        ("blacktoon", "toki", "normalized_title_author")
     ]
 
 
@@ -345,7 +459,8 @@ def test_novel_import_keeps_source_ids_and_records_only_a_link_candidate(tmp_pat
             """INSERT INTO text_novel_sources(
                    site,source_work_id,source_url,slug,title,author,title_key,author_key,last_seen_at)
                VALUES('blacktoon','24753','https://blacktoon452.com/novel/24753',
-                      '63670','Shared Book','A Writer','shared book','a writer','now')"""
+                      '63670','Shared Book','A Writer',?,?, 'now')""",
+            (importer._title_key("Shared Book"), importer._title_key("A Writer")),
         )
     db.close()
     novel: dict[str, object] = {
@@ -365,7 +480,8 @@ def test_novel_import_keeps_source_ids_and_records_only_a_link_candidate(tmp_pat
     _batch(inbox, _BATCHES[0], item=novel)
     receipt = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
     assert receipt is not None
-    assert receipt["items"][0]["canonical_work_id"] == "novel:toki:63670"
+    canonical = receipt["items"][0]["canonical_work_id"]
+    assert canonical.startswith("novel:") and canonical != "novel:toki:63670"
     with sqlite3.connect(db_path) as db:
         assert db.execute(
             "SELECT slug FROM text_novel_sources WHERE site='toki' AND source_work_id='63670'"
@@ -374,6 +490,13 @@ def test_novel_import_keeps_source_ids_and_records_only_a_link_candidate(tmp_pat
             "SELECT left_site,left_work_id,right_site,right_work_id,status "
             "FROM text_novel_link_candidates"
         ).fetchall() == [("blacktoon", "24753", "toki", "63670", "candidate")]
+        assert (
+            db.execute(
+                "SELECT canonical_work_id FROM text_novel_work_group_sources "
+                "WHERE site='toki' AND source_work_id='63670'"
+            ).fetchone()[0]
+            == canonical
+        )
 
 
 def test_legacy_toki_sources_backfill_numeric_slug_without_merging(tmp_path: Path) -> None:
@@ -515,7 +638,9 @@ def test_operation_window_defers_below_resource_floors(
             pytest.fail("resource limits must defer the text operation")
 
 
-def test_operation_window_defers_only_for_typemoon_publish(tmp_path: Path) -> None:
+def test_operation_window_defers_only_for_typemoon_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     control_lock = tmp_path / "state" / "control.lock"
     publish_lock = tmp_path / "static" / ".publish.lock"
     control_lock.parent.mkdir()
@@ -523,6 +648,7 @@ def test_operation_window_defers_only_for_typemoon_publish(tmp_path: Path) -> No
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n")
     status = _process_status(tmp_path)
+    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)

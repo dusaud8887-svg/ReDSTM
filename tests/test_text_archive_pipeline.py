@@ -358,6 +358,88 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
     assert catalog[0]["latest_label"] == "252화"
 
 
+def test_publisher_collapses_exact_cross_source_chapter_copies(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        original = dict(db.execute("SELECT * FROM text_archive_items").fetchone())
+        work_id = original["canonical_work_id"]
+        duplicate = original.copy()
+        duplicate.update(
+            identity="novel_chapter:blacktoon:24753:914174",
+            source_site="blacktoon",
+            source_work_id="24753",
+            source_chapter_id="914174",
+            canonical_chapter_id="novel:blacktoon:24753:914174",
+            source_url="https://blacktoon452.com/novel/24753/914174",
+            imported_at="2099-01-01T00:00:00Z",
+        )
+        columns = ",".join(duplicate)
+        placeholders = ",".join("?" for _ in duplicate)
+        db.execute(
+            f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+            tuple(duplicate.values()),
+        )
+        db.execute(
+            "INSERT INTO text_novel_work_group_sources VALUES('blacktoon','24753',?)",
+            (work_id,),
+        )
+
+    publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
+    pages = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "build" / "published" / "indexes" / "novel").glob("*.json")
+    ]
+    detail = next(page for page in pages if "chapters" in page)
+    assert len(detail["chapters"]) == 1
+    assert {row["source_site"] for row in detail["chapters"][0]["source_variants"]} == {
+        "toki",
+        "blacktoon",
+    }
+    catalog = next(page["items"] for page in pages if "items" in page)
+    assert catalog[0]["chapter_count"] == 1
+
+
+def test_novel_catalog_preserves_pre_link_work_ids_as_aliases(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO text_novel_work_groups VALUES('novel:linked:abc', 'now')")
+        db.execute(
+            "UPDATE text_novel_work_group_sources SET canonical_work_id='novel:linked:abc' "
+            "WHERE site='toki' AND source_work_id='63670'"
+        )
+        db.execute(
+            "INSERT INTO text_novel_work_group_sources "
+            "VALUES('blacktoon','24753','novel:linked:abc')"
+        )
+        db.execute(
+            "INSERT INTO text_novel_work_aliases "
+            "VALUES('novel:old-linked','novel:linked:abc','now')"
+        )
+        db.execute(
+            "UPDATE text_archive_items SET canonical_work_id='novel:linked:abc' WHERE lane='novel'"
+        )
+
+    publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
+    pages = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "build" / "published" / "indexes" / "novel").glob("*.json")
+    ]
+    catalog = next(page["items"] for page in pages if "items" in page)
+    assert catalog[0]["work_id"] == "novel:linked:abc"
+    assert catalog[0]["legacy_work_ids"] == [
+        "novel:blacktoon:24753",
+        "novel:old-linked",
+        "novel:toki:63670",
+    ]
+
+
 def test_novel_catalog_can_pass_old_canary_limit(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     _incoming_novel_batch(inbox, _BATCH_ID)
@@ -530,10 +612,11 @@ def test_novel_publisher_writes_a_paged_receipt_snapshot_after_r2_pointer(
     assert page["items"][0]["published_at"] == "2020-01-01T00:00:00Z"
     with sqlite3.connect(db_path) as db:
         db.execute("INSERT INTO text_novel_work_groups VALUES('linked', 'now')")
-        db.executemany(
-            "INSERT INTO text_novel_work_group_sources VALUES(?,?, 'linked')",
-            [("toki", "63670"), ("blacktoon", "24753")],
+        db.execute(
+            "UPDATE text_novel_work_group_sources SET canonical_work_id='linked' "
+            "WHERE site='toki' AND source_work_id='63670'"
         )
+        db.execute("INSERT INTO text_novel_work_group_sources VALUES('blacktoon','24753','linked')")
         db.execute("UPDATE text_archive_items SET canonical_work_id='linked' WHERE lane='novel'")
     publisher.build_availability_snapshot(db_path, receipts)
     current = json.loads(
@@ -648,6 +731,7 @@ def test_inbox_sftp_starts_at_chroot_root_for_drop_and_receipt_paths() -> None:
 def test_oracle_collector_checkpoints_and_skips_paid_chapters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
     monkeypatch.setattr(collector, "operation_window", nullcontext)
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
@@ -785,6 +869,7 @@ def test_body_canary_is_not_starved_by_work_details(tmp_path: Path) -> None:
 def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
     monkeypatch.setattr(collector, "operation_window", nullcontext)
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
@@ -838,6 +923,7 @@ def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
 def test_enabling_body_canary_queues_already_indexed_unknown_chapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
     monkeypatch.setattr(collector, "operation_window", nullcontext)
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
@@ -895,7 +981,6 @@ def test_approved_novel_link_is_used_for_future_collector_chapters(tmp_path: Pat
         "toki",
         "63670",
         accept=True,
-        canary_verified=True,
     )
     sources = collector.configured_sources({})
     db = importer._connect(db_path)
@@ -1150,7 +1235,7 @@ def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) 
             ("blacktoon", "24753", "63670", "Ｒead Me", "Author"),
             ("marumaru", "31004", "63670", "Read Me", "Author"),
             ("marumaru", "31005", "63670", "Read Me", "Different Author"),
-            ("marumaru", "31006", "", "Read Me", "Author"),
+            ("marumaru", "31006", "", "Read Me", ""),
         ]
         with db:
             for site, work_id, slug, title, author in works:
@@ -1165,8 +1250,8 @@ def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) 
                         slug,
                         title,
                         author,
-                        collector._text_key(title),
-                        collector._text_key(author),
+                        importer._title_key(title),
+                        importer._title_key(author),
                         "2026-09-23T00:00:00Z",
                     ),
                 )
@@ -1177,8 +1262,14 @@ def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) 
             "FROM text_novel_link_candidates"
         ).fetchall()
         assert [tuple(row) for row in rows] == [
-            ("blacktoon", "24753", "marumaru", "31004", "title_author", "candidate"),
-            ("blacktoon", "24753", "marumaru", "31006", "title_author", "candidate"),
+            (
+                "blacktoon",
+                "24753",
+                "marumaru",
+                "31004",
+                "normalized_title_author",
+                "candidate",
+            ),
         ]
         assert db.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 0
     finally:
@@ -1259,14 +1350,20 @@ def test_catalog_page_rejects_invalid_duplicate_and_shifted_pages(tmp_path: Path
             collector.RequestUnit(source, "list", "0", "https://blacktoon452.com/novel"),
             {"items": [{"id": 1, "title": "A"}], "total": 200, "size": 96, "page": 0},
         )
-        with pytest.raises(collector.CollectorError, match="catalog_total_changed"):
-            collector._apply_list(
-                db,
-                collector.RequestUnit(source, "list", "1", "https://blacktoon452.com/novel"),
-                {"items": [{"id": 2, "title": "B"}], "total": 300, "size": 96, "page": 1},
-            )
-        state = db.execute("SELECT next_page,total_count FROM text_collector_state").fetchone()
-        assert (state["next_page"], state["total_count"]) == (1, 200)
+        result = collector._apply_list(
+            db,
+            collector.RequestUnit(source, "list", "1", "https://blacktoon452.com/novel"),
+            {"items": [{"id": 2, "title": "B"}], "total": 300, "size": 96, "page": 1},
+        )
+        state = db.execute(
+            "SELECT next_page,total_count,last_error FROM text_collector_state"
+        ).fetchone()
+        assert result["consistency"] == "observed_partial"
+        assert (state["next_page"], state["total_count"], state["last_error"]) == (
+            2,
+            300,
+            "catalog_changed_during_scan",
+        )
     finally:
         db.close()
 

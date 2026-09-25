@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from crawler.collections import parse_title
-from scripts.text_archive.importer import _connect, _write_receipt
+from scripts.text_archive.importer import _chapter_key, _connect, _write_receipt
+from scripts.text_archive.recovery_metadata import metadata_fingerprint
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _INDEX_PAGE_SIZE = 500
@@ -37,6 +38,52 @@ def _latest_label(chapters: list[dict[str, Any]]) -> str:
         if parsed.order_key is not None and parsed.order_key[2] == 1:
             return str(row.get("chapter_label") or "")
     return str(chapters[-1].get("chapter_label") or "") if chapters else ""
+
+
+def _unique_novel_chapters(chapters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse only cross-source copies with the same label, kind, and exact body hash."""
+    grouped: dict[tuple[tuple[str, str], str], list[dict[str, Any]]] = {}
+    for row in chapters:
+        key = (
+            _chapter_key(str(row.get("chapter_label") or ""), str(row.get("chapter_kind") or "")),
+            str(row.get("content_sha256") or ""),
+        )
+        grouped.setdefault(key, []).append(row)
+
+    result: list[dict[str, Any]] = []
+    for rows in grouped.values():
+        by_source: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_source.setdefault(str(row.get("source_site") or ""), []).append(row)
+        if len(by_source) == 1:
+            result.extend(rows)
+            continue
+
+        for source_rows in by_source.values():
+            source_rows.sort(
+                key=lambda row: (str(row.get("imported_at") or ""), str(row.get("identity") or ""))
+            )
+        for index in range(max(map(len, by_source.values()))):
+            variants = [
+                source_rows[index] for source_rows in by_source.values() if index < len(source_rows)
+            ]
+            representative = min(
+                variants,
+                key=lambda row: (
+                    str(row.get("imported_at") or ""),
+                    str(row.get("source_site") or ""),
+                ),
+            ).copy()
+            representative["source_variants"] = [
+                {
+                    "source_site": str(row.get("source_site") or ""),
+                    "source_chapter_id": str(row.get("source_chapter_id") or ""),
+                    "source_url": str(row.get("source_url") or ""),
+                }
+                for row in variants
+            ]
+            result.append(representative)
+    return result
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -143,6 +190,20 @@ def build_publish_tree(
 
             if lane == "novel":
                 catalog: list[dict[str, Any]] = []
+                legacy_work_ids: dict[str, set[str]] = {}
+                for source in db.execute(
+                    "SELECT canonical_work_id,site,source_work_id "
+                    "FROM text_novel_work_group_sources"
+                ):
+                    legacy_work_ids.setdefault(source["canonical_work_id"], set()).add(
+                        f"novel:{source['site']}:{source['source_work_id']}"
+                    )
+                for alias in db.execute(
+                    "SELECT canonical_work_id,alias_work_id FROM text_novel_work_aliases"
+                ):
+                    legacy_work_ids.setdefault(alias["canonical_work_id"], set()).add(
+                        str(alias["alias_work_id"])
+                    )
                 rows = db.execute(
                     "SELECT * FROM text_archive_items WHERE lane=? "
                     "ORDER BY canonical_work_id,imported_at,identity",
@@ -151,7 +212,7 @@ def build_publish_tree(
                 for work_id, work_rows in groupby(
                     rows, key=lambda row: str(row["canonical_work_id"])
                 ):
-                    chapters = [dict(row) for row in work_rows]
+                    chapters = _unique_novel_chapters([dict(row) for row in work_rows])
                     first = chapters[0]
                     chapters.sort(key=_chapter_sort_key)
                     work = {
@@ -162,6 +223,11 @@ def build_publish_tree(
                         "author": first["author"],
                         "chapter_count": len(chapters),
                         "latest_label": _latest_label(chapters),
+                        "legacy_work_ids": sorted(
+                            alias
+                            for alias in legacy_work_ids.get(work_id, set())
+                            if alias != work_id
+                        ),
                     }
                     detail = {
                         "schema": 1,
@@ -175,6 +241,7 @@ def build_publish_tree(
                                 "source_site": row["source_site"],
                                 "source_chapter_id": row["source_chapter_id"],
                                 "sha256": row["content_sha256"],
+                                "source_variants": row.get("source_variants", []),
                             }
                             for row in chapters
                         ],
@@ -609,10 +676,12 @@ def publish_lane(
         )
     if item_count == 0:
         return {"lane": lane, "item_count": 0, "status": "idle"}
+    metadata_key = f"metadata:{lane}"
     metadata_updated = 0
     if lane == "arcalive":
         with operation_window(lock_wait_seconds=30):
             metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
+    metadata_digest = metadata_fingerprint(db_path, lane)
     with operation_window(lock_wait_seconds=30):
         pass
     if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
@@ -624,7 +693,8 @@ def publish_lane(
                 (lane,),
             ).fetchone()
             pointer_hash = _published_hash(db, f"published/{lane}/release.json")
-        if pending is None and pointer_hash and not metadata_updated:
+            metadata_matches = _published_hash(db, metadata_key) == metadata_digest
+        if pending is None and pointer_hash and not metadata_updated and metadata_matches:
             with operation_window(lock_wait_seconds=30):
                 pointer = _run(
                     [
@@ -716,6 +786,7 @@ def publish_lane(
         if hashlib.sha256(pointer_readback).hexdigest() != pointer_hash:
             raise OSError("release pointer readback mismatch")
         _record_publication(db_path, pointer_key, pointer_hash)
+        _record_publication(db_path, metadata_key, metadata_digest)
         with db:
             now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
             for identity, content_sha256 in _plan_rows(Path(tree["item_plan"])):

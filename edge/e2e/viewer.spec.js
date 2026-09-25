@@ -293,7 +293,7 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
     };
     else if (path.endsWith(`/index/novel/${catalogHash}.json`)) payload = {
       schema: 1, lane: "novel", page: 0,
-      items: [{ work_id: workId, title: "통합 테스트 작품", author: "테스트 작가", chapter_count: 2, detail_key: `published/indexes/novel/${detailHash}.json` }],
+      items: [{ work_id: workId, legacy_work_ids: ["novel:fixture:legacy"], title: "통합 테스트 작품", author: "테스트 작가", chapter_count: 2, detail_key: `published/indexes/novel/${detailHash}.json` }],
     };
     else if (path.endsWith(`/index/novel/${detailHash}.json`)) payload = { schema: 1, lane: "novel", work: { work_id: workId }, chapters };
     else if (path.endsWith(`/object/${firstBodyHash}`)) return route.fulfill({ contentType: "text/markdown", body: `첫 회차 본문\n안전한 텍스트\n${"긴 본문\n".repeat(300)}` });
@@ -334,6 +334,30 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   else await page.locator(".bottom-nav button[data-destination='browse']").click();
   await expect(page).toHaveURL(/\/browse(?:\?|$)/);
   await expect(page.locator("#text-reader")).toBeHidden();
+
+  const oldIdentity = "novel:novel:fixture:legacy:1";
+  await page.evaluate(({ oldIdentity, chapter }) => {
+    localStorage.setItem("redstm.textState.v1", JSON.stringify({
+      schema_version: 1,
+      history: { [oldIdentity]: { readAt: "2026-09-20T00:00:00Z", progress: 0.4 } },
+      bookmarks: { [oldIdentity]: {
+        savedAt: "2026-09-20T00:00:00Z", lane: "novel", entry: chapter,
+        work: { work_id: "novel:fixture:legacy", title: "통합 테스트 작품" }, title: "통합 테스트 작품",
+      } },
+    }));
+  }, { oldIdentity, chapter: chapters[0] });
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent("novel:fixture:legacy")}&chapter=1`);
+  await expect(page).toHaveURL(/work=novel%3Afixture%3A1/);
+  await expect(page.locator("#text-reader-body")).toContainText("안전한 텍스트");
+  await expect(page.locator("#text-reading-progress")).toHaveAttribute("aria-valuenow", "40");
+  await expect.poll(() => page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("redstm.textState.v1"));
+    return state.bookmarks["novel:novel:fixture:1:1"]?.work?.work_id;
+  })).toBe(workId);
+  expect(await page.evaluate((key) => {
+    const state = JSON.parse(localStorage.getItem("redstm.textState.v1"));
+    return key in state.history || key in state.bookmarks;
+  }, oldIdentity)).toBe(false);
 });
 
 test("opens the published text lane and keeps a late response out of TypeMoon browsing", async ({ page }) => {
