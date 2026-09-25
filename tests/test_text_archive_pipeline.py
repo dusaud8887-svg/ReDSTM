@@ -1205,9 +1205,10 @@ def test_paid_chapter_is_queued_again_after_it_becomes_free(tmp_path: Path) -> N
                    SET access='free',status='discovered',last_seen_at='t1'"""
             )
             collector._fill_body_queue(db, "blacktoon")
-        assert db.execute(
-            "SELECT status FROM text_collector_queue WHERE entity_id='20'"
-        ).fetchone()[0] == "pending"
+        assert (
+            db.execute("SELECT status FROM text_collector_queue WHERE entity_id='20'").fetchone()[0]
+            == "pending"
+        )
     finally:
         db.close()
 
@@ -1264,9 +1265,7 @@ def test_catalog_page_rejects_invalid_duplicate_and_shifted_pages(tmp_path: Path
                 collector.RequestUnit(source, "list", "1", "https://blacktoon452.com/novel"),
                 {"items": [{"id": 2, "title": "B"}], "total": 300, "size": 96, "page": 1},
             )
-        state = db.execute(
-            "SELECT next_page,total_count FROM text_collector_state"
-        ).fetchone()
+        state = db.execute("SELECT next_page,total_count FROM text_collector_state").fetchone()
         assert (state["next_page"], state["total_count"]) == (1, 200)
     finally:
         db.close()
@@ -1301,9 +1300,7 @@ def test_pc_markdown_and_plain_body_are_the_same_novel_text(tmp_path: Path) -> N
     first = importer.import_batch(inbox, _BATCH_ID, db_path, objects, receipts)
     assert first is not None and first["items"][0]["status"] == "accepted"
     second_id = "20260925T000002Z-pc-00000002"
-    wrapped = (
-        b"# 1\n# https://toki99.com/novel/63670/8794077\n\nfixture novel chapter\n"
-    )
+    wrapped = b"# 1\n# https://toki99.com/novel/63670/8794077\n\nfixture novel chapter\n"
     batch = inbox / "drop" / second_id
     files = batch / "files"
     files.mkdir(parents=True)
