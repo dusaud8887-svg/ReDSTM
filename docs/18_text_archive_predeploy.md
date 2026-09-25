@@ -124,6 +124,8 @@ DB 연결 시 숫자 source ID로 보완한다.
    들어가고 본문은 없다. 본문 SHA가 바뀌지 않는 재게시의 `published_at`은 유지해 no-op publish가
    무의미한 snapshot 변화를 만들지 않게 한다. Newtomi는 pointer/manifest/page 해시·ID·count를
    검증한 뒤 페이지별 checkpoint를 저장한다. 이전 snapshot에서 빠진 항목은 자동 삭제하지 않는다.
+   snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 500건씩 파일로
+   내보낸다. 전체 게시 트리는 아직 전량 재구성이므로 대량 장서의 처리 시간·메모리는 별도 실측이 필요하다.
 
 아카라이브 2개 배치 40건은 실제 신규 bucket에 게시·readback·revision 2 receipt까지 확인했다. PC 전송은 SFTP의 SSH 압축(`-C`)을 사용하므로 원본 바이트/SHA 검증 계약은 바뀌지 않는다. R2 Class A/B, 1,000화 압축 크기,
 작품 단위 묶음 여부, 텍스트 bucket 비용/중단선은 아직 측정되지 않아 대량 게시를 지원한다고 주장하지 않는다.

@@ -123,7 +123,10 @@ const workerRequests = new Map();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const textLibrary = createTextLibrary({
   readerPane: elements["reader-pane"],
-  onChange: () => updateShellMode(),
+  onChange: () => {
+    updateShellMode();
+    if (currentDestination === "text") applyTextSortOptions();
+  },
 });
 
 const searchWorker = new Worker("/search-worker.js", { type: "module" });
@@ -767,6 +770,22 @@ function syncSearchRoute() {
   }
 }
 
+function applyTextSortOptions() {
+  if (currentDestination !== "text") return;
+  const context = textLibrary.sortContext();
+  const options = context === "chapters"
+    ? [["오래된순", "oldest"], ["최신순", "latest"], ["이름순", "title"]]
+    : context === "works"
+      ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"]]
+      : [["가나다순", "title"]];
+  const select = elements["sort-filter"];
+  const previous = select.value;
+  const allowed = new Set(options.map(([, value]) => value));
+  select.replaceChildren(...options.map(([label, value]) => new Option(label, value)));
+  select.value = allowed.has(previous) ? previous : options[0][1];
+  textLibrary.setSort(select.value);
+}
+
 function updateDestinationLayout() {
   const browsing = currentDestination === "browse";
   const searching = currentDestination === "search";
@@ -779,7 +798,7 @@ function updateDestinationLayout() {
   document.querySelector(".saved-tabs").hidden = !saved;
   elements["catalog-search-row"].hidden = !searching && !saved && !text;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
-  elements["mode-chips"].hidden = saved || collections || searching;
+  elements["mode-chips"].hidden = saved || collections || searching || text;
   elements["kind-chips"].hidden = saved || !collections || searching;
   document.querySelector(".sort-field").hidden = saved;
   elements["mode-filter"].closest("label").hidden = !searching || collections;
@@ -787,7 +806,7 @@ function updateDestinationLayout() {
   document.querySelector(".search-match-field").hidden = !searching || collections;
   document.querySelector(".collection-kind-field").hidden = !searching || !collections;
   document.querySelector(".collection-read-field").hidden = saved || !collections;
-  document.querySelector(".board-field").hidden = saved;
+  document.querySelector(".board-field").hidden = saved || text;
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
     : text ? "소설·아카라이브 제목 검색"
     : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
@@ -804,7 +823,8 @@ function updateDestinationLayout() {
   syncFilterChips();
   renderActiveFilters();
   elements["search-clear"].hidden = !elements["search-input"].value;
-  elements["filter-toggle"].hidden = saved || (browsing && !isNarrowScreen());
+  elements["filter-toggle"].hidden = saved || text || (browsing && !isNarrowScreen());
+  if (text) applyTextSortOptions();
 }
 
 function syncFilterChips() {
@@ -2436,6 +2456,10 @@ for (const filter of [
   elements["collection-kind-filter"], elements["collection-read-filter"],
 ]) {
   filter.addEventListener("change", () => {
+    if (currentDestination === "text" && filter === elements["sort-filter"]) {
+      textLibrary.setSort(elements["sort-filter"].value);
+      return;
+    }
     if (filter === elements["mode-filter"]) applyBoardFilterOptions();
     syncSearchRoute();
     renderCurrentView();

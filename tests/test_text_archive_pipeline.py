@@ -268,6 +268,40 @@ def test_arcalive_catalog_can_pass_novel_canary_limit(tmp_path: Path) -> None:
     assert tree["item_count"] == 1001
 
 
+def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        original = dict(db.execute("SELECT * FROM text_archive_items").fetchone())
+        db.execute(
+            "UPDATE text_archive_items SET chapter_label='252화', source_chapter_id='252' "
+            "WHERE identity=?",
+            (original["identity"],),
+        )
+        earlier = original.copy()
+        earlier["identity"] = "novel_chapter:toki:63670:42"
+        earlier["canonical_chapter_id"] = earlier["identity"]
+        earlier["source_chapter_id"] = "42"
+        earlier["chapter_label"] = "42화"
+        earlier["imported_at"] = "2099-01-01T00:00:00Z"
+        columns = ",".join(earlier)
+        placeholders = ",".join("?" for _ in earlier)
+        db.execute(
+            f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+            tuple(earlier.values()),
+        )
+    publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
+    details = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "build" / "published" / "indexes" / "novel").glob("*.json")
+    ]
+    chapters = next(page["chapters"] for page in details if "chapters" in page)
+    assert [chapter["label"] for chapter in chapters] == ["42화", "252화"]
+
+
 def test_novel_catalog_can_pass_old_canary_limit(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     _incoming_novel_batch(inbox, _BATCH_ID)
@@ -451,6 +485,50 @@ def test_novel_publisher_writes_a_paged_receipt_snapshot_after_r2_pointer(
     manifest = json.loads((inbox / current["manifest_key"]).read_text(encoding="utf-8"))
     page = json.loads((inbox / manifest["pages"][0]["key"]).read_text(encoding="utf-8"))
     assert page["items"][0]["linked_sources"] == ["blacktoon:24753", "toki:63670"]
+
+
+def test_novel_availability_streaming_keeps_snapshot_hash_across_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inbox = tmp_path / "inbox"
+    batch_id = "20260923T140000Z-pc-00000002"
+    _incoming_novel_batch(inbox, batch_id)
+    db_path = tmp_path / "state" / "text.sqlite"
+    receipts = inbox / "receipts"
+    importer.import_batch(inbox, batch_id, db_path, tmp_path / "objects", receipts)
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        columns = [row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")]
+        original = dict(
+            db.execute("SELECT * FROM text_archive_items WHERE lane='novel'").fetchone()
+        )
+        second = dict(original)
+        second["identity"] = "novel_chapter:toki:63670:8794078"
+        second["source_chapter_id"] = "8794078"
+        second["canonical_chapter_id"] = "8794078"
+        second["source_url"] = "https://toki31.com/novel/63670/8794078"
+        db.execute(
+            f"INSERT INTO text_archive_items({','.join(columns)}) "
+            f"VALUES({','.join('?' for _ in columns)})",
+            [second[column] for column in columns],
+        )
+        db.executemany(
+            "INSERT INTO text_archive_publications(key,sha256,verified_at) VALUES(?,?,?)",
+            [
+                (f"item:{identity}", original["content_sha256"], "2026-09-25T00:00:00Z")
+                for identity in (original["identity"], second["identity"])
+            ],
+        )
+    monkeypatch.setattr(publisher, "_AVAILABILITY_PAGE_SIZE", 1)
+    result = publisher.build_availability_snapshot(db_path, receipts)
+    pointer = json.loads((receipts / "availability/novel/current.json").read_text(encoding="utf-8"))
+    manifest = json.loads((inbox / pointer["manifest_key"]).read_text(encoding="utf-8"))
+    items = [
+        json.loads((inbox / page["key"]).read_text(encoding="utf-8"))["items"][0]
+        for page in manifest["pages"]
+    ]
+    assert result["item_count"] == manifest["page_count"] == 2
+    assert pointer["snapshot_id"] == hashlib.sha256(publisher._json_bytes(items)).hexdigest()
 
 
 def test_publisher_does_not_claim_an_item_imported_after_build(

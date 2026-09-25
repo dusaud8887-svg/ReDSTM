@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from crawler.collections import parse_title
 from scripts.text_archive.importer import _connect, _write_receipt
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
@@ -17,6 +18,14 @@ _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
 _RCLONE_TIMEOUT_S = 30 * 60
 _AVAILABILITY_PAGE_SIZE = 500
+
+
+def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    """Same order as crawler.collections.parse_title, not import time."""
+    parsed = parse_title(str(row.get("chapter_label") or ""))
+    order = parsed.order_key or (9, 9, 9, 10**12, 10**12)
+    identity = str(row.get("source_chapter_id") or row.get("canonical_chapter_id") or "")
+    return (*order, parsed.base_key, identity)
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -109,9 +118,9 @@ def build_publish_tree(
                     },
                 )
                 work["chapter_count"] += 1
-                work["latest_label"] = row["chapter_label"]
             for work in groups.values():
-                chapters = chapters_by_work[work["work_id"]]
+                chapters = sorted(chapters_by_work[work["work_id"]], key=_chapter_sort_key)
+                work["latest_label"] = str(chapters[-1]["chapter_label"]) if chapters else ""
                 detail = {
                     "schema": 1,
                     "lane": "novel",
@@ -414,6 +423,8 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
     """Write a content-addressed, paged snapshot of novel items verified in R2."""
     db = _connect(db_path)
     try:
+        # Both passes must see the same rows while imports continue in WAL mode.
+        db.execute("BEGIN")
         group_sources: dict[str, list[str]] = {}
         for source in db.execute(
             "SELECT canonical_work_id,site,source_work_id FROM text_novel_work_group_sources"
@@ -421,86 +432,108 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
             group_sources.setdefault(source["canonical_work_id"], []).append(
                 f"{source['site']}:{source['source_work_id']}"
             )
-        items = [
-            {
-                "identity": row["identity"],
-                "source_site": row["source_site"],
-                "source_work_id": str(row["source_work_id"]),
-                "source_chapter_id": str(row["source_chapter_id"]),
-                "canonical_work_id": row["canonical_work_id"],
-                "canonical_chapter_id": row["canonical_chapter_id"],
-                "source_url": row["source_url"],
-                "title": row["title"],
-                "author": row["author"],
-                "chapter_label": row["chapter_label"],
-                "chapter_kind": row["chapter_kind"],
-                "access": row["access"],
-                "sha256": row["content_sha256"],
-                "bytes": row["bytes"],
-                "published_at": row["verified_at"],
-                "linked_sources": sorted(group_sources.get(row["canonical_work_id"], [])),
-            }
+
+        def items():
             for row in db.execute(
                 """SELECT i.*,p.verified_at FROM text_archive_items i
                    JOIN text_archive_publications p
                      ON p.key='item:'||i.identity AND p.sha256=i.content_sha256
                    WHERE i.lane='novel' ORDER BY i.identity"""
+            ):
+                yield {
+                    "identity": row["identity"],
+                    "source_site": row["source_site"],
+                    "source_work_id": str(row["source_work_id"]),
+                    "source_chapter_id": str(row["source_chapter_id"]),
+                    "canonical_work_id": row["canonical_work_id"],
+                    "canonical_chapter_id": row["canonical_chapter_id"],
+                    "source_url": row["source_url"],
+                    "title": row["title"],
+                    "author": row["author"],
+                    "chapter_label": row["chapter_label"],
+                    "chapter_kind": row["chapter_kind"],
+                    "access": row["access"],
+                    "sha256": row["content_sha256"],
+                    "bytes": row["bytes"],
+                    "published_at": row["verified_at"],
+                    "linked_sources": sorted(group_sources.get(row["canonical_work_id"], [])),
+                }
+
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        count = 0
+        for item in items():
+            if count:
+                digest.update(b",")
+            digest.update(_json_bytes(item).rstrip(b"\n"))
+            count += 1
+        if not count:
+            return {"status": "idle", "item_count": 0}
+        digest.update(b"]\n")
+        snapshot_id = digest.hexdigest()
+        snapshot_rel = Path("availability") / "novel" / "snapshots" / snapshot_id
+        page_refs: list[dict[str, Any]] = []
+
+        def write_page(page_items: list[dict[str, Any]]) -> None:
+            page_number = len(page_refs)
+            body = _json_bytes(
+                {
+                    "schema": 1,
+                    "lane": "novel",
+                    "snapshot_id": snapshot_id,
+                    "page": page_number,
+                    "items": page_items,
+                }
             )
-        ]
+            filename = f"page-{page_number:06d}.json"
+            key = f"receipts/{snapshot_rel.as_posix()}/{filename}"
+            _write_immutable(receipts_root / snapshot_rel / filename, body)
+            _share_availability(receipts_root / snapshot_rel / filename, receipts_root)
+            page_refs.append(
+                {
+                    "page": page_number,
+                    "key": key,
+                    "sha256": hashlib.sha256(body).hexdigest(),
+                    "item_count": len(page_items),
+                }
+            )
+
+        page_items: list[dict[str, Any]] = []
+        for item in items():
+            page_items.append(item)
+            if len(page_items) == _AVAILABILITY_PAGE_SIZE:
+                write_page(page_items)
+                page_items = []
+        if page_items:
+            write_page(page_items)
+
+        manifest = {
+            "schema": 1,
+            "lane": "novel",
+            "snapshot_id": snapshot_id,
+            "item_count": count,
+            "page_size": _AVAILABILITY_PAGE_SIZE,
+            "page_count": len(page_refs),
+            "pages": page_refs,
+        }
+        manifest_body = _json_bytes(manifest)
+        manifest_key = f"receipts/{snapshot_rel.as_posix()}/manifest.json"
+        _write_immutable(receipts_root / snapshot_rel / "manifest.json", manifest_body)
+        _share_availability(receipts_root / snapshot_rel / "manifest.json", receipts_root)
+        pointer = {
+            "schema": 1,
+            "lane": "novel",
+            "snapshot_id": snapshot_id,
+            "manifest_key": manifest_key,
+            "manifest_sha256": hashlib.sha256(manifest_body).hexdigest(),
+        }
+        _write(receipts_root / "availability" / "novel" / "current.json", _json_bytes(pointer))
+        _share_availability(
+            receipts_root / "availability" / "novel" / "current.json", receipts_root
+        )
+        return {"status": "published", "snapshot_id": snapshot_id, "item_count": count}
     finally:
         db.close()
-    if not items:
-        return {"status": "idle", "item_count": 0}
-    snapshot_id = hashlib.sha256(_json_bytes(items)).hexdigest()
-    snapshot_rel = Path("availability") / "novel" / "snapshots" / snapshot_id
-    page_refs: list[dict[str, Any]] = []
-    for page_number, offset in enumerate(range(0, len(items), _AVAILABILITY_PAGE_SIZE)):
-        page_items = items[offset : offset + _AVAILABILITY_PAGE_SIZE]
-        body = _json_bytes(
-            {
-                "schema": 1,
-                "lane": "novel",
-                "snapshot_id": snapshot_id,
-                "page": page_number,
-                "items": page_items,
-            }
-        )
-        filename = f"page-{page_number:06d}.json"
-        key = f"receipts/{snapshot_rel.as_posix()}/{filename}"
-        _write_immutable(receipts_root / snapshot_rel / filename, body)
-        _share_availability(receipts_root / snapshot_rel / filename, receipts_root)
-        page_refs.append(
-            {
-                "page": page_number,
-                "key": key,
-                "sha256": hashlib.sha256(body).hexdigest(),
-                "item_count": len(page_items),
-            }
-        )
-
-    manifest = {
-        "schema": 1,
-        "lane": "novel",
-        "snapshot_id": snapshot_id,
-        "item_count": len(items),
-        "page_size": _AVAILABILITY_PAGE_SIZE,
-        "page_count": len(page_refs),
-        "pages": page_refs,
-    }
-    manifest_body = _json_bytes(manifest)
-    manifest_key = f"receipts/{snapshot_rel.as_posix()}/manifest.json"
-    _write_immutable(receipts_root / snapshot_rel / "manifest.json", manifest_body)
-    _share_availability(receipts_root / snapshot_rel / "manifest.json", receipts_root)
-    pointer = {
-        "schema": 1,
-        "lane": "novel",
-        "snapshot_id": snapshot_id,
-        "manifest_key": manifest_key,
-        "manifest_sha256": hashlib.sha256(manifest_body).hexdigest(),
-    }
-    _write(receipts_root / "availability" / "novel" / "current.json", _json_bytes(pointer))
-    _share_availability(receipts_root / "availability" / "novel" / "current.json", receipts_root)
-    return {"status": "published", "snapshot_id": snapshot_id, "item_count": len(items)}
 
 
 def publish_lane(

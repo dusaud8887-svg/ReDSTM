@@ -1,3 +1,5 @@
+import { serialWorks } from "/text-work.js";
+
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
 const VIEWS = new Set([...LANES, "saved"]);
@@ -24,9 +26,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   let catalog = [];
   let visible = [];
   let work = null;
+  let chapterSource = [];
   let chapters = [];
+  let sortMode = "title";
   let folderBoard = null;
   let folderCategory = null;
+  let folderWork = null;
   let current = null;
   let saveTimer;
   let requestId = 0;
@@ -48,6 +53,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (search.value.trim()) params.set("q", search.value.trim());
     if (work) params.set("work", work.work_id);
     if (lane === "arcalive" && folderBoard) params.set("board", folderBoard);
+    if (lane === "arcalive" && folderWork) params.set("series", folderWork);
     if (lane === "arcalive" && folderCategory) params.set("category", folderCategory);
     if (current?.lane === "novel") params.set("chapter", current.entry.chapter_id);
     if (current) params.set("item", current.identity);
@@ -94,7 +100,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         meta.textContent = `${entry.kind || "회차"}${saved?.progress ? ` · ${Math.round(saved.progress * 100)}%` : ""}${history.bookmarks[identity(entry)] ? " · 저장됨" : ""}`;
       } else {
         meta.textContent = folderMode
-          ? `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`
+          ? `${folderMode === "work" ? `${entry.folder_count.toLocaleString("ko-KR")}화` : `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`}`
           : lane === "novel"
           ? `${entry.author || "작가 미상"} · ${entry.chapter_count ?? 0}화`
           : lane === "saved"
@@ -108,7 +114,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     });
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
-    status.textContent = `${rows.length.toLocaleString("ko-KR")}개 ${chaptersMode ? "회차" : folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
+    status.textContent = `${rows.length.toLocaleString("ko-KR")}개 ${chaptersMode ? "회차" : folderMode === "board" ? "게시판" : folderMode === "work" ? "작품" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
@@ -117,17 +123,76 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     }
   }
 
+  function episodeRank(label) {
+    const text = String(label || "").normalize("NFKC");
+    const numbered = /(?:제\s*)?(\d+)\s*(?:화|話|회)/.exec(text);
+    return {
+      side: /외전|특별편|후기/.test(text) ? 1 : 0,
+      number: numbered ? Number(numbered[1]) : Number.MAX_SAFE_INTEGER,
+      label: text,
+    };
+  }
+
+  function compareChapters(left, right) {
+    const id = String(left.chapter_id || left.source_chapter_id || left.post_id || "")
+      .localeCompare(String(right.chapter_id || right.source_chapter_id || right.post_id || ""));
+    if (Array.isArray(left.order) && Array.isArray(right.order)) {
+      let byOrder = 0;
+      for (let index = 0; index < left.order.length; index += 1) {
+        if (left.order[index] !== right.order[index]) {
+          byOrder = left.order[index] - right.order[index];
+          break;
+        }
+      }
+      if (sortMode === "title") {
+        return String(left.label || "").localeCompare(String(right.label || ""), "ko-KR", { numeric: true }) || id;
+      }
+      return (sortMode === "latest" ? -byOrder : byOrder) || id;
+    }
+    const a = episodeRank(left.label);
+    const b = episodeRank(right.label);
+    if (sortMode === "title") {
+      return a.label.localeCompare(b.label, "ko-KR", { numeric: true }) || id;
+    }
+    const direction = sortMode === "latest" ? -1 : 1;
+    const numbered = a.number === Number.MAX_SAFE_INTEGER || b.number === Number.MAX_SAFE_INTEGER
+      ? (a.number === b.number ? 0 : (a.number === Number.MAX_SAFE_INTEGER ? 1 : -1))
+      : (a.number - b.number) * direction;
+    return a.side - b.side || numbered
+      || a.label.localeCompare(b.label, "ko-KR", { numeric: true }) || id;
+  }
+
+  function orderedChapters(rows) {
+    return [...rows].sort(compareChapters);
+  }
+
+  function orderedWorks(rows) {
+    const title = (left, right) => String(left.title || left.work_id || "")
+      .localeCompare(String(right.title || right.work_id || ""), "ko-KR", { numeric: true })
+      || String(left.work_id || "").localeCompare(String(right.work_id || ""));
+    const copy = [...rows];
+    if (sortMode === "longest") {
+      copy.sort((left, right) => (right.chapter_count || 0) - (left.chapter_count || 0) || title(left, right));
+    } else if (sortMode === "updated") {
+      copy.sort((left, right) => episodeRank(right.latest_label).number - episodeRank(left.latest_label).number
+        || title(left, right));
+    } else copy.sort(title);
+    return copy;
+  }
+
   function renderCatalog() {
     if (work) {
+      const query = search.value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR");
+      chapters = orderedChapters(chapterSource);
       renderRows(chapters.filter((chapter) =>
         `${chapter.label || ""} ${chapter.kind || ""}`.normalize("NFKC").toLocaleLowerCase("ko-KR")
-          .includes(search.value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR"))), { chaptersMode: true });
+          .includes(query)), { chaptersMode: true });
       return;
     }
     const query = search.value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR");
-    const matching = catalog.filter((item) =>
+    const matching = orderedWorks(catalog.filter((item) =>
       `${item.title || item.category || ""} ${item.author || ""} ${item.board || ""}`
-        .normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query));
+        .normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query)));
     if (lane === "arcalive") {
       const group = (items, key) => {
         const grouped = new Map();
@@ -140,7 +205,34 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         return [...grouped.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR"));
       };
       if (!folderBoard) return renderRows(group(matching, "board"), { folderMode: "board" });
-      const inBoard = matching.filter((item) => String(item.board) === folderBoard);
+      const inBoard = catalog.filter((item) => String(item.board) === folderBoard);
+      const { works, loose } = serialWorks(inBoard);
+      if (works.length && !folderCategory) {
+        if (folderWork === "단편·기타") {
+          return renderRows(orderedChapters(loose.map((post) => ({ ...post, label: post.title }))));
+        }
+        if (folderWork) {
+          const found = works.find((entry) => entry.title === folderWork);
+          chapterSource = found ? found.posts : [];
+          chapters = orderedChapters(chapterSource);
+          const queryText = search.value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR");
+          return renderRows(chapters.filter((chapter) =>
+            `${chapter.label || ""} ${chapter.title || ""}`.normalize("NFKC").toLocaleLowerCase("ko-KR")
+              .includes(queryText)), { chaptersMode: true });
+        }
+        const folders = works.map((entry) => ({
+          folder_label: entry.title,
+          folder_count: entry.posts.length,
+          title: entry.title,
+          chapter_count: entry.posts.length,
+          latest_label: entry.posts.map((post) => post.label).sort((left, right) =>
+            episodeRank(right).number - episodeRank(left).number)[0],
+          work_id: entry.title,
+        }));
+        const rows = orderedWorks(folders);
+        if (loose.length) rows.push({ folder_label: "단편·기타", folder_count: loose.length, title: "단편·기타", chapter_count: loose.length, work_id: "단편·기타" });
+        return renderRows(rows, { folderMode: "work" });
+      }
       if (!folderCategory) return renderRows(group(inBoard, "category"), { folderMode: "category" });
       return renderRows(inBoard.filter((item) => String(item.category || "미분류") === folderCategory));
     }
@@ -152,6 +244,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     const visible = Boolean(work || folderBoard);
     button.hidden = !visible;
     button.textContent = work ? "← 작품 목록"
+      : folderWork ? `← ${folderBoard}`
       : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
   }
 
@@ -202,8 +295,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     }
     search.value = params.get("q") || "";
     work = null;
+    chapterSource = [];
     chapters = [];
     folderBoard = lane === "arcalive" ? params.get("board") : null;
+    folderWork = lane === "arcalive" ? params.get("series") : null;
     folderCategory = lane === "arcalive" ? params.get("category") : null;
     current = null;
     syncBackButton();
@@ -220,6 +315,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       if (activeRequest !== requestId) return;
       catalog = loaded;
       renderCatalog();
+      onChange();
       const workId = params.get("work");
       if (workId && lane === "novel") {
         const found = catalog.find((item) => item.work_id === workId);
@@ -265,8 +361,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (activeRequest !== requestId) return;
     work = item;
     syncBackButton();
-    chapters = detail.chapters;
+    chapterSource = detail.chapters;
     current = null;
+    onChange();
     renderCatalog();
     status.textContent = `${item.title || "작품"} · ${chapters.length}화`;
     setReader(false);
@@ -346,10 +443,20 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       navigate();
     } else if (work) {
       work = null;
+      chapterSource = [];
       chapters = [];
       syncBackButton();
+      onChange();
       renderCatalog();
       status.textContent = `${catalog.length.toLocaleString("ko-KR")}개 작품`;
+      navigate();
+    } else if (folderWork) {
+      folderWork = null;
+      chapterSource = [];
+      chapters = [];
+      syncBackButton();
+      onChange();
+      renderCatalog();
       navigate();
     } else if (folderCategory) {
       folderCategory = null;
@@ -370,12 +477,22 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       const saved = visible[index];
       if (lane === "arcalive" && !folderBoard) {
         folderBoard = saved.folder_label;
+        folderWork = null;
         syncBackButton();
+        onChange();
         renderCatalog();
         navigate();
         return;
       }
-      if (lane === "arcalive" && !folderCategory) {
+      if (lane === "arcalive" && !folderWork && !folderCategory && saved.folder_label && saved.chapter_count) {
+        folderWork = saved.folder_label;
+        syncBackButton();
+        onChange();
+        renderCatalog();
+        navigate();
+        return;
+      }
+      if (lane === "arcalive" && !folderCategory && !folderWork) {
         folderCategory = saved.folder_label;
         syncBackButton();
         renderCatalog();
@@ -401,8 +518,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     flushPosition();
     lane = nextLane;
     work = null;
+    chapterSource = [];
     chapters = [];
     folderBoard = null;
+    folderWork = null;
     folderCategory = null;
     current = null;
     setReader(false);
@@ -478,20 +597,39 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (target) void openBody(target);
   }
 
+  function sortContext() {
+    if ((lane === "novel" && work) || (lane === "arcalive" && folderWork && folderWork !== "단편·기타")) return "chapters";
+    if (lane === "novel" || (lane === "arcalive" && folderBoard && !folderCategory)) return "works";
+    return "titles";
+  }
+
+  function setSort(value) {
+    const allowed = new Set(["oldest", "latest", "title", "longest", "updated"]);
+    const next = allowed.has(value) ? value : (sortContext() === "chapters" ? "oldest" : "title");
+    if (next === sortMode) return;
+    sortMode = next;
+    renderCatalog();
+  }
+
   function isReading() { return Boolean(current); }
+  function inWork() { return Boolean(work); }
   function currentRoute() { return route(); }
   function leave() {
     ++requestId;
     flushPosition();
     current = null;
     work = null;
+    chapterSource = [];
     chapters = [];
     folderBoard = null;
+    folderWork = null;
     folderCategory = null;
     syncBackButton();
     reader.hidden = true;
     document.body.classList.remove("reader-open");
   }
 
-  return { open, searchChanged, activate, isReading, currentRoute, leave, changeLane };
+  return {
+    open, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute, leave, changeLane,
+  };
 }
