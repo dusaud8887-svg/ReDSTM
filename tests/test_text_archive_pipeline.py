@@ -266,6 +266,40 @@ def test_arcalive_catalog_can_pass_novel_canary_limit(tmp_path: Path) -> None:
         db_path, tmp_path / "objects", tmp_path / "build", "arcalive"
     )
     assert tree["item_count"] == 1001
+    assert sum(1 for _ in publisher._plan_rows(tree["item_plan"])) == 1001
+    assert "items" not in tree
+
+
+def test_receipt_finalization_pages_more_than_one_hundred_batches(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_batch(inbox)
+    db_path = tmp_path / "text.sqlite"
+    receipts = inbox / "receipts"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", receipts)
+    with sqlite3.connect(db_path) as db:
+        manifest_sha, receipt_json, imported_at = db.execute(
+            "SELECT manifest_sha256,receipt_json,imported_at FROM text_archive_batches"
+        ).fetchone()
+        original = json.loads(receipt_json)
+        item = original["items"][0]
+        db.execute("DELETE FROM text_archive_batches")
+        for number in range(101):
+            batch_id = f"20260923T130000Z-pc-{number:08d}"
+            receipt = {**original, "batch_id": batch_id}
+            db.execute(
+                "INSERT INTO text_archive_batches VALUES(?,?,?,?,?)",
+                (batch_id, manifest_sha, 1, json.dumps(receipt), imported_at),
+            )
+        db.execute(
+            "INSERT INTO text_archive_publications VALUES(?,?,?)",
+            (f"item:{item['identity']}", item["content_sha256"], "2026-09-25T00:00:00Z"),
+        )
+    publisher._finalize_receipts(db_path, receipts)
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM text_archive_batches WHERE revision=2"
+        ).fetchone()[0] == 101
+    assert (receipts / "20260923T130000Z-pc-00000100.json").is_file()
 
 
 def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path) -> None:
@@ -339,6 +373,7 @@ def test_novel_catalog_can_pass_old_canary_limit(tmp_path: Path) -> None:
             )
     tree = publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
     assert tree["item_count"] == 1001
+    assert sum(1 for _ in publisher._plan_rows(tree["item_plan"])) == 1001
 
 
 def test_publisher_readback_failure_never_switches_pointer(

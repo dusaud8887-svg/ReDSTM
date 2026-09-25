@@ -581,6 +581,7 @@ def _safe_batch(
         ):
             reason = "content_metadata_invalid"
         if not reason:
+            assert isinstance(size, int)
             batch_bytes += size
             if batch_bytes > _MAX_BATCH_BYTES:
                 raise BatchRejectedError("batch_too_large")

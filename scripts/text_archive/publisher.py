@@ -6,9 +6,11 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from itertools import groupby
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from crawler.collections import parse_title
 from scripts.text_archive.importer import _connect, _write_receipt
@@ -75,10 +77,10 @@ def _share_availability(path: Path, receipts_root: Path) -> None:
     while parent != receipts_root:
         if not parent.is_relative_to(receipts_root) or parent.is_symlink():
             raise OSError("availability path escaped receipts root")
-        os.chown(parent, -1, read_group)
+        os.chown(parent, -1, read_group)  # type: ignore[attr-defined]  # POSIX-only branch
         parent.chmod(0o750)
         parent = parent.parent
-    os.chown(path, -1, read_group)
+    os.chown(path, -1, read_group)  # type: ignore[attr-defined]  # POSIX-only branch
     path.chmod(0o640)
 
 
@@ -90,156 +92,181 @@ def _indexed_file(root: Path, prefix: str, value: Any) -> tuple[str, bytes]:
     return key, body
 
 
+def _plan_rows(path: Path) -> Iterator[list[str]]:
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            yield json.loads(line)
+
+
+def _plan_write(stream: TextIO, *values: str) -> None:
+    stream.write(json.dumps(values, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
 def build_publish_tree(
     db_path: Path, object_root: Path, output_root: Path, lane: str
 ) -> dict[str, Any]:
     """Build deterministic, content-addressed artifacts without touching remote storage."""
     if lane not in {"novel", "arcalive"}:
         raise ValueError("lane must be novel or arcalive")
+    output_root.mkdir(parents=True, exist_ok=True)
+    plans = {
+        kind: output_root / f".publish-{lane}-{kind}.jsonl"
+        for kind in ("items", "objects", "indexes")
+    }
     db = _connect(db_path)
     try:
-        rows = [
-            dict(row)
-            for row in db.execute(
-                "SELECT * FROM text_archive_items WHERE lane=? ORDER BY imported_at,identity",
-                (lane,),
-            )
-        ]
-        if not rows:
+        # Keep catalog, object and item passes on one imported snapshot in WAL mode.
+        db.execute("BEGIN")
+        item_count, generated_at = db.execute(
+            "SELECT COUNT(*),COALESCE(MAX(imported_at),'1970-01-01T00:00:00Z') "
+            "FROM text_archive_items WHERE lane=?",
+            (lane,),
+        ).fetchone()
+        if not item_count:
             raise ValueError("no_publishable_items")
-        if lane == "novel":
-            groups: dict[str, dict[str, Any]] = {}
-            chapters_by_work: dict[str, list[dict[str, Any]]] = {}
-            for row in rows:
-                work_id = str(row["canonical_work_id"])
-                chapters_by_work.setdefault(work_id, []).append(row)
-                work = groups.setdefault(
-                    work_id,
-                    {
-                        "work_id": work_id,
-                        "source_site": row["source_site"],
-                        "source_work_id": row["source_work_id"],
-                        "title": row["title"],
-                        "author": row["author"],
-                        "chapter_count": 0,
-                        "latest_label": "",
-                        "detail_key": "",
-                    },
+        with (
+            plans["items"].open("w", encoding="utf-8", newline="\n") as item_plan,
+            plans["objects"].open("w", encoding="utf-8", newline="\n") as object_plan,
+            plans["indexes"].open("w", encoding="utf-8", newline="\n") as index_plan,
+        ):
+            catalog_refs: list[dict[str, str]] = []
+
+            def page(items: list[dict[str, Any]]) -> None:
+                key, body = _indexed_file(
+                    output_root,
+                    lane,
+                    {"schema": 1, "lane": lane, "page": len(catalog_refs), "items": items},
                 )
-                work["chapter_count"] += 1
-            for work in groups.values():
-                chapters = sorted(chapters_by_work[work["work_id"]], key=_chapter_sort_key)
-                work["latest_label"] = _latest_label(chapters)
-                detail = {
-                    "schema": 1,
-                    "lane": "novel",
-                    "work": {key: work[key] for key in ("work_id", "title", "author")},
-                    "chapters": [
+                digest = hashlib.sha256(body).hexdigest()
+                catalog_refs.append({"key": key, "sha256": digest})
+                _plan_write(index_plan, key, digest)
+
+            if lane == "novel":
+                catalog: list[dict[str, Any]] = []
+                rows = db.execute(
+                    "SELECT * FROM text_archive_items WHERE lane=? "
+                    "ORDER BY canonical_work_id,imported_at,identity",
+                    (lane,),
+                )
+                for work_id, work_rows in groupby(
+                    rows, key=lambda row: str(row["canonical_work_id"])
+                ):
+                    chapters = [dict(row) for row in work_rows]
+                    first = chapters[0]
+                    chapters.sort(key=_chapter_sort_key)
+                    work = {
+                        "work_id": work_id,
+                        "source_site": first["source_site"],
+                        "source_work_id": first["source_work_id"],
+                        "title": first["title"],
+                        "author": first["author"],
+                        "chapter_count": len(chapters),
+                        "latest_label": _latest_label(chapters),
+                    }
+                    detail = {
+                        "schema": 1,
+                        "lane": "novel",
+                        "work": {key: work[key] for key in ("work_id", "title", "author")},
+                        "chapters": [
+                            {
+                                "chapter_id": row["canonical_chapter_id"],
+                                "label": row["chapter_label"],
+                                "kind": row["chapter_kind"],
+                                "source_site": row["source_site"],
+                                "source_chapter_id": row["source_chapter_id"],
+                                "sha256": row["content_sha256"],
+                            }
+                            for row in chapters
+                        ],
+                    }
+                    work["detail_key"], body = _indexed_file(output_root, "novel", detail)
+                    _plan_write(
+                        index_plan, str(work["detail_key"]), hashlib.sha256(body).hexdigest()
+                    )
+                    catalog.append(work)
+                catalog.sort(key=lambda item: (item["title"].casefold(), item["work_id"]))
+                for offset in range(0, len(catalog), _INDEX_PAGE_SIZE):
+                    page(catalog[offset : offset + _INDEX_PAGE_SIZE])
+                work_count = len(catalog)
+            else:
+                page_items: list[dict[str, Any]] = []
+                for row in db.execute(
+                    "SELECT * FROM text_archive_items WHERE lane=? ORDER BY imported_at,identity",
+                    (lane,),
+                ):
+                    page_items.append(
                         {
-                            "chapter_id": row["canonical_chapter_id"],
-                            "label": row["chapter_label"],
-                            "kind": row["chapter_kind"],
-                            "source_site": row["source_site"],
-                            "source_chapter_id": row["source_chapter_id"],
+                            "identity": row["identity"],
+                            "board": row["source_board"],
+                            "post_id": row["source_post_id"],
+                            "category": row["source_category"],
+                            "title": row["title"],
+                            "content_lane": row["content_lane"],
                             "sha256": row["content_sha256"],
+                            "bytes": row["bytes"],
                         }
-                        for row in chapters
-                    ],
-                }
-                work["detail_key"], _ = _indexed_file(output_root, "novel", detail)
-            catalog = sorted(
-                groups.values(), key=lambda item: (item["title"].casefold(), item["work_id"])
-            )
-        else:
-            catalog = [
-                {
-                    "identity": row["identity"],
-                    "board": row["source_board"],
-                    "post_id": row["source_post_id"],
-                    "category": row["source_category"],
-                    "title": row["title"],
-                    "content_lane": row["content_lane"],
-                    "sha256": row["content_sha256"],
-                    "bytes": row["bytes"],
-                }
-                for row in rows
-            ]
-        catalog_refs: list[dict[str, str]] = []
-        for page_number, offset in enumerate(range(0, len(catalog), _INDEX_PAGE_SIZE)):
-            key, body = _indexed_file(
-                output_root,
-                lane,
+                    )
+                    if len(page_items) == _INDEX_PAGE_SIZE:
+                        page(page_items)
+                        page_items = []
+                if page_items:
+                    page(page_items)
+                work_count = 0
+
+            release_body = _json_bytes(
                 {
                     "schema": 1,
                     "lane": lane,
-                    "page": page_number,
-                    "items": catalog[offset : offset + _INDEX_PAGE_SIZE],
-                },
+                    "generated_at": generated_at,
+                    "item_count": item_count,
+                    "work_count": work_count,
+                    "catalog_pages": catalog_refs,
+                }
             )
-            catalog_refs.append({"key": key, "sha256": hashlib.sha256(body).hexdigest()})
-        release_body = _json_bytes(
-            {
-                "schema": 1,
-                "lane": lane,
-                "generated_at": max(
-                    (row["imported_at"] for row in rows), default="1970-01-01T00:00:00Z"
-                ),
-                "item_count": len(rows),
-                "work_count": len(catalog) if lane == "novel" else 0,
-                "catalog_pages": catalog_refs,
-            }
-        )
-        release_sha = hashlib.sha256(release_body).hexdigest()
-        release_key = f"published/releases/{lane}/{release_sha}.json"
-        _write(output_root / release_key, release_body)
-        pointer = _json_bytes(
-            {"schema": 1, "lane": lane, "release_key": release_key, "sha256": release_sha}
-        )
-        pointer_path = output_root / f"published/{lane}/release.json"
-        _write(pointer_path, pointer)
-        object_rows = [
-            dict(row)
+            release_sha = hashlib.sha256(release_body).hexdigest()
+            release_key = f"published/releases/{lane}/{release_sha}.json"
+            _write(output_root / release_key, release_body)
+            _plan_write(index_plan, release_key, release_sha)
+            pointer = _json_bytes(
+                {"schema": 1, "lane": lane, "release_key": release_key, "sha256": release_sha}
+            )
+            pointer_path = output_root / f"published/{lane}/release.json"
+            _write(pointer_path, pointer)
+
+            for row in db.execute(
+                "SELECT identity,content_sha256 FROM text_archive_items "
+                "WHERE lane=? ORDER BY imported_at,identity",
+                (lane,),
+            ):
+                _plan_write(item_plan, row["identity"], row["content_sha256"])
             for row in db.execute(
                 "SELECT DISTINCT content_sha256,bytes,object_key "
                 "FROM text_archive_items WHERE lane=?",
                 (lane,),
-            )
-        ]
-        for row in object_rows:
-            source = object_root / row["object_key"]
-            target_key = (
-                f"published/objects/sha256/{row['content_sha256'][:2]}/{row['content_sha256']}.md"
-            )
-            target = output_root / target_key
-            body = source.read_bytes()
-            if (
-                len(body) != row["bytes"]
-                or hashlib.sha256(body).hexdigest() != row["content_sha256"]
             ):
-                raise ValueError(
-                    f"local content object failed verification: {row['content_sha256']}"
+                digest = row["content_sha256"]
+                target_key = f"published/objects/sha256/{digest[:2]}/{digest}.md"
+                _plan_write(
+                    object_plan, target_key, digest, row["object_key"], str(row["bytes"])
                 )
-            _write_immutable(target, body)
+            for stream in (item_plan, object_plan, index_plan):
+                stream.flush()
+                os.fsync(stream.fileno())
+        db.execute("COMMIT")
+        for target_key, digest, source_key, size in _plan_rows(plans["objects"]):
+            body = (object_root / source_key).read_bytes()
+            if len(body) != int(size) or hashlib.sha256(body).hexdigest() != digest:
+                raise ValueError(f"local content object failed verification: {digest}")
+            _write_immutable(output_root / target_key, body)
         return {
             "lane": lane,
-            "item_count": len(rows),
-            "items": [(row["identity"], row["content_sha256"]) for row in rows],
+            "item_count": item_count,
+            "item_plan": plans["items"],
+            "object_plan": plans["objects"],
+            "index_plan": plans["indexes"],
             "release_key": release_key,
             "release_sha256": release_sha,
             "pointer_path": pointer_path,
-            "object_keys": [
-                f"published/objects/sha256/{row['content_sha256'][:2]}/{row['content_sha256']}.md"
-                for row in object_rows
-            ],
-            "immutable_keys": [
-                *[
-                    f"published/objects/sha256/{row['content_sha256'][:2]}/{row['content_sha256']}.md"
-                    for row in object_rows
-                ],
-                *[item["key"] for item in catalog_refs],
-                *[str(work["detail_key"]) for work in (catalog if lane == "novel" else [])],
-                release_key,
-            ],
         }
     finally:
         db.close()
@@ -390,40 +417,53 @@ def _backfill_arcalive_metadata(db_path: Path, object_root: Path) -> int:
 def _finalize_receipts(db_path: Path, receipts_root: Path) -> None:
     db = _connect(db_path)
     try:
-        batches = db.execute(
-            "SELECT batch_id,manifest_sha256,revision,receipt_json "
-            "FROM text_archive_batches WHERE revision=1"
-        ).fetchall()
-        for batch in batches:
-            receipt = json.loads(batch["receipt_json"])
-            eligible = [
-                item for item in receipt["items"] if item.get("status") in {"accepted", "duplicate"}
-            ]
-            if not eligible:
-                continue
-            publications = {
-                str(row["key"]): row
-                for row in db.execute(
-                    "SELECT key,sha256,verified_at FROM text_archive_publications"
+        last_id = ""
+        while True:
+            batches = db.execute(
+                "SELECT batch_id,receipt_json FROM text_archive_batches "
+                "WHERE revision=1 AND batch_id>? ORDER BY batch_id LIMIT 100",
+                (last_id,),
+            ).fetchall()
+            if not batches:
+                break
+            for batch in batches:
+                receipt = json.loads(batch["receipt_json"])
+                eligible = [
+                    item for item in receipt["items"]
+                    if item.get("status") in {"accepted", "duplicate"}
+                ]
+                if not eligible:
+                    continue
+                keys = [f"item:{item['identity']}" for item in eligible]
+                placeholders = ",".join("?" for _ in keys)
+                publications = {
+                    str(row["key"]): row
+                    for row in db.execute(
+                        "SELECT key,sha256,verified_at FROM text_archive_publications "
+                        f"WHERE key IN ({placeholders})",
+                        keys,
+                    )
+                }
+                if any(
+                    (record := publications.get(f"item:{item['identity']}")) is None
+                    or record["sha256"] != item.get("content_sha256")
+                    for item in eligible
+                ):
+                    continue
+                for item in eligible:
+                    item["published_at"] = publications[f"item:{item['identity']}"]["verified_at"]
+                receipt["revision"] = 2
+                encoded = json.dumps(
+                    receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")
                 )
-            }
-            if any(
-                (record := publications.get(f"item:{item['identity']}")) is None
-                or record["sha256"] != item.get("content_sha256")
-                for item in eligible
-            ):
-                continue
-            for item in eligible:
-                item["published_at"] = publications[f"item:{item['identity']}"]["verified_at"]
-            receipt["revision"] = 2
-            encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            _write_receipt(receipts_root, str(batch["batch_id"]), receipt)
-            with db:
-                db.execute(
-                    "UPDATE text_archive_batches SET revision=2,receipt_json=? "
-                    "WHERE batch_id=? AND revision=1",
-                    (encoded, batch["batch_id"]),
-                )
+                _write_receipt(receipts_root, str(batch["batch_id"]), receipt)
+                with db:
+                    db.execute(
+                        "UPDATE text_archive_batches SET revision=2,receipt_json=? "
+                        "WHERE batch_id=? AND revision=1",
+                        (encoded, batch["batch_id"]),
+                    )
+            last_id = str(batches[-1]["batch_id"])
     finally:
         db.close()
 
@@ -442,7 +482,7 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
                 f"{source['site']}:{source['source_work_id']}"
             )
 
-        def items():
+        def items() -> Iterator[dict[str, Any]]:
             for row in db.execute(
                 """SELECT i.*,p.verified_at FROM text_archive_items i
                    JOIN text_archive_publications p
@@ -598,36 +638,49 @@ def publish_lane(
     tree = build_publish_tree(db_path, object_root, build_root, lane)
     db = _connect(db_path)
     try:
-        pending_objects = [
-            (key, Path(key).stem)
-            for key in tree["object_keys"]
-            if _published_hash(db, key) != Path(key).stem
-        ]
-        if len(pending_objects) > 1:
-            for offset in range(0, len(pending_objects), 8):
-                batch = pending_objects[offset : offset + 8]
+        pending_objects: list[tuple[str, str]] = []
+
+        def publish_batch() -> None:
+            if pending_objects:
+                batch = pending_objects[:]
                 _publish_object_batch(build_root, remote, batch, runner)
                 for key, digest in batch:
                     _record_publication(db_path, key, digest)
-        for key in tree["immutable_keys"]:
-            local = build_root / key
-            body = local.read_bytes()
-            digest = hashlib.sha256(body).hexdigest()
-            if _published_hash(db, key) == digest:
-                continue
-            with operation_window(lock_wait_seconds=30):
-                _run(
-                    ["rclone", "--config", _RCLONE_CONFIG, "copyto", str(local), f"{remote}/{key}"],
-                    runner,
-                )
-            with operation_window(lock_wait_seconds=30):
-                readback = _run(
-                    ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
-                    runner,
-                )
-            if hashlib.sha256(readback).hexdigest() != digest:
-                raise OSError(f"R2 readback mismatch: {key}")
-            _record_publication(db_path, key, digest)
+                pending_objects.clear()
+
+        for key, digest, *_ in _plan_rows(Path(tree["object_plan"])):
+            if _published_hash(db, key) != digest:
+                pending_objects.append((key, digest))
+                if len(pending_objects) == 8:
+                    publish_batch()
+        if len(pending_objects) > 1:
+            publish_batch()
+
+        for plan in ("object_plan", "index_plan"):
+            for row in _plan_rows(Path(tree[plan])):
+                key, digest = row[:2]
+                if _published_hash(db, key) == digest:
+                    continue
+                local = build_root / key
+                body = local.read_bytes()
+                if hashlib.sha256(body).hexdigest() != digest:
+                    raise ValueError(f"local publish file failed verification: {key}")
+                with operation_window(lock_wait_seconds=30):
+                    _run(
+                        [
+                            "rclone", "--config", _RCLONE_CONFIG, "copyto",
+                            str(local), f"{remote}/{key}",
+                        ],
+                        runner,
+                    )
+                with operation_window(lock_wait_seconds=30):
+                    readback = _run(
+                        ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
+                        runner,
+                    )
+                if hashlib.sha256(readback).hexdigest() != digest:
+                    raise OSError(f"R2 readback mismatch: {key}")
+                _record_publication(db_path, key, digest)
         pointer_path = Path(tree["pointer_path"])
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
@@ -654,7 +707,7 @@ def publish_lane(
         _record_publication(db_path, pointer_key, pointer_hash)
         with db:
             now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-            for identity, content_sha256 in tree["items"]:
+            for identity, content_sha256 in _plan_rows(Path(tree["item_plan"])):
                 db.execute(
                     "INSERT INTO text_archive_publications(key,sha256,verified_at) VALUES(?,?,?) "
                     "ON CONFLICT(key) DO UPDATE SET sha256=excluded.sha256, "

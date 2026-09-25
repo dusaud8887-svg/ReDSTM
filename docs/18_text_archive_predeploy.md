@@ -125,7 +125,8 @@ DB 연결 시 숫자 source ID로 보완한다.
    무의미한 snapshot 변화를 만들지 않게 한다. Newtomi는 pointer/manifest/page 해시·ID·count를
    검증한 뒤 페이지별 checkpoint를 저장한다. 이전 snapshot에서 빠진 항목은 자동 삭제하지 않는다.
    snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 500건씩 파일로
-   내보낸다. 전체 게시 트리는 아직 전량 재구성이므로 대량 장서의 처리 시간·메모리는 별도 실측이 필요하다.
+   내보낸다. 게시 트리는 같은 SQLite 읽기 시점에서 500건 페이지와 JSONL 게시 계획을 파일로
+   내보내며, 원문 객체 복사 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
 
 아카라이브 2개 배치 40건은 실제 신규 bucket에 게시·readback·revision 2 receipt까지 확인했다. PC 전송은 SFTP의 SSH 압축(`-C`)을 사용하므로 원본 바이트/SHA 검증 계약은 바뀌지 않는다. R2 Class A/B, 1,000화 압축 크기,
 작품 단위 묶음 여부, 텍스트 bucket 비용/중단선은 아직 측정되지 않아 대량 게시를 지원한다고 주장하지 않는다.
@@ -195,7 +196,8 @@ TypeMoon control은 active, schedule은 inactive, 루트 여유는 약 57GiB였�
 control lock이나 과거 swap 사용량만으로 텍스트 작업을 막지 않고, 새 단발 작업 시 실제
 `MemAvailable + redstm-text 자체 VmRSS ≥350MiB`(프로세스가 시작 전 차지하지 않던 메모리 여유 추정),
 디스크 ≥40GiB, schedule inactive, publish lock 획득을 요구한다.
-서비스 `MemoryMax=150M`, `MemorySwapMax=0`; collector/import는 5분, publisher는 15분 timer다.
+서비스 `MemoryMax=150M`, `MemorySwapMax=0`; collector는 10초마다 실행 기회를 만들고
+import는 5분, publisher는 15분 timer다. TypeMoon 게시 락 중 collector는 실행 전 건너뛴다.
 2026-09-24 실제 첫 목록 96작품은 양쪽 제목·작가와 작품 ID가 대응했고, 한 작품의 931개
 회차 라벨 및 대표 공개 본문 SHA-256이 같았다. 추가 표본에서는 전체 회차 라벨 집합이 다른
 작품과 회차 API의 HTTP 500이 관찰됐다. 따라서 20작품 본문 canary는 통과하지 않았고

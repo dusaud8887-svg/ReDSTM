@@ -10,6 +10,8 @@ Group=redstm-text
 WorkingDirectory=/opt/redstm-text/current
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/redstm-text/collector.env
+# Skip the expensive Python startup while TypeMoon owns the publish window.
+ExecCondition=/usr/bin/flock -n /srv/redstm/static/.publish.lock /usr/bin/true
 ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.collector
 SuccessExitStatus=75
 Restart=no
