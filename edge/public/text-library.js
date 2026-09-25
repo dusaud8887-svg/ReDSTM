@@ -292,7 +292,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     return response.json();
   }
 
-  async function loadCatalog(selectedLane) {
+  async function loadCatalog(selectedLane, onFirstPage) {
     const pointer = await json(`/api/v1/text/release/${selectedLane}`).catch((error) => {
       if (selectedLane === "novel" && error.message === "request_404") throw new Error("novel_unpublished");
       throw error;
@@ -306,6 +306,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       throw new Error("release_manifest_invalid");
     }
     const items = [];
+    let showedFirstPage = false;
     for (const ref of release.catalog_pages) {
       const match = new RegExp(`^published/indexes/${selectedLane}/([a-f0-9]{64})\\.json$`).exec(ref.key || "");
       if (!match || ref.sha256 !== match[1]) throw new Error("catalog_reference_invalid");
@@ -314,6 +315,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         throw new Error("catalog_page_invalid");
       }
       items.push(...page.items);
+      if (!showedFirstPage && onFirstPage) {
+        showedFirstPage = true;
+        onFirstPage(items.slice());
+      }
     }
     catalogs.set(selectedLane, { sha256: pointer.sha256, items });
     if (selectedLane === "novel") details.clear();
@@ -349,7 +354,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       const loaded = lane === "saved"
         ? Object.entries(history.bookmarks).map(([key, saved]) => ({ ...saved, identity: key }))
           .filter((saved) => saved.entry && LANES.has(saved.lane) && HASH.test(saved.entry.sha256 || ""))
-        : await loadCatalog(lane);
+        : await loadCatalog(lane, (first) => {
+          if (activeRequest !== requestId) return;
+          catalog = first;
+          renderCatalog();
+          status.textContent = "목록 첫 화면 · 나머지를 불러오는 중…";
+        });
       if (activeRequest !== requestId) return;
       catalog = loaded;
       renderCatalog();
@@ -450,6 +460,16 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     }
     setReader(true);
     readerPane.scrollTop = record.scroll || 0;
+    if (record.anchor && record.revision && record.revision !== hash) {
+      const plain = body.textContent || "";
+      const at = plain.indexOf(record.anchor);
+      if (at > 0) {
+        requestAnimationFrame(() => {
+          const max = Math.max(0, readerPane.scrollHeight - readerPane.clientHeight);
+          readerPane.scrollTop = Math.round(max * (at / Math.max(plain.length, 1)));
+        });
+      }
+    }
     requestAnimationFrame(() => document.querySelector("#text-reader-title").focus({ preventScroll: true }));
     if (shouldNavigate) navigate();
   }
@@ -573,10 +593,16 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     const max = Math.max(0, readerPane.scrollHeight - readerPane.clientHeight);
     const scroll = readerPane.scrollTop;
     const old = history.history[current.identity] || {};
+    const plain = body.textContent || "";
+    const ratio = max ? scroll / max : 0;
+    const anchorAt = Math.min(plain.length, Math.floor(plain.length * ratio));
     history.history[current.identity] = {
       readAt: old.readAt || new Date().toISOString(),
       scroll,
       progress: max ? Math.min(1, scroll / max) : 0,
+      chapterId: current.entry.chapter_id || current.entry.source_chapter_id || "",
+      revision: current.entry.sha256 || "",
+      anchor: plain.slice(anchorAt, anchorAt + 40),
     };
     const percent = Math.round(history.history[current.identity].progress * 100);
     const progress = document.querySelector("#text-reading-progress");
@@ -637,7 +663,18 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     const index = chapters.findIndex((chapter) => sameChapter(chapter, current.entry));
     if (index < 0) return;
     const target = chapters[index + delta];
-    if (target) void openBody(target);
+    if (!target) return;
+    const episodeNumber = (label) => {
+      const match = String(label || "").match(/(\d+)\s*(?:화|話|회)/);
+      return match ? Number(match[1]) : null;
+    };
+    const left = episodeNumber(chapters[index].label);
+    const right = episodeNumber(target.label);
+    if (left !== null && right !== null && Math.abs(right - left) > 1) {
+      const missing = Math.abs(right - left) - 1;
+      status.textContent = `이 목록에서 ${missing}화가 비어 있습니다. 미수집이거나 접근 대기일 수 있습니다.`;
+    }
+    void openBody(target);
   }
 
   function sortContext() {

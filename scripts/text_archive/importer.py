@@ -43,6 +43,7 @@ _ITEM_FIELDS = {
     "access",
     "bytes",
     "sha256",
+    "text_sha256",
     "observed_at",
     "board",
     "post_id",
@@ -490,6 +491,47 @@ def _object_key(sha256: str) -> str:
     return f"objects/sha256/{sha256[:2]}/{sha256}.md"
 
 
+_PC_NOVEL_MARKDOWN = re.compile(r"# [^\n]*\n# https://[^\s]+\n\n(.+)\n\Z", re.DOTALL)
+
+
+def canonical_novel_bytes(raw: bytes) -> bytes | None:
+    """Version-1 body bytes. Same rule as Newtomi's novel_text.canonical_novel_bytes."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\x00" in text or not text.endswith("\n"):
+        return None
+    if text.startswith("# "):
+        match = _PC_NOVEL_MARKDOWN.fullmatch(text)
+        if match is None:
+            return None
+        prose = match.group(1)
+    else:
+        prose = text[:-1]
+    if not prose or prose != prose.strip():
+        return None
+    return (prose + "\n").encode("utf-8")
+
+
+def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes | None) -> bool:
+    """True when both stored files reduce to the same known novel body."""
+    if incoming is None:
+        return False
+    incoming_text = canonical_novel_bytes(incoming)
+    if incoming_text is None or not object_key:
+        return False
+    stored_path = object_root / object_key
+    if stored_path.is_symlink() or not stored_path.is_file():
+        return False
+    try:
+        stored = stored_path.read_bytes()
+    except OSError:
+        return False
+    return canonical_novel_bytes(stored) == incoming_text
+
+
 def _safe_batch(
     inbox_root: Path, batch_id: str
 ) -> tuple[dict[str, Any], bytes, Path, dict[str, Any]]:
@@ -603,6 +645,16 @@ def _safe_batch(
                         and hashlib.sha256(body).hexdigest() != digest
                     ):
                         reason = "sha256_mismatch"
+                    claimed_text = item.get("text_sha256")
+                    if not reason and claimed_text is not None and body is not None:
+                        canonical = canonical_novel_bytes(body)
+                        if (
+                            not isinstance(claimed_text, str)
+                            or not _SHA256.fullmatch(claimed_text)
+                            or canonical is None
+                            or hashlib.sha256(canonical).hexdigest() != claimed_text
+                        ):
+                            reason = "text_sha256_mismatch"
                     if not reason and body is not None:
                         try:
                             text = body.decode("utf-8")
@@ -780,11 +832,26 @@ def import_batch(
                     continue
                 digest = str(item["sha256"])
                 existing = db.execute(
-                    """SELECT content_sha256,bytes,canonical_work_id,canonical_chapter_id
+                    """SELECT content_sha256,bytes,object_key,canonical_work_id,canonical_chapter_id
                        FROM text_archive_items WHERE identity=?""",
                     (identity,),
                 ).fetchone()
                 if existing is not None and existing["content_sha256"] != digest:
+                    if _equivalent_novel_text(
+                        object_root, str(existing["object_key"]), candidate["body"]
+                    ):
+                        canonical_work_id = existing["canonical_work_id"]
+                        canonical_chapter_id = existing["canonical_chapter_id"]
+                        results.append(
+                            {
+                                "identity": identity,
+                                "status": "duplicate",
+                                "canonical_work_id": canonical_work_id,
+                                "canonical_chapter_id": canonical_chapter_id,
+                                "content_sha256": existing["content_sha256"],
+                            }
+                        )
+                        continue
                     db.execute(
                         """INSERT OR IGNORE INTO text_archive_conflicts
                            (batch_id,identity,existing_sha256,incoming_sha256,reason,detected_at)
@@ -957,15 +1024,46 @@ def import_batch(
         db.close()
 
 
+def _record_batch_rejection(inbox_root: Path, batch_id: str, reason: str) -> None:
+    """Keep the original batch and remember a terminal rejection so later batches run."""
+    if not _BATCH_ID.fullmatch(batch_id):
+        raise BatchRejectedError("batch_id_invalid")
+    batch_dir = inbox_root / "drop" / batch_id
+    if any(path.is_symlink() for path in (inbox_root, inbox_root / "drop", batch_dir)):
+        raise BatchRejectedError("batch_path_symlink")
+    if not batch_dir.is_dir():
+        return
+    target = batch_dir / "rejected.json"
+    if target.exists():
+        return
+    payload = json.dumps(
+        {"batch_id": batch_id, "reason": reason[:300], "detected_at": _now()},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    fd, name = tempfile.mkstemp(prefix=".rejected-", dir=batch_dir)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _next_ready_batch(inbox_root: Path) -> str | None:
     drop = inbox_root / "drop"
     if drop.is_symlink() or not drop.is_dir():
         return None
     for directory in sorted(drop.iterdir(), key=lambda entry: entry.name):
         if _BATCH_ID.fullmatch(directory.name) and not directory.is_symlink():
+            rejected = directory / "rejected.json"
             if (
                 (directory / "ready.json").is_file()
                 and not (directory / "ready.json").is_symlink()
+                and not rejected.is_file()
                 and not (inbox_root / "receipts" / f"{directory.name}.json").is_file()
             ):
                 return directory.name
@@ -992,6 +1090,10 @@ def main() -> None:
             )
     except RuntimeWindowError as exc:
         parser.exit(75, f"text import deferred: {exc}\n")
+    except BatchRejectedError as exc:
+        _record_batch_rejection(inbox_root, batch_id, str(exc))
+        print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
+        return
     if result is None:
         parser.exit(0, "batch not ready; no receipt written\n")
     print(

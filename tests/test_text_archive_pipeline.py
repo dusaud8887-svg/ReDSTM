@@ -50,6 +50,11 @@ def test_body_queue_window_refills_beyond_canary(tmp_path: Path) -> None:
                 "UPDATE text_collector_queue SET status='done' WHERE entity_id IN "
                 "(SELECT entity_id FROM text_collector_queue LIMIT 100)"
             )
+            db.execute(
+                """UPDATE text_novel_chapters SET status='complete'
+                   WHERE source_chapter_id IN (
+                     SELECT entity_id FROM text_collector_queue WHERE status='done')"""
+            )
             collector._fill_body_queue(db, "marumaru")
         assert db.execute("SELECT COUNT(*) FROM text_collector_queue").fetchone()[0] == 1100
     finally:
@@ -1122,7 +1127,15 @@ def test_live_json_shape_keeps_unknown_access_and_rejects_paid_placeholder() -> 
         {"work": {"id": 24743, "title": "Novel"}, "episodes": [{"id": 31027, "number": 1}]}
     )
     assert work_id == "24743"
-    assert episodes == [{"id": "31027", "label": "1", "kind": "main", "access": "unknown"}]
+    assert episodes == [
+        {
+            "id": "31027",
+            "label": "1",
+            "episode_number": 1,
+            "kind": "main",
+            "access": "unknown",
+        }
+    ]
     assert (
         collector._plain_text('[{"kind":"narration","text":"sample chapter"}]') == "sample chapter"
     )
@@ -1170,3 +1183,166 @@ def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) 
         assert db.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 0
     finally:
         db.close()
+
+
+def test_paid_chapter_is_queued_again_after_it_becomes_free(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    db.executescript(collector._SCHEMA)
+    try:
+        with db:
+            db.execute(
+                """INSERT INTO text_novel_chapters(
+                   site,source_work_id,source_chapter_id,access,status,last_seen_at)
+                   VALUES('blacktoon','10','20','point','waiting','t0')"""
+            )
+            db.execute(
+                """INSERT INTO text_collector_queue(
+                   source,kind,entity_id,parent_work_id,status,updated_at)
+                   VALUES('blacktoon','episode','20','10','done','t0')"""
+            )
+            db.execute(
+                """UPDATE text_novel_chapters
+                   SET access='free',status='discovered',last_seen_at='t1'"""
+            )
+            collector._fill_body_queue(db, "blacktoon")
+        assert db.execute(
+            "SELECT status FROM text_collector_queue WHERE entity_id='20'"
+        ).fetchone()[0] == "pending"
+    finally:
+        db.close()
+
+
+def test_rejected_ready_batch_keeps_its_files_and_unblocks_the_next(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    old, new = "20260925T000000Z-pc-aaaaaaaa", "20260925T000001Z-pc-bbbbbbbb"
+    for name in (old, new):
+        folder = inbox / "drop" / name
+        folder.mkdir(parents=True)
+        (folder / "manifest.json").write_text("{}", encoding="utf-8")
+        (folder / "ready.json").write_text("{}", encoding="utf-8")
+    assert importer._next_ready_batch(inbox) == old
+    importer._record_batch_rejection(inbox, old, "manifest_digest_mismatch")
+    assert (inbox / "drop" / old / "manifest.json").read_text(encoding="utf-8") == "{}"
+    assert importer._next_ready_batch(inbox) == new
+
+
+def test_catalog_page_rejects_invalid_duplicate_and_shifted_pages(tmp_path: Path) -> None:
+    with pytest.raises(collector.CollectorError, match="catalog_rows_rejected"):
+        collector.parse_catalog_page(
+            {
+                "items": [{"id": "10", "title": "Good"}, {"id": "bad", "title": "Bad"}],
+                "total": 2,
+                "size": 96,
+            }
+        )
+    with pytest.raises(collector.CollectorError, match="catalog_duplicate_id"):
+        collector.parse_catalog_page(
+            {
+                "items": [{"id": 10, "title": "A"}, {"id": "10", "title": "B"}],
+                "total": 2,
+                "size": 96,
+            }
+        )
+    db = importer._connect(tmp_path / "text.sqlite")
+    db.executescript(collector._SCHEMA)
+    source = collector.Source("blacktoon", "blacktoon452.com")
+    try:
+        with pytest.raises(collector.CollectorError, match="catalog_page_mismatch"):
+            collector._apply_list(
+                db,
+                collector.RequestUnit(source, "list", "0", "https://blacktoon452.com/novel"),
+                {"items": [{"id": 1, "title": "A"}], "total": 200, "size": 96, "page": 4},
+            )
+        collector._apply_list(
+            db,
+            collector.RequestUnit(source, "list", "0", "https://blacktoon452.com/novel"),
+            {"items": [{"id": 1, "title": "A"}], "total": 200, "size": 96, "page": 0},
+        )
+        with pytest.raises(collector.CollectorError, match="catalog_total_changed"):
+            collector._apply_list(
+                db,
+                collector.RequestUnit(source, "list", "1", "https://blacktoon452.com/novel"),
+                {"items": [{"id": 2, "title": "B"}], "total": 300, "size": 96, "page": 1},
+            )
+        state = db.execute(
+            "SELECT next_page,total_count FROM text_collector_state"
+        ).fetchone()
+        assert (state["next_page"], state["total_count"]) == (1, 200)
+    finally:
+        db.close()
+
+
+def test_display_title_is_kept_when_an_episode_number_is_also_present() -> None:
+    _work_id, _title, _author, episodes = collector.parse_work_detail(
+        {
+            "id": 9,
+            "title": "작품",
+            "episodes": [
+                {
+                    "id": 20,
+                    "episodeNumber": 1,
+                    "number": 1,
+                    "title": "1화 - 개정판",
+                }
+            ],
+        }
+    )
+    assert episodes[0]["label"] == "1화 - 개정판"
+    assert episodes[0]["episode_number"] == 1
+
+
+def test_pc_markdown_and_plain_body_are_the_same_novel_text(tmp_path: Path) -> None:
+    prose = b"fixture novel chapter\n"
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    objects = tmp_path / "objects"
+    receipts = inbox / "receipts"
+    first = importer.import_batch(inbox, _BATCH_ID, db_path, objects, receipts)
+    assert first is not None and first["items"][0]["status"] == "accepted"
+    second_id = "20260925T000002Z-pc-00000002"
+    wrapped = (
+        b"# 1\n# https://toki99.com/novel/63670/8794077\n\nfixture novel chapter\n"
+    )
+    batch = inbox / "drop" / second_id
+    files = batch / "files"
+    files.mkdir(parents=True)
+    item = {
+        "identity": "novel_chapter:toki:63670:8794077",
+        "kind": "novel_chapter",
+        "site": "toki",
+        "source_work_id": "63670",
+        "source_chapter_id": "8794077",
+        "source_url": "https://toki99.com/novel/63670/8794077",
+        "work_title": "작품",
+        "author": "작가",
+        "chapter_label": "1화",
+        "chapter_kind": "main",
+        "access": "free",
+        "bytes": len(wrapped),
+        "sha256": hashlib.sha256(wrapped).hexdigest(),
+        "text_sha256": hashlib.sha256(prose).hexdigest(),
+        "relative_path": "files/000001.md",
+    }
+    (files / "000001.md").write_bytes(wrapped)
+    manifest = {
+        "schema": 1,
+        "batch_id": second_id,
+        "producer": "newtomi-pc",
+        "items": [item],
+    }
+    raw = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
+    (batch / "manifest.json").write_bytes(raw)
+    (batch / "ready.json").write_text(
+        json.dumps(
+            {"schema": 1, "batch_id": second_id, "manifest_sha256": hashlib.sha256(raw).hexdigest()}
+        ),
+        encoding="utf-8",
+    )
+    second = importer.import_batch(inbox, second_id, db_path, objects, receipts)
+    assert second is not None
+    assert second["items"][0]["status"] == "duplicate"
+    assert second["items"][0]["content_sha256"] == hashlib.sha256(prose).hexdigest()
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM text_archive_conflicts").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM text_archive_objects").fetchone()[0] == 1

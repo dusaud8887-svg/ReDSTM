@@ -146,12 +146,16 @@ def parse_catalog_page(value: Any) -> tuple[list[dict[str, Any]], int, int]:
     if type(total) is not int or total < 0 or type(size) is not int or size < 1:
         raise CollectorError("catalog_paging_invalid")
     valid: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), (str, int)):
-            continue
+            raise CollectorError("catalog_rows_rejected")
         work_id = str(row["id"])
         if not work_id.isdigit():
-            continue
+            raise CollectorError("catalog_rows_rejected")
+        if work_id in seen:
+            raise CollectorError("catalog_duplicate_id")
+        seen.add(work_id)
         valid.append(
             {
                 "id": work_id,
@@ -160,8 +164,6 @@ def parse_catalog_page(value: Any) -> tuple[list[dict[str, Any]], int, int]:
                 "author": str(row.get("authorName") or row.get("author") or "")[:300],
             }
         )
-    if rows and not valid:
-        raise CollectorError("catalog_ids_invalid")
     return valid, total, size
 
 
@@ -203,9 +205,22 @@ def parse_work_detail(value: Any) -> tuple[str, str, str, list[dict[str, Any]]]:
             or access_value in {"point", "paid", "locked", "restricted"}
         )
         access = "unknown" if free == point else "free" if free else "point"
-        label = str(row.get("episodeNumber") or row.get("number") or row.get("title") or "")[:300]
+        raw_number = row.get("episodeNumber")
+        if raw_number is None:
+            raw_number = row.get("number")
+        episode_number = raw_number if type(raw_number) is int else None
+        title = str(row.get("title") or "").strip()
+        label = (title or (str(episode_number) if episode_number is not None else ""))[:300]
         kind = str(row.get("chapterKind") or row.get("kind") or "main")[:40]
-        normalized.append({"id": chapter_id, "label": label, "kind": kind, "access": access})
+        normalized.append(
+            {
+                "id": chapter_id,
+                "label": label,
+                "episode_number": episode_number,
+                "kind": kind,
+                "access": access,
+            }
+        )
     return work_id, title, author, normalized
 
 
@@ -466,17 +481,23 @@ def _fill_body_queue(db: sqlite3.Connection, source: str) -> None:
     if not remaining:
         return
     db.execute(
-        """INSERT OR IGNORE INTO text_collector_queue(
+        """INSERT INTO text_collector_queue(
            source,kind,entity_id,parent_work_id,status,next_check_at,
            attempts,last_error,updated_at)
            SELECT c.site,'episode',c.source_chapter_id,c.source_work_id,'pending',0,0,'',?
            FROM text_novel_chapters c
            WHERE c.site=? AND c.access IN ('free','unknown')
              AND c.status IN ('discovered','unknown_access')
+             AND c.content_sha256 IS NULL
              AND NOT EXISTS (
                  SELECT 1 FROM text_collector_queue q WHERE q.source=c.site
-                   AND q.kind='episode' AND q.entity_id=c.source_chapter_id)
-           ORDER BY c.last_seen_at,c.source_work_id,c.source_chapter_id LIMIT ?""",
+                   AND q.kind='episode' AND q.entity_id=c.source_chapter_id
+                   AND q.status!='done')
+           ORDER BY c.last_seen_at,c.source_work_id,c.source_chapter_id LIMIT ?
+           ON CONFLICT(source,kind,entity_id) DO UPDATE SET
+             status='pending',next_check_at=0,last_error='',
+             parent_work_id=excluded.parent_work_id,updated_at=excluded.updated_at
+           WHERE text_collector_queue.status='done'""",
         (_now(), source, remaining),
     )
 
@@ -485,6 +506,26 @@ def _apply_list(db: sqlite3.Connection, unit: RequestUnit, value: Any) -> dict[s
     works, total, page_size = parse_catalog_page(value)
     now = int(time.time())
     page = int(unit.entity_id)
+    reported: Any = None
+    if isinstance(value, dict):
+        data = value.get("data", value)
+        if isinstance(data, dict) and "page" in data:
+            reported = data.get("page")
+        elif "page" in value:
+            reported = value.get("page")
+    if type(reported) is int and reported != page:
+        raise CollectorError("catalog_page_mismatch")
+    state_key = f"{unit.source.name}:list"
+    previous = db.execute(
+        "SELECT total_count,next_page FROM text_collector_state WHERE source=?",
+        (state_key,),
+    ).fetchone()
+    if (
+        previous is not None
+        and int(previous["next_page"]) > 0
+        and int(previous["total_count"]) not in {0, total}
+    ):
+        raise CollectorError("catalog_total_changed")
     if not works and page * page_size < total:
         raise CollectorError("catalog_empty_before_end")
     with db:
@@ -591,7 +632,8 @@ def _apply_work(
                     now,
                 ),
             )
-        if unit.source.name == body_source:
+        json_owner = os.environ.get("REDSTM_TEXT_JSON_OWNER", "oracle").strip().lower()
+        if unit.source.name == body_source and json_owner != "pc":
             _fill_body_queue(db, unit.source.name)
         mark_cross_source_covered(db, unit.source.name, work_id)
         db.execute(

@@ -252,6 +252,10 @@ def build_publish_tree(
                 os.fsync(stream.fileno())
         db.execute("COMMIT")
         for target_key, digest, source_key, size in _plan_rows(plans["objects"]):
+            target = output_root / target_key
+            if target.is_file() and not target.is_symlink() and target.stat().st_size == int(size):
+                if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
+                    continue
             body = (object_root / source_key).read_bytes()
             if len(body) != int(size) or hashlib.sha256(body).hexdigest() != digest:
                 raise ValueError(f"local content object failed verification: {digest}")
@@ -611,14 +615,15 @@ def publish_lane(
             metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
     with operation_window(lock_wait_seconds=30):
         pass
-    if lane == "arcalive":
+    if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
         with sqlite3.connect(db_path) as db:
             pending = db.execute(
                 "SELECT 1 FROM text_archive_items i LEFT JOIN text_archive_publications p "
                 "ON p.key='item:'||i.identity AND p.sha256=i.content_sha256 "
-                "WHERE i.lane='arcalive' AND p.key IS NULL LIMIT 1"
+                "WHERE i.lane=? AND p.key IS NULL LIMIT 1",
+                (lane,),
             ).fetchone()
-            pointer_hash = _published_hash(db, "published/arcalive/release.json")
+            pointer_hash = _published_hash(db, f"published/{lane}/release.json")
         if pending is None and pointer_hash and not metadata_updated:
             with operation_window(lock_wait_seconds=30):
                 pointer = _run(
@@ -627,13 +632,16 @@ def publish_lane(
                         "--config",
                         _RCLONE_CONFIG,
                         "cat",
-                        f"{remote}/published/arcalive/release.json",
+                        f"{remote}/published/{lane}/release.json",
                     ],
                     runner,
                 )
             if hashlib.sha256(pointer).hexdigest() == pointer_hash:
                 _finalize_receipts(db_path, receipts_root)
-                return {"lane": lane, "item_count": item_count, "status": "noop"}
+                result = {"lane": lane, "item_count": item_count, "status": "noop"}
+                if lane == "novel":
+                    result["availability"] = build_availability_snapshot(db_path, receipts_root)
+                return result
     tree = build_publish_tree(db_path, object_root, build_root, lane)
     db = _connect(db_path)
     try:
