@@ -25,6 +25,7 @@ from scripts.text_archive.importer import (
     _store_object,
     _title_key,
     mark_cross_source_covered,
+    novel_text_sha256,
 )
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
@@ -755,6 +756,7 @@ def _apply_episode(
             )
         raise BatchRejectedError("source_id_hash_changed")
     key = _store_object(object_root, body, digest)
+    text_digest = novel_text_sha256(body)
     with db:
         if old is None:
             db.execute(
@@ -789,10 +791,14 @@ def _apply_episode(
                 ),
             )
         db.execute(
+            "UPDATE text_archive_items SET text_sha256=? WHERE identity=?",
+            (text_digest, identity),
+        )
+        db.execute(
             "UPDATE text_novel_chapters SET content_sha256=?,access='free',"
-            "status='complete',last_seen_at=? "
+            "status='complete',text_sha256=?,last_seen_at=? "
             "WHERE site=? AND source_work_id=? AND source_chapter_id=?",
-            (digest, now, unit.source.name, parent_id, chapter_id),
+            (digest, text_digest, now, unit.source.name, parent_id, chapter_id),
         )
         _refresh_link_candidates(db, unit.source.name, parent_id)
         db.execute(

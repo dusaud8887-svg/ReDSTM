@@ -499,6 +499,31 @@ def test_store_keeps_body_and_retries_when_comments_are_incomplete(
         assert tuple(frontier_row) == ("retry", "incomplete_comments")
 
 
+def test_partial_comment_retry_preserves_existing_projection(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    first = store.store_post(run_id, _post(), captured_at=_NOW,
+                             raw_sha256="a" * 64, warc_file="first.warc.gz")
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=1)
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60,
+                                    now=_NOW + timedelta(minutes=1))
+    assert lease is not None
+    second = store.store_post(run_id, _post(body="changed", comment=None),
+                              captured_at=_NOW + timedelta(minutes=1),
+                              raw_sha256="b" * 64, warc_file="partial.warc.gz", lease=lease)
+    assert second.changed is False
+    assert second.version_id == first.version_id
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT COUNT(*) FROM comments").fetchone()[0] == 1
+        assert db.execute("SELECT comment_count FROM posts").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
+        assert db.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "retry"
+
+
 def test_retry_backoff_keeps_network_failures_retryable(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)

@@ -18,6 +18,22 @@ from scripts.text_archive import collector, compare_sources, importer, publisher
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
 
+def test_novel_publisher_collapses_same_body_with_different_source_headers() -> None:
+    prose = b"Same chapter body.\n"
+    rows = []
+    for site in ("toki", "blacktoon"):
+        raw = f"# Chapter 1\n# https://{site}.example/novel/1/1\n\n".encode() + prose
+        rows.append({
+            "chapter_label": "1화", "chapter_kind": "main", "source_site": site,
+            "source_chapter_id": "1", "source_url": f"https://{site}.example/novel/1/1",
+            "content_sha256": hashlib.sha256(raw).hexdigest(),
+            "text_sha256": importer.novel_text_sha256(raw),
+            "imported_at": "now", "identity": f"novel_chapter:{site}:1:1",
+        })
+    assert rows[0]["content_sha256"] != rows[1]["content_sha256"]
+    assert len(publisher._unique_novel_chapters(rows)) == 1
+
+
 def test_body_queue_window_refills_beyond_canary(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     db.executescript(collector._SCHEMA)
@@ -1009,7 +1025,7 @@ def test_approved_novel_link_is_used_for_future_collector_chapters(tmp_path: Pat
         db.close()
 
 
-def test_linked_chapter_coverage_skips_only_unique_label_and_kind(tmp_path: Path) -> None:
+def test_linked_chapter_coverage_never_skips_unverified_body(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     db.executescript(collector._SCHEMA)
     try:
@@ -1037,12 +1053,12 @@ def test_linked_chapter_coverage_skips_only_unique_label_and_kind(tmp_path: Path
                     (chapter_id, label),
                 )
                 collector._enqueue(db, "blacktoon", "episode", chapter_id, "24753")
-            assert importer.mark_cross_source_covered(db, "blacktoon", "24753") == 1
+            assert importer.mark_cross_source_covered(db, "blacktoon", "24753") == 0
         rows = db.execute(
             "SELECT entity_id,status FROM text_collector_queue ORDER BY entity_id"
         ).fetchall()
         assert [tuple(row) for row in rows] == [
-            ("2", "covered"),
+            ("2", "pending"),
             ("3", "pending"),
             ("4", "pending"),
         ]

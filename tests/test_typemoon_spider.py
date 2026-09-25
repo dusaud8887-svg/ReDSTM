@@ -574,7 +574,7 @@ def test_unknown_detail_shape_is_parse_failed() -> None:
     ("views", "warning"),
     [("", "missing_views"), ("many", "invalid_views")],
 )
-def test_detail_numeric_parse_failure_is_not_synthesized_as_zero(views: str, warning: str) -> None:
+def test_detail_numeric_parse_failure_does_not_block_body(views: str, warning: str) -> None:
     url = "https://www.typemoon.net/write_free21/62068"
     views_html = f"<div class='views'>{views}</div>" if views else ""
     response = HtmlResponse(
@@ -589,6 +589,6 @@ def test_detail_numeric_parse_failure_is_not_synthesized_as_zero(views: str, war
 
     item = list(TypeMoonSpider().parse_detail(response))[0]
 
-    assert item["outcome"] == "parse_failed"
+    assert item["outcome"] == "stored"
     assert item["warnings"] == [warning]
-    assert "views" not in item
+    assert item["views"] == 0

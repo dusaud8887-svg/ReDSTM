@@ -204,7 +204,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (sortMode === "longest") {
       copy.sort((left, right) => (right.chapter_count || 0) - (left.chapter_count || 0) || title(left, right));
     } else if (sortMode === "updated") {
-      copy.sort((left, right) => latestEpisodeNumber(right.latest_label) - latestEpisodeNumber(left.latest_label)
+      copy.sort((left, right) => String(right.last_imported_at || "").localeCompare(String(left.last_imported_at || ""))
         || title(left, right));
     } else copy.sort(title);
     return copy;

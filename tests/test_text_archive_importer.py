@@ -247,9 +247,9 @@ def test_unique_title_author_and_matching_body_hashes_auto_link(tmp_path: Path) 
                 db.execute(
                     """INSERT INTO text_novel_chapters(
                        site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
-                       access,content_sha256,status,last_seen_at)
-                       VALUES(?,?,?,?,'main','free',?,'complete','now')""",
-                    (site, work_id, chapter_id, f"{chapter_id}화", digest),
+                       access,content_sha256,text_sha256,status,last_seen_at)
+                       VALUES(?,?,?,?,'main','free',?,?,'complete','now')""",
+                    (site, work_id, chapter_id, f"{chapter_id}화", digest, digest),
                 )
             importer._refresh_link_candidates(db, site, work_id)
     rows = db.execute(
@@ -260,6 +260,102 @@ def test_unique_title_author_and_matching_body_hashes_auto_link(tmp_path: Path) 
         :
     ] == ("auto_accepted", "normalized_title_author+body_sha256")
     db.close()
+
+
+def test_punctuation_and_label_overlap_do_not_auto_link_editions(tmp_path: Path) -> None:
+    assert importer._chapter_key("1.5화", "main") != importer._chapter_key("15화", "main")
+    assert importer._chapter_key("1-2화", "main") != importer._chapter_key("12화", "main")
+    db = importer._connect(tmp_path / "text.sqlite")
+    try:
+        with db:
+            for site, work_id in (("blacktoon", "1"), ("marumaru", "2")):
+                db.execute(
+                    """INSERT INTO text_novel_sources(
+                       site,source_work_id,slug,title,author,title_key,author_key,last_seen_at)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (site, work_id, work_id, "Same", "Author", "same", "author", "now"),
+                )
+                importer._canonical_work_id(db, site, work_id)
+                for number in range(1, 11):
+                    db.execute(
+                        """INSERT INTO text_novel_chapters(
+                           site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+                           access,content_sha256,status,last_seen_at)
+                           VALUES(?,?,?,?,'main','free',?,'complete','now')""",
+                        (site, work_id, str(number), f"{number}화",
+                         hashlib.sha256(f"{site}:{number}".encode()).hexdigest()),
+                    )
+                importer._refresh_link_candidates(db, site, work_id)
+        assert db.execute(
+            "SELECT status FROM text_novel_link_candidates"
+        ).fetchone()[0] == "candidate"
+        assert db.execute(
+            "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
+        ).fetchone()[0] == 2
+    finally:
+        db.close()
+
+
+def test_matching_body_hashes_at_different_chapter_positions_do_not_link(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    try:
+        with db:
+            for site, work_id, offset in (("blacktoon", "1", 0), ("marumaru", "2", 10)):
+                db.execute(
+                    """INSERT INTO text_novel_sources(
+                       site,source_work_id,slug,title,author,title_key,author_key,last_seen_at)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (site, work_id, work_id, "Same", "Author", "same", "author", "now"),
+                )
+                importer._canonical_work_id(db, site, work_id)
+                for number, digest in ((1, "a" * 64), (2, "b" * 64)):
+                    db.execute(
+                        """INSERT INTO text_novel_chapters(
+                           site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+                           access,content_sha256,text_sha256,status,last_seen_at)
+                           VALUES(?,?,?,?,'main','free',?,?,'complete','now')""",
+                        (site, work_id, str(number), f"{number + offset}화", digest, digest),
+                    )
+                importer._refresh_link_candidates(db, site, work_id)
+        assert db.execute(
+            "SELECT status FROM text_novel_link_candidates"
+        ).fetchone()[0] == "candidate"
+    finally:
+        db.close()
+
+
+def test_old_label_only_link_is_split_and_covered_requeued(tmp_path: Path) -> None:
+    path = tmp_path / "text.sqlite"
+    db = importer._connect(path)
+    with db:
+        db.execute("DELETE FROM text_novel_identity_migrations WHERE version=3")
+        db.execute("INSERT INTO text_novel_work_groups VALUES('old','now')")
+        db.executemany(
+            "INSERT INTO text_novel_work_group_sources VALUES(?,?,'old')",
+            [("blacktoon", "1"), ("marumaru", "2")],
+        )
+        db.execute(
+            """INSERT INTO text_novel_link_candidates VALUES(
+               'blacktoon','1','marumaru','2','normalized_title_author+chapter_sequence',
+               'auto_accepted','now')"""
+        )
+        db.execute(
+            """INSERT INTO text_novel_chapters(site,source_work_id,source_chapter_id,
+               chapter_label,chapter_kind,access,status,last_seen_at)
+               VALUES('marumaru','2','1','1화','main','free','covered','now')"""
+        )
+    db.close()
+    db = importer._connect(path)
+    try:
+        assert db.execute(
+            "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
+        ).fetchone()[0] == 2
+        assert db.execute("SELECT status FROM text_novel_chapters").fetchone()[0] == "discovered"
+        assert db.execute(
+            "SELECT status FROM text_novel_link_candidates"
+        ).fetchone()[0] == "candidate"
+    finally:
+        db.close()
 
 
 def test_same_title_without_distinguishing_evidence_stays_unlinked(tmp_path: Path) -> None:

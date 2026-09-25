@@ -26,10 +26,18 @@ def test_precision_first_collection_preview_is_normalized_ordered_and_determinis
 
     assert forward == reverse
     assert [[post.external_post_id for post in group.posts] for group in forward.groups] == [
-        [1, 2],
         [10, 11, 12],
         [5, 6],
     ]
-    assert forward.rejected["duplicate_episode"] == 2
+    assert forward.rejected["single_episode"] == 6
     assert parse_title("연감 2026").order_key is None
     assert parse_title("작품 (리메이크) 2화").base_key == "작품 (리메이크)"
+
+
+def test_decimal_and_side_story_have_distinct_chapter_order() -> None:
+    main = [parse_title(f"긴 작품 {label}") for label in ("1화", "1.5화", "2화")]
+    assert [chapter.base_key for chapter in main] == ["긴 작품"] * 3
+    assert [chapter.order_key for chapter in main] == sorted(chapter.order_key for chapter in main)
+    side = parse_title("긴 작품 외전 1화")
+    assert side.base_key == "긴 작품"
+    assert side.order_key != main[0].order_key

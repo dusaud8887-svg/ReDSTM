@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from crawler.collections import parse_title
-from scripts.text_archive.importer import _chapter_key, _connect, _write_receipt
+from scripts.text_archive.importer import _chapter_key, _connect, _write_receipt, novel_text_sha256
 from scripts.text_archive.recovery_metadata import metadata_fingerprint
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
@@ -46,7 +46,7 @@ def _unique_novel_chapters(chapters: list[dict[str, Any]]) -> list[dict[str, Any
     for row in chapters:
         key = (
             _chapter_key(str(row.get("chapter_label") or ""), str(row.get("chapter_kind") or "")),
-            str(row.get("content_sha256") or ""),
+            str(row.get("text_sha256") or row.get("content_sha256") or ""),
         )
         grouped.setdefault(key, []).append(row)
 
@@ -162,6 +162,29 @@ def build_publish_tree(
     }
     db = _connect(db_path)
     try:
+        if lane == "novel":
+            with db:
+                for row in db.execute(
+                    """SELECT identity,source_site,source_work_id,source_chapter_id,
+                              content_sha256,object_key FROM text_archive_items
+                       WHERE lane='novel' AND text_sha256 IS NULL"""
+                ).fetchall():
+                    body = (object_root / str(row["object_key"])).read_bytes()
+                    if hashlib.sha256(body).hexdigest() != row["content_sha256"]:
+                        raise ValueError(
+                            f"local content object failed verification: {row['identity']}"
+                        )
+                    digest = novel_text_sha256(body)
+                    db.execute(
+                        "UPDATE text_archive_items SET text_sha256=? WHERE identity=?",
+                        (digest, row["identity"]),
+                    )
+                    db.execute(
+                        """UPDATE text_novel_chapters SET text_sha256=?
+                           WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
+                        (digest, row["source_site"], row["source_work_id"],
+                         row["source_chapter_id"]),
+                    )
         # Keep catalog, object and item passes on one imported snapshot in WAL mode.
         db.execute("BEGIN")
         item_count, generated_at = db.execute(
@@ -223,6 +246,7 @@ def build_publish_tree(
                         "author": first["author"],
                         "chapter_count": len(chapters),
                         "latest_label": _latest_label(chapters),
+                        "last_imported_at": max(str(row["imported_at"]) for row in chapters),
                         "legacy_work_ids": sorted(
                             alias
                             for alias in legacy_work_ids.get(work_id, set())

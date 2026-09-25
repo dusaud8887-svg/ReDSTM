@@ -1146,7 +1146,9 @@ class TypeMoonSpider(scrapy.Spider):
                 warnings.append("invalid_expected_comment_count")
             elif len(comments) < expected_comment_count:
                 warnings.append("incomplete_comments")
-        blocking = [warning for warning in warnings if warning != "incomplete_comments"]
+        blocking = [
+            warning for warning in warnings if warning in {"missing_title", "missing_content"}
+        ]
         if blocking:
             yield CapturedPostItem(
                 board_id=board_id,
@@ -1160,7 +1162,6 @@ class TypeMoonSpider(scrapy.Spider):
 
         assert title is not None
         assert content is not None
-        assert views is not None
         category = _category(response)
         normalized_title = title
         if category:
@@ -1176,12 +1177,12 @@ class TypeMoonSpider(scrapy.Spider):
             author=_first_text(response, _AUTHOR_SELECTORS),
             category=category,
             created_at_raw=_first_text(response, _DATE_SELECTORS),
-            views=views,
+            views=views if views is not None else 0,
             body_html=body_html,
             body_text=body_text,
             is_aa=_is_aa(board_id, category, content),
             comments=comments,
-            warnings=[],
+            warnings=warnings,
             **capture_metadata,
         )
 

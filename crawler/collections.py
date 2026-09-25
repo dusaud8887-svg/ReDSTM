@@ -5,6 +5,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from decimal import Decimal
 
 _LEADING_TAG = re.compile(r"^\s*\[(?:연재|번역|aa|팬픽|소설|작품)\]\s*", re.IGNORECASE)
 _EXPLICIT_EPISODE = re.compile(
@@ -12,8 +13,8 @@ _EXPLICIT_EPISODE = re.compile(
     (?P<label>
       (?:(?P<season>\d+)\s*(?:기|시즌|season)\s*)?
       (?:(?:제\s*)?(?P<volume>\d+)\s*(?:권|부|volume|vol\.?|part)\s*)?
-      (?:제\s*)?(?P<start>\d+)
-      (?:\s*(?:~|〜|～|-)\s*(?P<end>\d+))?
+      (?:제\s*)?(?P<start>\d+(?:\.\d+)?)
+      (?:\s*(?:~|〜|～|-)\s*(?P<end>\d+(?:\.\d+)?))?
       \s*(?:화|회|장|편|chapter|ch\.?|episode|ep\.?)
     )\s*$
     """,
@@ -42,7 +43,7 @@ class PostTitle:
 class ParsedTitle:
     base_key: str
     episode_label: str | None
-    order_key: tuple[int, int, int, int, int] | None
+    order_key: tuple[int, int, int, Decimal, Decimal] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +77,16 @@ def parse_title(title: str) -> ParsedTitle:
     )
     special = None if match else _SPECIAL_EPISODE.search(value)
     if match:
-        start = int(match.group("start"))
-        end = int(match.groupdict().get("end") or start)
+        start = Decimal(match.group("start"))
+        end = Decimal(match.groupdict().get("end") or start)
         season = int(match.groupdict().get("season") or 0)
         volume = int(match.groupdict().get("volume") or 0)
         base = _TRAILING_SEPARATOR.sub("", value[: match.start()]).strip()
-        return ParsedTitle(base, match.group("label").strip(), (season, volume, 1, start, end))
+        side_story = bool(re.search(r"(?:^|\s)(?:외전|특별편)\s*$", base))
+        if side_story:
+            base = re.sub(r"(?:^|\s)(?:외전|특별편)\s*$", "", base).strip()
+        return ParsedTitle(base, match.group("label").strip(),
+                           (season, volume, 2 if side_story else 1, start, end))
     if special:
         ranks = {
             "프롤로그": 0,
@@ -96,12 +101,12 @@ def parse_title(title: str) -> ParsedTitle:
         }
         label = special.group("label").strip()
         base = _TRAILING_SEPARATOR.sub("", value[: special.start()]).strip()
-        return ParsedTitle(base, label, (0, 0, ranks[label.casefold()], 0, 0))
+        return ParsedTitle(base, label, (0, 0, ranks[label.casefold()], Decimal(0), Decimal(0)))
     return ParsedTitle(value, None, None)
 
 
 def preview_collections(posts: Iterable[PostTitle]) -> Preview:
-    blocks: dict[tuple[str, str], list[tuple[PostTitle, ParsedTitle]]] = defaultdict(list)
+    blocks: dict[tuple[str, str, str], list[tuple[PostTitle, ParsedTitle]]] = defaultdict(list)
     rejected: Counter[str] = Counter()
     parsed_posts = 0
     for post in posts:
@@ -112,10 +117,11 @@ def preview_collections(posts: Iterable[PostTitle]) -> Preview:
         if len(parsed.base_key.replace(" ", "")) < 4:
             rejected["low_information_title"] += 1
             continue
-        blocks[(post.board_id, parsed.base_key)].append((post, parsed))
+        author_key = _matching_text(post.author or "")
+        blocks[(post.board_id, parsed.base_key, author_key)].append((post, parsed))
 
     groups: list[CollectionCandidate] = []
-    for (board_id, base_key), rows in sorted(blocks.items()):
+    for (board_id, base_key, _author_key), rows in sorted(blocks.items()):
         if len(rows) < 2:
             rejected["single_episode"] += len(rows)
             continue

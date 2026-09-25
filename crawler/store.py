@@ -136,12 +136,34 @@ class ArchiveStore:
             connection.execute("BEGIN IMMEDIATE")
             existing_post = connection.execute(
                 """
-                SELECT canonical_url, title, author, category, created_at_source,
+                SELECT id, canonical_url, title, author, category, created_at_source,
                        created_at_raw, views, comment_count, is_aa, latest_version_id
                 FROM posts WHERE board_id = ? AND external_post_id = ?
                 """,
                 (post.board_id, post.external_post_id),
             ).fetchone()
+            if (
+                existing_post is not None
+                and lease is not None
+                and lease.expected_comment_count is not None
+                and len(post.comments) < lease.expected_comment_count
+            ):
+                connection.execute(
+                    """INSERT INTO captures (
+                       run_id,url,entity_type,post_id,fetched_at,http_status,outcome,
+                       raw_sha256,warc_file,warc_record_id,error_code)
+                       VALUES (?,?,'post',?,?,?,'parse_failed',?,?,?,'incomplete_comments')""",
+                    (run_id, post.canonical_url, existing_post["id"], captured_at_text,
+                     http_status, raw_sha256, warc_file, post.warc_record_id),
+                )
+                transition_lease(
+                    connection, lease, state="retry", error_code="incomplete_comments",
+                    next_attempt_at=retry_backoff(max(lease.attempts, 1), captured_at),
+                )
+                return StoreResult(
+                    int(existing_post["id"]), int(existing_post["latest_version_id"]),
+                    int(connection.execute("SELECT last_insert_rowid()").fetchone()[0]), False,
+                )
             effective_author = (
                 post.author
                 if post.author is not None

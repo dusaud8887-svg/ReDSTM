@@ -2,7 +2,7 @@
 
 const LEADING_TAG = /^\s*\[(?:연재|번역|aa|팬픽|소설|작품)\]\s*/i;
 const EXPLICIT_EPISODE = new RegExp(
-  "(?<label>(?:(?<season>\\d+)\\s*(?:기|시즌|season)\\s*)?(?:(?:제\\s*)?(?<volume>\\d+)\\s*(?:권|부|volume|vol\\.?|part)\\s*)?(?:제\\s*)?(?<start>\\d+)(?:\\s*(?:~|〜|～|-)\\s*(?<end>\\d+))?\\s*(?:화|회|장|편|chapter|ch\\.?|episode|ep\\.?))\\s*$",
+  "(?<label>(?:(?<season>\\d+)\\s*(?:기|시즌|season)\\s*)?(?:(?:제\\s*)?(?<volume>\\d+)\\s*(?:권|부|volume|vol\\.?|part)\\s*)?(?:제\\s*)?(?<start>\\d+(?:\\.\\d+)?)(?:\\s*(?:~|〜|～|-)\\s*(?<end>\\d+(?:\\.\\d+)?))?\\s*(?:화|회|장|편|chapter|ch\\.?|episode|ep\\.?))\\s*$",
   "i",
 );
 const HASH_EPISODE = /(?<label>#\s*(?<start>\d+))\s*$/;
@@ -41,7 +41,9 @@ export function parseTitle(title) {
     const season = Number(match.groups.season || 0);
     const volume = Number(match.groups.volume || 0);
     const cut = finish(value, match);
-    return { base: cut.base, label: cut.label, order: [season, volume, 1, start, end] };
+    const sideStory = /(?:^|\s)(?:외전|특별편)\s*$/.test(cut.base);
+    const base = sideStory ? cut.base.replace(/(?:^|\s)(?:외전|특별편)\s*$/, "").trim() : cut.base;
+    return { base, label: cut.label, order: [season, volume, sideStory ? 2 : 1, start, end] };
   }
   const special = SPECIAL_EPISODE.exec(value);
   if (special) {
@@ -64,7 +66,7 @@ export function serialWorks(posts) {
   for (const post of posts) {
     const parsed = parseTitle(post.title);
     if (!parsed.order || parsed.base.replaceAll(" ", "").length < 4) continue;
-    const key = `${post.board || ""}\u0000${parsed.base}`;
+    const key = `${post.board || ""}\u0000${parsed.base}\u0000${matchingText(post.author)}`;
     const rows = blocks.get(key) || [];
     rows.push({ post, parsed });
     blocks.set(key, rows);

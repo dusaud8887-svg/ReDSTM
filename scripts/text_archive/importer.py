@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS text_archive_items (
   author TEXT NOT NULL DEFAULT '', chapter_label TEXT NOT NULL DEFAULT '',
   chapter_kind TEXT NOT NULL DEFAULT '', access TEXT NOT NULL DEFAULT 'unknown',
   content_sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, object_key TEXT NOT NULL,
+  text_sha256 TEXT,
   canonical_work_id TEXT, canonical_chapter_id TEXT, batch_id TEXT NOT NULL,
   imported_at TEXT NOT NULL
 );
@@ -93,6 +94,7 @@ CREATE TABLE IF NOT EXISTS text_novel_chapters (
   site TEXT NOT NULL, source_work_id TEXT NOT NULL, source_chapter_id TEXT NOT NULL,
   chapter_label TEXT NOT NULL DEFAULT '', chapter_kind TEXT NOT NULL DEFAULT 'main',
   access TEXT NOT NULL DEFAULT 'unknown', content_sha256 TEXT, status TEXT NOT NULL,
+  text_sha256 TEXT,
   last_seen_at TEXT NOT NULL,
   PRIMARY KEY(site, source_work_id, source_chapter_id)
 );
@@ -157,7 +159,7 @@ def _title_key(value: str) -> str:
 
 
 def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -> int:
-    """Skip only unique, same-labelled chapters of an explicitly linked work."""
+    """Requeue unverified chapters; a matching label cannot prove body identity."""
     group = db.execute(
         "SELECT canonical_work_id FROM text_novel_work_group_sources "
         "WHERE site=? AND source_work_id=?",
@@ -165,18 +167,6 @@ def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -
     ).fetchone()
     if group is None:
         return 0
-    others = db.execute(
-        """SELECT i.chapter_label,i.chapter_kind FROM text_archive_items i
-           JOIN text_novel_work_group_sources g
-             ON g.site=i.source_site AND g.source_work_id=i.source_work_id
-           WHERE g.canonical_work_id=? AND i.source_site!=? AND i.lane='novel'""",
-        (group[0], site),
-    ).fetchall()
-    available: dict[tuple[str, str], int] = {}
-    for row in others:
-        key = (_text_key(row["chapter_label"]), row["chapter_kind"])
-        if key[0]:
-            available[key] = available.get(key, 0) + 1
     db.execute(
         """UPDATE text_novel_chapters SET status='discovered'
            WHERE site=? AND source_work_id=? AND status='covered'""",
@@ -193,38 +183,7 @@ def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -
                WHERE source=? AND kind='episode' AND parent_work_id=? AND status='covered'""",
             (site, work_id),
         )
-    chapters = db.execute(
-        """SELECT source_chapter_id,chapter_label,chapter_kind,access,status
-           FROM text_novel_chapters WHERE site=? AND source_work_id=?""",
-        (site, work_id),
-    ).fetchall()
-    local_counts: dict[tuple[str, str], int] = {}
-    for row in chapters:
-        key = (_text_key(row["chapter_label"]), row["chapter_kind"])
-        local_counts[key] = local_counts.get(key, 0) + 1
-    covered = 0
-    for row in chapters:
-        key = (_text_key(row["chapter_label"]), row["chapter_kind"])
-        if (
-            row["access"] == "free"
-            and row["status"] not in {"complete", "held_conflict", "waiting"}
-            and key[0]
-            and available.get(key) == local_counts.get(key) == 1
-        ):
-            db.execute(
-                """UPDATE text_novel_chapters SET status='covered'
-                   WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
-                (site, work_id, row["source_chapter_id"]),
-            )
-            if has_queue:
-                db.execute(
-                    """UPDATE text_collector_queue SET status='covered'
-                       WHERE source=? AND kind='episode' AND entity_id=?
-                         AND status IN ('pending','retry')""",
-                    (site, row["source_chapter_id"]),
-                )
-            covered += 1
-    return covered
+    return 0
 
 
 def _refresh_link_candidates(db: sqlite3.Connection, site: str, work_id: str) -> None:
@@ -467,7 +426,7 @@ def _merge_work_groups(
 
 def _chapter_key(label: str, kind: str) -> tuple[str, str]:
     normalized = unicodedata.normalize("NFKC", label).casefold()
-    return re.sub(r"[^\w]+", "", normalized), _text_key(kind)
+    return re.sub(r"\s+", "", normalized), _text_key(kind)
 
 
 def _auto_link_basis(
@@ -514,13 +473,19 @@ def _auto_link_basis(
         ).fetchone()[0]
         if matches != 1:
             return None
-    hashes = db.execute(
-        """SELECT COUNT(DISTINCT l.content_sha256) FROM text_novel_chapters l
-           JOIN text_novel_chapters r ON r.content_sha256=l.content_sha256
-           WHERE l.site=? AND l.source_work_id=? AND r.site=? AND r.source_work_id=?
-             AND l.content_sha256 IS NOT NULL AND l.status='complete' AND r.status='complete'""",
-        (left_site, left_work_id, right_site, right_work_id),
-    ).fetchone()[0]
+    signatures: list[set[tuple[tuple[str, str], str]]] = []
+    for site, work_id in ((left_site, left_work_id), (right_site, right_work_id)):
+        signatures.append({
+            (_chapter_key(str(row["chapter_label"]), str(row["chapter_kind"])),
+             str(row["text_sha256"]))
+            for row in db.execute(
+                """SELECT chapter_label,chapter_kind,text_sha256 FROM text_novel_chapters
+                   WHERE site=? AND source_work_id=? AND status='complete'
+                     AND text_sha256 IS NOT NULL""",
+                (site, work_id),
+            )
+        })
+    hashes = len(signatures[0] & signatures[1])
     left_slug = str(left["slug"] or "").casefold()
     right_slug = str(right["slug"] or "").casefold()
     external_id_match = (
@@ -530,22 +495,6 @@ def _auto_link_basis(
         return "normalized_title_author+body_sha256"
     if hashes >= 1 and external_id_match:
         return "normalized_title_author+source_alias+body_sha256"
-    chapter_sets: list[set[tuple[str, str]]] = []
-    for site, work_id in ((left_site, left_work_id), (right_site, right_work_id)):
-        chapter_sets.append(
-            {
-                _chapter_key(str(row[0]), str(row[1]))
-                for row in db.execute(
-                    """SELECT chapter_label,chapter_kind FROM text_novel_chapters
-                       WHERE site=? AND source_work_id=? AND chapter_label<>''""",
-                    (site, work_id),
-                )
-            }
-        )
-    smaller = min(map(len, chapter_sets))
-    overlap = len(chapter_sets[0] & chapter_sets[1])
-    if smaller >= 10 and overlap >= 10 and overlap / smaller >= 0.8:
-        return "normalized_title_author+chapter_sequence"
     return None
 
 
@@ -712,6 +661,10 @@ def canonical_novel_bytes(raw: bytes) -> bytes | None:
     if not prose or prose != prose.strip():
         return None
     return (prose + "\n").encode("utf-8")
+
+
+def novel_text_sha256(raw: bytes) -> str:
+    return hashlib.sha256(canonical_novel_bytes(raw) or raw).hexdigest()
 
 
 def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes | None) -> bool:
@@ -919,9 +872,15 @@ def _connect(path: Path) -> sqlite3.Connection:
         db.execute(
             "ALTER TABLE text_archive_items ADD COLUMN source_category TEXT NOT NULL DEFAULT ''"
         )
+    if "text_sha256" not in item_columns:
+        db.execute("ALTER TABLE text_archive_items ADD COLUMN text_sha256 TEXT")
+    chapter_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_chapters)")}
+    if "text_sha256" not in chapter_columns:
+        db.execute("ALTER TABLE text_novel_chapters ADD COLUMN text_sha256 TEXT")
     with db:
         _migrate_stable_work_ids(db)
         _migrate_normalized_titles(db)
+        _migrate_weak_novel_links(db)
         legacy_pc_sources = db.execute(
             """SELECT site,source_work_id FROM text_novel_sources
                WHERE site IN ('toki','newtoki','sbxh') AND slug=''"""
@@ -934,6 +893,68 @@ def _connect(path: Path) -> sqlite3.Connection:
             )
             _refresh_link_candidates(db, str(source["site"]), str(source["source_work_id"]))
     return db
+
+
+def _migrate_weak_novel_links(db: sqlite3.Connection) -> None:
+    if db.execute("SELECT 1 FROM text_novel_identity_migrations WHERE version=3").fetchone():
+        return
+    for row in db.execute(
+        """SELECT left_site,left_work_id,right_site,right_work_id
+           FROM text_novel_link_candidates
+           WHERE status='auto_accepted'
+             AND match_basis='normalized_title_author+chapter_sequence'"""
+    ).fetchall():
+        left = db.execute(
+            """SELECT canonical_work_id FROM text_novel_work_group_sources
+               WHERE site=? AND source_work_id=?""",
+            (row["left_site"], row["left_work_id"]),
+        ).fetchone()
+        right = db.execute(
+            """SELECT canonical_work_id FROM text_novel_work_group_sources
+               WHERE site=? AND source_work_id=?""",
+            (row["right_site"], row["right_work_id"]),
+        ).fetchone()
+        if left is not None and right is not None and left[0] == right[0]:
+            members = db.execute(
+                "SELECT COUNT(*) FROM text_novel_work_group_sources WHERE canonical_work_id=?",
+                (left[0],),
+            ).fetchone()[0]
+            if members == 2:
+                new_id = _new_work_id()
+                db.execute(
+                    "INSERT INTO text_novel_work_groups(canonical_work_id,created_at) VALUES(?,?)",
+                    (new_id, _now()),
+                )
+                db.execute(
+                    """UPDATE text_novel_work_group_sources SET canonical_work_id=?
+                       WHERE site=? AND source_work_id=?""",
+                    (new_id, row["right_site"], row["right_work_id"]),
+                )
+                db.execute(
+                    """UPDATE text_archive_items SET canonical_work_id=?
+                       WHERE lane='novel' AND source_site=? AND source_work_id=?""",
+                    (new_id, row["right_site"], row["right_work_id"]),
+                )
+                db.execute(
+                    """UPDATE text_novel_work_aliases SET canonical_work_id=?
+                       WHERE alias_work_id=?""",
+                    (new_id, f"novel:{row['right_site']}:{row['right_work_id']}"),
+                )
+        db.execute(
+            """UPDATE text_novel_link_candidates SET status='candidate',
+               match_basis='normalized_title_author',updated_at=?
+               WHERE left_site=? AND left_work_id=? AND right_site=? AND right_work_id=?""",
+            (_now(), row["left_site"], row["left_work_id"],
+             row["right_site"], row["right_work_id"]),
+        )
+    db.execute("UPDATE text_novel_chapters SET status='discovered' WHERE status='covered'")
+    if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='text_collector_queue'"
+    ).fetchone():
+        db.execute("UPDATE text_collector_queue SET status='pending' WHERE status='covered'")
+    db.execute(
+        "INSERT INTO text_novel_identity_migrations(version,completed_at) VALUES(3,?)", (_now(),)
+    )
 
 
 def _migrate_stable_work_ids(db: sqlite3.Connection) -> None:
@@ -1255,6 +1276,11 @@ def import_batch(
                         ),
                     )
                     if candidate["lane"] == "novel":
+                        text_digest = novel_text_sha256(body)
+                        db.execute(
+                            "UPDATE text_archive_items SET text_sha256=? WHERE identity=?",
+                            (text_digest, identity),
+                        )
                         title = str(data.get("work_title", ""))
                         author = str(data.get("author", ""))
                         db.execute(
@@ -1300,6 +1326,12 @@ def import_batch(
                                 "complete",
                                 now,
                             ),
+                        )
+                        db.execute(
+                            """UPDATE text_novel_chapters SET text_sha256=?
+                               WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
+                            (text_digest, candidate["source_site"], candidate["source_work_id"],
+                             candidate["source_chapter_id"]),
                         )
                         _refresh_link_candidates(
                             db, candidate["source_site"], candidate["source_work_id"]
