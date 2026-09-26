@@ -10,12 +10,20 @@ from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from scripts.text_archive import collector, compare_sources, importer, publisher
 
 _BATCH_ID = "20260923T130000Z-pc-00000001"
+
+
+def test_publication_record_closes_sqlite_connection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    connection = MagicMock()
+    monkeypatch.setattr(publisher.sqlite3, "connect", lambda _: connection)
+    publisher._record_publication(tmp_path / "text.sqlite", "key", "digest")
+    connection.close.assert_called_once_with()
 
 
 def test_novel_publisher_collapses_same_body_with_different_source_headers() -> None:
@@ -534,7 +542,7 @@ def test_object_batch_uses_downloaded_sha256_before_accepting(
     calls: list[str] = []
 
     def rclone(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        assert kwargs["timeout"] == 30 * 60
+        assert kwargs["timeout"] == 5 * 60
         calls.append(argv[3])
         if argv[3] == "copy":
             assert argv[argv.index("--transfers") + 1] == "2"

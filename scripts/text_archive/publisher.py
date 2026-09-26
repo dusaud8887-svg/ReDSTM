@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import tempfile
 from collections.abc import Iterator
+from contextlib import closing
 from datetime import UTC, datetime
 from itertools import groupby
 from pathlib import Path
@@ -19,7 +20,7 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
-_RCLONE_TIMEOUT_S = 30 * 60
+_RCLONE_TIMEOUT_S = 5 * 60
 _AVAILABILITY_PAGE_SIZE = 500
 
 
@@ -414,6 +415,8 @@ def _publish_object_batch(
                 "2",
                 "--checkers",
                 "2",
+                "--contimeout", "10s", "--timeout", "60s",
+                "--retries", "1", "--low-level-retries", "2",
             ],
             runner,
         )
@@ -434,6 +437,8 @@ def _publish_object_batch(
                     str(selection),
                     "--checkers",
                     "2",
+                    "--contimeout", "10s", "--timeout", "60s",
+                    "--retries", "1", "--low-level-retries", "2",
                 ],
                 runner,
             )
@@ -443,7 +448,7 @@ def _publish_object_batch(
 
 def _record_publication(db_path: Path, key: str, digest: str) -> None:
     verified_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    with sqlite3.connect(db_path) as db:
+    with closing(sqlite3.connect(db_path)) as db, db:
         db.execute(
             "CREATE TABLE IF NOT EXISTS text_archive_publications "
             "(key TEXT PRIMARY KEY, sha256 TEXT NOT NULL, verified_at TEXT NOT NULL)"
