@@ -288,10 +288,13 @@ def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None,
                     and query.get("wr_id") == [chapter_id]
                 )
             if valid_host and site == "bookkor":
-                valid_host = re.fullmatch(
-                    rf"/[^/]+/{re.escape(work_id)}-ep-{re.escape(chapter_id)}",
-                    parsed.path,
-                ) is not None
+                valid_host = (
+                    re.fullmatch(
+                        rf"/[^/]+/{re.escape(work_id)}-ep-{re.escape(chapter_id)}",
+                        parsed.path,
+                    )
+                    is not None
+                )
         except ValueError:
             valid_host = False
         if not valid_host:

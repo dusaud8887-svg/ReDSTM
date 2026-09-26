@@ -25,12 +25,17 @@ _BATCHES = (
 
 def test_bookkor_chapter_identity_requires_matching_work_and_chapter() -> None:
     item = {
-        "kind": "novel_chapter", "site": "bookkor", "source_work_id": "4522",
-        "source_chapter_id": "8675541", "identity": "novel_chapter:bookkor:4522:8675541",
+        "kind": "novel_chapter",
+        "site": "bookkor",
+        "source_work_id": "4522",
+        "source_chapter_id": "8675541",
+        "identity": "novel_chapter:bookkor:4522:8675541",
         "source_url": "https://001.bookkor.com/sample-2/4522-ep-8675541",
     }
     assert importer._identity_matches(item)[0]
-    assert not importer._identity_matches({**item, "source_url": "https://001.bookkor.com/sample-2/4523-ep-8675541"})[0]
+    assert not importer._identity_matches(
+        {**item, "source_url": "https://001.bookkor.com/sample-2/4523-ep-8675541"}
+    )[0]
 
 
 def test_concurrent_connections_serialize_identity_migrations(

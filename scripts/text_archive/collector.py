@@ -1017,8 +1017,11 @@ def run_one(
                            cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
                            last_error=excluded.last_error""",
                         (
-                            f"{_SHARED_GROUP}:{unit.source.name}", now, cooldown,
-                            status_code, f"http_{status_code}",
+                            f"{_SHARED_GROUP}:{unit.source.name}",
+                            now,
+                            cooldown,
+                            status_code,
+                            f"http_{status_code}",
                         ),
                     )
             finally:
@@ -1041,8 +1044,13 @@ def run_one(
                                VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
                                cooldown_until=excluded.cooldown_until,
                                last_status=excluded.last_status,last_error=excluded.last_error""",
-                            (f"{_SHARED_GROUP}:{unit.source.name}", now, now + 300,
-                             status_code, f"http_{status_code}"),
+                            (
+                                f"{_SHARED_GROUP}:{unit.source.name}",
+                                now,
+                                now + 300,
+                                status_code,
+                                f"http_{status_code}",
+                            ),
                         )
                 finally:
                     db.close()
