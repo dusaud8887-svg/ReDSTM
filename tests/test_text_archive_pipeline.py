@@ -19,7 +19,9 @@ from scripts.text_archive import collector, compare_sources, importer, publisher
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
 
-def test_publication_record_closes_sqlite_connection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_publication_record_closes_sqlite_connection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     connection = MagicMock()
     monkeypatch.setattr(publisher.sqlite3, "connect", lambda _: connection)
     publisher._record_publication(tmp_path / "text.sqlite", "key", "digest")
