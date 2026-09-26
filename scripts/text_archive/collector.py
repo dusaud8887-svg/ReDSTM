@@ -111,7 +111,7 @@ def configured_body_source(env: dict[str, str] | None = None) -> str | None:
     name = values.get("REDSTM_TEXT_BODY_SOURCE", "").strip().lower()
     if not name:
         return None
-    if name not in _HOSTS:
+    if name not in {*_HOSTS, "both"}:
         raise CollectorError("body_source_invalid")
     return name
 
@@ -309,10 +309,16 @@ def _next_unit(
     fallback_kind = "episode" if body_source and slot in (0, 2) else "work"
     candidates: list[tuple[int, str, str, RequestUnit]] = []
     for source in sources:
+        cooldown = db.execute(
+            "SELECT cooldown_until FROM text_collector_groups WHERE group_id=?",
+            (f"{_SHARED_GROUP}:{source.name}",),
+        ).fetchone()
+        if cooldown is not None and int(cooldown[0]) > now:
+            continue
         queued = db.execute(
             """SELECT kind,entity_id FROM text_collector_queue
                WHERE source=? AND status IN ('pending','retry') AND next_check_at<=?
-                 AND (kind!='episode' OR ?=source)
+                 AND (kind!='episode' OR ? IN (source,'both'))
                ORDER BY CASE WHEN kind=? THEN 0 WHEN kind=? THEN 1 ELSE 2 END,
                         updated_at,kind,entity_id LIMIT 1""",
             (source.name, now, body_source, preferred_kind, fallback_kind),
@@ -391,7 +397,11 @@ def _get(
                 "SELECT * FROM text_collector_groups WHERE group_id=?", (_SHARED_GROUP,)
             ).fetchone()
             now = int(time.time())
-            if group is not None and int(group["cooldown_until"]) > now:
+            source_group = db.execute(
+                "SELECT cooldown_until FROM text_collector_groups WHERE group_id=?",
+                (f"{_SHARED_GROUP}:{unit.source.name}",),
+            ).fetchone()
+            if source_group is not None and int(source_group[0]) > now:
                 raise CollectorError("source_group_cooldown")
             last_request = int(group["last_request_at"]) if group else 0
             delay = max(0, _REQUEST_GAP - (now - last_request))
@@ -409,7 +419,11 @@ def _get(
                     "SELECT * FROM text_collector_groups WHERE group_id=?", (_SHARED_GROUP,)
                 ).fetchone()
                 now = int(time.time())
-                if group is not None and int(group["cooldown_until"]) > now:
+                source_group = db.execute(
+                    "SELECT cooldown_until FROM text_collector_groups WHERE group_id=?",
+                    (f"{_SHARED_GROUP}:{unit.source.name}",),
+                ).fetchone()
+                if source_group is not None and int(source_group[0]) > now:
                     raise CollectorError("source_group_cooldown")
                 last_request = int(group["last_request_at"]) if group else 0
                 retry_delay = max(0, _REQUEST_GAP - (now - last_request))
@@ -646,7 +660,7 @@ def _apply_work(
             )
         _refresh_link_candidates(db, unit.source.name, work_id)
         json_owner = os.environ.get("REDSTM_TEXT_JSON_OWNER", "pc").strip().lower()
-        if unit.source.name == body_source and json_owner != "pc":
+        if body_source in {unit.source.name, "both"} and json_owner != "pc":
             _fill_body_queue(db, unit.source.name)
         mark_cross_source_covered(db, unit.source.name, work_id)
         db.execute(
@@ -962,11 +976,13 @@ def run_one(
     db = _connect(db_path)
     try:
         db.executescript(_SCHEMA)
-        if body_source is not None and body_source not in _HOSTS:
+        if body_source is not None and body_source not in {*_HOSTS, "both"}:
             raise CollectorError("body_source_invalid")
         if body_source is not None:
             with db:
-                _fill_body_queue(db, body_source)
+                for source in sources:
+                    if body_source in {source.name, "both"}:
+                        _fill_body_queue(db, source.name)
         unit = _next_unit(db, sources, int(clock()), body_source)
     finally:
         db.close()
@@ -1000,7 +1016,10 @@ def run_one(
                            VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
                            cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
                            last_error=excluded.last_error""",
-                        (_SHARED_GROUP, now, cooldown, status_code, f"http_{status_code}"),
+                        (
+                            f"{_SHARED_GROUP}:{unit.source.name}", now, cooldown,
+                            status_code, f"http_{status_code}",
+                        ),
                     )
             finally:
                 db.close()
@@ -1012,6 +1031,21 @@ def run_one(
                 "http_status": status_code,
             }
         if status_code < 200 or status_code >= 300:
+            if status_code in {502, 504}:
+                db = _connect(db_path)
+                try:
+                    with db:
+                        db.execute(
+                            """INSERT INTO text_collector_groups(
+                               group_id,last_request_at,cooldown_until,last_status,last_error)
+                               VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
+                               cooldown_until=excluded.cooldown_until,
+                               last_status=excluded.last_status,last_error=excluded.last_error""",
+                            (f"{_SHARED_GROUP}:{unit.source.name}", now, now + 300,
+                             status_code, f"http_{status_code}"),
+                        )
+                finally:
+                    db.close()
             raise CollectorError(f"http_{status_code}")
         value = json.loads(raw)
         db = _connect(db_path)

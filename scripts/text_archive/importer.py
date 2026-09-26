@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
@@ -30,6 +30,7 @@ _SITE_HOSTS = {
     "sbxh": re.compile(r"sbxh\d*\.com\Z", re.I),
     "blacktoon": re.compile(r"blacktoon\d*\.com\Z", re.I),
     "marumaru": re.compile(r"marumaru\d*\.com\Z", re.I),
+    "ondobook": re.compile(r"\d+\.ondobook\.net\Z", re.I),
 }
 _ITEM_FIELDS = {
     "identity",
@@ -278,6 +279,13 @@ def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None,
                 and parsed.password is None
                 and parsed.port in {None, 443}
             )
+            if valid_host and site == "ondobook":
+                query = parse_qs(parsed.query)
+                valid_host = (
+                    parsed.path == "/bbs/board.php"
+                    and query.get("bo_table") == ["novel"]
+                    and query.get("wr_id") == [chapter_id]
+                )
         except ValueError:
             valid_host = False
         if not valid_host:

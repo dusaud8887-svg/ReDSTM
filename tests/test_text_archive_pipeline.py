@@ -894,6 +894,14 @@ def test_body_canary_is_not_starved_by_work_details(tmp_path: Path) -> None:
         assert collector._next_unit(db, sources, 1, "blacktoon").kind == "episode"
         db.execute("UPDATE text_collector_queue SET attempts=1 WHERE kind='episode'")
         assert collector._next_unit(db, sources, 1, "blacktoon").kind == "work"
+        db.execute("UPDATE text_collector_queue SET status='done' WHERE source='blacktoon'")
+        db.execute(
+            "INSERT INTO text_collector_queue"
+            "(source,kind,entity_id,status,updated_at) "
+            "VALUES('marumaru','episode','1472536','pending','now')"
+        )
+        assert collector._next_unit(db, sources, 1, "both").source.name == "marumaru"
+        assert collector._next_unit(db, sources, 1, "both").kind == "episode"
     finally:
         db.close()
 
@@ -1098,13 +1106,16 @@ def test_linked_chapter_coverage_never_skips_unverified_body(tmp_path: Path) -> 
         db.close()
 
 
-def test_shared_origin_cooldown_blocks_sibling_domain_and_unknown_blocks_need_review(
+def test_source_cooldown_does_not_block_sibling_domain_and_unknown_blocks_need_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(collector, "operation_window", nullcontext)
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
-    session: Any = FakeSession(FakeResponse({}, status=429, headers={"Retry-After": "3600"}))
+    session: Any = FakeSession(
+        FakeResponse({}, status=429, headers={"Retry-After": "3600"}),
+        FakeResponse({"content": [], "total": 0, "size": 96}),
+    )
     first = collector.run_one(
         db_path, tmp_path / "objects", collector.configured_sources({}), session=session
     )
@@ -1113,10 +1124,44 @@ def test_shared_origin_cooldown_blocks_sibling_domain_and_unknown_blocks_need_re
     )
     assert collector.configured_body_source({}) is None
     assert first["status"] == "cooldown"
-    assert second == {"status": "deferred", "reason": "source_group_cooldown"}
-    assert len(session.calls) == 1
+    assert second["status"] == "listed"
+    assert second["source"] != first["source"]
+    assert len(session.calls) == 2
     with pytest.raises(collector.CollectorError, match="requires_review"):
         collector._plain_text([{"type": "image", "src": "not-followed"}])
+
+
+def test_ondobook_identity_requires_novel_chapter_url() -> None:
+    item = {
+        "kind": "novel_chapter",
+        "site": "ondobook",
+        "source_work_id": "4609",
+        "source_chapter_id": "680426",
+        "identity": "novel_chapter:ondobook:4609:680426",
+        "source_url": "https://25.ondobook.net/bbs/board.php?bo_table=novel&wr_id=680426",
+    }
+    assert importer._identity_matches(item)[0]
+    item["source_url"] = "https://25.ondobook.net/bbs/board.php?bo_table=notice&wr_id=680426"
+    assert not importer._identity_matches(item)[0]
+
+
+def test_upstream_502_cools_only_failed_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    session: Any = FakeSession(
+        FakeResponse({}, status=502),
+        FakeResponse({"content": [], "total": 0, "size": 96}),
+    )
+    sources = collector.configured_sources({})
+    first = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    second = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert first["status"] == "held"
+    assert second["status"] == "listed"
+    assert first["source"] != second["source"]
+    assert len(session.calls) == 2
 
 
 def test_oracle_rotates_only_after_repeated_failure_and_valid_json(

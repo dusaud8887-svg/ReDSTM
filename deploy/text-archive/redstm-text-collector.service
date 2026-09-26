@@ -11,7 +11,7 @@ WorkingDirectory=/opt/redstm-text/current
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/redstm-text/collector.env
 # Oracle is the production body collector; Newtomi PC independently covers Toki/Arca text.
-Environment=REDSTM_TEXT_BODY_SOURCE=blacktoon
+Environment=REDSTM_TEXT_BODY_SOURCE=both
 Environment=REDSTM_TEXT_JSON_OWNER=oracle
 # Skip the expensive Python startup while TypeMoon owns the publish window.
 ExecCondition=/usr/bin/flock -n /srv/redstm/static/.publish.lock /usr/bin/true
