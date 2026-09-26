@@ -31,6 +31,7 @@ _SITE_HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d*\.com\Z", re.I),
     "marumaru": re.compile(r"marumaru\d*\.com\Z", re.I),
     "ondobook": re.compile(r"\d+\.ondobook\.net\Z", re.I),
+    "bookkor": re.compile(r"\d+\.bookkor\.com\Z", re.I),
 }
 _ITEM_FIELDS = {
     "identity",
@@ -286,6 +287,11 @@ def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None,
                     and query.get("bo_table") == ["novel"]
                     and query.get("wr_id") == [chapter_id]
                 )
+            if valid_host and site == "bookkor":
+                valid_host = re.fullmatch(
+                    rf"/[^/]+/{re.escape(work_id)}-ep-{re.escape(chapter_id)}",
+                    parsed.path,
+                ) is not None
         except ValueError:
             valid_host = False
         if not valid_host:
