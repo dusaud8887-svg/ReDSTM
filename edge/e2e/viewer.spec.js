@@ -545,11 +545,9 @@ test("separates board browsing from keyword search", async ({ page }, testInfo) 
   await expect(page.locator(".result-item")).toHaveCount(3);
   await expect(page.locator(".result-board")).toHaveText(["자유게시판", "자유게시판", "자유게시판"]);
   await expect(page.locator("#result-status")).toContainText("자유게시판");
-  if (page.viewportSize().width < 760) {
-    await expect(page.locator("#active-filters")).toContainText("자유게시판");
-  } else {
-    await expect(page.locator("#active-filters")).toBeHidden();
-  }
+  // The board is shown by its own picker, not as a generic filter chip.
+  await expect(page.locator("#board-dock-name")).toHaveText("자유게시판");
+  await expect(page.locator("#active-filters")).toBeHidden();
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-browse.png` });
 
   await page.locator('[data-scope="collections"]').click();
@@ -619,7 +617,8 @@ test("keeps search format inside filters instead of duplicate chips", async ({ p
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#mode-chips")).toBeHidden();
   await expect(page.locator("#active-filters")).toContainText("AA");
-  await expect(page.locator("#active-filters")).toContainText("자유게시판");
+  await expect(page.locator("#active-filters")).not.toContainText("자유게시판");
+  await expect(page.locator("#board-dock-name")).toHaveText("자유게시판");
   await expect(page.locator("#mode-filter")).toHaveValue("aa");
   await expect(page.locator("#result-status")).toContainText("자유게시판");
   await expect(page.locator("#result-status")).toContainText("AA");
@@ -1612,4 +1611,57 @@ test("opens a direct Reader deep link without inventing a context list", async (
   await page.goBack();
   await expect(page).toHaveURL(/\/browse\?board=board_a$/);
   await expect(page.locator(".result-item", { hasText: "비소속" })).toBeVisible();
+});
+
+test("picks a board from the board dock without opening filters", async ({ page }) => {
+  await useBoardFilterFixture(page);
+  await page.goto("/browse?mode=aa");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#board-dock")).toBeVisible();
+  await expect(page.locator("#board-dock-name")).toHaveText("전체 게시판");
+  await page.locator("#board-dock-button").click();
+  const sheet = page.getByRole("dialog", { name: "게시판 선택" });
+  await expect(sheet).toBeVisible();
+  const creation = sheet.locator('.board-group-toggle[data-group="창작"]');
+  await expect(creation).toHaveAttribute("aria-expanded", "false");
+  await creation.click();
+  await expect(creation).toHaveAttribute("aria-expanded", "true");
+  // Starring does not select the row.
+  await sheet.locator('[data-star="write_free"]').click();
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('[data-star="write_free"]').first()).toHaveAttribute("aria-pressed", "true");
+  await sheet.locator('.board-group [data-board="write_free"]').click();
+  await expect(sheet).toBeHidden();
+  await expect(page).toHaveURL(/board=write_free/);
+  // An AA-only format filter would hide this prose board, so it is cleared.
+  await expect(page).not.toHaveURL(/mode=aa/);
+  await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
+  await expect(page.locator("#board-dock-name")).toHaveText("창작집담");
+  await expect(page.locator("#board-dock-group")).toHaveText("창작");
+  await page.locator("#board-dock-button").click();
+  await expect(sheet.locator(".board-section h3", { hasText: "즐겨찾기" })).toBeVisible();
+  await sheet.locator("#board-search").fill("19금");
+  await expect(sheet.locator(".board-select")).toHaveCount(1);
+  await sheet.locator("button[aria-label='닫기']").click();
+  await page.locator("#board-dock-clear").click();
+  await expect(page).not.toHaveURL(/board=/);
+  await expect(page.locator(".result-item")).toHaveCount(3);
+});
+
+test("keeps filter sheet edits as a draft until applied", async ({ page }) => {
+  test.skip(page.viewportSize().width >= 760, "The filter sheet is the narrow-screen presentation");
+  await useCollectionFixture(page);
+  await page.goto("/search?q=%EC%A7%B8");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator("#filter-toggle").click();
+  await expect(page.getByRole("dialog", { name: "필터" })).toBeVisible();
+  await setSelect(page, "sort-filter", "oldest");
+  await expect(page).not.toHaveURL(/sort=oldest/);
+  await page.locator("#filter-dialog button[aria-label='닫기']").click();
+  await expect(page.locator("#sort-filter")).toHaveValue("latest");
+  await page.locator("#filter-toggle").click();
+  await setSelect(page, "sort-filter", "oldest");
+  await page.locator("#filter-apply").click();
+  await expect(page.getByRole("dialog", { name: "필터" })).toBeHidden();
+  await expect(page).toHaveURL(/sort=oldest/);
 });

@@ -88,6 +88,14 @@
             <button type="button" class="active" data-scope="posts" aria-pressed="true">게시판 글</button>
             <button type="button" data-scope="collections" aria-pressed="false">작품</button>
           </nav>
+          <div class="board-dock" id="board-dock" hidden>
+            <button class="board-dock-button" id="board-dock-button" type="button" aria-haspopup="dialog" aria-controls="board-dialog">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6.5 12 3l8 3.5-8 3.5-8-3.5Z"/><path d="m4 12 8 3.5 8-3.5M4 17.5 12 21l8-3.5"/></svg>
+              <span class="board-dock-path"><small id="board-dock-group">게시판</small><strong id="board-dock-name">전체 게시판</strong></span>
+              <span class="board-dock-action">게시판 바꾸기<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg></span>
+            </button>
+            <button class="board-dock-clear" id="board-dock-clear" type="button" aria-label="전체 게시판 보기" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+          </div>
           <nav class="view-tabs text-lanes" id="text-lanes" aria-label="텍스트 장서 종류" hidden>
             <button type="button" class="active" data-text-lane="novel" aria-pressed="true">소설</button>
             <button type="button" data-text-lane="arcalive" aria-pressed="false">아카라이브</button>
@@ -293,15 +301,26 @@
     <dialog id="filter-dialog" aria-labelledby="filter-dialog-title">
       <form method="dialog">
         <header>
-          <div><p>현재 목록에 바로 적용됩니다</p><h2 id="filter-dialog-title" tabindex="-1">필터</h2></div>
+          <div><p>적용을 눌러야 목록에 반영됩니다</p><h2 id="filter-dialog-title" tabindex="-1">필터</h2></div>
           <button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
         </header>
         <div id="filter-dialog-fields"></div>
         <div class="filter-dialog-actions">
-          <button type="button" id="filter-reset">필터 초기화</button>
-          <button type="button" id="filter-clear-all">전체 초기화</button>
-          <button value="close" id="filter-apply">적용</button>
+          <button type="button" id="filter-reset">초기화</button>
+          <button type="button" id="filter-apply">적용</button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="board-dialog" aria-labelledby="board-dialog-title">
+      <form method="dialog">
+        <header><div><p>고르면 바로 그 게시판만 보여 줍니다</p><h2 id="board-dialog-title" tabindex="-1">게시판 선택</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <label class="search-field board-search">
+          <span class="sr-only">게시판 이름으로 찾기</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></svg>
+          <input id="board-search" type="search" placeholder="게시판 이름으로 찾기" autocomplete="off" enterkeyhint="search">
+        </label>
+        <div class="board-panel" id="board-panel"></div>
       </form>
     </dialog>
 

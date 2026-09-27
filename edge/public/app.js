@@ -19,6 +19,7 @@ import {
   postReadingLabel,
   postReadingState,
 } from "/reading-model.js";
+import { createBoardNavigator } from "/board-navigator.js";
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence } from "/sequence.js";
 import { captureTextAnchor, restoreTextAnchor } from "/text-anchor.js";
@@ -57,7 +58,8 @@ const elements = Object.fromEntries(
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
-    "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-clear-all",
+    "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
+    "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
@@ -131,6 +133,9 @@ let readerNavigation = null;
 let routeHandled = false;
 let pointerStart = null;
 let moreOpener = null;
+// Filter sheet edits are a draft until 적용; closing any other way restores this snapshot.
+let filterDraft = null;
+let catalogNote = "";
 const workerRequests = new Map();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const textLibrary = createTextLibrary({
@@ -152,6 +157,15 @@ const textLibrary = createTextLibrary({
     updateShellMode();
     if (currentDestination === "text") applyTextSortOptions();
   },
+});
+
+const boardNavigator = createBoardNavigator({
+  dialog: elements["board-dialog"],
+  panel: elements["board-panel"],
+  search: elements["board-search"],
+  boards: navigatorBoards,
+  selected: () => elements["board-filter"].value,
+  onSelect: selectBoard,
 });
 
 const searchWorker = new Worker("/search-worker.js", { type: "module" });
@@ -1038,7 +1052,9 @@ function updateDestinationLayout() {
   document.querySelector(".search-match-field").hidden = !searching || collections;
   document.querySelector(".collection-kind-field").hidden = !searching || !collections;
   document.querySelector(".collection-read-field").hidden = saved || !collections;
-  document.querySelector(".board-field").hidden = saved || text;
+  // The board lives in its own picker (board dock); the select only carries the value.
+  document.querySelector(".board-field").hidden = true;
+  elements["board-dock"].hidden = !browsing && !searching;
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
     : text ? "소설·아카라이브 제목 검색"
     : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
@@ -1052,6 +1068,7 @@ function updateDestinationLayout() {
     : collections ? "연재·번역·AA 목차"
     : browsing ? "게시판별 보존 글" : "제목·작성자·분류로 찾기";
   applyBoardFilterOptions();
+  renderBoardDock();
   syncFilterChips();
   renderActiveFilters();
   elements["search-clear"].hidden = !elements["search-input"].value;
@@ -1095,9 +1112,48 @@ function activeFilterItems() {
 }
 
 function sheetFilterItems() {
-  const items = activeFilterItems();
+  const items = activeFilterItems().filter((item) => item.key !== "board");
   if (currentDestination !== "browse") return items;
   return items.filter((item) => item.key !== "mode" && item.key !== "kind");
+}
+
+function navigatorBoards() {
+  return [...boardById.values()]
+    .filter((board) => currentScope !== "collections" || !collectionBoardIds || collectionBoardIds.has(board.board_id))
+    .map((board) => ({
+      id: board.board_id,
+      name: boardDisplayName(board, board.board_id),
+      group: boardGroupLabel(board.group_name),
+      count: currentScope === "collections" ? undefined : board.post_count,
+    }));
+}
+
+function renderBoardDock() {
+  const boardId = elements["board-filter"].value;
+  const board = boardById.get(boardId);
+  elements["board-dock-group"].textContent = board ? boardGroupLabel(board.group_name) : "게시판";
+  elements["board-dock-name"].textContent = board ? boardLabel(boardId) : "전체 게시판";
+  elements["board-dock-button"].ariaLabel = `게시판 선택, 현재 ${board ? boardLabel(boardId) : "전체 게시판"}`;
+  elements["board-dock-clear"].hidden = !boardId;
+  elements["board-dock"].classList.toggle("selected", Boolean(boardId));
+}
+
+// Choosing a board shows that whole board: a format filter that would hide it is cleared.
+function selectBoard(boardId) {
+  const board = boardById.get(boardId);
+  const mode = elements["mode-filter"].value;
+  if (board && currentScope === "posts" && mode !== "all" && searchSupportsAa && board.is_aa != null &&
+      (mode === "aa") !== board.is_aa) {
+    elements["mode-filter"].value = "all";
+    catalogNote = "형식 조건을 전체로 바꿨습니다";
+    populateBoardFilter();
+  }
+  elements["board-filter"].value = boardId;
+  syncSearchRoute();
+  updateDestinationLayout();
+  renderCurrentView();
+  elements["result-list"].scrollTop = 0;
+  elements["board-dock-button"].focus({ preventScroll: true });
 }
 
 function renderActiveFilters() {
@@ -1127,15 +1183,9 @@ function clearFilter(key) {
   renderCurrentView();
 }
 
-function resetFilters({ clearQuery = false } = {}) {
+function resetFilters() {
   elements["board-filter"].value = "";
-  elements["mode-filter"].value = "all";
-  elements["search-target"].value = "all";
-  elements["search-match"].value = "and";
-  elements["collection-kind-filter"].value = "all";
-  elements["collection-read-filter"].value = "all";
-  elements["sort-filter"].value = currentScope === "collections" ? "updated" : "latest";
-  if (clearQuery) elements["search-input"].value = "";
+  resetSheetFilterValues();
   syncSearchRoute();
   updateDestinationLayout();
   renderCurrentView();
@@ -1148,10 +1198,22 @@ function restoreCatalogControls() {
   }
 }
 
+const sheetFilterIds = ["mode-filter", "search-target", "search-match", "collection-kind-filter", "collection-read-filter", "sort-filter"];
+
+function resetSheetFilterValues() {
+  elements["mode-filter"].value = "all";
+  elements["search-target"].value = "all";
+  elements["search-match"].value = "and";
+  elements["collection-kind-filter"].value = "all";
+  elements["collection-read-filter"].value = "all";
+  elements["sort-filter"].value = currentScope === "collections" ? "updated" : "latest";
+}
+
 function openFilterSheet() {
   const dialog = elements["filter-dialog"];
   if (isNarrowScreen()) {
     filterOpener = document.activeElement;
+    filterDraft = Object.fromEntries(sheetFilterIds.map((id) => [id, elements[id].value]));
     elements["filter-dialog-fields"].append(elements["catalog-controls"]);
     if (!dialog.open) dialog.showModal();
     requestAnimationFrame(() => dialog.querySelector("h2")?.focus());
@@ -1159,6 +1221,14 @@ function openFilterSheet() {
     document.body.classList.toggle("filters-expanded");
     elements["filter-toggle"].setAttribute("aria-pressed", document.body.classList.contains("filters-expanded"));
   }
+}
+
+function applyFilterSheet() {
+  filterDraft = null;
+  closeFilterSheet();
+  syncSearchRoute();
+  updateDestinationLayout();
+  renderCurrentView();
 }
 
 function closeFilterSheet() {
@@ -1786,7 +1856,10 @@ function renderWidenActions(empty) {
 function catalogStatus(countText) {
   if (!["browse", "search"].includes(currentDestination)) return countText;
   const labels = activeFilterItems().map((item) => item.label);
-  return labels.length ? `${labels.join(" · ")} · ${countText}` : countText;
+  const note = catalogNote;
+  catalogNote = "";
+  const status = labels.length ? `${labels.join(" · ")} · ${countText}` : countText;
+  return note ? `${note} · ${status}` : status;
 }
 
 function renderResults(posts, status) {
@@ -2805,12 +2878,21 @@ elements["search-clear"].addEventListener("click", () => {
   elements["search-input"].focus();
 });
 elements["filter-toggle"].addEventListener("click", openFilterSheet);
-elements["filter-reset"].addEventListener("click", () => resetFilters());
-elements["filter-clear-all"].addEventListener("click", () => {
-  resetFilters({ clearQuery: true });
-  closeFilterSheet();
+elements["filter-reset"].addEventListener("click", () => {
+  resetSheetFilterValues();
+  applyBoardFilterOptions();
 });
-elements["filter-dialog"].addEventListener("close", restoreCatalogControls);
+elements["filter-apply"].addEventListener("click", applyFilterSheet);
+// X, Esc, and system Back discard the draft.
+elements["filter-dialog"].addEventListener("close", () => {
+  restoreCatalogControls();
+  if (!filterDraft) return;
+  for (const [id, value] of Object.entries(filterDraft)) elements[id].value = value;
+  filterDraft = null;
+  updateDestinationLayout();
+});
+elements["board-dock-button"].addEventListener("click", () => boardNavigator.open());
+elements["board-dock-clear"].addEventListener("click", () => selectBoard(""));
 elements["active-filters"].addEventListener("click", (event) => {
   const key = event.target.closest("[data-clear]")?.dataset.clear;
   if (key) clearFilter(key);
@@ -2844,6 +2926,7 @@ for (const filter of [
       textLibrary.setSort(elements["sort-filter"].value);
       return;
     }
+    if (filterDraft) return;
     if (filter === elements["mode-filter"]) applyBoardFilterOptions();
     syncSearchRoute();
     renderCurrentView();
