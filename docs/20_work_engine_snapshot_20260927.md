@@ -4,10 +4,11 @@
 
 | 백업 | 생성 시각 (UTC) | 크기 | 확인 |
 |---|---|---:|---|
-| TypeMoonNet `/srv/redstm/snapshots/canonical-work-profile-20260927T115018Z.sqlite` | 2026-09-27 11:50:18 | 15,442,030,592 bytes | SQLite backup 완료, 원본과 페이지 수(3,770,027) 및 작품 수 일치. 전체 `quick_check`는 디스크 부하로 중단했으므로 전체 페이지 무결성은 미확인 |
+| TypeMoonNet 분석용 백업 (프로파일 후 제거) | 2026-09-27 11:50:18 | 15,442,030,592 bytes | SQLite backup 완료, 원본과 페이지 수(3,770,027) 및 작품 수 일치. 전체 `quick_check`는 디스크 부하로 중단했으므로 전체 페이지 무결성은 미확인 |
 | Text `/srv/redstm-text/text-archive.pre-author-repair-20260927T114041Z.sqlite` | 2026-09-27 11:40:41 | 370,241,536 bytes | `quick_check=ok`, SHA-256 `0ec302604fd7d803ef48acdd3f63adefaa9a9be7e85f5eb17f45a4136aa851ba` |
 
 세부 집계 JSON은 운영 작업공간의 `.data/operations/typemoon-work-profile-20260927.json` 및 `.data/operations/text-work-profile-20260927.json`에 보관했다. 이 두 JSON은 본문이나 작성자명 목록을 포함하지 않는다.
+TypeMoonNet의 분석용 전체 백업은 프로파일을 마친 뒤 삭제했다. 서버 여유 공간 40GiB 미만에서 텍스트 수집이 `disk_below_floor`로 중단되어 원본 운영 DB와 기존 복구 스냅샷은 유지하고 분석용 복사본만 정리했다. 따라서 위 TypeMoonNet 수치는 보존된 전체 백업을 다시 검사할 수 있는 상태가 아니다.
 
 ## 확인된 수치
 
@@ -31,3 +32,5 @@ Text 백업은 Arcalive 저자 복구 **전** 시점이다. 이후 운영 DB의 
 복구는 각 원본 상세 페이지를 수정된 `parse_work_detail()`로 다시 수집한 뒤, 원본 `site + source_work_id`가 일치하고 상세 페이지의 작품 제목이 명확한 건에만 적용한다. 변경 전 제목·새 제목·원본 URL·관측 시각·근거 파일을 기록한 dry-run을 먼저 만든다. 확정 건은 `text_novel_sources.title/title_key`와 해당 `text_archive_items.title`만 갱신하며, 기존 `canonical_work_id`, 회차 ID, alias, 소속, 원문 객체는 유지한다. 게시된 항목의 제목이 바뀌면 릴리스 포인터 검증을 거쳐 새 색인을 발행한다. 근거가 없거나 작품명과 회차명이 실제로 같은 건은 보류한다. 백업과 변경 전 값으로 역적용할 수 있어야 한다.
 
 현재 백업에서는 3개 이상 출처가 합쳐진 그룹이 없어서 W05의 split 대상이 없다. 과거 migration marker만으로 복구 성공을 주장하지 않으며, 그룹 소속 수와 링크 상태를 함께 확인했다.
+
+2026-09-27에 상세 API의 Marumaru·Blacktoon 표본 두 건 모두 기존 제목과 다른 작품 제목을 반환함을 확인했다. 수집기가 검증된 상세 응답을 받으면 동일 원본의 보관 회차 제목도 갱신하도록 수정했다. 운영 DB의 의심 7,206건에 대해 변경 전 원본 metadata와 대기열 상태를 `/srv/redstm-text/title-repair-before-20260927T122755Z.jsonl`에 보존하고 기존 속도 제한 대기열로 재등록했다. 재수집과 새 제목의 확정은 비동기로 진행된다.
