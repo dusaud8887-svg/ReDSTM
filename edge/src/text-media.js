@@ -4,7 +4,8 @@
 
 import { isArcaPathKey } from "../public/arca-media.js";
 
-const MAX_PATHS = 100;
+// One R2 head per path; stays well under the Workers subrequest limit.
+const MAX_PATHS = 40;
 const IMAGE_TYPES = new Set(["image/webp", "image/png", "image/jpeg", "image/gif"]);
 
 function json(status, body) {

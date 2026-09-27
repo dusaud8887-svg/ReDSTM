@@ -821,21 +821,24 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
 // Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
 // as rendered (live signed links load; expired ones point at the source post).
 async function archiveTextMedia(body, renderId) {
-  const paths = arcaPaths(body).slice(0, 100);
-  if (!paths.length) return;
-  let media;
-  try {
-    const response = await fetch("/api/v1/text/media/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths }),
-    });
-    if (!response.ok) return;
-    media = (await response.json()).media ?? {};
-  } catch {
-    return;
+  const paths = arcaPaths(body);
+  // The Worker checks each path with one R2 call, so a request carries at most 40.
+  for (let start = 0; start < paths.length; start += 40) {
+    let media;
+    try {
+      const response = await fetch("/api/v1/text/media/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: paths.slice(start, start + 40) }),
+      });
+      if (!response.ok) return;
+      media = (await response.json()).media ?? {};
+    } catch {
+      return;
+    }
+    if (body.dataset.renderId !== renderId) return;
+    applyArchivedMedia(body, media);
   }
-  if (body.dataset.renderId === renderId) applyArchivedMedia(body, media);
 }
 
 function closeTextReader() {

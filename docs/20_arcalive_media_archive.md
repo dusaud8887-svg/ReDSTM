@@ -34,10 +34,10 @@
 
 - 대상: `text_archive_outbox`의 `kind='arcalive_post'`이면서 identity가 `:text`로 끝나는 행(텍스트 레인). `both`/`media` 레인은 ReDSTM 텍스트 장서에 없으므로 제외한다.
 - 테이블(`core/storage.py`):
-  - `text_media_posts(identity PK, file_path, status pending|done|gone|failed, attempts, next_attempt_at, last_error, updated_at)` — 글 단위 진행.
+  - `text_media_posts(identity PK, file_path, content_sha256, status pending|done|gone|failed, attempts, next_attempt_at, last_error, updated_at)` — 글 단위 진행.
   - `text_media_items(path_key PK, identity, status ready|batched|stored|failed, file_name, content_type, bytes, sha256, width, height, batch_id, last_error, updated_at)` — 이미지 단위. 경로 키가 같으면 한 번만 받는다.
   - `text_media_batches(batch_id PK, manifest_sha256, state queued|uncertain|sent|done|rejected, error, updated_at)`.
-- 발견: 주기마다 outbox의 대상 행 중 `text_media_posts`에 없는 것을 `pending`으로 넣는다. 새로 받은 글도, 이미 있는 1만 4천여 글(백필)도 같은 방식으로 들어간다. 순서는 outbox `updated_at` 오름차순.
+- 발견: 주기마다 outbox의 대상 행 중 `text_media_posts`에 없거나 본문 sha256이 바뀐(글 수정 재전송) 것을 `pending`으로 넣는다. 새로 받은 글도, 이미 있는 1만 4천여 글(백필)도 같은 방식으로 들어간다. 순서는 outbox `updated_at` 오름차순.
 
 ### 2.2 수집 (글 하나)
 
@@ -46,7 +46,7 @@
 3. 다운로드: 세션 `get_bytes(url, referer=<글 주소>?p=1, family="arcalive")`(다운로드와 같은 속도 제한을 공유).
 4. 전처리:
    - 접근 거부 이미지 해시, 이미지가 아닌 응답은 실패(`placeholder`/`not_image`).
-   - GIF는 그대로(움짤 보존).
+   - GIF는 그대로(움짤 보존). AVIF 등 네 형식 밖의 이미지는 Pillow로 열리면 WebP로 바꾼다.
    - 그 외는 Pillow로 열어 가로 1600px 초과면 비율 유지 축소, WebP q80으로 저장. 결과가 원본보다 크고 원본이 1600px 이하면 원본을 그대로 쓴다.
    - 결과 8MiB 초과는 실패(`too_large`).
    - 저장: `<appdata>/text-media-cache/<sha256>.<ext>`, 상태 `ready`.
@@ -68,7 +68,7 @@ drop/<YYYYMMDDTHHMMSSZ>-media-<8hex>/
 ```
 
 - 전송은 `drop/.uploading-<id>`에 올리고 `ready.json`을 마지막에 rename한 뒤 디렉터리를 rename한다(텍스트 배치와 같다). 타임아웃은 크기에 비례한다.
-- 전송 중 끊기면 `uncertain`: 영수증을 확인하고, 영수증이 없으면 같은 배치를 다시 올린다(같은 stage를 덮어씀).
+- 전송 중 끊기면 `uncertain`: 영수증을 확인하고, 영수증이 없으면 `drop/<id>/ready.json`이 이미 있는지(커밋됨) 본다. 없을 때만 같은 배치를 다시 올린다(같은 stage를 덮어씀).
 
 ### 2.4 영수증과 정리
 
@@ -88,7 +88,7 @@ drop/<YYYYMMDDTHHMMSSZ>-media-<8hex>/
 
 ## 4. Worker와 Reader
 
-- `POST /api/v1/text/media/resolve` `{paths:[경로 키 ≤100]}` → R2 `head("media/arca/<키>")`를 병렬로 확인해 `{media:{<키>:{url:"/api/v1/text/media/arca/<키>"}}}`.
+- `POST /api/v1/text/media/resolve` `{paths:[경로 키 ≤40]}`(Reader는 40개씩 나눠 요청) → R2 `head("media/arca/<키>")`를 병렬로 확인해 `{media:{<키>:{url:"/api/v1/text/media/arca/<키>"}}}`.
 - `GET|HEAD /api/v1/text/media/arca/<경로 키>` → R2 본문, `Content-Type`은 저장된 값(이미지 네 형식만), `Cache-Control: private, max-age=31536000, immutable`.
 - 쓰기 API는 없다. 대기열·업로드 엔드포인트(`queue`, `queue/result`, `object`)와 크롬 확장은 제거했다. D1 `0008_text_media`의 `text_media`·`text_media_queue` 테이블은 비어 있고 쓰지 않는다(릴리스가 파괴적 마이그레이션을 막아 남겨 둔다).
 - Reader는 텍스트 본문을 그린 뒤 경로 키를 resolve하고 보관본이 있으면 `보관된 이미지`로 바꾼다. 없으면 지금처럼 서명이 살아 있으면 원본, 만료면 `만료된 이미지 링크 · 원문 글에서 보기`.

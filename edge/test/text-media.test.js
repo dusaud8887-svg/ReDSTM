@@ -44,7 +44,7 @@ test("resolves only the path keys archived in R2", async () => {
   assert.deepEqual(await response.json(), { media: { [pathA]: { url: `/api/v1/text/media/arca/${pathA}` } } });
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: ["../x"] } })).status, 400);
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: [] } })).status, 400);
-  assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: Array(101).fill(pathA) } })).status, 400);
+  assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: Array(41).fill(pathA) } })).status, 400);
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", body: JSON.stringify({ paths: [pathA] }) })).status, 400);
 });
 
