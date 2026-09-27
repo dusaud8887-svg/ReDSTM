@@ -310,7 +310,7 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
   나눈다. Reader는 현재 게시판 membership과 해당 detail shard만 지연 로드한다.
 - header에 `현재 12 / 48`과 collection title을 표시한다.
 - 이전/다음 card에는 방향, 제목, unavailable 여부를 함께 쓴다.
-- collection이 아닌 글은 board 기준 이전/다음임을 label로 구분한다.
+- collection이 아닌 글은 Reader를 연 목록(검색 결과·게시판·보관함 등)의 순서로 이전/다음하고, 그 목록을 본문 아래에 함께 보여 준다(`19` §4.1). label은 `현재 결과`/`게시판`처럼 목록을 밝힌다.
 - unavailable entry는 이전/다음에서 건너뛰되 collection context에 `보존 불가` 수를 표시한다. source가
   더 구체적인 reason을 제공하기 전에는 이유를 추측하지 않는다.
 - 마지막 글의 primary action은 `컬렉션으로 돌아가기`, secondary는 `처음부터`, `전체 목록`이다.

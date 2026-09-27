@@ -504,6 +504,15 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         await openBody(chapter, { navigation: "route", activeRequest });
         return true;
       }
+      // Home's 이어서 읽기 on a finished chapter: continue with the one after it.
+      if (params.get("resume") === "next" && activeRequest === requestId) {
+        window.history.replaceState(window.history.state, "", listRoute());
+        const target = resumeTarget();
+        if (target) {
+          await openBody(target, { navigation: "push", activeRequest });
+          return true;
+        }
+      }
       return false;
     }
     if (params.has("item") && lane === "arcalive") {
@@ -811,16 +820,22 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     });
   }
 
+  // The chapter to resume a work at: the last one read, or the next one when it was finished.
+  function resumeTarget() {
+    const resume = lastReadChapter();
+    if (!resume) return null;
+    if ((resume.record.progress ?? 0) < FINISHED) return resume.chapter;
+    const entries = canonicalChapters(chapterSource);
+    const index = entries.findIndex((chapter) => sameChapter(chapter, resume.chapter));
+    return adjacentInSequence(entries, index, 1).target ?? resume.chapter;
+  }
+
   function activate(button) {
     if (button.dataset.continue) {
-      const resume = lastReadChapter();
-      if (!resume) return;
-      const finished = (resume.record.progress ?? 0) >= FINISHED;
-      const entries = canonicalChapters(chapterSource);
-      const index = entries.findIndex((chapter) => sameChapter(chapter, resume.chapter));
-      const target = finished ? adjacentInSequence(entries, index, 1).target ?? resume.chapter : resume.chapter;
+      const target = resumeTarget();
+      if (!target) return;
       rememberListPosition();
-      void openBody(target).catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });
+      void openBody(target, { navigation: current ? "replace" : "push" }).catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });
       return;
     }
     const index = Number(button.dataset.index);
@@ -844,9 +859,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       list.scrollTop = 0;
       return;
     }
+    // Picking another row from the side list while a body is open stays in the same session.
+    const navigation = current ? "replace" : "push";
     const action = lane === "saved"
-      ? openBody(selected.entry, { sourceLane: selected.lane, sourceWork: selected.work, savedIdentity: selected.identity })
-      : work || lane === "arcalive" ? openBody(selected) : openWork(selected);
+      ? openBody(selected.entry, { navigation, sourceLane: selected.lane, sourceWork: selected.work, savedIdentity: selected.identity })
+      : work || lane === "arcalive" ? openBody(selected, { navigation }) : openWork(selected);
     void action.catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });
   }
 

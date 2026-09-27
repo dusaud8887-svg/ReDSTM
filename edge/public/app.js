@@ -538,7 +538,7 @@ function renderTextContinue(text) {
   const finished = postReadingState(text.progress) === "finished";
   elements["continue-meta"].textContent = [
     text.identity.startsWith("novel:") ? "소설" : "아카라이브",
-    finished ? "다 읽음 · 회차 목록에서 다음 화" : postReadingLabel(text.progress, { seen: true }),
+    finished ? (text.identity.startsWith("novel:") ? "다 읽음 · 다음 화로 이어서" : "다 읽음") : postReadingLabel(text.progress, { seen: true }),
   ].filter(Boolean).join(" · ");
   elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
 }
@@ -778,6 +778,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   currentMode = "prose";
   setReaderSource("text");
   resetReaderChrome();
+  collapseCatalogForReading();
   elements["reader-kicker"].textContent = kicker;
   elements["reader-title"].textContent = title;
   elements["reader-meta"].textContent = meta;
@@ -797,7 +798,9 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
 function closeTextReader() {
   if (readerSource !== "text") return;
   setReaderSource(null);
-  document.body.classList.remove("reader-open", "reader-controls-hidden");
+  // Back at the list: the collapsed side list opens again, as it does for TypeMoon.
+  document.body.classList.remove("reader-open", "reader-controls-hidden", "catalog-collapsed");
+  elements["catalog-toggle"].setAttribute("aria-expanded", "true");
   setImmersive(false, false);
   updateShellMode();
 }
@@ -806,6 +809,13 @@ function closeTextReader() {
 function syncScrollBaseline() {
   lastReaderScroll = elements["reader-pane"].scrollTop;
   readerScrollDelta = 0;
+}
+
+// Mid-width screens give the Reader the whole width while reading; the side list stays one tap away.
+function collapseCatalogForReading() {
+  const collapse = matchMedia("(min-width: 760px) and (max-width: 899px)").matches;
+  document.body.classList.toggle("catalog-collapsed", collapse);
+  elements["catalog-toggle"].setAttribute("aria-expanded", String(!collapse));
 }
 
 function resetReaderChrome() {
@@ -2523,9 +2533,7 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   };
   setReaderSource("typemoon");
   resetReaderChrome();
-  const collapseCatalog = matchMedia("(min-width: 760px) and (max-width: 899px)").matches;
-  document.body.classList.toggle("catalog-collapsed", collapseCatalog);
-  elements["catalog-toggle"].setAttribute("aria-expanded", String(!collapseCatalog));
+  collapseCatalogForReading();
   elements["reader-kicker"].textContent = [boardLabel(post.board_id) || post.board_id, post.category].filter(Boolean).join(" · ");
   elements["reader-title"].textContent = post.title || "제목 없음";
   document.title = `${post.title || "제목 없음"} — ReDSTM`;
@@ -3038,9 +3046,16 @@ elements["result-list"].addEventListener("click", (event) => {
 function openTextFromHome(target, { listOnly = false } = {}) {
   const home = currentRoute();
   const finished = postReadingState(target.progress) === "finished";
-  history.pushState({ redstmText: true, redstmParent: home }, "", target.listRoute);
-  if (!listOnly && !finished) {
-    history.pushState({ redstmText: true, redstmReader: true, redstmParent: target.listRoute }, "", target.route);
+  const novel = target.identity.startsWith("novel:");
+  if (!listOnly && finished && novel) {
+    // The work list opens and moves straight on to the next chapter (see text-library resume).
+    const separator = target.listRoute.includes("?") ? "&" : "?";
+    history.pushState({ redstmText: true, redstmParent: home }, "", `${target.listRoute}${separator}resume=next`);
+  } else {
+    history.pushState({ redstmText: true, redstmParent: home }, "", target.listRoute);
+    if (!listOnly) {
+      history.pushState({ redstmText: true, redstmReader: true, redstmParent: target.listRoute }, "", target.route);
+    }
   }
   void handleRoute();
 }
@@ -3051,7 +3066,7 @@ elements["continue-reading"].addEventListener("click", () => {
   if (continueCollectionId) {
     history.pushState({ redstmCollection: true, redstmParent: currentRoute() }, "", `/collections/${continueCollectionId}`);
   }
-  loadPost(continueTargetPost);
+  loadPost(continueTargetPost, "push", { listHint: continueCollectionId ? "" : "recent" });
 });
 elements["continue-toc"].addEventListener("click", () => {
   if (continueText) return openTextFromHome(continueText, { listOnly: true });

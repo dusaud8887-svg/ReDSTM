@@ -501,6 +501,8 @@ body.text-library-open .text-work-back { display: inline-flex; }
 .reader-list-pager svg { width: 18px; height: 18px; }
 .reader-list-pager span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 @media (hover: hover) { .reader-list-row:hover:not(:disabled) { background: var(--surface); } }
+/* Wide screens already show the same list beside the Reader. */
+@media (min-width: 760px) { body.reading-context:not(.catalog-collapsed) .reader-list { display: none; } }
 .comments { border-top: 1px solid var(--line); padding: 36px max(32px, calc((100% - var(--prose-width)) / 2)) 72px; }
 .comments h2 { margin: 0 0 20px; font-size: 20px; font-weight: 680; }
 .comments h2 span { color: var(--muted); font-weight: 450; }

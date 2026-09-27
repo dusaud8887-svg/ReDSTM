@@ -376,6 +376,7 @@ async function useBoardPosts(page, count) {
 }
 
 test("TypeMoon: the list under a post is the list it was opened from, around that post", async ({ page }) => {
+  test.skip(page.viewportSize().width >= 900, "Wide screens show this list beside the Reader instead");
   await useBoardPosts(page, 120);
   await page.goto("/browse?sort=oldest");
   await expect(page.locator(".result-item").first()).toBeVisible();
@@ -399,6 +400,7 @@ test("TypeMoon: the list under a post is the list it was opened from, around tha
 });
 
 test("TypeMoon: a search keeps its results under the post and after reload", async ({ page }) => {
+  test.skip(page.viewportSize().width >= 900, "Wide screens show this list beside the Reader instead");
   await useBoardPosts(page, 120);
   await page.goto("/search?q=%EA%B8%80%201");
   await page.locator('.result-item[data-key="board_a:12"]').click();
@@ -413,6 +415,7 @@ test("TypeMoon: a search keeps its results under the post and after reload", asy
 });
 
 test("TypeMoon: a deep link shows its board, and a series shows its table of contents", async ({ page }) => {
+  test.skip(page.viewportSize().width >= 900, "Wide screens show this list beside the Reader instead");
   await useLongCollection(page, 30);
   await page.goto("/read/board_a/15");
   await expect(page.locator("#reader-list-kicker")).toHaveText("게시판");
@@ -425,8 +428,10 @@ test("TypeMoon: a deep link shows its board, and a series shows its table of con
 });
 
 test("Text: the list under a chapter keeps the chapter list's sort and survives reload", async ({ page }) => {
+  test.skip(page.viewportSize().width >= 900, "Wide screens show this list beside the Reader instead");
   const workId = await useLongNovel(page, 300);
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await expect(page.locator('#result-list [data-key="chapter:1"]')).toBeVisible();
   await page.locator("#sort-filter").evaluate((select) => {
     select.value = "latest";
     select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -446,4 +451,41 @@ test("Text: the list under a chapter keeps the chapter list's sort and survives 
   await page.goBack();
   await expect(page.locator('#result-list [data-key="chapter:200"]')).toBeVisible();
   await expect(page.locator("#result-list .result-item[data-key] .result-title").first()).toHaveText("300화");
+});
+
+test("Home continues a finished text chapter at the next chapter", async ({ page }) => {
+  const workId = await useLongNovel(page, 10);
+  await useLongCollection(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=4`);
+  await expect(page.locator("#reader-title")).toHaveText("4화");
+  await page.locator("#end-next").click();
+  await expect(page.locator("#reader-title")).toHaveText("5화");
+  await page.locator("#end-previous").click();
+  await expect(page.locator("#reader-title")).toHaveText("4화");
+  await page.goto("/");
+  await expect(page.locator("#continue-title")).toHaveText("4화");
+  await expect(page.locator("#continue-meta")).toContainText("다음 화로 이어서");
+  await page.locator("#continue-reading").click();
+  await expect(page.locator("#reader-title")).toHaveText("5화");
+  await page.goBack();
+  await expect(page.locator('#result-list [data-key="chapter:5"]')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("Picking another chapter from the visible side list stays in the reading session", async ({ page }) => {
+  test.skip(page.viewportSize().width < 760, "The side list shows beside the Reader on wide screens");
+  const workId = await useLongNovel(page, 10);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await page.locator('#result-list [data-key="chapter:2"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("2화");
+  if (await page.locator("#catalog-toggle").isVisible() && await page.locator(".catalog").isHidden()) {
+    await page.locator("#catalog-toggle").click();
+  }
+  await page.locator('#result-list [data-key="chapter:7"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("7화");
+  await expect(page.locator("#reader-list")).toBeHidden();
+  await page.goBack();
+  await expect(page.locator("#reader")).toBeHidden();
+  await expect(page).toHaveURL(/work=novel%3Afixture%3Along$/);
 });

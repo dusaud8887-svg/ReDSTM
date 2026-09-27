@@ -290,9 +290,9 @@ bottom navigation에는 넣지 않는다.
 상세 조건:
 
 - 기본 노출: 검색 input, scope tab, `필터` button, 현재 적용 chip. 둘러보기용 형식/종류 칩은 검색 상단에 두지 않는다.
-- filter sheet/popover: 게시판, 글 형식, 검색 대상, 모든 단어/하나라도, 정렬. 작품 검색은 종류·읽기 상태·정렬.
+- filter sheet/popover: 글 형식, 검색 대상, 모든 단어/하나라도, 정렬. 작품 검색은 종류·읽기 상태·정렬. 게시판은 filter가 아니라 게시판 바에서 고른다(`19` §6).
 - desktop 폭이 충분해도 모든 select를 항상 펼치지 않는다. query와 결과가 주인공이어야 한다.
-- `필터 초기화`는 query를 보존한다. input의 `×`는 query만 지운다. `전체 초기화`는 둘을 모두 지운다.
+- 모바일 filter sheet는 임시값이다: `초기화`는 sheet 값만 기본값으로 되돌리고, `적용`을 눌러야 목록에 반영된다. X·Esc·Back은 취소. query는 input의 `×`로만 지운다(`19` §6).
 - no-result에서는 현재 query·chip을 그대로 둔 채 `제목만 → 전체 필드`, 특정 게시판 해제처럼 한 단계씩
   넓히는 행동을 제시한다.
 - 제목과 작성자의 일치 부분은 `<mark>`로 강조하되 screen reader가 중복해서 읽지 않게 text node를
