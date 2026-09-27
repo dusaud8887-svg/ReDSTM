@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SEARCH_FIELDS, findPost, prepareSearch, searchPosts } from "../public/search-core.js";
+import { SEARCH_FIELDS, findPost, prepareSearch, searchPage, searchPosts } from "../public/search-core.js";
 import { createIndexLoader } from "../public/search-worker.js";
 
 const payload = {
@@ -272,4 +272,27 @@ test("worker identifies an expired Access session", async (context) => {
     code: "access_expired",
     message: "Cloudflare Access session expired",
   });
+});
+
+test("pages a result list around the current post with its list neighbours", () => {
+  const posts = Array.from({ length: 25 }, (_, index) => [
+    index % 2 ? "b" : "a", 25 - index, `글 ${25 - index}`, "작가", null, "2026-03-01", String(index).padStart(64, "0"),
+  ]);
+  const index = prepareSearch({ schema_version: 1, fields: SEARCH_FIELDS, posts });
+  const page = searchPage(index, { boardId: "a", around: "a:9", pageSize: 5 });
+  assert.equal(page.total, 13);
+  assert.equal(page.found, 8);
+  assert.equal(page.offset, 5);
+  assert.deepEqual(page.posts.map((post) => post.external_post_id), [15, 13, 11, 9, 7]);
+  assert.equal(page.previous.external_post_id, 11);
+  assert.equal(page.next.external_post_id, 7);
+  const oldest = searchPage(index, { boardId: "a", sort: "oldest", around: "a:9", pageSize: 5 });
+  assert.equal(oldest.previous.external_post_id, 7);
+  assert.equal(oldest.next.external_post_id, 11);
+  const missing = searchPage(index, { boardId: "b", around: "a:9", pageSize: 5 });
+  assert.equal(missing.found, -1);
+  assert.equal(missing.offset, 0);
+  assert.equal(missing.next, null);
+  assert.equal(searchPage(index, { boardId: "a", page: 99, pageSize: 5 }).offset, 10);
+  assert.throws(() => searchPage(index, { pageSize: 0 }), /page size/);
 });

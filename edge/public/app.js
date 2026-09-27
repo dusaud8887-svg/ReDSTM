@@ -64,6 +64,8 @@ const elements = Object.fromEntries(
     "image-viewer", "image-viewer-image", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output",
+    "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
+    "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
@@ -132,6 +134,12 @@ let continueTargetPost = null;
 // A text chapter Home can resume ({ route, listRoute, … } from the text library) or null.
 let continueText = null;
 const prefetched = new Set();
+const READER_LIST_PAGE = 10;
+// The list shown under a Reader body: { onOpen(key), onPage(delta) } from the owning source.
+let readerListModel = null;
+// TypeMoon: the list a reading session came from, derived from its parent route.
+let listContext = null;
+let listRequestId = 0;
 let immersiveOpener = null;
 let editingBookmarkSummary = null;
 // Which source owns the shared Reader shell: "typemoon", "text", or null when it is closed.
@@ -154,6 +162,7 @@ const textLibrary = createTextLibrary({
     setBookmarked: renderBookmarkState,
     progress: bodyProgress,
     syncScroll: syncScrollBaseline,
+    setList: renderReaderList,
     captureAnchor: () => captureTextAnchor(elements["archive-body"], elements["reader-pane"], readerTopInset()),
     restoreAnchor: (anchor) => {
       restoreTextAnchor(elements["archive-body"], elements["reader-pane"], anchor, readerTopInset());
@@ -459,7 +468,7 @@ function setAaZoom(value, debounce = false) {
   else persistUserState();
 }
 
-function renderHomeList(element, posts, emptyText, limit = 6) {
+function renderHomeList(element, posts, emptyText, limit = 6, listHint = "") {
   element.replaceChildren();
   if (!posts.length) {
     const empty = document.createElement("li");
@@ -478,7 +487,7 @@ function renderHomeList(element, posts, emptyText, limit = 6) {
     title.textContent = post.title || "제목 없음";
     meta.textContent = [boardLabel(post.board_id), post.author, formatSourceDate(post.created_at_raw)].filter(Boolean).join(" · ");
     button.append(title, meta);
-    button.addEventListener("click", () => loadPost(post));
+    button.addEventListener("click", () => loadPost(post, "push", { listHint }));
     item.append(button);
     element.append(item);
   }
@@ -513,7 +522,7 @@ function renderCover(
   if (showContinue) void renderContinueCard();
   else elements["continue-block"].hidden = true;
   renderHomeList(elements["latest-list"], latestPosts, "최근 게시된 글이 없습니다.", 6);
-  renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.", 4);
+  renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.", 4, "recent");
   void renderReadingWorks();
   updateShellMode();
 }
@@ -743,6 +752,8 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   if (!source) {
     readerNavigation = null;
+    listContext = null;
+    renderReaderList(null);
     elements["reader-more"].open && elements["reader-more"].close();
     return;
   }
@@ -1072,10 +1083,11 @@ function applyTextSortOptions() {
       ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"]]
       : [["가나다순", "title"]];
   const select = elements["sort-filter"];
-  const previous = select.value;
+  const wanted = textLibrary.currentSort();
   const allowed = new Set(options.map(([, value]) => value));
   select.replaceChildren(...options.map(([label, value]) => new Option(label, value)));
-  select.value = allowed.has(previous) ? previous : options[0][1];
+  // The text library owns its sort (it travels in the URL); the select only mirrors it.
+  select.value = allowed.has(wanted) ? wanted : options[0][1];
   textLibrary.setSort(select.value);
 }
 
@@ -1503,7 +1515,7 @@ function synthesizeParentEntry() {
   if (!parent) return;
   const target = `${currentRoute()}${location.hash}`;
   history.replaceState({ redstmSynthetic: true }, "", parent);
-  history.pushState({ ...state, redstmParent: parent }, "", target);
+  history.pushState({ ...state, redstmParent: parent, redstmSyntheticParent: true }, "", target);
 }
 
 // Back from a Reader: return to the list that opened it when this session owns that entry,
@@ -1571,7 +1583,7 @@ function handleWorkerMessage({ data }) {
       error.code = data.code;
       pending.reject(error);
     }
-    else pending.resolve(data.summaries);
+    else pending.resolve(data.type === "page" ? data : data.summaries);
     return;
   }
   if (data.type === "error") {
@@ -2464,7 +2476,7 @@ async function updateCollection() {
 
 // navigation: "push" enters the Reader from a list or Home, "replace" moves within the same
 // reading session (previous/next, another row of a visible side list), "route" follows history.
-async function loadPost(summary, navigation = "push") {
+async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
   const viewId = ++readerViewId;
   if (currentSummary) persistReadingPosition();
   postController?.abort();
@@ -2483,7 +2495,7 @@ async function loadPost(summary, navigation = "push") {
     if (viewId !== readerViewId) return;
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
     elements["archive-state"].textContent = "보존본";
-    showPost(payload, resolved, navigation);
+    showPost(payload, resolved, navigation, listHint);
   } catch (error) {
     if (viewId !== readerViewId || error.name === "AbortError") return;
     renderArchiveError(error, "본문을 열 수 없음");
@@ -2493,7 +2505,7 @@ async function loadPost(summary, navigation = "push") {
   }
 }
 
-function showPost(payload, suppliedSummary, navigation) {
+function showPost(payload, suppliedSummary, navigation, listHint = "") {
   const post = payload.post;
   currentPayload = payload;
   currentSummary = {
@@ -2530,10 +2542,12 @@ function showPost(payload, suppliedSummary, navigation) {
   // Only entering the Reader adds a history entry. Episode moves replace it, so one Back
   // (system or the 목록 button) always returns to the list the session started from.
   if (navigation === "push") {
-    history.pushState({ redstmReader: true, redstmParent: currentRoute() }, "", nextUrl);
+    history.pushState({ redstmReader: true, redstmParent: currentRoute(), ...(listHint ? { redstmList: listHint } : {}) }, "", nextUrl);
   } else {
     history.replaceState({ ...(history.state ?? {}), redstmReader: true, redstmCollection: false }, "", nextUrl);
   }
+  // Reads the parent route from history.state, so it runs after the entry above is written.
+  void refreshTypeMoonList();
   openMobileReader();
   updateShellMode();
   requestAnimationFrame(() => {
@@ -2746,19 +2760,215 @@ function typeMoonNavigation() {
       context: `${collection.title} · ${index + 1}/${collection.entries.length}`,
     };
   }
-  const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
-  const resultContext = index >= 0 && ["browse", "search", "bookmarks"].includes(currentDestination);
-  const step = (offset) => index < 0 ? null : entryStep(renderedResults[index + offset]);
-  const next = step(1);
+  // Other posts step through the list the session came from, in that list's order.
+  const located = listContext?.result && listContext.summaryKey === postIdentity(currentSummary) ? listContext.result : null;
+  const next = located ? entryStep(located.next) : null;
   return {
     unit: "글",
-    qualifier: resultContext ? "현재 결과" : "게시판",
-    previous: step(-1),
+    qualifier: listContext?.descriptor.qualifier ?? "",
+    previous: located ? entryStep(located.previous) : null,
     next,
-    note: next || index < 0 ? "" : "목록의 마지막 글입니다.",
+    pending: !located && Boolean(listContext?.loading),
+    note: located && located.found >= 0 && !next ? "목록의 마지막 글입니다." : "",
     hasToc: false,
     context: boardLabel(currentSummary?.board_id) || "",
   };
+}
+
+// ---- The list under the Reader ------------------------------------------------------------
+
+// Which list a TypeMoon reading session belongs to, read from the route that opened it.
+function listDescriptor() {
+  const state = history.state ?? {};
+  const parent = typeof state.redstmParent === "string" ? state.redstmParent : "";
+  const url = new URL(parent || "/", location.origin);
+  const boardOnly = (boardId) => ({
+    kind: "search",
+    params: { boardId },
+    kicker: "게시판",
+    title: boardLabel(boardId) || boardId,
+    qualifier: "게시판",
+  });
+  const collection = /^\/collections\/([1-9]\d*)$/.exec(url.pathname);
+  if (collection) return { kind: "collection", collectionId: Number(collection[1]), kicker: "작품 목차", title: "" };
+  if (!parent || state.redstmSyntheticParent) return boardOnly(currentSummary.board_id);
+  if (url.pathname === "/saved") {
+    const view = url.searchParams.get("view");
+    const source = view === "recent" ? historyEntries
+      : view === "reading" ? historyEntries.filter((entry) => postReadingState(entry.progress) === "reading")
+      : bookmarks;
+    return {
+      kind: "items",
+      items: source.map((entry) => entry.summary),
+      kicker: "보관함",
+      title: view === "recent" ? "최근 읽음" : view === "reading" ? "읽는 중" : "저장한 글",
+      qualifier: "현재 목록",
+    };
+  }
+  if (url.pathname === "/" && state.redstmList === "recent") {
+    return { kind: "items", items: historyEntries.map((entry) => entry.summary), kicker: "홈", title: "최근 읽은 글", qualifier: "현재 목록" };
+  }
+  if (url.pathname === "/browse" || url.pathname === "/search") {
+    const query = url.searchParams;
+    const params = {
+      query: query.get("q") ?? "",
+      boardId: query.get("board") ?? "",
+      mode: searchSupportsAa && ["aa", "prose"].includes(query.get("mode")) ? query.get("mode") : "all",
+      sort: query.get("sort") === "oldest" ? "oldest" : "latest",
+      target: ["title", "author"].includes(query.get("target")) ? query.get("target") : "all",
+      match: query.get("match") === "or" ? "or" : "and",
+    };
+    const conditions = [
+      params.query && params.boardId ? boardLabel(params.boardId) : "",
+      params.mode === "aa" ? "AA" : params.mode === "prose" ? "소설·일반" : "",
+      params.sort === "oldest" ? "오래된순" : "",
+    ].filter(Boolean);
+    return {
+      kind: "search",
+      params,
+      kicker: params.query ? "검색 결과" : "게시판",
+      title: [params.query ? `“${params.query}”` : (boardLabel(params.boardId) || "전체 게시판"), ...conditions].join(" · "),
+      qualifier: "현재 결과",
+    };
+  }
+  if (url.pathname === "/") return { kind: "search", params: {}, kicker: "홈", title: "최근 게시된 글", qualifier: "최근 글" };
+  return boardOnly(currentSummary.board_id);
+}
+
+function workerPage(params) {
+  const id = ++messageId;
+  return new Promise((resolve, reject) => {
+    workerRequests.set(id, { resolve, reject });
+    searchWorker.postMessage({ type: "page", id, pageSize: READER_LIST_PAGE, ...params });
+  });
+}
+
+function localPage(items, identity, page) {
+  const found = items.findIndex((item) => postIdentity(item) === identity);
+  const lastPage = Math.max(0, Math.ceil(items.length / READER_LIST_PAGE) - 1);
+  const pageIndex = Number.isInteger(page) ? Math.min(Math.max(0, page), lastPage)
+    : found >= 0 ? Math.floor(found / READER_LIST_PAGE) : 0;
+  const offset = pageIndex * READER_LIST_PAGE;
+  return {
+    posts: items.slice(offset, offset + READER_LIST_PAGE),
+    total: items.length,
+    offset,
+    found,
+    previous: found > 0 ? items[found - 1] : null,
+    next: found >= 0 ? items[found + 1] ?? null : null,
+  };
+}
+
+// Loads the page of the session's list containing the current post (or an explicit page).
+async function refreshTypeMoonList({ page = null } = {}) {
+  if (!currentSummary) return;
+  const requestId = ++listRequestId;
+  const summaryKey = postIdentity(currentSummary);
+  const descriptor = page === null || !listContext ? listDescriptor() : listContext.descriptor;
+  listContext = { descriptor, summaryKey, loading: true, result: page === null ? null : listContext?.result };
+  let result;
+  try {
+    if (descriptor.kind === "collection") {
+      const collection = await loadCollectionDetail(descriptor.collectionId);
+      if (!collection) throw new Error("작품 목차가 없습니다");
+      descriptor.title = collection.title;
+      result = localPage(collection.entries, summaryKey, page);
+      result.collection = true;
+    } else if (descriptor.kind === "items") {
+      result = localPage(descriptor.items, summaryKey, page);
+    } else {
+      result = await workerPage({ ...descriptor.params, around: summaryKey, page });
+    }
+  } catch {
+    result = null;
+  }
+  if (requestId !== listRequestId || postIdentity(currentSummary) !== summaryKey) return;
+  // Paging keeps the neighbours that were located around the current post.
+  if (page !== null && result && listContext.result) {
+    result.found = listContext.result.found;
+    result.previous = listContext.result.previous;
+    result.next = listContext.result.next;
+  }
+  listContext = { descriptor, summaryKey, loading: false, result };
+  renderTypeMoonList();
+  updateNavigation();
+}
+
+function renderTypeMoonList() {
+  const { descriptor, result } = listContext ?? {};
+  if (!result) {
+    renderReaderList(null);
+    return;
+  }
+  const history = historyByIdentityMap();
+  const current = postIdentity(currentSummary);
+  const showBoard = descriptor.kind !== "search" || !descriptor.params.boardId || descriptor.params.query;
+  renderReaderList({
+    kicker: descriptor.kicker,
+    title: descriptor.title,
+    total: result.total,
+    offset: result.offset,
+    hint: result.found < 0 ? "지금 읽는 글은 이 목록에 없습니다." : "",
+    rows: result.posts.map((post) => {
+      const identity = postIdentity(post);
+      const progress = history.get(identity)?.progress;
+      return {
+        key: identity,
+        title: post.title || "제목 없음",
+        meta: result.collection
+          ? [`${post.position}편`, post.object_key ? "" : "보존 불가",
+            identity === current ? "" : postReadingLabel(progress, { seen: history.has(identity) })].filter(Boolean).join(" · ")
+          : [showBoard ? boardLabel(post.board_id) : "", post.author, formatSourceDate(post.created_at_raw),
+            identity === current ? "" : postReadingLabel(progress, { seen: history.has(identity) })].filter(Boolean).join(" · "),
+        current: identity === current,
+        read: postReadingState(progress) === "finished",
+        disabled: result.collection && !post.object_key,
+        post,
+      };
+    }),
+    onOpen: (row) => loadPost(row.post, "replace"),
+    onPage: (delta) => refreshTypeMoonList({ page: Math.floor(result.offset / READER_LIST_PAGE) + delta }),
+  });
+}
+
+// model: { kicker, title, total, offset, hint, rows: [{ key, title, meta, current, read, disabled }],
+// onOpen(row), onPage(delta) } or null to hide the section.
+function renderReaderList(model) {
+  readerListModel = model;
+  elements["reader-list"].hidden = !model || !model.total;
+  if (!model) return;
+  elements["reader-list-kicker"].textContent = model.kicker ?? "";
+  elements["reader-list-title"].textContent = model.title ?? "";
+  elements["reader-list-hint"].textContent = model.hint ?? "";
+  elements["reader-list-hint"].hidden = !model.hint;
+  const fragment = document.createDocumentFragment();
+  model.rows.forEach((row, index) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "reader-list-row";
+    button.dataset.index = String(index);
+    button.classList.toggle("read", Boolean(row.read));
+    if (row.current) button.setAttribute("aria-current", "true");
+    button.disabled = Boolean(row.disabled || row.current);
+    const title = document.createElement("strong");
+    title.textContent = row.title;
+    button.append(title);
+    if (row.current || row.meta) {
+      const meta = document.createElement("span");
+      meta.textContent = [row.current ? "지금 읽는 중" : "", row.meta].filter(Boolean).join(" · ");
+      button.append(meta);
+    }
+    item.append(button);
+    fragment.append(item);
+  });
+  elements["reader-list-items"].replaceChildren(fragment);
+  const first = model.offset + 1;
+  const last = model.offset + model.rows.length;
+  elements["reader-list-range"].textContent = `${first.toLocaleString("ko-KR")}–${last.toLocaleString("ko-KR")} / ${model.total.toLocaleString("ko-KR")}`;
+  elements["reader-list-previous"].disabled = model.offset <= 0;
+  elements["reader-list-next"].disabled = last >= model.total;
+  elements["reader-list"].querySelector(".reader-list-pager").hidden = model.total <= model.rows.length;
 }
 
 function typeMoonStep(offset, { finished = false } = {}) {
@@ -2877,6 +3087,15 @@ elements["more-note"].addEventListener("click", () => {
   if (currentSummary) openBookmarkEditor(currentSummary);
 });
 elements["more-source"].addEventListener("click", closeReaderMore);
+elements["reader-list-items"].addEventListener("click", (event) => {
+  const button = event.target.closest(".reader-list-row");
+  const row = button && readerListModel?.rows[Number(button.dataset.index)];
+  if (row && !button.disabled) readerListModel.onOpen(row);
+});
+for (const [id, delta] of [["reader-list-previous", -1], ["reader-list-next", 1]]) {
+  elements[id].addEventListener("click", () => readerListModel?.onPage(delta));
+}
+elements["reader-list-all"].addEventListener("click", () => readerCommand("list"));
 // Jump within a long body (the inverse of bodyProgress).
 elements["more-position"].addEventListener("input", () => {
   const pane = elements["reader-pane"];

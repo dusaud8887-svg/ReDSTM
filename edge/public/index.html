@@ -280,6 +280,19 @@
               <span class="chapter-end-copy"><small id="end-previous-kicker">이전 글</small><span id="end-previous-title">이전 글이 없습니다</span></span>
             </button>
           </section>
+          <section class="reader-list" id="reader-list" aria-labelledby="reader-list-title" hidden>
+            <header class="reader-list-header">
+              <div><small id="reader-list-kicker"></small><h2 id="reader-list-title"></h2></div>
+              <button class="reader-list-all" id="reader-list-all" type="button">전체 목록<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
+            </header>
+            <p class="reader-list-hint" id="reader-list-hint" hidden></p>
+            <ol class="reader-list-items" id="reader-list-items"></ol>
+            <nav class="reader-list-pager" id="reader-list-pager" aria-label="목록 페이지">
+              <button id="reader-list-previous" type="button" aria-label="목록 이전 페이지"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>이전</button>
+              <span id="reader-list-range" aria-live="polite"></span>
+              <button id="reader-list-next" type="button" aria-label="목록 다음 페이지">다음<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
+            </nav>
+          </section>
           <section class="comments" id="comments" aria-labelledby="comments-title">
             <h2 id="comments-title">댓글 <span id="comment-count">0</span></h2><ol id="comment-list"></ol>
           </section>

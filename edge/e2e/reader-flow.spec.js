@@ -348,3 +348,102 @@ test("The 더보기 position slider jumps within a long body", async ({ page }) 
   await page.locator("#reader-more button[aria-label='닫기']").click();
   await expect(page.locator("#end-next")).toBeInViewport();
 });
+
+async function useBoardPosts(page, count) {
+  const release = {
+    schema_version: 1,
+    search: { object_key: "search/e2e.json.zst" },
+    collections: { object_key: collectionIndexKey },
+    boards: [{ board_id: "board_a", name: "자유게시판", group_name: "창작", post_count: count }],
+  };
+  const index = {
+    schema_version: 1,
+    fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
+    posts: Array.from({ length: count }, (_, i) => {
+      const id = count - i;
+      return ["board_a", id, `글 ${id}`, "작성자", null, "2026-07-11", hashFor(id), false];
+    }),
+  };
+  await page.route("**/archive/**", (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const post = /^posts\/board_a\/(\d+)-/.exec(key);
+    const payload = post ? { ...postPayload(Number(post[1])), post: { ...postPayload(Number(post[1])).post, title: `글 ${post[1]}` } }
+      : key === "release.json" ? release : key === "search/e2e.json.zst" ? index
+      : key === collectionIndexKey ? { schema_version: 1, collections: [] } : null;
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+}
+
+test("TypeMoon: the list under a post is the list it was opened from, around that post", async ({ page }) => {
+  await useBoardPosts(page, 120);
+  await page.goto("/browse?sort=oldest");
+  await expect(page.locator(".result-item").first()).toBeVisible();
+  await page.locator('.result-item[data-key="board_a:25"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("글 25");
+  const list = page.locator("#reader-list");
+  await expect(list.locator("#reader-list-title")).toHaveText("전체 게시판 · 오래된순");
+  await expect(list.locator("#reader-list-range")).toHaveText("21–30 / 120");
+  await expect(list.locator('.reader-list-row[aria-current="true"] strong')).toHaveText("글 25");
+  // 다음 글 follows the same list order (oldest first), and the list follows along.
+  await page.locator(mobileWidth(page) ? "#reader-bottom-next" : "#next-post").click();
+  await expect(page.locator("#reader-title")).toHaveText("글 26");
+  await expect(list.locator('.reader-list-row[aria-current="true"] strong')).toHaveText("글 26");
+  await list.locator("#reader-list-next").click();
+  await expect(list.locator("#reader-list-range")).toHaveText("31–40 / 120");
+  await list.locator(".reader-list-row", { hasText: "글 33" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("글 33");
+  // Still one reading session: Back returns to the original list.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/browse\?sort=oldest$/);
+});
+
+test("TypeMoon: a search keeps its results under the post and after reload", async ({ page }) => {
+  await useBoardPosts(page, 120);
+  await page.goto("/search?q=%EA%B8%80%201");
+  await page.locator('.result-item[data-key="board_a:12"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("글 12");
+  await expect(page.locator("#reader-list-kicker")).toHaveText("검색 결과");
+  await expect(page.locator("#reader-list-title")).toHaveText("“글 1”");
+  await expect(page.locator('.reader-list-row[aria-current="true"] strong')).toHaveText("글 12");
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("글 12");
+  await expect(page.locator("#reader-list-title")).toHaveText("“글 1”");
+  await expect(page.locator("#end-next-kicker")).toHaveText("다음 글 · 현재 결과");
+});
+
+test("TypeMoon: a deep link shows its board, and a series shows its table of contents", async ({ page }) => {
+  await useLongCollection(page, 30);
+  await page.goto("/read/board_a/15");
+  await expect(page.locator("#reader-list-kicker")).toHaveText("게시판");
+  await expect(page.locator("#reader-list-title")).toHaveText("자유게시판");
+  await page.goto("/collections/1");
+  await page.locator('.collection-entry[data-key="15"]').click();
+  await expect(page.locator("#reader-list-kicker")).toHaveText("작품 목차");
+  await expect(page.locator("#reader-list-title")).toHaveText("긴 연재");
+  await expect(page.locator('.reader-list-row[aria-current="true"] strong')).toHaveText("15편 제목");
+});
+
+test("Text: the list under a chapter keeps the chapter list's sort and survives reload", async ({ page }) => {
+  const workId = await useLongNovel(page, 300);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await page.locator("#sort-filter").evaluate((select) => {
+    select.value = "latest";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page).toHaveURL(/sort=latest/);
+  await page.locator('#result-list [data-key="chapter:200"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("200화");
+  await expect(page.locator("#reader-list-title")).toHaveText("긴 소설 · 최신순");
+  await expect(page.locator("#reader-list-range")).toHaveText("101–110 / 300");
+  await expect(page.locator(".reader-list-row strong").first()).toHaveText("200화");
+  await expect(page.locator(".reader-list-row strong").nth(1)).toHaveText("199화");
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("200화");
+  await expect(page.locator("#reader-list-title")).toHaveText("긴 소설 · 최신순");
+  await page.locator(".reader-list-row", { hasText: "195화" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("195화");
+  await page.goBack();
+  await expect(page.locator('#result-list [data-key="chapter:200"]')).toBeVisible();
+  await expect(page.locator("#result-list .result-item[data-key] .result-title").first()).toHaveText("300화");
+});

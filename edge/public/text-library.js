@@ -8,6 +8,8 @@ const VIEWS = new Set([...LANES, "saved"]);
 const HASH = /^[a-f0-9]{64}$/;
 const FINISHED = 0.95;
 const ROW_SELECTOR = ".result-item[data-key]";
+const LIST_PAGE = 10;
+const SORT_LABELS = { oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최신 화순" };
 
 function readState() {
   try {
@@ -71,6 +73,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let saveTimer;
   let requestId = 0;
   let moving = false;
+  // Page of the list shown under the body; null follows the current chapter.
+  let listPage = null;
 
   function persist() {
     try { localStorage.setItem(STATE_KEY, JSON.stringify(history)); }
@@ -90,7 +94,17 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (work) params.set("work", work.work_id);
     if (lane === "arcalive" && folderBoard) params.set("board", folderBoard);
     if (lane === "arcalive" && folderCategory) params.set("category", folderCategory);
+    if (sortMode !== defaultSort()) params.set("sort", sortMode);
     return params;
+  }
+
+  function defaultSort() {
+    return lane === "novel" && work ? "oldest" : "title";
+  }
+
+  function readSort(params) {
+    const requested = params.get("sort");
+    sortMode = SORT_LABELS[requested] ? requested : defaultSort();
   }
 
   function listRoute() {
@@ -426,6 +440,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     chapterSource = [];
     folderBoard = lane === "arcalive" ? params.get("board") : null;
     folderCategory = lane === "arcalive" ? params.get("category") : null;
+    readSort(params);
     closeReader();
     syncBackButton();
     catalog = [];
@@ -480,6 +495,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const found = catalog.find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
       if (!found) return false;
       await openWork(found, false, activeRequest);
+      readSort(params);
+      renderCatalog();
       if (found.work_id !== workId) replaceRoute();
       const chapterId = params.get("chapter");
       const chapter = chapterId && chapterSource.find((entry) => String(entry.chapter_id) === chapterId);
@@ -533,6 +550,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (activeRequest !== requestId) return undefined;
       work = found;
     }
+    readSort(params);
     syncBackButton();
     onChange();
     renderCatalog();
@@ -545,6 +563,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const detail = await workDetail(item);
     if (activeRequest !== requestId) return;
     work = item;
+    if (shouldNavigate) sortMode = defaultSort();
     syncBackButton();
     chapterSource = detail.chapters;
     closeReader();
@@ -644,6 +663,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       sourceUrl: parsed.sourceUrl,
     });
     shell.setNavigation(navigation());
+    listPage = null;
+    publishList();
     updateBookmark();
     onChange();
     restorePosition(record, hash);
@@ -659,6 +680,65 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (anchor && (Number.isInteger(record.offset) || (record.revision && record.revision !== hash))) {
       requestAnimationFrame(() => shell.restoreAnchor(anchor));
     }
+  }
+
+  function listHeading() {
+    const sorted = sortMode !== defaultSort() ? ` · ${SORT_LABELS[sortMode]}` : "";
+    const query = search.value.trim() ? ` · “${search.value.trim()}”` : "";
+    if (current?.viewLane === "saved") return { kicker: "텍스트 저장함", title: `저장한 자료${query}` };
+    if (current?.lane === "novel") return { kicker: "회차 목록", title: `${current.work?.title || "소설"}${sorted}${query}` };
+    return { kicker: "아카라이브", title: `${[folderBoard, folderCategory].filter(Boolean).join(" · ") || "글 목록"}${sorted}${query}` };
+  }
+
+  function isCurrentRow(item) {
+    if (!current) return false;
+    if (current.viewLane === "saved") return item.identity === current.identity;
+    return sameChapter(item, current.entry);
+  }
+
+  // The same rows, order, and filter as the list the body was opened from.
+  function publishList() {
+    if (!current) return shell.setList(null);
+    const rows = visible;
+    const found = rows.findIndex(isCurrentRow);
+    const lastPage = Math.max(0, Math.ceil(rows.length / LIST_PAGE) - 1);
+    const page = Number.isInteger(listPage) ? Math.min(Math.max(0, listPage), lastPage)
+      : found >= 0 ? Math.floor(found / LIST_PAGE) : 0;
+    const offset = page * LIST_PAGE;
+    const chapters = current.viewLane !== "saved" && current.lane === "novel";
+    return shell.setList({
+      ...listHeading(),
+      total: rows.length,
+      offset,
+      hint: found < 0 ? "지금 읽는 글은 이 목록에 없습니다." : "",
+      rows: rows.slice(offset, offset + LIST_PAGE).map((item) => {
+        const key = current.viewLane === "saved" ? item.identity : identity(item, current.lane, current.work);
+        const progress = history.history[key]?.progress ?? 0;
+        return {
+          key,
+          item,
+          current: isCurrentRow(item),
+          read: progress >= FINISHED,
+          title: current.viewLane === "saved" ? (item.title || item.entry?.label || "저장한 자료")
+            : chapters ? (item.label || "회차") : (item.title || item.category || "글"),
+          meta: [
+            chapters ? chapterKind(item.kind) : current.viewLane === "saved" ? (item.entry?.label || "") : (item.category || ""),
+            isCurrentRow(item) ? "" : progress >= FINISHED ? "다 읽음" : progress > 0 ? `${Math.round(progress * 100)}%` : history.history[key] ? "열어 봄" : "",
+          ].filter(Boolean).join(" · "),
+        };
+      }),
+      onOpen: (row) => {
+        listPage = null;
+        const action = current?.viewLane === "saved"
+          ? openBody(row.item.entry, { navigation: "replace", sourceLane: row.item.lane, sourceWork: row.item.work, savedIdentity: row.item.identity })
+          : openBody(row.item, { navigation: "replace" });
+        void action.catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });
+      },
+      onPage: (delta) => {
+        listPage = page + delta;
+        publishList();
+      },
+    });
   }
 
   function updateBookmark() {
@@ -709,6 +789,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       chapterSource = [];
     } else if (folderCategory) folderCategory = null;
     else if (folderBoard) folderBoard = null;
+    sortMode = defaultSort();
     syncBackButton();
     onChange();
     renderCatalog();
@@ -826,6 +907,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         if (current && frozen) {
           sequence = { ...frozen, index: frozen.entries.findIndex((entry) => sameChapter(entry, target)) };
           shell.setNavigation(navigation());
+          publishList();
         }
       })
       .catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; })
@@ -887,7 +969,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (next === sortMode) return;
     sortMode = next;
     renderCatalog();
+    if (!current) window.history.replaceState(window.history.state, "", listRoute());
   }
+
+  function currentSort() { return sortMode; }
 
   // The list a deep-linked body belongs to, used to build a Back target under it.
   function parentRoute(params) {
@@ -926,6 +1011,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   return {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
-    leave, changeLane, command, parentRoute, flush: flushPosition, latestReading,
+    leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
   };
 }

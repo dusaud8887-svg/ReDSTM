@@ -91,6 +91,7 @@ export function searchPosts(
     match = "and",
     limit = 100,
     offset = 0,
+    collect = null,
   } = {},
 ) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
@@ -133,10 +134,37 @@ export function searchPosts(
       : tokens.every((token) => searchText.includes(token));
     if (tokens.length && !tokenMatches) continue;
     // `total` is the running match index; collect the window [offset, offset + limit).
-    if (total >= offset && posts.length < limit) posts.push(result(row, index.hasIsAa));
+    if (collect) collect.push(row);
+    else if (total >= offset && posts.length < limit) posts.push(result(row, index.hasIsAa));
     total += 1;
   }
   return { posts, total };
+}
+
+// One page of a result list plus the neighbours of a given post, so the Reader can show "the
+// list you came from" around the current post and step through it in the same order.
+// around: "board:id" to open the page containing that post; page: explicit 0-based page.
+export function searchPage(index, { around = "", page = null, pageSize = 10, ...filters } = {}) {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50) {
+    throw new Error("Search page size must be between 1 and 50");
+  }
+  const matches = [];
+  searchPosts(index, { ...filters, limit: 1, offset: 0, collect: matches });
+  const aroundRow = around ? index.identities.get(around) : null;
+  const found = aroundRow ? matches.indexOf(aroundRow) : -1;
+  const lastPage = Math.max(0, Math.ceil(matches.length / pageSize) - 1);
+  const pageIndex = Number.isInteger(page) ? Math.min(Math.max(0, page), lastPage)
+    : found >= 0 ? Math.floor(found / pageSize) : 0;
+  const offset = pageIndex * pageSize;
+  const summary = (row) => (row ? result(row, index.hasIsAa) : null);
+  return {
+    posts: matches.slice(offset, offset + pageSize).map((row) => result(row, index.hasIsAa)),
+    total: matches.length,
+    offset,
+    found,
+    previous: found > 0 ? summary(matches[found - 1]) : null,
+    next: found >= 0 ? summary(matches[found + 1]) : null,
+  };
 }
 
 export function findPost(index, boardId, externalPostId) {
