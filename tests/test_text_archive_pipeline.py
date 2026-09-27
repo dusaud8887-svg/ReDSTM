@@ -913,7 +913,9 @@ def test_work_recrawl_repairs_imported_title_without_changing_identity(tmp_path:
     db.executescript(collector._SCHEMA)
     unit = collector.RequestUnit(
         collector.Source("blacktoon", "blacktoon452.com"),
-        "work", "42", "https://blacktoon452.com/api/works/42",
+        "work",
+        "42",
+        "https://blacktoon452.com/api/works/42",
     )
     try:
         with db:
@@ -927,9 +929,11 @@ def test_work_recrawl_repairs_imported_title_without_changing_identity(tmp_path:
             )
         payload = {"work": {"id": 42, "title": "작품", "author": "작가"}, "episodes": []}
         collector._apply_work(db, unit, payload, None)
-        assert tuple(db.execute(
-            "SELECT identity,source_chapter_id,title,author FROM text_archive_items"
-        ).fetchone()) == ("novel:blacktoon:42:7", "7", "작품", "작가")
+        assert tuple(
+            db.execute(
+                "SELECT identity,source_chapter_id,title,author FROM text_archive_items"
+            ).fetchone()
+        ) == ("novel:blacktoon:42:7", "7", "작품", "작가")
         with pytest.raises(collector.CollectorError, match="work_title_missing"):
             collector._apply_work(db, unit, {"work": {"id": 42}, "episodes": []}, None)
         assert db.execute("SELECT title FROM text_novel_sources").fetchone()[0] == "작품"
