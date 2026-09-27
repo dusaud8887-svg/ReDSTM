@@ -391,13 +391,13 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 ):
                     if key in report:
                         board_result[key] = report[key]
-            if board_status == "succeeded" and outcomes.get("stored", 0) > 0:
+            if board_status == "succeeded":
                 try:
                     with archive_transaction(args.archive) as connection:
                         board_result["work_reconcile"] = reconcile_board(
                             connection, board_id, apply=True
                         )
-                except sqlite3.Error as error:
+                except Exception as error:
                     # Crawled source data stays committed even when classification fails.
                     board_result["work_reconcile"] = {
                         "status": "failed",
