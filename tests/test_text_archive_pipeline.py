@@ -420,6 +420,8 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
     assert chapters[2]["source_episode_number_raw"] == "42"
     assert chapters[2]["source_episode_number"] == 42
     assert chapters[2]["source_toc_position"] == 1
+    assert "novel:toki:63670:42" in chapters[2]["legacy_chapter_ids"]
+    assert "novel_chapter:toki:63670:42" in chapters[2]["legacy_chapter_ids"]
     catalog = next(page["items"] for page in details if "items" in page)
     assert catalog[0]["latest_label"] == "252화"
 
@@ -465,6 +467,8 @@ def test_publisher_collapses_exact_cross_source_chapter_copies(tmp_path: Path) -
         "toki",
         "blacktoon",
     }
+    assert "novel:toki:63670:8794077" in detail["chapters"][0]["legacy_chapter_ids"]
+    assert "novel_chapter:blacktoon:24753:914174" in detail["chapters"][0]["legacy_chapter_ids"]
     catalog = next(page["items"] for page in pages if "items" in page)
     assert catalog[0]["chapter_count"] == 1
 

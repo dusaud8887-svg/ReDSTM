@@ -94,6 +94,7 @@ def _unique_novel_chapters(chapters: list[dict[str, Any]]) -> list[dict[str, Any
             representative["source_variants"] = [
                 {
                     "source_site": str(row.get("source_site") or ""),
+                    "source_work_id": str(row.get("source_work_id") or ""),
                     "source_chapter_id": str(row.get("source_chapter_id") or ""),
                     "source_url": str(row.get("source_url") or ""),
                 }
@@ -101,6 +102,21 @@ def _unique_novel_chapters(chapters: list[dict[str, Any]]) -> list[dict[str, Any
             ]
             result.append(representative)
     return result
+
+
+def _chapter_aliases(row: dict[str, Any]) -> list[str]:
+    variants = [row, *row.get("source_variants", [])]
+    aliases = {str(row.get("identity") or ""), str(row.get("canonical_chapter_id") or "")}
+    for variant in variants:
+        site = str(variant.get("source_site") or "")
+        work = str(variant.get("source_work_id") or "")
+        chapter = str(variant.get("source_chapter_id") or "")
+        if site and work and chapter:
+            aliases.update(
+                (f"novel:{site}:{work}:{chapter}", f"novel_chapter:{site}:{work}:{chapter}")
+            )
+    aliases.discard("")
+    return sorted(aliases)
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -286,6 +302,7 @@ def build_publish_tree(
                         "chapters": [
                             {
                                 "chapter_id": row["canonical_chapter_id"],
+                                "legacy_chapter_ids": _chapter_aliases(row),
                                 "reading_order": position,
                                 "label": row["chapter_label"],
                                 "kind": row["chapter_kind"],

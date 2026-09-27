@@ -1,6 +1,6 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
-import { migrateNovelState, orderChapters } from "/text-work.js";
+import { migrateNovelChapterState, migrateNovelState, orderChapters } from "/text-work.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
@@ -277,7 +277,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function sameChapter(chapter, entry) {
-    if (chapter.chapter_id && entry.chapter_id) return String(chapter.chapter_id) === String(entry.chapter_id);
+    if (chapter.chapter_id && entry.chapter_id) {
+      return String(chapter.chapter_id) === String(entry.chapter_id)
+        || chapter.legacy_chapter_ids?.includes(String(entry.chapter_id))
+        || entry.legacy_chapter_ids?.includes(String(chapter.chapter_id));
+    }
     if (chapter.identity && entry.identity) return chapter.identity === entry.identity;
     return chapter.post_id != null && entry.post_id != null
       && String(chapter.post_id) === String(entry.post_id);
@@ -402,6 +406,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (detail.schema !== 1 || detail.lane !== "novel" || !Array.isArray(detail.chapters)) {
       throw new Error("work_detail_invalid");
     }
+    if (migrateNovelChapterState(history, item, detail.chapters)) persist();
     details.set(item.work_id, detail);
     return detail;
   }
@@ -498,7 +503,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       renderCatalog();
       if (found.work_id !== workId) replaceRoute();
       const chapterId = params.get("chapter");
-      const chapter = chapterId && chapterSource.find((entry) => String(entry.chapter_id) === chapterId);
+      const chapter = chapterId && chapterSource.find((entry) =>
+        String(entry.chapter_id) === chapterId || entry.legacy_chapter_ids?.includes(chapterId));
       if (chapter && activeRequest === requestId) {
         await openBody(chapter, { navigation: "route", activeRequest });
         return true;
