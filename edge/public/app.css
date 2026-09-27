@@ -549,6 +549,9 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .settings-app h3 { margin: 0; font-size: 14px; font-weight: 700; }
 .settings-note { margin: 0; color: var(--subtle); font-size: 12px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.more-position { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.reader-topbar-progress { color: var(--subtle); font-variant-numeric: tabular-nums; font-weight: 600; }
+.reader-topbar-progress:empty { display: none; }
 .more-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .more-actions :is(button, a) { min-width: 0; min-height: 80px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; text-align: center; text-decoration: none; cursor: pointer; }
 @media (hover: hover) { .more-actions :is(button, a):hover { border-color: var(--accent); color: var(--accent); } }

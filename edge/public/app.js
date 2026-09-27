@@ -63,6 +63,7 @@ const elements = Object.fromEntries(
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
     "image-viewer", "image-viewer-image", "image-viewer-source",
     "collection-jump", "collection-jump-input",
+    "reader-topbar-progress", "more-position", "more-position-output",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
@@ -128,6 +129,9 @@ let recentQueries = Array.isArray(userState.lastCatalogState?.recentQueries)
 let filterOpener = null;
 let continueCollectionId = null;
 let continueTargetPost = null;
+// A text chapter Home can resume ({ route, listRoute, … } from the text library) or null.
+let continueText = null;
+const prefetched = new Set();
 let immersiveOpener = null;
 let editingBookmarkSummary = null;
 // Which source owns the shared Reader shell: "typemoon", "text", or null when it is closed.
@@ -514,8 +518,30 @@ function renderCover(
   updateShellMode();
 }
 
+function renderTextContinue(text) {
+  continueText = text;
+  continueTargetPost = null;
+  continueCollectionId = null;
+  elements["continue-block"].hidden = false;
+  elements["continue-work"].hidden = !text.work;
+  elements["continue-work"].textContent = text.work;
+  elements["continue-title"].textContent = text.title || "텍스트 장서";
+  const finished = postReadingState(text.progress) === "finished";
+  elements["continue-meta"].textContent = [
+    text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    finished ? "다 읽음 · 회차 목록에서 다음 화" : postReadingLabel(text.progress, { seen: true }),
+  ].filter(Boolean).join(" · ");
+  elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
+}
+
 async function renderContinueCard() {
   const latestEntry = historyEntries.find((entry) => entry.summary?.object_key);
+  const text = textLibrary.latestReading();
+  continueText = null;
+  if (text && (!latestEntry || Date.parse(text.readAt) > Date.parse(latestEntry.readAt))) {
+    if (currentDestination === "library") renderTextContinue(text);
+    return;
+  }
   if (!latestEntry) {
     elements["continue-block"].hidden = true;
     continueTargetPost = null;
@@ -862,7 +888,22 @@ function renderReaderNavigation(nav) {
   elements["chapter-end-note"].textContent = nav.note ?? "";
   elements["chapter-end-note"].hidden = !nav.note;
   elements["reader-topbar-title"].textContent = nav.context ?? "";
+  schedulePrefetch(nav.next?.prefetch);
   elements["reader-more-context"].textContent = nav.context ?? "";
+}
+
+// Warm the browser cache for the next episode (archive objects are immutable). Skipped on
+// data saver; one request per target per session, after the current page has settled.
+function schedulePrefetch(url) {
+  if (!url || prefetched.has(url) || navigator.connection?.saveData) return;
+  const run = () => {
+    if (prefetched.has(url) || !readerSource) return;
+    prefetched.add(url);
+    // Same request shape as the Reader's own fetch, so the browser cache can answer it.
+    fetch(url, { priority: "low" }).catch(() => prefetched.delete(url));
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(run, { timeout: 3000 });
+  else setTimeout(run, 1500);
 }
 
 function renderBookmarkState(active, { notes = false } = {}) {
@@ -901,6 +942,9 @@ function openReaderMore() {
   elements["more-mode-reset"].hidden = !typeMoon || elements["mode-reset"].hidden;
   elements["more-mode-label"].textContent = elements["mode-toggle"].textContent;
   elements["more-immersive-label"].textContent = document.body.classList.contains("immersive") ? "집중 종료" : "집중 모드";
+  const percent = Math.round(bodyProgress() * 100);
+  elements["more-position"].value = String(percent);
+  elements["more-position-output"].value = `${percent}%`;
   if (!elements["reader-more"].open) {
     moreOpener = document.activeElement;
     elements["reader-more"].showModal();
@@ -2624,6 +2668,7 @@ function updateReadingProgress() {
   if (!readerSource) return;
   const progress = bodyProgress();
   elements["reading-progress"].style.width = `${progress * 100}%`;
+  elements["reader-topbar-progress"].textContent = `${Math.round(progress * 100)}%`;
   elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
@@ -2672,7 +2717,11 @@ function updateNavigation() {
 }
 
 function entryStep(entry) {
-  return entry ? { title: entry.title || "제목 없음", entry } : null;
+  return entry ? {
+    title: entry.title || "제목 없음",
+    entry,
+    prefetch: postObjectKeyPattern.test(entry.object_key ?? "") ? `/archive/${entry.object_key}` : "",
+  } : null;
 }
 
 // Collection members move in collection order; other posts move through the list the Reader
@@ -2774,7 +2823,20 @@ elements["result-list"].addEventListener("click", (event) => {
 });
 // Continue from Home places the work's table of contents under the Reader, so Back walks
 // Reader → 목차 → 홈 without flashing the table of contents first.
+// Text: the chapter list goes under the chapter so Back walks 본문 → 회차 목록 → 홈.
+// A finished chapter resumes at its list, whose 이어 읽기 row offers the next chapter.
+function openTextFromHome(target, { listOnly = false } = {}) {
+  const home = currentRoute();
+  const finished = postReadingState(target.progress) === "finished";
+  history.pushState({ redstmText: true, redstmParent: home }, "", target.listRoute);
+  if (!listOnly && !finished) {
+    history.pushState({ redstmText: true, redstmReader: true, redstmParent: target.listRoute }, "", target.route);
+  }
+  void handleRoute();
+}
+
 elements["continue-reading"].addEventListener("click", () => {
+  if (continueText) return openTextFromHome(continueText);
   if (!continueTargetPost) return;
   if (continueCollectionId) {
     history.pushState({ redstmCollection: true, redstmParent: currentRoute() }, "", `/collections/${continueCollectionId}`);
@@ -2782,6 +2844,7 @@ elements["continue-reading"].addEventListener("click", () => {
   loadPost(continueTargetPost);
 });
 elements["continue-toc"].addEventListener("click", () => {
+  if (continueText) return openTextFromHome(continueText, { listOnly: true });
   if (continueCollectionId) void openCollectionDetail(continueCollectionId);
 });
 elements["browse-all"].addEventListener("click", () => showDestination("browse"));
@@ -2814,6 +2877,20 @@ elements["more-note"].addEventListener("click", () => {
   if (currentSummary) openBookmarkEditor(currentSummary);
 });
 elements["more-source"].addEventListener("click", closeReaderMore);
+// Jump within a long body (the inverse of bodyProgress).
+elements["more-position"].addEventListener("input", () => {
+  const pane = elements["reader-pane"];
+  const body = elements["archive-body"];
+  const ratio = Number(elements["more-position"].value) / 100;
+  const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
+  const chapterEnd = document.getElementById("chapter-end");
+  // The far end lands on the 다음 화 card rather than the last line behind the toolbar.
+  pane.scrollTop = ratio >= 1
+    ? chapterEnd.offsetTop - pane.clientHeight / 3
+    : ratio * (span > 0 ? span : pane.scrollHeight - pane.clientHeight);
+  syncScrollBaseline();
+  elements["more-position-output"].value = `${Math.round(ratio * 100)}%`;
+});
 elements["more-mode"].addEventListener("click", () => {
   closeReaderMore();
   elements["mode-toggle"].click();
@@ -3051,6 +3128,12 @@ elements["reader-pane"].addEventListener("scroll", () => {
   updateReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   const delta = current - lastReaderScroll;
+  if (current < 80) {
+    document.body.classList.remove("reader-controls-hidden");
+    readerScrollDelta = 0;
+    lastReaderScroll = current;
+    return;
+  }
   if (delta && !reducedMotion.matches && isNarrowScreen() && document.body.classList.contains("reader-open")) {
     readerScrollDelta = Math.sign(readerScrollDelta) === Math.sign(delta)
       ? readerScrollDelta + delta

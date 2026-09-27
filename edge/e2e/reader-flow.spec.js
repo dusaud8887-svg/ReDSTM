@@ -307,3 +307,44 @@ test("TypeMoon: 회차로 이동 finds an episode in a long table of contents wi
   await page.locator("#collection-jump-input").press("Enter");
   await expect(page.locator('.collection-entry[data-key="300"]')).toBeFocused();
 });
+
+test("Home resumes the most recent text chapter; Back walks chapter → list → home", async ({ page }) => {
+  const workId = await useLongNovel(page, 10);
+  await useLongCollection(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await page.locator('#result-list [data-key="chapter:5"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("5화");
+  await page.goto("/");
+  await expect(page.locator("#continue-title")).toHaveText("5화");
+  await expect(page.locator("#continue-work")).toHaveText("긴 소설");
+  await page.locator("#continue-reading").click();
+  await expect(page.locator("#reader-title")).toHaveText("5화");
+  await page.goBack();
+  await expect(page.locator('#result-list [data-key="chapter:5"]')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("The next episode is fetched ahead once the current one settles", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const requested = [];
+  page.on("request", (request) => requested.push(new URL(request.url()).pathname));
+  await page.goto("/collections/1");
+  await page.locator('.collection-entry[data-key="1"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  await expect.poll(() => requested.some((path) => path.startsWith("/archive/posts/board_a/2-"))).toBe(true);
+});
+
+test("The 더보기 position slider jumps within a long body", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await expect(page.locator("#more-position-output")).toHaveText("0%");
+  await page.locator("#more-position").evaluate((input) => {
+    input.value = "100";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator("#reader-more button[aria-label='닫기']").click();
+  await expect(page.locator("#end-next")).toBeInViewport();
+});

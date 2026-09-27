@@ -572,7 +572,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const step = (direction) => {
       if (!sequence) return null;
       const result = adjacentInSequence(sequence.entries, sequence.index, direction);
-      return result.target ? { title: result.target.label || result.target.title || "", entry: result.target } : null;
+      return result.target ? {
+        title: result.target.label || result.target.title || "",
+        entry: result.target,
+        prefetch: HASH.test(result.target.sha256 || "") ? `/api/v1/text/object/${result.target.sha256}` : "",
+      } : null;
     };
     const previous = step(-1);
     const next = step(1);
@@ -620,7 +624,15 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     sequence = sequenceFor(entry, currentLane, chapters);
     if (sequence && sequence.index < 0) sequence = null;
     const record = history.history[entryIdentity] || {};
-    history.history[entryIdentity] = { ...record, readAt: new Date().toISOString() };
+    history.history[entryIdentity] = {
+      ...record,
+      readAt: new Date().toISOString(),
+      title: isNovel ? (entry.label || "") : (entry.title || ""),
+      work: isNovel ? (itemWork?.title || "") : "",
+      route: route(),
+      listRoute: currentLane === "novel" && itemWork
+        ? `/text?${new URLSearchParams({ lane: "novel", work: itemWork.work_id })}` : listRoute(),
+    };
     persist();
     shell.open({
       kicker: isNovel ? (itemWork?.title || "소설") : ["아카라이브", entry.board].filter(Boolean).join(" · "),
@@ -777,6 +789,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const measured = shell.progress();
     const anchor = shell.captureAnchor();
     history.history[current.identity] = {
+      ...old,
       readAt: old.readAt || new Date().toISOString(),
       scroll: readerPane.scrollTop,
       progress: (old.progress ?? 0) >= FINISHED ? Math.max(old.progress, measured) : measured,
@@ -885,6 +898,16 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return `/text?${parent}`;
   }
 
+  // Most recent text reading that Home can resume (records written before routes were stored are skipped).
+  function latestReading() {
+    let latest = null;
+    for (const [key, record] of Object.entries(history.history)) {
+      if (!record?.route || !record.readAt) continue;
+      if (!latest || record.readAt > latest.readAt) latest = { identity: key, ...record };
+    }
+    return latest;
+  }
+
   function isReading() { return Boolean(current); }
   function inWork() { return Boolean(work); }
   function currentRoute() { return route(); }
@@ -903,6 +926,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   return {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
-    leave, changeLane, command, parentRoute, flush: flushPosition,
+    leave, changeLane, command, parentRoute, flush: flushPosition, latestReading,
   };
 }
