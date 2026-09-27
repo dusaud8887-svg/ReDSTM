@@ -2,6 +2,8 @@
 
 상태: 구현 계약(2026-09-27). 이전 크롬 확장 방식(`extension/redstm-arca-media`, 대기열 API)은 폐기했다.
 
+배포(2026-09-27): Worker `2e56508`(version `4683270d`) 배포됨 — resolve/serve만 있고 쓰기 API 없음. 뉴토미 `3f11e12` 푸시됨(앱 재빌드·재시작 전에는 동작하지 않음). Oracle `media_importer`·`redstm-text-media.{service,path,timer}`는 **아직 설치하지 않았다**(`deploy/text-archive/update_oracle.sh` 필요). 설치 전 뉴토미가 보낸 미디어 배치는 drop에 최대 2개(≤96MB)까지만 쌓이고 영수증을 기다린다.
+
 ## 1. 문제와 결정
 
 - 텍스트 장서의 아카라이브 글은 본문에 `[image] https://ac-o.arca.live/<날짜코드>/<해시>.<ext>?expires=…&key=…` 줄을 가진다. 서명은 수 주 뒤 만료되고, 만료·무서명 요청은 403과 200×200 접근 거부 이미지(sha256 `f2a4…8c0b`)를 받는다.
