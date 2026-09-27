@@ -908,6 +908,35 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
     assert body_path.read_text(encoding="utf-8") == "sample chapter\n"
 
 
+def test_work_recrawl_repairs_imported_title_without_changing_identity(tmp_path: Path) -> None:
+    db = importer._connect(tmp_path / "text.sqlite")
+    db.executescript(collector._SCHEMA)
+    unit = collector.RequestUnit(
+        collector.Source("blacktoon", "blacktoon452.com"),
+        "work", "42", "https://blacktoon452.com/api/works/42",
+    )
+    try:
+        with db:
+            db.execute(
+                """INSERT INTO text_archive_items(
+                   identity,lane,source_site,source_work_id,source_chapter_id,
+                   source_url,title,author,content_sha256,bytes,object_key,batch_id,imported_at)
+                   VALUES('novel:blacktoon:42:7','novel','blacktoon','42','7',
+                          'https://blacktoon452.com/novel/42/7','7화','',
+                          'hash',1,'object','batch','now')"""
+            )
+        payload = {"work": {"id": 42, "title": "작품", "author": "작가"}, "episodes": []}
+        collector._apply_work(db, unit, payload, None)
+        assert tuple(db.execute(
+            "SELECT identity,source_chapter_id,title,author FROM text_archive_items"
+        ).fetchone()) == ("novel:blacktoon:42:7", "7", "작품", "작가")
+        with pytest.raises(collector.CollectorError, match="work_title_missing"):
+            collector._apply_work(db, unit, {"work": {"id": 42}, "episodes": []}, None)
+        assert db.execute("SELECT title FROM text_novel_sources").fetchone()[0] == "작품"
+    finally:
+        db.close()
+
+
 def test_collector_keeps_indexing_work_after_first_hundred_attempts(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     try:

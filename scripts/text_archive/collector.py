@@ -623,6 +623,8 @@ def _apply_work(
     work_id, title, author, episodes = parse_work_detail(value)
     if work_id != unit.entity_id:
         raise CollectorError("work_id_mismatch")
+    if not title.strip():
+        raise CollectorError("work_title_missing")
     now = _now()
     with db:
         source_row = db.execute(
@@ -648,6 +650,12 @@ def _apply_work(
                 _title_key(author),
                 now,
             ),
+        )
+        db.execute(
+            """UPDATE text_archive_items SET title=?,
+               author=CASE WHEN author='' THEN ? ELSE author END
+               WHERE lane='novel' AND source_site=? AND source_work_id=?""",
+            (title, author, unit.source.name, work_id),
         )
         _canonical_work_id(db, unit.source.name, work_id)
         for episode in episodes:
