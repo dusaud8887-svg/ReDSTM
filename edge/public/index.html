@@ -213,7 +213,14 @@
             <p>작품 모음</p>
             <h1 id="collection-title" tabindex="-1"></h1>
             <p id="collection-meta"></p>
-            <button class="collection-continue" id="collection-continue" type="button" hidden></button>
+            <div class="collection-actions">
+              <button class="collection-continue" id="collection-continue" type="button" hidden></button>
+              <form class="toc-jump" id="collection-jump" role="search" aria-label="회차로 이동">
+                <label for="collection-jump-input" class="sr-only">이동할 편 번호</label>
+                <input id="collection-jump-input" type="number" inputmode="numeric" min="1" placeholder="몇 편?" enterkeyhint="go">
+                <button type="submit">찾기</button>
+              </form>
+            </div>
           </header>
           <ol class="collection-entry-list" id="collection-entry-list"></ol>
         </section>

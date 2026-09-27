@@ -293,3 +293,17 @@ test("Text bodies turn standalone image lines into images", async ({ page }) => 
   await expect(page.locator("#archive-body")).toContainText("첫 줄");
   await expect(page.locator('#archive-body a[href="https://example.test/x"]')).toHaveText("https://example.test/x");
 });
+
+test("TypeMoon: 회차로 이동 finds an episode in a long table of contents without opening it", async ({ page }) => {
+  await useLongCollection(page, 300);
+  await page.goto("/collections/1");
+  await expect(page.locator("#collection-title")).toHaveText("긴 연재");
+  await page.locator("#collection-jump-input").fill("250");
+  await page.locator("#collection-jump-input").press("Enter");
+  await expect(page.locator('.collection-entry[data-key="250"]')).toBeFocused();
+  await expect(page.locator('.collection-entry[data-key="250"]')).toBeInViewport();
+  await expect(page.locator("#collection-view")).toBeVisible();
+  await page.locator("#collection-jump-input").fill("999");
+  await page.locator("#collection-jump-input").press("Enter");
+  await expect(page.locator('.collection-entry[data-key="300"]')).toBeFocused();
+});

@@ -387,6 +387,13 @@ body.text-library-open .text-work-back { display: inline-flex; }
 .collection-view-header #collection-meta { margin: 14px 0 0; color: var(--muted); font-size: 12px; }
 .collection-continue { min-height: 44px; margin: 18px 0 0; padding: 0 14px; border: 1px solid var(--accent); border-radius: 6px; background: transparent; color: var(--accent); font-weight: 650; text-align: left; cursor: pointer; }
 .collection-continue:hover { background: var(--accent-soft); }
+.collection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+.collection-actions .collection-continue { margin: 0; }
+.toc-jump { display: flex; gap: 4px; margin-left: auto; }
+.toc-jump input { width: 6.5rem; height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--page); color: var(--ink); font: inherit; }
+.toc-jump button { min-width: 48px; height: 44px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 650; cursor: pointer; }
+.collection-entry.jumped { animation: jump-flash 1.4s ease-out; }
+@keyframes jump-flash { from { background: var(--accent-soft); } to { background: transparent; } }
 .collection-entry-list { margin: 0; padding: 0; list-style: none; }
 .collection-entry-list li { border-bottom: 1px solid var(--line); }
 .collection-entry { width: 100%; min-height: 68px; display: grid; grid-template-columns: 3.5rem minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 10px 2px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }

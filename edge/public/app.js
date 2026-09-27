@@ -62,6 +62,7 @@ const elements = Object.fromEntries(
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
     "image-viewer", "image-viewer-image", "image-viewer-source",
+    "collection-jump", "collection-jump-input",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
@@ -2974,6 +2975,22 @@ elements["collection-continue"].addEventListener("click", async () => {
   const collection = await loadCollectionDetail(Number(elements["collection-entry-list"].dataset.collectionId));
   const entry = collection?.entries[Number(position) - 1];
   if (entry?.object_key) loadPost(entry);
+});
+// 회차로 이동 finds the row (nearest existing number) without opening it.
+elements["collection-jump"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  const wanted = Number(elements["collection-jump-input"].value);
+  const rows = [...elements["collection-entry-list"].querySelectorAll(".collection-entry[data-key]")];
+  if (!Number.isInteger(wanted) || !rows.length) return;
+  const row = rows.reduce((best, candidate) =>
+    Math.abs(Number(candidate.dataset.key) - wanted) < Math.abs(Number(best.dataset.key) - wanted) ? candidate : best);
+  const pane = elements["reader-pane"];
+  pane.scrollTop += row.getBoundingClientRect().top - pane.getBoundingClientRect().top - pane.clientHeight / 3;
+  row.classList.remove("jumped");
+  void row.offsetWidth;
+  row.classList.add("jumped");
+  elements["collection-jump-input"].blur();
+  row.focus({ preventScroll: true });
 });
 elements["collection-back"].addEventListener("click", () => {
   if (history.state?.redstmParent) history.back();
