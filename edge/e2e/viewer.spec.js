@@ -426,6 +426,36 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   await expect(page.locator("#text-reader-body")).toHaveText("대담한 융합");
 });
 
+test("arcalive follows board/category/files even when titles look like a series", async ({ page }) => {
+  await useCollectionFixture(page);
+  const releaseHash = "a".repeat(64);
+  const indexHash = "b".repeat(64);
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let payload;
+    if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
+    else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${indexHash}.json`, sha256: indexHash }],
+    };
+    else if (path.endsWith(`/index/arcalive/${indexHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", items: [1, 2].map((number) => ({
+        identity: `arcalive:0765:${number}:text`, title: `해리포터와 뛰어노는 조랑말들 ${number}화`,
+        category: "agr", board: "0765", post_id: number, sha256: "c".repeat(64),
+      })),
+    };
+    else return route.fulfill({ status: 404 });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/text?lane=arcalive");
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("agr");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#result-list .result-title")).toHaveText([
+    "해리포터와 뛰어노는 조랑말들 1화", "해리포터와 뛰어노는 조랑말들 2화",
+  ]);
+});
+
 test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {
   await usePaginationFixture(page, 150);
   await page.goto("/browse");

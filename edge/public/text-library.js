@@ -1,4 +1,4 @@
-import { migrateNovelState, parseTitle, serialWorks } from "/text-work.js";
+import { migrateNovelState, parseTitle } from "/text-work.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
@@ -31,7 +31,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   let sortMode = "title";
   let folderBoard = null;
   let folderCategory = null;
-  let folderWork = null;
   let current = null;
   let saveTimer;
   let requestId = 0;
@@ -53,7 +52,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     if (search.value.trim()) params.set("q", search.value.trim());
     if (work) params.set("work", work.work_id);
     if (lane === "arcalive" && folderBoard) params.set("board", folderBoard);
-    if (lane === "arcalive" && folderWork) params.set("series", folderWork);
     if (lane === "arcalive" && folderCategory) params.set("category", folderCategory);
     if (current?.lane === "novel") params.set("chapter", current.entry.chapter_id);
     if (current) params.set("item", current.identity);
@@ -100,7 +98,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
         meta.textContent = `${entry.kind || "회차"}${saved?.progress ? ` · ${Math.round(saved.progress * 100)}%` : ""}${history.bookmarks[identity(entry)] ? " · 저장됨" : ""}`;
       } else {
         meta.textContent = folderMode
-          ? `${folderMode === "work" ? `${entry.folder_count.toLocaleString("ko-KR")}화` : `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`}`
+          ? `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`
           : lane === "novel"
           ? `${entry.author || "작가 미상"} · ${entry.chapter_count ?? 0}화`
           : lane === "saved"
@@ -114,7 +112,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     });
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
-    status.textContent = `${rows.length.toLocaleString("ko-KR")}개 ${chaptersMode ? "회차" : folderMode === "board" ? "게시판" : folderMode === "work" ? "작품" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
+    status.textContent = `${rows.length.toLocaleString("ko-KR")}개 ${chaptersMode ? "회차" : folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
@@ -131,22 +129,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       number: numbered ? Number(numbered[1]) : Number.MAX_SAFE_INTEGER,
       label: text,
     };
-  }
-
-  function latestEpisodeNumber(label) {
-    const parsed = parseTitle(String(label || ""));
-    if (parsed.order && parsed.order[2] === 1) return parsed.order[3];
-    const ranked = episodeRank(label);
-    return ranked.number === Number.MAX_SAFE_INTEGER ? -1 : ranked.number;
-  }
-
-  function latestExplicitLabel(posts) {
-    for (let index = posts.length - 1; index >= 0; index -= 1) {
-      const order = posts[index].order;
-      if (order && order[2] === 1) return posts[index].label || posts[index].title || "";
-    }
-    const last = posts[posts.length - 1];
-    return last ? (last.label || last.title || "") : "";
   }
 
   function resolvedOrder(entry) {
@@ -239,38 +221,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       const visibleBoard = query
         ? boardItems.filter((item) => `${item.title || ""} ${item.category || ""}`.normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query))
         : boardItems;
-      const { works, loose } = serialWorks(boardItems);
-      if (works.length && !folderCategory) {
-        const shownLoose = query
-          ? loose.filter((post) => `${post.title || ""} ${post.category || ""}`.normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query))
-          : loose;
-        if (folderWork === "단편·기타") {
-          return renderRows(orderedChapters(shownLoose.map((post) => ({ ...post, label: post.title }))));
-        }
-        if (folderWork) {
-          const found = works.find((entry) => entry.title === folderWork);
-          chapterSource = found ? found.posts : [];
-          chapters = orderedChapters(chapterSource);
-          return renderRows(chapters.filter((chapter) =>
-            `${chapter.label || ""} ${chapter.title || ""}`.normalize("NFKC").toLocaleLowerCase("ko-KR")
-              .includes(query)), { chaptersMode: true });
-        }
-        const shownWorks = query
-          ? works.filter((entry) => entry.title.normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query)
-            || entry.posts.some((post) => `${post.title || ""} ${post.label || ""}`.normalize("NFKC").toLocaleLowerCase("ko-KR").includes(query)))
-          : works;
-        const folders = shownWorks.map((entry) => ({
-          folder_label: entry.title,
-          folder_count: entry.posts.length,
-          title: entry.title,
-          chapter_count: entry.posts.length,
-          latest_label: latestExplicitLabel(entry.posts),
-          work_id: entry.title,
-        }));
-        const rows = orderedWorks(folders);
-        if (shownLoose.length) rows.push({ folder_label: "단편·기타", folder_count: shownLoose.length, title: "단편·기타", chapter_count: shownLoose.length, work_id: "단편·기타" });
-        return renderRows(rows, { folderMode: "work" });
-      }
       if (!folderCategory) return renderRows(group(visibleBoard, "category"), { folderMode: "category" });
       return renderRows(visibleBoard.filter((item) => String(item.category || "미분류") === folderCategory));
     }
@@ -282,7 +232,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     const visible = Boolean(work || folderBoard);
     button.hidden = !visible;
     button.textContent = work ? "← 작품 목록"
-      : folderWork ? `← ${folderBoard}`
       : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
   }
 
@@ -341,7 +290,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     chapterSource = [];
     chapters = [];
     folderBoard = lane === "arcalive" ? params.get("board") : null;
-    folderWork = lane === "arcalive" ? params.get("series") : null;
     folderCategory = lane === "arcalive" ? params.get("category") : null;
     current = null;
     syncBackButton();
@@ -455,7 +403,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     progress.style.width = `${Math.round((record.progress || 0) * 100)}%`;
     progress.setAttribute("aria-valuenow", String(Math.round((record.progress || 0) * 100)));
     updateBookmark();
-    const inSerial = isNovel || (currentLane === "arcalive" && folderWork && folderWork !== "단편·기타");
+    const inSerial = isNovel;
     const position = chapters.findIndex((chapter) => sameChapter(chapter, entry));
     for (const id of ["text-reader-previous", "text-reader-bottom-previous"]) {
       document.querySelector(`#${id}`).disabled = !inSerial || position <= 0;
@@ -514,14 +462,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       renderCatalog();
       status.textContent = `${catalog.length.toLocaleString("ko-KR")}개 작품`;
       navigate();
-    } else if (folderWork) {
-      folderWork = null;
-      chapterSource = [];
-      chapters = [];
-      syncBackButton();
-      onChange();
-      renderCatalog();
-      navigate();
     } else if (folderCategory) {
       folderCategory = null;
       syncBackButton();
@@ -541,22 +481,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
       const saved = visible[index];
       if (lane === "arcalive" && !folderBoard) {
         folderBoard = saved.folder_label;
-        folderWork = null;
         syncBackButton();
         onChange();
         renderCatalog();
         navigate();
         return;
       }
-      if (lane === "arcalive" && !folderWork && !folderCategory && saved.folder_label && saved.chapter_count) {
-        folderWork = saved.folder_label;
-        syncBackButton();
-        onChange();
-        renderCatalog();
-        navigate();
-        return;
-      }
-      if (lane === "arcalive" && !folderCategory && !folderWork) {
+      if (lane === "arcalive" && !folderCategory) {
         folderCategory = saved.folder_label;
         syncBackButton();
         renderCatalog();
@@ -585,7 +516,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     chapterSource = [];
     chapters = [];
     folderBoard = null;
-    folderWork = null;
     folderCategory = null;
     current = null;
     setReader(false);
@@ -662,7 +592,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
 
   function moveChapter(delta) {
     const inSerial = current && chapters.length && (
-      current.lane === "novel" || (current.lane === "arcalive" && folderWork && folderWork !== "단편·기타")
+      current.lane === "novel"
     );
     if (!inSerial) return;
     const index = chapters.findIndex((chapter) => sameChapter(chapter, current.entry));
@@ -683,8 +613,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
   }
 
   function sortContext() {
-    if ((lane === "novel" && work) || (lane === "arcalive" && folderWork && folderWork !== "단편·기타")) return "chapters";
-    if (lane === "novel" || (lane === "arcalive" && folderBoard && !folderCategory)) return "works";
+    if (lane === "novel" && work) return "chapters";
+    if (lane === "novel") return "works";
     return "titles";
   }
 
@@ -707,7 +637,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane }) {
     chapterSource = [];
     chapters = [];
     folderBoard = null;
-    folderWork = null;
     folderCategory = null;
     syncBackButton();
     reader.hidden = true;
