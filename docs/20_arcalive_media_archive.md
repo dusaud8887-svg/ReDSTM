@@ -2,7 +2,7 @@
 
 상태: 구현 계약(2026-09-27). 이전 크롬 확장 방식(`extension/redstm-arca-media`, 대기열 API)은 폐기했다.
 
-배포(2026-09-27): Worker `2e56508`(version `4683270d`) 배포됨 — resolve/serve만 있고 쓰기 API 없음. 뉴토미 `3f11e12` 푸시됨(앱 재빌드·재시작 전에는 동작하지 않음). Oracle `media_importer`·`redstm-text-media.{service,path,timer}`는 **아직 설치하지 않았다**(`deploy/text-archive/update_oracle.sh` 필요). 설치 전 뉴토미가 보낸 미디어 배치는 drop에 최대 2개(≤96MB)까지만 쌓이고 영수증을 기다린다.
+배포(2026-09-27): Worker는 `8d4343c`를 포함한 main `1c216c6`(version `f1d93054`), Oracle text release `20260927T115629Z`(`redstm-text-media.{service,path,timer}` 활성), 뉴토미 `ebe8fa1` 빌드(`dist/Newtomi Downloader`). 실제 글 1개(`arcalive:monmusu:102379431`)로 수집 → SFTP → media_importer → R2(`content-type` image/webp·image/png) → 영수증 → drop 정리까지 확인했다. media importer도 공용 `operation_window`를 따르므로 루트 여유가 40GiB 아래면 `disk_below_floor`로 미뤘다가 여유가 돌아오면 이어서 처리한다(같은 날 스냅샷 압축 중 실제로 발생).
 
 ## 1. 문제와 결정
 
