@@ -15,13 +15,27 @@ _EXPLICIT_EPISODE = re.compile(
       (?:(?:제\s*)?(?P<volume>\d+)\s*(?:권|부|volume|vol\.?|part)\s*)?
       (?:제\s*)?(?P<start>\d+(?:\.\d+)?)
       (?:\s*(?:~|〜|～|-)\s*(?P<end>\d+(?:\.\d+)?))?
-      \s*(?:화|회|장|편|chapter|ch\.?|episode|ep\.?)
+      \s*(?:화|話|회|장|편|chapter|ch\.?|episode|ep\.?)
     )\s*$
     """,
     re.IGNORECASE | re.VERBOSE,
 )
 _HASH_EPISODE = re.compile(r"(?P<label>#\s*(?P<start>\d+))\s*$")
-_BRACKET_EPISODE = re.compile(r"(?P<label>[([]\s*(?P<start>\d+)\s*[)\]])\s*$")
+_BRACKET_EPISODE = re.compile(
+    r"(?P<label>\(\s*(?P<paren_start>\d+)\s*\)|\[\s*(?P<bracket_start>\d+)\s*\])\s*$"
+)
+_UNBALANCED_EPISODE = re.compile(r"[([]\s*\d+\s*[)\]]\s*$")
+_ENGLISH_EPISODE = re.compile(
+    r"(?P<label>(?:chapter|ch\.?|episode|ep\.?)\s*(?P<start>\d+(?:\.\d+)?))\s*$",
+    re.IGNORECASE,
+)
+_SUBTITLE_EPISODE = re.compile(
+    r"(?P<label>(?:제\s*)?(?P<start>\d+(?:\.\d+)?)\s*(?:화|話|회|장|편))\s*[:：]\s*(?P<subtitle>.+)$"
+)
+_TRAILING_STATUS = re.compile(
+    r"\s*(?:\((?P<paren>완|완결|수정|재업)\)|"
+    r"\[(?P<bracket>완|완결|수정|재업)\]|(?P<han>完))\s*$"
+)
 _SPECIAL_EPISODE = re.compile(
     r"(?P<label>프롤로그|서장|막간|외전|특별편|에필로그|prologue|interlude|epilogue)\s*$",
     re.IGNORECASE,
@@ -44,6 +58,10 @@ class ParsedTitle:
     base_key: str
     episode_label: str | None
     order_key: tuple[int, int, int, Decimal, Decimal] | None
+    parse_status: str = "unparsed"
+    reason: str | None = None
+    status_marker: str | None = None
+    subtitle: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,15 +88,28 @@ def _matching_text(title: str) -> str:
 
 def parse_title(title: str) -> ParsedTitle:
     value = _matching_text(title)
+    status = _TRAILING_STATUS.search(value)
+    if status:
+        value = value[: status.start()].rstrip()
+    status_marker = next((part for part in status.groups() if part), None) if status else None
     match = (
         _EXPLICIT_EPISODE.search(value)
         or _HASH_EPISODE.search(value)
         or _BRACKET_EPISODE.search(value)
+        or _ENGLISH_EPISODE.search(value)
+        or _SUBTITLE_EPISODE.search(value)
     )
     special = None if match else _SPECIAL_EPISODE.search(value)
     if match:
-        start = Decimal(match.group("start"))
+        start = Decimal(
+            match.groupdict().get("start")
+            or match.groupdict().get("paren_start")
+            or match.groupdict().get("bracket_start")
+            or "0"
+        )
         end = Decimal(match.groupdict().get("end") or start)
+        if end < start:
+            return ParsedTitle(value, None, None, "invalid", "reversed_range", status_marker)
         season = int(match.groupdict().get("season") or 0)
         volume = int(match.groupdict().get("volume") or 0)
         base = _TRAILING_SEPARATOR.sub("", value[: match.start()]).strip()
@@ -86,7 +117,12 @@ def parse_title(title: str) -> ParsedTitle:
         if side_story:
             base = re.sub(r"(?:^|\s)(?:외전|특별편)\s*$", "", base).strip()
         return ParsedTitle(
-            base, match.group("label").strip(), (season, volume, 2 if side_story else 1, start, end)
+            base,
+            match.group("label").strip(),
+            (season, volume, 2 if side_story else 1, start, end),
+            "parsed",
+            status_marker=status_marker,
+            subtitle=match.groupdict().get("subtitle"),
         )
     if special:
         ranks = {
@@ -102,8 +138,16 @@ def parse_title(title: str) -> ParsedTitle:
         }
         label = special.group("label").strip()
         base = _TRAILING_SEPARATOR.sub("", value[: special.start()]).strip()
-        return ParsedTitle(base, label, (0, 0, ranks[label.casefold()], Decimal(0), Decimal(0)))
-    return ParsedTitle(value, None, None)
+        return ParsedTitle(
+            base,
+            label,
+            (0, 0, ranks[label.casefold()], Decimal(0), Decimal(0)),
+            "parsed",
+            status_marker=status_marker,
+        )
+    if _UNBALANCED_EPISODE.search(value):
+        return ParsedTitle(value, None, None, "invalid", "mismatched_bracket", status_marker)
+    return ParsedTitle(value, None, None, status_marker=status_marker)
 
 
 def preview_collections(posts: Iterable[PostTitle]) -> Preview:
@@ -123,17 +167,16 @@ def preview_collections(posts: Iterable[PostTitle]) -> Preview:
 
     groups: list[CollectionCandidate] = []
     for (board_id, base_key, _author_key), rows in sorted(blocks.items()):
-        if len(rows) < 2:
-            rejected["single_episode"] += len(rows)
-            continue
-        orders = [parsed.order_key for _post, parsed in rows]
-        if len(set(orders)) != len(orders):
-            rejected["duplicate_episode"] += len(rows)
+        counts = Counter(parsed.order_key for _post, parsed in rows)
+        unique = [(post, parsed) for post, parsed in rows if counts[parsed.order_key] == 1]
+        rejected["duplicate_episode"] += len(rows) - len(unique)
+        if len(unique) < 2:
+            rejected["single_episode"] += len(unique)
             continue
         ordered = tuple(
             post
             for post, _parsed in sorted(
-                rows,
+                unique,
                 key=lambda item: (
                     item[1].order_key,
                     item[0].created_at_source or "",

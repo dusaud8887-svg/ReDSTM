@@ -286,6 +286,7 @@ def build_publish_tree(
                         "chapters": [
                             {
                                 "chapter_id": row["canonical_chapter_id"],
+                                "reading_order": position,
                                 "label": row["chapter_label"],
                                 "kind": row["chapter_kind"],
                                 "source_episode_number_raw": row["source_episode_number_raw"],
@@ -297,7 +298,7 @@ def build_publish_tree(
                                 "sha256": row["content_sha256"],
                                 "source_variants": row.get("source_variants", []),
                             }
-                            for row in chapters
+                            for position, row in enumerate(chapters)
                         ],
                     }
                     work["detail_key"], body = _indexed_file(output_root, "novel", detail)

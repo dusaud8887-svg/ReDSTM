@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { migrateNovelState, parseTitle, serialWorks } from "../public/text-work.js";
+import { migrateNovelState, orderChapters } from "../public/text-work.js";
 
 test("migrates reading progress and bookmarks from old linked-work URLs", () => {
   const state = {
@@ -24,39 +24,10 @@ test("migrates reading progress and bookmarks from old linked-work URLs", () => 
   assert.equal(migrateNovelState(state, [work]), false);
 });
 
-test("parseTitle matches crawler.collections.parse_title", () => {
-  assert.deepEqual(parseTitle("[연재] Ｆａｔｅ： 달빛 2화"), {
-    base: "fate: 달빛", label: "2화", order: [0, 0, 1, 2, 2],
-  });
-  assert.equal(parseTitle("작품 (리메이크) 2화").base, "작품 (리메이크)");
-  assert.equal(parseTitle("연감 2026").order, null);
-  assert.equal(parseTitle("대담한 합성 (Worm/The Gamer) 2부 파트 16").order, null);
-  assert.deepEqual(parseTitle("기나긴 서사 프롤로그").order, [0, 0, 0, 0, 0]);
-  assert.deepEqual(parseTitle("긴 작품 1.5화").order, [0, 0, 1, 1.5, 1.5]);
-  assert.deepEqual(parseTitle("긴 작품 외전 1화").order, [0, 0, 2, 1, 1]);
-});
-
-test("serial groups follow preview_collections membership and order", () => {
-  const posts = [
-    { board: "board", post_id: 2, title: "[연재] Ｆａｔｅ： 달빛 2화", author: "번역자2" },
-    { board: "board", post_id: 1, title: "[연재] Fate: 달빛 1화", author: "번역자1" },
-    { board: "board", post_id: 3, title: "마왕: 첫 작품 1화" },
-    { board: "board", post_id: 4, title: "마왕: 다른 작품 2화" },
-    { board: "board", post_id: 5, title: "작품 (리메이크) 1화" },
-    { board: "board", post_id: 6, title: "작품 (리메이크) 2화" },
-    { board: "board", post_id: 7, title: "중복 작품 1화" },
-    { board: "board", post_id: 8, title: "중복 작품 1화" },
-    { board: "board", post_id: 9, title: "연감 2026" },
-    { board: "board", post_id: 10, title: "기나긴 서사 프롤로그" },
-    { board: "board", post_id: 11, title: "기나긴 서사 1화" },
-    { board: "board", post_id: 12, title: "기나긴 서사 에필로그" },
-    { board: "board", post_id: 13, title: "기나긴 서사" },
-    { board: "board", post_id: 14, title: "[연재] Fate: 달빛" },
-  ];
-  const { works, loose } = serialWorks(posts);
-  assert.deepEqual(works.map((work) => work.posts.map((post) => post.post_id)), [
-    [10, 11, 12],
-    [5, 6],
-  ]);
-  assert.deepEqual(loose.map((post) => post.post_id), [2, 1, 3, 4, 7, 8, 9, 13, 14]);
+test("published reading order survives list sorting and misleading chapter labels", () => {
+  const chapters = [{ label: "1화" }, { label: "제3화: 귀환" }, { label: "2화" }];
+  assert.deepEqual(orderChapters(chapters, "oldest"), chapters);
+  assert.deepEqual(orderChapters(chapters, "latest").map((row) => row.label),
+    ["2화", "제3화: 귀환", "1화"]);
+  assert.deepEqual(chapters.map((row) => row.label), ["1화", "제3화: 귀환", "2화"]);
 });

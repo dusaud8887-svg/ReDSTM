@@ -1,6 +1,6 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
-import { migrateNovelState, parseTitle } from "/text-work.js";
+import { migrateNovelState, orderChapters } from "/text-work.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
@@ -276,21 +276,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return parts.join(" · ");
   }
 
-  function episodeRank(label) {
-    const text = String(label || "").normalize("NFKC");
-    const numbered = /(?:제\s*)?(\d+)\s*(?:화|話|회)/.exec(text);
-    return {
-      side: /외전|특별편|후기/.test(text) ? 1 : 0,
-      number: numbered ? Number(numbered[1]) : Number.MAX_SAFE_INTEGER,
-      label: text,
-    };
-  }
-
-  function resolvedOrder(entry) {
-    if (Array.isArray(entry.order)) return entry.order;
-    return parseTitle(entry.label || entry.title || "").order;
-  }
-
   function sameChapter(chapter, entry) {
     if (chapter.chapter_id && entry.chapter_id) return String(chapter.chapter_id) === String(entry.chapter_id);
     if (chapter.identity && entry.identity) return chapter.identity === entry.identity;
@@ -298,40 +283,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       && String(chapter.post_id) === String(entry.post_id);
   }
 
-  function compareChapters(left, right, mode) {
-    const id = String(left.chapter_id || left.source_chapter_id || left.post_id || "")
-      .localeCompare(String(right.chapter_id || right.source_chapter_id || right.post_id || ""));
-    const leftOrder = resolvedOrder(left);
-    const rightOrder = resolvedOrder(right);
-    if (leftOrder && rightOrder) {
-      let byOrder = 0;
-      for (let index = 0; index < leftOrder.length; index += 1) {
-        if (leftOrder[index] !== rightOrder[index]) {
-          byOrder = leftOrder[index] - rightOrder[index];
-          break;
-        }
-      }
-      if (mode === "title") {
-        return String(left.label || "").localeCompare(String(right.label || ""), "ko-KR", { numeric: true }) || id;
-      }
-      return (mode === "latest" ? -byOrder : byOrder) || id;
-    }
-    const a = episodeRank(left.label);
-    const b = episodeRank(right.label);
-    if (mode === "title") {
-      return a.label.localeCompare(b.label, "ko-KR", { numeric: true }) || id;
-    }
-    const direction = mode === "latest" ? -1 : 1;
-    const numbered = a.number === Number.MAX_SAFE_INTEGER || b.number === Number.MAX_SAFE_INTEGER
-      ? (a.number === b.number ? 0 : (a.number === Number.MAX_SAFE_INTEGER ? 1 : -1))
-      : (a.number - b.number) * direction;
-    return a.side - b.side || numbered
-      || a.label.localeCompare(b.label, "ko-KR", { numeric: true }) || id;
-  }
-
-  // Reading order is always oldest-first; the list sort only changes what the list shows.
+  // The published detail is in reading order; list sorting never changes navigation.
   function canonicalChapters(rows) {
-    return [...rows].sort((left, right) => compareChapters(left, right, "oldest"));
+    return orderChapters(rows, "oldest");
   }
 
   function orderedWorks(rows) {
@@ -351,7 +305,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function renderCatalog() {
     const query = normalize(search.value.trim());
     if (work) {
-      const displayed = [...chapterSource].sort((left, right) => compareChapters(left, right, sortMode));
+      const displayed = orderChapters(chapterSource, sortMode);
       renderRows(displayed.filter((chapter) => normalize(`${chapter.label || ""} ${chapterKind(chapter.kind)}`).includes(query)),
         { chaptersMode: true });
       return;

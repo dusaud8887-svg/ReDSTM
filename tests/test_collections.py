@@ -43,3 +43,28 @@ def test_decimal_and_side_story_have_distinct_chapter_order() -> None:
     side = parse_title("긴 작품 외전 1화")
     assert side.base_key == "긴 작품"
     assert side.order_key != main[0].order_key
+
+
+def test_title_parser_keeps_subtitle_status_and_rejects_invalid_syntax() -> None:
+    title = parse_title("긴 작품 제12화: 귀환 (완)")
+    assert title.base_key == "긴 작품"
+    assert title.order_key is not None and title.order_key[3] == 12
+    assert (title.subtitle, title.status_marker, title.parse_status) == ("귀환", "완", "parsed")
+    assert parse_title("긴 작품 Chapter 12").order_key == title.order_key
+    assert parse_title("긴 작품 12話").order_key == title.order_key
+    assert parse_title("긴 작품 3~1화").reason == "reversed_range"
+    assert parse_title("긴 작품 (1]").reason == "mismatched_bracket"
+    assert parse_title("연감 2026").parse_status == "unparsed"
+
+
+def test_duplicate_episode_is_local_to_conflicting_rows() -> None:
+    result = preview_collections(
+        [
+            _post(1, "기나긴 작품 1화"),
+            _post(2, "기나긴 작품 2화"),
+            _post(3, "기나긴 작품 3화"),
+            _post(4, "기나긴 작품 2화"),
+        ]
+    )
+    assert [[post.external_post_id for post in group.posts] for group in result.groups] == [[1, 3]]
+    assert result.rejected["duplicate_episode"] == 2

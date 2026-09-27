@@ -416,6 +416,7 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
         "252화",
         "에필로그",
     ]
+    assert [chapter["reading_order"] for chapter in chapters] == list(range(len(chapters)))
     assert chapters[2]["source_episode_number_raw"] == "42"
     assert chapters[2]["source_episode_number"] == 42
     assert chapters[2]["source_toc_position"] == 1
