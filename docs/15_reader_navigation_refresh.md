@@ -2,6 +2,7 @@
 
 - 상태: Phase 0–3 구현. 목록 occupancy·끝 이동 완독·이전/다음 기준·게시판 표시명 보완. Phase 4 모듈 분리는 후속
 - 기준일: 2026-09-20
+- 갱신: Reader 이동·뒤로가기·설정 배치·게시판 선택은 [`19_mobile_reader_redesign.md`](19_mobile_reader_redesign.md)가 대체한다
 - 범위: Reader의 홈, 둘러보기, 검색, 작품, 보관함, 본문 Reader와 반응형 shell
 - 제외: `/ops` 운영 화면의 정보 구조와 기능. Reader에서 운영 화면으로 가는 링크만 유지한다.
 - 현재 구현: discovery/reading shell, `/browse`·`/search` 역할 분리, progress 기반 이어 읽기, 보관함 `읽는 중`, local user-state, 작품 색인, 둘러보기 칩/게시판 필터 정합, 검색·보관함 조건 분리
