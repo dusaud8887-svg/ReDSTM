@@ -489,3 +489,67 @@ test("Picking another chapter from the visible side list stays in the reading se
   await expect(page.locator("#reader")).toBeHidden();
   await expect(page).toHaveURL(/work=novel%3Afixture%3Along$/);
 });
+
+test("Text parity: sort chips, reading progress, memo·tags, and Home 읽던 작품", async ({ page }) => {
+  const workId = await useLongNovel(page, 40);
+  await useLongCollection(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await expect(page.locator('#result-list [data-key="chapter:1"]')).toBeVisible();
+  await expect(page.locator("#search-input")).toHaveAttribute("placeholder", /회차 찾기/);
+  // Sorting is a visible control, and it travels in the URL.
+  await page.locator('#text-sort-chips [data-text-sort="latest"]').click();
+  await expect(page.locator('#text-sort-chips [data-text-sort="latest"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(/sort=latest/);
+  await expect(page.locator("#result-list .result-item[data-key] .result-title").first()).toHaveText("40화");
+  await page.locator('#result-list [data-key="chapter:3"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("3화");
+  // Memo and tags work for text bookmarks too.
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await expect(page.locator("#more-note")).toBeVisible();
+  await page.locator("#more-note").click();
+  await page.locator("#bookmark-note").fill("다시 볼 장면");
+  await page.locator("#bookmark-tags").fill("복선, 명장면");
+  await page.locator("#bookmark-dialog button[type='submit']").click();
+  await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#end-next").click();
+  await expect(page.locator("#reader-title")).toHaveText("4화");
+  await page.goto("/text?lane=saved");
+  await expect(page.locator("#result-list .result-item").first()).toContainText("#명장면");
+  await expect(page.locator("#result-list .result-item").first()).toContainText("다시 볼 장면");
+  await page.goto("/text?lane=novel");
+  await expect(page.locator("#result-list .result-item").first()).toContainText("읽음 1/40");
+  await expect(page.locator("#result-list .result-item").first()).toContainText("최근 4화");
+  await page.goto("/");
+  const works = page.locator("#reading-works");
+  await expect(works).toBeVisible();
+  await works.locator(".home-item", { hasText: "긴 소설" }).click();
+  await expect(page).toHaveURL(/work=novel%3Afixture%3Along/);
+  await expect(page.locator('#result-list [data-key="chapter:4"]')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("Text bodies show [image] and [video] lines and readable markdown links", async ({ page }) => {
+  const workId = await useLongNovel(page, 2);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("https://ac-o.arca.live/**", (route) => route.fulfill({ contentType: "image/png", body: png }));
+  await page.route("https://ac.arca.live/**", (route) => route.fulfill({ status: 404, body: "" }));
+  const image = "https://ac-o.arca.live/20240329sac/7e4f.png?expires=4102444800&key=huxjPhFT5g-FdT0sbArY3A&type=orig";
+  const expired = "https://ac-o.arca.live/20240329sac/old.png?expires=1785653375&key=x&type=orig";
+  await page.route(`**/api/v1/text/object/${(1).toString(16).padStart(64, "a")}`, (route) => route.fulfill({
+    contentType: "text/markdown",
+    body: `# 긴 소설-1화\n#\nhttps://novel.example/1\n\n[image] ${image}\n[image] ${expired}\n\n진정한 순교자\n[video] https://ac.arca.live/v/clip.mp4?expires=4102444800&key=k\n출처 [https://novelpia.com/novel/391903](https://unsafelink.com/https://novelpia.com/novel/391903)`,
+  }));
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await expect(page.locator("#archive-body .media-figure img")).toHaveAttribute("src", image);
+  await expect(page.locator("#archive-body .media-video video")).toHaveAttribute("src", "https://ac.arca.live/v/clip.mp4?expires=4102444800&key=k");
+  // An expired signed link is not loaded; the note points at the source post.
+  await expect(page.locator("#archive-body .media-expired")).toHaveCount(1);
+  await expect(page.locator("#archive-body .media-expired a")).toHaveAttribute("href", "https://novel.example/1");
+  await expect(page.locator("#archive-body .media-figure img")).toHaveCount(1);
+  await expect(page.locator("#archive-body")).not.toContainText("[image]");
+  const link = page.locator('#archive-body a[href="https://novelpia.com/novel/391903"]');
+  await expect(link).toHaveText("https://novelpia.com/novel/391903");
+  await expect(page.locator("#archive-body")).not.toContainText("unsafelink");
+});

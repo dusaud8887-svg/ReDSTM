@@ -64,6 +64,7 @@ const elements = Object.fromEntries(
     "image-viewer", "image-viewer-image", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output",
+    "text-sort-chips",
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
@@ -142,6 +143,8 @@ let listContext = null;
 let listRequestId = 0;
 let immersiveOpener = null;
 let editingBookmarkSummary = null;
+// True while the bookmark editor edits the open text chapter instead of a TypeMoon post.
+let editingTextBookmark = false;
 // Which source owns the shared Reader shell: "typemoon", "text", or null when it is closed.
 let readerSource = null;
 let readerNavigation = null;
@@ -624,65 +627,79 @@ async function renderReadingWorks() {
   const section = elements["reading-works"];
   const list = elements["reading-works-list"];
   if (!section || !list || currentDestination !== "library") return;
+  const items = [];
+  let failedBoards = new Set();
+  let typeMoonFailed = false;
   try {
     const index = await collectionIndex();
-    const { progress, failedBoards } = await collectionReadingProgress(index);
-    if (currentDestination !== "library") return;
+    const reading = await collectionReadingProgress(index);
+    failedBoards = reading.failedBoards;
     collectionProgressFailedBoards = failedBoards;
-    const items = [];
     for (const collection of index.summaries) {
       if (failedBoards.has(collection.board_id)) continue;
-      const state = progress.get(collection.id);
+      const state = reading.progress.get(collection.id);
       const occupancy = collectionOccupancy({
         availableCount: collectionAvailableCount(collection),
         finishedCount: state?.finished ?? 0,
         readingCount: state?.reading ?? 0,
       });
       if (occupancy !== "reading") continue;
+      const copy = collectionRowCopy({
+        entryCount: collection.entry_count,
+        unavailableCount: collection.unavailable_count ?? 0,
+        finishedCount: state?.finished ?? 0,
+        readingCount: state?.reading ?? 0,
+        continueTarget: null,
+      });
       items.push({
-        collection,
-        copy: collectionRowCopy({
-          entryCount: collection.entry_count,
-          unavailableCount: collection.unavailable_count ?? 0,
-          finishedCount: state?.finished ?? 0,
-          readingCount: state?.reading ?? 0,
-          continueTarget: null,
-        }),
+        title: collection.title,
+        meta: [boardLabel(collection.board_id), copy.progress, copy.action].filter(Boolean).join(" · "),
         readAt: state?.lastReadAt ?? "",
+        open: () => void openCollectionDetail(collection.id),
       });
     }
-    items.sort((left, right) => Date.parse(right.readAt || 0) - Date.parse(left.readAt || 0));
-    const shown = items.slice(0, 3);
-    section.hidden = shown.length === 0 && failedBoards.size === 0;
-    list.replaceChildren();
-    if (failedBoards.size && shown.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "home-empty";
-      empty.textContent = "읽기 상태를 확인하지 못했습니다.";
-      list.append(empty);
-    }
-    for (const item of shown) {
-      const row = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "home-item";
-      const title = document.createElement("strong");
-      title.textContent = item.collection.title;
-      const meta = document.createElement("span");
-      meta.textContent = [boardLabel(item.collection.board_id), item.copy.progress, item.copy.action].filter(Boolean).join(" · ");
-      button.append(title, meta);
-      button.addEventListener("click", () => void openCollectionDetail(item.collection.id));
-      row.append(button);
-      list.append(row);
-    }
-    if (failedBoards.size && shown.length) {
-      const note = document.createElement("li");
-      note.className = "home-empty";
-      note.textContent = "일부 읽기 상태 미확인";
-      list.append(note);
-    }
   } catch {
-    section.hidden = true;
+    typeMoonFailed = true;
+  }
+  if (currentDestination !== "library") return;
+  for (const work of textLibrary.readingWorks()) {
+    items.push({
+      title: work.title,
+      meta: ["소설", work.meta].filter(Boolean).join(" · "),
+      readAt: work.readAt,
+      open: () => openTextFromHome({ identity: "novel:", listRoute: work.listRoute, progress: 0 }, { listOnly: true }),
+    });
+  }
+  items.sort((left, right) => (Date.parse(right.readAt) || 0) - (Date.parse(left.readAt) || 0));
+  const shown = items.slice(0, 3);
+  section.hidden = shown.length === 0 && failedBoards.size === 0;
+  list.replaceChildren();
+  if ((failedBoards.size || typeMoonFailed) && shown.length === 0) {
+    section.hidden = !failedBoards.size;
+    const empty = document.createElement("li");
+    empty.className = "home-empty";
+    empty.textContent = "읽기 상태를 확인하지 못했습니다.";
+    list.append(empty);
+  }
+  for (const item of shown) {
+    const row = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "home-item";
+    const title = document.createElement("strong");
+    title.textContent = item.title;
+    const meta = document.createElement("span");
+    meta.textContent = item.meta;
+    button.append(title, meta);
+    button.addEventListener("click", item.open);
+    row.append(button);
+    list.append(row);
+  }
+  if (failedBoards.size && shown.length) {
+    const note = document.createElement("li");
+    note.className = "home-empty";
+    note.textContent = "일부 읽기 상태 미확인";
+    list.append(note);
   }
 }
 
@@ -789,7 +806,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   body.classList.remove("aa", "normalize-source-styles");
   body.classList.add("plain-text");
   body.ariaLabel = "텍스트 본문";
-  renderPlainTextWithMedia(body, text);
+  renderPlainTextWithMedia(body, text, { sourceUrl });
   openMobileReader();
   updateShellMode();
   requestAnimationFrame(() => elements["reader-title"].focus({ preventScroll: true }));
@@ -1086,12 +1103,8 @@ function syncSearchRoute() {
 
 function applyTextSortOptions() {
   if (currentDestination !== "text") return;
-  const context = textLibrary.sortContext();
-  const options = context === "chapters"
-    ? [["오래된순", "oldest"], ["최신순", "latest"], ["이름순", "title"]]
-    : context === "works"
-      ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"]]
-      : [["가나다순", "title"]];
+  const sortOptions = textLibrary.sortOptions();
+  const options = sortOptions.length ? sortOptions : [["가나다순", "title"]];
   const select = elements["sort-filter"];
   const wanted = textLibrary.currentSort();
   const allowed = new Set(options.map(([, value]) => value));
@@ -1099,6 +1112,18 @@ function applyTextSortOptions() {
   // The text library owns its sort (it travels in the URL); the select only mirrors it.
   select.value = allowed.has(wanted) ? wanted : options[0][1];
   textLibrary.setSort(select.value);
+  // The select is hidden in the text library; these chips are its visible control.
+  const chips = elements["text-sort-chips"];
+  chips.hidden = sortOptions.length < 2;
+  chips.replaceChildren(...sortOptions.map(([label, value]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.dataset.textSort = value;
+    chip.textContent = label;
+    chip.setAttribute("aria-pressed", String(value === select.value));
+    return chip;
+  }));
+  elements["search-input"].placeholder = textLibrary.searchPlaceholder();
 }
 
 function updateDestinationLayout() {
@@ -1125,7 +1150,7 @@ function updateDestinationLayout() {
   document.querySelector(".board-field").hidden = true;
   elements["board-dock"].hidden = !browsing && !searching;
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
-    : text ? "소설·아카라이브 제목 검색"
+    : text ? textLibrary.searchPlaceholder()
     : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
   elements["catalog-title"].textContent = saved ? "내 보관함"
     : text ? "텍스트 장서"
@@ -1416,6 +1441,7 @@ function showDestination(destination, navigate = true, view = destination === "b
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
   elements["catalog-toggle"].setAttribute("aria-expanded", "true");
   document.body.classList.toggle("text-library-open", destination === "text");
+  if (destination !== "text") elements["text-sort-chips"].hidden = true;
   updateDestinationLayout();
   if (destination === "library") renderCover();
   else {
@@ -2709,9 +2735,23 @@ function toggleTypeMoonBookmark() {
   renderAfterBookmarkChange();
 }
 
+function openTextBookmarkEditor() {
+  const details = textLibrary.bookmarkDetails();
+  if (!details) return;
+  editingTextBookmark = true;
+  editingBookmarkSummary = null;
+  elements["bookmark-dialog-post"].textContent = details.title;
+  elements["bookmark-note"].value = details.note;
+  elements["bookmark-tags"].value = details.tags.join(", ");
+  elements["bookmark-remove"].hidden = !details.saved;
+  if (!elements["bookmark-dialog"].open) elements["bookmark-dialog"].showModal();
+  requestAnimationFrame(() => elements["bookmark-note"].focus());
+}
+
 function openBookmarkEditor(summary) {
   const identity = postIdentity(summary);
   if (!identity) return;
+  editingTextBookmark = false;
   const existing = bookmarks.find((entry) => postIdentity(entry.summary) === identity);
   editingBookmarkSummary = existing?.summary ?? summary;
   elements["bookmark-dialog-post"].textContent = editingBookmarkSummary.title || "제목 없음";
@@ -2725,6 +2765,7 @@ function openBookmarkEditor(summary) {
 function closeBookmarkEditor() {
   if (elements["bookmark-dialog"].open) elements["bookmark-dialog"].close();
   editingBookmarkSummary = null;
+  editingTextBookmark = false;
 }
 
 function renderAfterBookmarkChange() {
@@ -3099,7 +3140,8 @@ for (const [id, command] of [["more-toc", "toc"], ["more-bookmark", "bookmark"]]
 }
 elements["more-note"].addEventListener("click", () => {
   closeReaderMore();
-  if (currentSummary) openBookmarkEditor(currentSummary);
+  if (readerSource === "text") openTextBookmarkEditor();
+  else if (currentSummary) openBookmarkEditor(currentSummary);
 });
 elements["more-source"].addEventListener("click", closeReaderMore);
 elements["reader-list-items"].addEventListener("click", (event) => {
@@ -3198,6 +3240,14 @@ elements["filter-dialog"].addEventListener("close", () => {
   updateDestinationLayout();
 });
 elements["board-dock-button"].addEventListener("click", () => boardNavigator.open());
+elements["text-sort-chips"].addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-text-sort]");
+  if (!chip) return;
+  elements["sort-filter"].value = chip.dataset.textSort;
+  textLibrary.setSort(chip.dataset.textSort);
+  applyTextSortOptions();
+  elements["result-list"].scrollTop = 0;
+});
 elements["board-dock-clear"].addEventListener("click", () => selectBoard(""));
 elements["active-filters"].addEventListener("click", (event) => {
   const key = event.target.closest("[data-clear]")?.dataset.clear;
@@ -3313,6 +3363,14 @@ elements["collection-back"].addEventListener("click", () => {
 });
 elements["bookmark-form"].addEventListener("submit", (event) => {
   event.preventDefault();
+  if (editingTextBookmark) {
+    textLibrary.saveBookmarkDetails(sanitizeBookmarkMetadata(
+      elements["bookmark-note"].value,
+      elements["bookmark-tags"].value.split(/[,，]/),
+    ));
+    closeBookmarkEditor();
+    return;
+  }
   if (!editingBookmarkSummary) return;
   const identity = postIdentity(editingBookmarkSummary);
   const metadata = sanitizeBookmarkMetadata(
@@ -3333,6 +3391,11 @@ elements["bookmark-form"].addEventListener("submit", (event) => {
   renderAfterBookmarkChange();
 });
 elements["bookmark-remove"].addEventListener("click", () => {
+  if (editingTextBookmark) {
+    textLibrary.removeBookmark();
+    closeBookmarkEditor();
+    return;
+  }
   const identity = postIdentity(editingBookmarkSummary);
   bookmarks = bookmarks.filter((entry) => postIdentity(entry.summary) !== identity);
   persistUserState();

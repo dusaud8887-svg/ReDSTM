@@ -134,6 +134,25 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return String(entry.identity ?? entry.post_id ?? entry.title);
   }
 
+  // { finished, reading, lastReadAt } per novel work, from local reading records.
+  function workProgress() {
+    const progress = new Map();
+    for (const [key, record] of Object.entries(history.history)) {
+      const match = /^novel:(.+):[^:]+$/.exec(key);
+      if (!match || !record) continue;
+      const item = progress.get(match[1]) ?? { finished: 0, reading: 0, lastReadAt: "", record: null };
+      const value = record.progress ?? 0;
+      if (value >= FINISHED) item.finished += 1;
+      else if (value > 0) item.reading += 1;
+      if (String(record.readAt || "") > item.lastReadAt) {
+        item.lastReadAt = String(record.readAt || "");
+        item.record = record;
+      }
+      progress.set(match[1], item);
+    }
+    return progress;
+  }
+
   function lastReadChapter() {
     if (!work) return null;
     let latest = null;
@@ -149,6 +168,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     list.replaceChildren();
     const fragment = document.createDocumentFragment();
     const resume = chaptersMode ? lastReadChapter() : null;
+    const works = !chaptersMode && !folderMode && lane === "novel" ? workProgress() : null;
     if (resume) {
       const button = document.createElement("button");
       button.type = "button";
@@ -206,9 +226,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         meta.textContent = folderMode
           ? `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`
           : lane === "novel"
-          ? `${entry.author || "작가 미상"} · ${entry.chapter_count ?? 0}화`
+          ? workRowMeta(entry, works?.get(entry.work_id))
           : lane === "saved"
-            ? `${entry.lane === "novel" ? entry.work?.author || "소설" : entry.entry?.board || "아카라이브"} · 저장한 자료`
+            ? [entry.lane === "novel" ? `${entry.entry?.label || "회차"}` : entry.entry?.board || "아카라이브",
+              ...(entry.tags ?? []).map((tag) => `#${tag}`), entry.note || ""].filter(Boolean).join(" · ")
             : [entry.category, entry.board].filter(Boolean).join(" · ") || "아카라이브";
       }
       if (meta.textContent) button.append(line, meta);
@@ -221,7 +242,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
     status.textContent = chaptersMode
-      ? `${work?.title || "작품"} · ${rows.length.toLocaleString("ko-KR")}화`
+      ? chapterStatus(rows.length)
       : `${rows.length.toLocaleString("ko-KR")}개 ${folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
     if (!rows.length) {
       const empty = document.createElement("li");
@@ -229,6 +250,30 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       empty.textContent = catalog.length ? "검색 결과가 없습니다." : "아직 게시된 자료가 없습니다.";
       list.append(empty);
     }
+  }
+
+  function chapterStatus(shown) {
+    const total = chapterSource.length;
+    let finished = 0;
+    for (const chapter of chapterSource) {
+      if ((history.history[identity(chapter, "novel", work)]?.progress ?? 0) >= FINISHED) finished += 1;
+    }
+    return [
+      work?.title || "작품",
+      work?.author || "",
+      shown === total ? `${total.toLocaleString("ko-KR")}화` : `${shown.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}화`,
+      `읽음 ${finished.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}`,
+    ].filter(Boolean).join(" · ");
+  }
+
+  function workRowMeta(entry, progress) {
+    const total = entry.chapter_count ?? 0;
+    const parts = [entry.author || "작가 미상", `${total}화`];
+    if (progress) {
+      parts.push(`읽음 ${progress.finished}/${total}`);
+      if (progress.record?.title) parts.push(`최근 ${progress.record.title}`);
+    }
+    return parts.join(" · ");
   }
 
   function episodeRank(label) {
@@ -312,7 +357,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return;
     }
     const matching = orderedWorks(catalog.filter((item) =>
-      normalize(`${item.title || item.category || ""} ${item.author || ""} ${item.board || ""}`).includes(query)));
+      normalize(`${item.title || item.category || ""} ${item.author || ""} ${item.board || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query)));
     if (lane === "arcalive") {
       const group = (items, key) => {
         const grouped = new Map();
@@ -657,6 +702,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       readAt: new Date().toISOString(),
       title: isNovel ? (entry.label || "") : (entry.title || ""),
       work: isNovel ? (itemWork?.title || "") : "",
+      total: isNovel ? (itemWork?.chapter_count ?? 0) : 0,
       route: route(),
       listRoute: currentLane === "novel" && itemWork
         ? `/text?${new URLSearchParams({ lane: "novel", work: itemWork.work_id })}` : listRoute(),
@@ -751,7 +797,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function updateBookmark() {
-    shell.setBookmarked(Boolean(current && history.bookmarks[current.identity]));
+    shell.setBookmarked(Boolean(current && history.bookmarks[current.identity]), { notes: Boolean(current) });
   }
 
   function closeReader() {
@@ -931,6 +977,31 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       .finally(() => { moving = false; });
   }
 
+  function bookmarkDetails() {
+    if (!current) return null;
+    const saved = history.bookmarks[current.identity];
+    return {
+      title: current.lane === "novel" ? `${current.work?.title || "소설"} · ${current.entry.label || "회차"}` : (current.entry.title || "글"),
+      saved: Boolean(saved),
+      note: saved?.note ?? "",
+      tags: saved?.tags ?? [],
+    };
+  }
+
+  function saveBookmarkDetails({ note, tags }) {
+    if (!current) return;
+    if (!history.bookmarks[current.identity]) toggleBookmark();
+    const saved = history.bookmarks[current.identity];
+    if (note) saved.note = note; else delete saved.note;
+    if (tags.length) saved.tags = tags; else delete saved.tags;
+    persist();
+    updateBookmark();
+  }
+
+  function removeBookmark() {
+    if (current && history.bookmarks[current.identity]) toggleBookmark();
+  }
+
   function toggleBookmark() {
     if (!current) return;
     if (history.bookmarks[current.identity]) delete history.bookmarks[current.identity];
@@ -1010,6 +1081,40 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return latest;
   }
 
+  function searchPlaceholder() {
+    if (lane === "novel" && work) return "회차 찾기 (예: 120화, 외전)";
+    if (lane === "novel") return "작품 제목·작가 검색";
+    if (lane === "saved") return "저장한 자료·메모·태그 검색";
+    if (folderCategory) return "글 제목 검색";
+    return "게시판·분류 검색";
+  }
+
+  function sortOptions() {
+    const context = sortContext();
+    return context === "chapters"
+      ? [["오래된순", "oldest"], ["최신순", "latest"], ["이름순", "title"]]
+      : context === "works"
+        ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"]]
+        : [];
+  }
+
+  // Works being read (some chapter read, not all finished), newest first, for Home.
+  function readingWorks() {
+    const works = catalogs.get("novel")?.items ?? [];
+    const byId = new Map(works.map((item) => [item.work_id, item]));
+    return [...workProgress()].map(([workId, progress]) => {
+      const item = byId.get(workId);
+      const total = item?.chapter_count ?? progress.record?.total ?? 0;
+      if (!progress.record?.listRoute || (total && progress.finished >= total)) return null;
+      return {
+        title: item?.title || progress.record.work || "소설",
+        meta: [total ? `읽음 ${progress.finished}/${total}` : "", progress.record.title ? `최근 ${progress.record.title}` : ""].filter(Boolean).join(" · "),
+        listRoute: progress.record.listRoute,
+        readAt: progress.lastReadAt,
+      };
+    }).filter(Boolean).sort((left, right) => right.readAt.localeCompare(left.readAt));
+  }
+
   function isReading() { return Boolean(current); }
   function inWork() { return Boolean(work); }
   function currentRoute() { return route(); }
@@ -1029,5 +1134,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   return {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
+    searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
   };
 }

@@ -15,6 +15,7 @@ const contentSecurityPolicy = [
   "form-action 'none'",
   "frame-ancestors 'none'",
   "img-src 'self' https:",
+  "media-src 'self' https:",
   "object-src 'none'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",

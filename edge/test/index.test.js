@@ -265,6 +265,9 @@ test("serves authenticated static assets with security headers", async () => {
   assert.match(result.headers.get("Content-Security-Policy"), /default-src 'self'/);
   assert.match(result.headers.get("Content-Security-Policy"), /upgrade-insecure-requests/);
   assert.doesNotMatch(result.headers.get("Content-Security-Policy"), /img-src[^;]*data:/);
+  // Text-archive [video] lines play from https sources; scripts and frames stay same-origin.
+  assert.match(result.headers.get("Content-Security-Policy"), /media-src 'self' https:/);
+  assert.match(result.headers.get("Content-Security-Policy"), /script-src 'self'/);
   assert.equal(result.headers.get("X-Content-Type-Options"), "nosniff");
   assert.match(await result.text(), /ReDSTM/);
 

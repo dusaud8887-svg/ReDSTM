@@ -3,7 +3,11 @@
 // referrer; a failed image falls back to its original link without breaking the body.
 
 const IMAGE_PATH = /\.(?:jpe?g|png|gif|webp|avif|bmp)$/i;
-const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+// A markdown link "[label](url)" or a bare URL.
+const LINK_PATTERN = /\[([^\]\n]{1,300})\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s<>"'`]+/gi;
+// Text-archive exports mark media on their own line: "[image] URL", "[video] URL".
+const TAGGED_MEDIA = /^\s*\[(image|img|video)\]\s+(\S+)\s*$/i;
+const LINK_WRAPPERS = [/^https?:\/\/unsafelink\.com\/(https?:\/\/.+)$/i];
 const TRAILING_PUNCTUATION = /[)\]}.,!?;:'"。、」』]+$/;
 
 export function imageUrl(candidate) {
@@ -17,6 +21,74 @@ export function imageUrl(candidate) {
   if (!IMAGE_PATH.test(url.pathname)) return null;
   url.protocol = "https:";
   return url.href;
+}
+
+function safeHttpUrl(candidate) {
+  let url;
+  try {
+    url = new URL(String(candidate ?? "").trim());
+  } catch {
+    return null;
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+  url.protocol = "https:";
+  return url.href;
+}
+
+// "https://unsafelink.com/https://real" → "https://real".
+export function unwrapLink(href) {
+  for (const wrapper of LINK_WRAPPERS) {
+    const match = wrapper.exec(href);
+    if (match) return unwrapLink(match[1]);
+  }
+  return href;
+}
+
+// { kind: "image" | "video", href } for a tagged media line, else null. The tag declares the
+// type, so the URL needs no image extension (signed CDN URLs keep their query intact).
+export function taggedMedia(line) {
+  const match = TAGGED_MEDIA.exec(String(line ?? ""));
+  if (!match) return null;
+  const href = safeHttpUrl(match[2]);
+  if (!href) return null;
+  return { kind: match[1].toLowerCase() === "video" ? "video" : "image", href };
+}
+
+// Signed CDN links (…?expires=<unix seconds>&key=…) stop working after that time; loading them
+// only produces a broken box, so they get a note pointing at the source post instead.
+export function isExpiredSignedUrl(href, nowSeconds = Date.now() / 1000) {
+  try {
+    const expires = Number(new URL(href).searchParams.get("expires"));
+    return Number.isFinite(expires) && expires > 0 && expires < nowSeconds;
+  } catch {
+    return false;
+  }
+}
+
+function expiredMedia(href, kind, sourceUrl) {
+  const note = document.createElement("p");
+  note.className = "media-expired";
+  note.append(`만료된 ${kind === "video" ? "영상" : "이미지"} 링크`);
+  if (sourceUrl) {
+    note.append(" · ");
+    note.append(originalLink(sourceUrl, "원문 글에서 보기"));
+  }
+  note.title = href;
+  return note;
+}
+
+export function mediaVideo(href) {
+  const figure = document.createElement("figure");
+  figure.className = "media-figure media-video";
+  const video = document.createElement("video");
+  video.controls = true;
+  video.preload = "none";
+  video.playsInline = true;
+  video.src = href;
+  const caption = document.createElement("figcaption");
+  caption.append(originalLink(href, `영상 원본 · ${hostOf(href)}`));
+  figure.append(video, caption);
+  return figure;
 }
 
 function hostOf(href) {
@@ -73,7 +145,7 @@ function watchFailure(image, href) {
 }
 
 // Plain text: a line that is only an image URL becomes an image; other URLs become links.
-export function renderPlainTextWithMedia(container, text) {
+export function renderPlainTextWithMedia(container, text, { sourceUrl = "" } = {}) {
   const fragment = document.createDocumentFragment();
   let buffer = "";
   const flush = () => {
@@ -83,10 +155,14 @@ export function renderPlainTextWithMedia(container, text) {
   };
   const lines = String(text).split("\n");
   lines.forEach((line, index) => {
-    const href = imageUrl(line);
-    if (href) {
+    const tagged = taggedMedia(line);
+    const href = tagged ? null : imageUrl(line);
+    if (tagged || href) {
       flush();
-      fragment.append(mediaFigure(href));
+      const url = tagged?.href ?? href;
+      const kind = tagged?.kind ?? "image";
+      fragment.append(isExpiredSignedUrl(url) ? expiredMedia(url, kind, sourceUrl)
+        : kind === "video" ? mediaVideo(url) : mediaFigure(url));
       return;
     }
     buffer += line + (index < lines.length - 1 ? "\n" : "");
@@ -97,16 +173,19 @@ export function renderPlainTextWithMedia(container, text) {
 
 function appendLinkedText(target, text) {
   let last = 0;
-  for (const match of text.matchAll(URL_PATTERN)) {
-    const raw = match[0].replace(TRAILING_PUNCTUATION, "");
+  for (const match of text.matchAll(LINK_PATTERN)) {
+    const markdown = match[1] !== undefined;
+    const raw = markdown ? match[0] : match[0].replace(TRAILING_PUNCTUATION, "");
     let href;
     try {
-      href = new URL(raw).href;
+      href = new URL(unwrapLink(markdown ? match[2] : raw)).href;
     } catch {
       continue;
     }
+    if (!/^https?:/i.test(href)) continue;
     if (match.index > last) target.append(text.slice(last, match.index));
-    const link = originalLink(href, raw);
+    const label = markdown ? match[1].replace(/^https?:\/\/unsafelink\.com\//i, "") : raw;
+    const link = originalLink(href, label);
     if (imageUrl(href)) link.dataset.image = imageUrl(href);
     target.append(link);
     last = match.index + raw.length;
