@@ -554,7 +554,7 @@ test("Text bodies show [image] and [video] lines and readable markdown links", a
   await expect(page.locator("#archive-body")).not.toContainText("unsafelink");
 });
 
-test("Arcalive images: archived copies replace expired links and missing ones are queued", async ({ page }) => {
+test("Arcalive images: archived copies replace expired links and missing ones keep the source note", async ({ page }) => {
   await useLongCollection(page, 3);
   const releaseHash = "a".repeat(64);
   const indexHash = "b".repeat(64);
@@ -562,21 +562,17 @@ test("Arcalive images: archived copies replace expired links and missing ones ar
   const stored = "20240329sac/7e4f8557ceebfb10692c4b35f198e52334ddc010b6026c5bfd7da73c636b3119.png";
   const missing = "20231026sac/7c3492e4ce4b6052a9e2d123e337ca339964275147bd8fe8fe9ad4c4aa71623f.png";
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-  const queued = [];
+  const requests = [];
   await page.route("**/api/v1/text/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/v1/text/media/resolve") {
       const { paths } = route.request().postDataJSON();
-      expect(route.request().headers()["x-redstm-media"]).toBe("1");
+      requests.push(paths);
       return route.fulfill({ contentType: "application/json", body: JSON.stringify({
-        media: Object.fromEntries(paths.filter((item) => item === stored).map((item) => [item, { url: `/api/v1/text/media/${"d".repeat(64)}.webp`, width: 400, height: 300 }])),
+        media: Object.fromEntries(paths.filter((item) => item === stored).map((item) => [item, { url: `/api/v1/text/media/arca/${item}` }])),
       }) });
     }
-    if (path === "/api/v1/text/media/queue") {
-      queued.push(route.request().postDataJSON());
-      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ queued: 1 }) });
-    }
-    if (path.startsWith("/api/v1/text/media/")) return route.fulfill({ contentType: "image/png", body: png });
+    if (path.startsWith("/api/v1/text/media/arca/")) return route.fulfill({ contentType: "image/png", body: png });
     let payload;
     if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
     else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
@@ -598,8 +594,9 @@ test("Arcalive images: archived copies replace expired links and missing ones ar
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#reader-title")).toHaveText("작은 가슴파의 유혹");
   const archived = page.locator('#archive-body .media-figure[data-archived="true"] img');
-  await expect(archived).toHaveAttribute("src", `/api/v1/text/media/${"d".repeat(64)}.webp`);
+  await expect(archived).toHaveAttribute("src", `/api/v1/text/media/arca/${stored}`);
   await expect(page.locator("#archive-body .media-expired")).toHaveCount(2);
-  await expect(page.locator(`#archive-body .media-expired[data-arca-path="${missing}"]`)).toContainText("보관 대기 중");
-  expect(queued).toEqual([{ post_url: "https://arca.live/b/monmusu/102379431", paths: [missing] }]);
+  await expect(page.locator(`#archive-body .media-expired[data-arca-path="${missing}"]`)).toContainText("만료된 이미지 링크");
+  await expect(page.locator(`#archive-body .media-expired[data-arca-path="${missing}"] a`)).toHaveAttribute("href", "https://arca.live/b/monmusu/102379431");
+  expect(requests).toEqual([[stored, missing]]);
 });

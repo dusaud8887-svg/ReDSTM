@@ -16,22 +16,31 @@ install -o root -g root -m 0644 "$stage/crawler/__init__.py" "$stage/crawler/col
 (cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" \
   -m scripts.text_archive.collector --help >/dev/null && \
   sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.publisher --help >/dev/null)
+  -m scripts.text_archive.publisher --help >/dev/null && \
+  sudo -u redstm-text "$release/.venv/bin/python" \
+  -m scripts.text_archive.media_importer --help >/dev/null)
 
-for kind in collector import publish; do
+for kind in collector import publish media; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.service" \
     "/etc/systemd/system/redstm-text-$kind.service"
 done
-install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-collector.timer" \
-  /etc/systemd/system/redstm-text-collector.timer
-install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-import.path" \
-  /etc/systemd/system/redstm-text-import.path
-systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish}.service \
-  /etc/systemd/system/redstm-text-import.path /etc/systemd/system/redstm-text-collector.timer
+for kind in collector media; do
+  install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.timer" \
+    "/etc/systemd/system/redstm-text-$kind.timer"
+done
+for kind in import media; do
+  install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.path" \
+    "/etc/systemd/system/redstm-text-$kind.path"
+done
+systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish,media}.service \
+  /etc/systemd/system/redstm-text-{import,media}.path \
+  /etc/systemd/system/redstm-text-{collector,media}.timer
 systemctl daemon-reload
 systemctl enable --now redstm-text-import.path
 systemctl restart redstm-text-collector.timer
 ln -s "$release" /opt/redstm-text/current.next
 mv -Tf /opt/redstm-text/current.next /opt/redstm-text/current
+# The media units start only once the release that contains media_importer is current.
+systemctl enable --now redstm-text-media.path redstm-text-media.timer
 setfacl -x u:redstm-text /srv/redstm/state/control.lock /srv/redstm/state
 echo "redstm_text_updated=${release##*/}"

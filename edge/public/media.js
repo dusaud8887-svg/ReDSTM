@@ -253,21 +253,9 @@ export function applyArchivedMedia(container, media) {
       continue;
     }
     const figure = mediaFigure(archived.url, { caption: "보관된 이미지" });
-    const image = figure.querySelector("img");
-    image.width = archived.width;
-    image.height = archived.height;
     figure.dataset.archived = "true";
     node.replaceWith(figure);
   }
   return [...missing];
 }
 
-// Expired links that are now queued say so, instead of only pointing at the source post.
-export function markQueuedMedia(container, paths) {
-  const queued = new Set(paths);
-  for (const note of container.querySelectorAll(".media-expired[data-arca-path]")) {
-    if (!queued.has(note.dataset.arcaPath) || note.dataset.queued) continue;
-    note.dataset.queued = "true";
-    note.firstChild.textContent = "보관 대기 중인 이미지 (PC 크롬 확장이 받아 오면 표시됩니다)";
-  }
-}

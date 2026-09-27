@@ -70,7 +70,7 @@
 - 텍스트 저장에도 메모·태그(더보기 `메모·태그`, 타입문넷과 같은 편집기). 저장함 행에 태그·메모가 보이고 검색된다.
 - 홈 `읽던 작품`에 읽는 중인 텍스트 소설이 타입문넷 작품과 함께 최근순으로 나온다.
 - 아카라이브 내보내기 형식: `[image] URL` → 이미지, `[video] URL` → 누르면 재생하는 영상(`preload=none`, CSP `media-src 'self' https:` 추가), `[라벨](https://unsafelink.com/실제주소)` → 라벨 링크(래퍼 제거). 아카라이브 이미지 CDN은 서명 URL(`expires`)만 허용하고 내보낸 파일의 서명은 이미 만료(410/403)되므로, 만료된 링크는 불러오지 않는다(서명을 떼거나 `expires`만 지운 주소도 403과 함께 200×200 접근 거부 이미지를 준다 — 2026-09-27 실측).
-- 아카라이브 이미지 보관(영상 제외): 텍스트 본문의 아카라이브 이미지는 CDN 경로(`20230607sac/<해시>.webp`)로 `POST /api/v1/text/media/resolve`에 조회해 보관본(R2 `media/images/<sha256>`, 같은 사이트, 만료 없음)으로 바꾼다. 없으면 원문 글 주소와 함께 `POST /api/v1/text/media/queue`에 올리고(최근 읽은 글 우선), 만료된 링크는 `보관 대기 중`으로 표시한다. 대기열은 사용자 PC 크롬의 확장 [`extension/redstm-arca-media`](../extension/redstm-arca-media/README.md)이 그 크롬의 아카라이브 로그인으로 원문을 열어 새 서명 주소의 이미지를 받아 가로 1600px WebP로 줄여 `PUT /api/v1/text/media/object`로 올린다. 일반 웹페이지는 브라우저 동일 출처 정책 때문에 아카라이브 응답을 읽을 수 없어 확장이 필요하다. 쓰기 API는 Access 뒤에서 `X-ReDSTM-Media: 1` 헤더를 요구하고(교차 사이트 위조 차단), 이미지 매직 바이트·8MB·접근 거부 이미지 해시를 검사한다. D1 `0008_text_media`(`text_media`, `text_media_queue`).
+- 아카라이브 이미지 보관(영상 제외): 뉴토미가 받아 전처리한 이미지가 R2 `media/arca/<CDN 경로 키>`에 있다. Reader는 텍스트 본문의 아카라이브 이미지 경로 키(`20230607sac/<해시>.webp`)를 `POST /api/v1/text/media/resolve`로 확인해 보관본(`/api/v1/text/media/arca/<경로 키>`)으로 바꾸고, 없으면 원본(서명이 살아 있을 때) 또는 `만료된 이미지 링크 · 원문 글에서 보기`를 그대로 둔다. 수집·전송·백필 계약은 [`20_arcalive_media_archive.md`](20_arcalive_media_archive.md).
 
 ## 5. 설정
 

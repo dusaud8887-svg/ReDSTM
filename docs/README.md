@@ -37,6 +37,8 @@
    작품 묶음 생성·목차·읽기 상태 검토와 1차 구현
 15. [`19_mobile_reader_redesign.md`](19_mobile_reader_redesign.md)
    모바일 읽기 개편: 세션 history·Back=목록, 정규 회차 순서, 목록 anchor 복원, 공통 Reader, 게시판 바, 이미지
+16. [`20_arcalive_media_archive.md`](20_arcalive_media_archive.md)
+   아카라이브 이미지 보관: 뉴토미 수집·전처리, SFTP 미디어 배치, Oracle media importer → R2, Reader 교체, 백필
 
 `00`이 제품/architecture의 source of truth이고 `04`가 실행 상태의 source of truth다.
 `05`~`13`은 각각 시각, 제품 경험, reader/AA, operations, frontend, runner, 설정, release와 crawler

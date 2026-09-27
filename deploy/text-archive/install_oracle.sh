@@ -65,22 +65,26 @@ uv pip install --python "$release/.venv/bin/python" filelock==3.32.2 requests==2
 (cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" \
   -m scripts.text_archive.collector --help >/dev/null && \
   sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.publisher --help >/dev/null)
+  -m scripts.text_archive.publisher --help >/dev/null && \
+  sudo -u redstm-text "$release/.venv/bin/python" \
+  -m scripts.text_archive.media_importer --help >/dev/null)
 ln -s "$release" /opt/redstm-text/current.next
 mv -Tf /opt/redstm-text/current.next /opt/redstm-text/current
 
-for kind in collector import publish; do
+for kind in collector import publish media; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.service" \
     "/etc/systemd/system/redstm-text-$kind.service"
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.timer" \
     "/etc/systemd/system/redstm-text-$kind.timer"
 done
-install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-import.path" \
-  /etc/systemd/system/redstm-text-import.path
-systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish}.{service,timer} \
-  /etc/systemd/system/redstm-text-import.path
+for kind in import media; do
+  install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.path" \
+    "/etc/systemd/system/redstm-text-$kind.path"
+done
+systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish,media}.{service,timer} \
+  /etc/systemd/system/redstm-text-{import,media}.path
 systemctl daemon-reload
-systemctl enable --now redstm-text-import.path
+systemctl enable --now redstm-text-import.path redstm-text-media.path redstm-text-media.timer
 
 install -o root -g root -m 0644 "$stage/deploy/text-archive/sshd-match.conf" \
   /etc/ssh/redstm-inbox-match.conf

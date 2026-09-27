@@ -20,9 +20,8 @@ import {
   postReadingState,
 } from "/reading-model.js";
 import { createBoardNavigator } from "/board-navigator.js";
-import { arcaPostUrl } from "/arca-media.js";
 import {
-  applyArchivedMedia, arcaPaths, decorateImages, enhanceHtmlMedia, markQueuedMedia, renderPlainTextWithMedia,
+  applyArchivedMedia, arcaPaths, decorateImages, enhanceHtmlMedia, renderPlainTextWithMedia,
 } from "/media.js";
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence } from "/sequence.js";
@@ -813,37 +812,30 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   renderPlainTextWithMedia(body, text, { sourceUrl });
   const renderId = String(++textRenderId);
   body.dataset.renderId = renderId;
-  void archiveTextMedia(body, sourceUrl, renderId);
+  void archiveTextMedia(body, renderId);
   openMobileReader();
   updateShellMode();
   requestAnimationFrame(() => elements["reader-title"].focus({ preventScroll: true }));
 }
 
-// Arcalive images: show archived copies, and queue the post (by its canonical URL) for the
-// browser extension when some are missing. Failures leave the body as rendered.
-async function archiveTextMedia(body, sourceUrl, renderId) {
+// Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
+// as rendered (live signed links load; expired ones point at the source post).
+async function archiveTextMedia(body, renderId) {
   const paths = arcaPaths(body).slice(0, 100);
   if (!paths.length) return;
-  const headers = { "Content-Type": "application/json", "X-ReDSTM-Media": "1" };
-  let media = {};
+  let media;
   try {
-    const response = await fetch("/api/v1/text/media/resolve", { method: "POST", headers, body: JSON.stringify({ paths }) });
-    if (response.ok) media = (await response.json()).media ?? {};
+    const response = await fetch("/api/v1/text/media/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    });
+    if (!response.ok) return;
+    media = (await response.json()).media ?? {};
   } catch {
     return;
   }
-  if (body.dataset.renderId !== renderId) return;
-  const missing = applyArchivedMedia(body, media);
-  const postUrl = arcaPostUrl(sourceUrl);
-  if (!missing.length || !postUrl) return;
-  try {
-    const response = await fetch("/api/v1/text/media/queue", {
-      method: "POST", headers, body: JSON.stringify({ post_url: postUrl, paths: missing }),
-    });
-    if (response.ok && body.dataset.renderId === renderId) markQueuedMedia(body, missing);
-  } catch {
-    // The next reading tries again.
-  }
+  if (body.dataset.renderId === renderId) applyArchivedMedia(body, media);
 }
 
 function closeTextReader() {
