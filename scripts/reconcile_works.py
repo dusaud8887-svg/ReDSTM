@@ -8,7 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from crawler.archive import archive_transaction
-from crawler.collections import PostTitle, parse_title, preview_collections
+from crawler.collections import (
+    PostTitle,
+    display_collection_title,
+    parse_title,
+    preview_collections,
+)
 
 
 def reconcile_board(
@@ -61,9 +66,16 @@ def reconcile_board(
             memberships[int(external_post_id)].add(collection_id)
 
     proposed: list[tuple[int, int]] = []
+    new_collections: list[tuple[str, list[int]]] = []
+    titles = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT title FROM collections WHERE board_id = ?", (board_id,)
+        )
+    }
     skipped: Counter[str] = Counter()
     for group in preview.groups:
-        if not group.posts[0].author or not group.posts[0].author.strip():
+        if any(not post.author or not post.author.strip() for post in group.posts):
             skipped["unknown_author"] += 1
             continue
         counts: Counter[int] = Counter(
@@ -71,6 +83,16 @@ def reconcile_board(
             for post in group.posts
             for collection_id in memberships[post.external_post_id]
         )
+        if not counts:
+            title = display_collection_title(group)
+            if title in titles or any(
+                post.external_post_id not in available for post in group.posts
+            ):
+                skipped["new_collection_conflict"] += 1
+                continue
+            titles.add(title)
+            new_collections.append((title, [post.external_post_id for post in group.posts]))
+            continue
         if len(counts) != 1 or next(iter(counts.values()), 0) < 2:
             skipped["ambiguous_or_unanchored"] += 1
             continue
@@ -93,8 +115,23 @@ def reconcile_board(
         ]
         proposed.extend((collection_id, post.external_post_id) for post in new)
 
-    if apply and proposed:
+    if apply and (proposed or new_collections):
         now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        for title, external_post_ids in new_collections:
+            cursor = connection.execute(
+                """INSERT INTO collections (board_id,kind,title,created_at,updated_at)
+                   VALUES (?, 'series', ?, ?, ?)""",
+                (board_id, title, now, now),
+            )
+            connection.executemany(
+                """INSERT INTO collection_entries
+                   (collection_id,position,post_id,source_external_post_id)
+                   VALUES (?,?,?,?)""",
+                [
+                    (cursor.lastrowid, position, post_ids[external_post_id], external_post_id)
+                    for position, external_post_id in enumerate(external_post_ids, 1)
+                ],
+            )
         for collection_id, external_post_id in proposed:
             positions[collection_id] += 1
             connection.execute(
@@ -115,6 +152,8 @@ def reconcile_board(
         "board_id": board_id,
         "proposed": len(proposed),
         "applied": len(proposed) if apply else 0,
+        "new_collections": len(new_collections),
+        "created_collections": len(new_collections) if apply else 0,
         "skipped": dict(sorted(skipped.items())),
         "changes": [
             {"collection_id": collection_id, "external_post_id": external_post_id}

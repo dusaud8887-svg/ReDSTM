@@ -288,6 +288,42 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     assert calls == [("cat", "published/arcalive/release.json")]
 
 
+def test_arcalive_publisher_emits_work_view_without_changing_file_catalog(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_batch(inbox)
+    db_path = tmp_path / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE text_archive_items SET title='긴 연재 제목 1화'")
+        db.execute(
+            """INSERT INTO text_archive_items
+               (identity,lane,source_site,source_board,source_post_id,source_category,
+                content_lane,source_url,title,author,content_sha256,bytes,object_key,
+                batch_id,imported_at)
+               SELECT 'arcalive:novel:109:text',lane,source_site,source_board,'109',
+                      source_category,content_lane,source_url,'긴 연재 제목 2화',author,
+                      content_sha256,bytes,object_key,batch_id,imported_at
+               FROM text_archive_items WHERE source_post_id='108'"""
+        )
+    tree = publisher.build_publish_tree(
+        db_path, tmp_path / "objects", tmp_path / "build", "arcalive"
+    )
+    release = json.loads((tmp_path / "build" / tree["release_key"]).read_text(encoding="utf-8"))
+    assert release["item_count"] == 2
+    assert release["work_count"] == 1
+    assert len(release["catalog_pages"]) == 1
+    work_page = json.loads(
+        (tmp_path / "build" / release["work_catalog_pages"][0]["key"]).read_text(encoding="utf-8")
+    )
+    work = work_page["items"][0]
+    assert work["chapter_count"] == 2
+    detail = json.loads((tmp_path / "build" / work["detail_key"]).read_text(encoding="utf-8"))
+    assert [chapter["identity"] for chapter in detail["chapters"]] == [
+        "arcalive:novel:108:text",
+        "arcalive:novel:109:text",
+    ]
+
+
 def test_arcalive_author_repair_verifies_objects_and_replays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

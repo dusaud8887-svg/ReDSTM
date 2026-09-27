@@ -14,7 +14,12 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any, TextIO
 
-from crawler.collections import parse_title
+from crawler.collections import (
+    PostTitle,
+    display_collection_title,
+    parse_title,
+    preview_collections,
+)
 from scripts.text_archive.importer import (
     _chapter_key,
     _connect,
@@ -188,6 +193,68 @@ def _plan_write(stream: TextIO, *values: str) -> None:
     stream.write(json.dumps(values, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def _arcalive_works(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    by_post = {
+        (str(row["source_board"]), str(row["source_category"]), int(row["source_post_id"])): row
+        for row in rows
+        if row["content_lane"] == "text"
+    }
+    preview = preview_collections(
+        PostTitle(
+            json.dumps([row["source_board"], row["source_category"]], ensure_ascii=False),
+            int(row["source_post_id"]),
+            str(row["title"]),
+            str(row["author"]),
+            str(row["imported_at"]),
+        )
+        for row in by_post.values()
+    )
+    works = []
+    for group in preview.groups:
+        if any(not post.author or not post.author.strip() for post in group.posts):
+            continue
+        board, category = json.loads(group.board_id)
+        chapters = [by_post[board, category, post.external_post_id] for post in group.posts]
+        author = str(chapters[0]["author"])
+        work_id = (
+            "arcalive:"
+            + hashlib.sha256(
+                _json_bytes([board, category, group.base_key, author.casefold()])
+            ).hexdigest()[:24]
+        )
+        work = {
+            "work_id": work_id,
+            "title": display_collection_title(group),
+            "author": author,
+            "board": board,
+            "category": category,
+            "chapter_count": len(chapters),
+            "last_imported_at": max(str(row["imported_at"]) for row in chapters),
+        }
+        detail = {
+            "schema": 1,
+            "lane": "arcalive",
+            "work": {"work_id": work_id, "title": work["title"], "author": author},
+            "chapters": [
+                {
+                    "identity": row["identity"],
+                    "title": row["title"],
+                    "label": row["title"],
+                    "board": board,
+                    "category": category,
+                    "post_id": row["source_post_id"],
+                    "sha256": row["content_sha256"],
+                    "author": row["author"],
+                    "content_lane": row["content_lane"],
+                    "reading_order": position,
+                }
+                for position, row in enumerate(chapters)
+            ],
+        }
+        works.append((work, detail))
+    return sorted(works, key=lambda pair: (pair[0]["title"], pair[0]["work_id"]))
+
+
 def build_publish_tree(
     db_path: Path, object_root: Path, output_root: Path, lane: str
 ) -> dict[str, Any]:
@@ -243,6 +310,7 @@ def build_publish_tree(
             plans["indexes"].open("w", encoding="utf-8", newline="\n") as index_plan,
         ):
             catalog_refs: list[dict[str, str]] = []
+            work_catalog_refs: list[dict[str, str]] = []
 
             def page(items: list[dict[str, Any]]) -> None:
                 key, body = _indexed_file(
@@ -335,10 +403,12 @@ def build_publish_tree(
                 work_count = len(catalog)
             else:
                 page_items: list[dict[str, Any]] = []
+                source_rows: list[dict[str, Any]] = []
                 for row in db.execute(
                     "SELECT * FROM text_archive_items WHERE lane=? ORDER BY imported_at,identity",
                     (lane,),
                 ):
+                    source_rows.append(dict(row))
                     page_items.append(
                         {
                             "identity": row["identity"],
@@ -357,7 +427,28 @@ def build_publish_tree(
                         page_items = []
                 if page_items:
                     page(page_items)
-                work_count = 0
+                works = _arcalive_works(source_rows)
+                for work, detail in works:
+                    work["detail_key"], body = _indexed_file(output_root, lane, detail)
+                    _plan_write(index_plan, work["detail_key"], hashlib.sha256(body).hexdigest())
+                for offset in range(0, len(works), _INDEX_PAGE_SIZE):
+                    key, body = _indexed_file(
+                        output_root,
+                        lane,
+                        {
+                            "schema": 1,
+                            "lane": lane,
+                            "view": "works",
+                            "page": len(work_catalog_refs),
+                            "items": [
+                                work for work, _ in works[offset : offset + _INDEX_PAGE_SIZE]
+                            ],
+                        },
+                    )
+                    digest = hashlib.sha256(body).hexdigest()
+                    work_catalog_refs.append({"key": key, "sha256": digest})
+                    _plan_write(index_plan, key, digest)
+                work_count = len(works)
 
             release_body = _json_bytes(
                 {
@@ -367,6 +458,7 @@ def build_publish_tree(
                     "item_count": item_count,
                     "work_count": work_count,
                     "catalog_pages": catalog_refs,
+                    **({"work_catalog_pages": work_catalog_refs} if lane == "arcalive" else {}),
                 }
             )
             release_sha = hashlib.sha256(release_body).hexdigest()
@@ -764,6 +856,10 @@ def publish_lane(
         with operation_window(lock_wait_seconds=30):
             metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
     metadata_digest = metadata_fingerprint(db_path, lane)
+    if lane == "arcalive":
+        metadata_digest = hashlib.sha256(
+            f"arcalive-works-v1:{metadata_digest}".encode()
+        ).hexdigest()
     with operation_window(lock_wait_seconds=30):
         pass
     if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):

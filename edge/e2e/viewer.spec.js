@@ -434,12 +434,30 @@ test("arcalive follows board/category/files even when titles look like a series"
   await useCollectionFixture(page);
   const releaseHash = "a".repeat(64);
   const indexHash = "b".repeat(64);
+  const worksHash = "d".repeat(64);
+  const detailHash = "e".repeat(64);
   await page.route("**/api/v1/text/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     let payload;
     if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
     else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
       schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${indexHash}.json`, sha256: indexHash }],
+      work_catalog_pages: [{ key: `published/indexes/arcalive/${worksHash}.json`, sha256: worksHash }],
+    };
+    else if (path.endsWith(`/index/arcalive/${worksHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", view: "works", items: [{
+        work_id: "arcalive:series", title: "해리포터와 뛰어노는 조랑말들", author: "작가",
+        board: "0765", category: "agr", chapter_count: 2,
+        detail_key: `published/indexes/arcalive/${detailHash}.json`,
+      }],
+    };
+    else if (path.endsWith(`/index/arcalive/${detailHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", work: { work_id: "arcalive:series", title: "해리포터와 뛰어노는 조랑말들", author: "작가" },
+      chapters: [1, 2].map((number) => ({
+        identity: `arcalive:0765:${number}:text`, title: `해리포터와 뛰어노는 조랑말들 ${number}화`,
+        label: `해리포터와 뛰어노는 조랑말들 ${number}화`, category: "agr", board: "0765", post_id: number,
+        sha256: "c".repeat(64), reading_order: number - 1,
+      })),
     };
     else if (path.endsWith(`/index/arcalive/${indexHash}.json`)) payload = {
       schema: 1, lane: "arcalive", items: [1, 2].map((number) => ({
@@ -447,6 +465,10 @@ test("arcalive follows board/category/files even when titles look like a series"
         category: "agr", board: "0765", post_id: number, sha256: "c".repeat(64),
       })),
     };
+    else if (path.endsWith(`/object/${"c".repeat(64)}`)) return route.fulfill({
+      contentType: "text/markdown",
+      body: "# 해리포터와 뛰어노는 조랑말들 1화\n\n- url: https://arca.live/b/0765/1\n\n---\n\n본문",
+    });
     else return route.fulfill({ status: 404 });
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
@@ -458,6 +480,19 @@ test("arcalive follows board/category/files even when titles look like a series"
   await expect(page.locator("#result-list .result-title")).toHaveText([
     "해리포터와 뛰어노는 조랑말들 1화", "해리포터와 뛰어노는 조랑말들 2화",
   ]);
+  await page.locator('[data-arcalive-view="works"]').click();
+  await expect(page).toHaveURL(/view=works/);
+  await expect(page.locator("#result-list .result-title")).toHaveText("해리포터와 뛰어노는 조랑말들");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page).toHaveURL(/work=arcalive%3Aseries/);
+  await expect(page.locator("#result-list .result-item:not([data-continue]) .result-title")).toHaveText([
+    "해리포터와 뛰어노는 조랑말들 1화", "해리포터와 뛰어노는 조랑말들 2화",
+  ]);
+  await page.locator("#result-list .result-item:not([data-continue])").first().click();
+  await expect(page.locator("#reader-title")).toHaveText("해리포터와 뛰어노는 조랑말들 1화");
+  await expect(page.locator("#reader-bottom-next")).toBeEnabled();
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("해리포터와 뛰어노는 조랑말들 1화");
 });
 
 test("pages a large board with load-more instead of stopping at the first page", async ({ page }) => {

@@ -79,6 +79,14 @@ class Preview:
     parsed_posts: int
 
 
+def display_collection_title(candidate: CollectionCandidate) -> str:
+    """Keep the source's spelling while removing its parsed episode suffix."""
+    title = unicodedata.normalize("NFKC", candidate.title).strip()
+    label = parse_title(candidate.title).episode_label
+    position = title.casefold().rfind(label.casefold()) if label else -1
+    return (title[:position].rstrip(" \t:：/-–—·") if position >= 0 else "") or candidate.base_key
+
+
 def _matching_text(title: str) -> str:
     value = unicodedata.normalize("NFKC", title).casefold().replace("～", "~").replace("〜", "~")
     while match := _LEADING_TAG.match(value):

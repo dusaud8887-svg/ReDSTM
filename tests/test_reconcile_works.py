@@ -55,3 +55,44 @@ def test_reconcile_appends_only_unambiguous_later_chapter_and_replays_safely(
             )
         )
     assert [tuple(row) for row in entries] == [(1, 1), (2, 2), (3, 3)]
+
+
+def test_reconcile_creates_missing_work_then_appends_future_chapter(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    initialize_archive(archive)
+    with archive_transaction(archive) as connection:
+        connection.execute(
+            """INSERT INTO boards
+               (board_id,name,canonical_url,first_seen_at,last_seen_at)
+               VALUES ('aa_19','19금 AA','https://example.com/aa','2026-01-01','2026-01-01')"""
+        )
+        for post_id, title in ((1, "긴 연재 제목 1화"), (2, "긴 연재 제목 2화")):
+            connection.execute(
+                """INSERT INTO posts
+                   (id,board_id,external_post_id,canonical_url,title,author,
+                    first_seen_at,last_seen_at,availability)
+                   VALUES (?,'aa_19',?,?,?,'작가','2026-01-01','2026-01-01','available')""",
+                (post_id, post_id, f"https://example.com/{post_id}", title),
+            )
+    with archive_transaction(archive, read_only=True) as connection:
+        assert reconcile_board(connection, "aa_19")["new_collections"] == 1
+        assert connection.execute("SELECT COUNT(*) FROM collections").fetchone()[0] == 0
+    with archive_transaction(archive) as connection:
+        assert reconcile_board(connection, "aa_19", apply=True)["created_collections"] == 1
+        assert reconcile_board(connection, "aa_19", apply=True)["created_collections"] == 0
+        connection.execute(
+            """INSERT INTO posts
+               (id,board_id,external_post_id,canonical_url,title,author,
+                first_seen_at,last_seen_at,availability)
+               VALUES (3,'aa_19',3,'https://example.com/3','긴 연재 제목 3화','작가',
+                       '2026-01-02','2026-01-02','available')"""
+        )
+        assert reconcile_board(connection, "aa_19", apply=True)["applied"] == 1
+        assert connection.execute("SELECT COUNT(*) FROM collections").fetchone()[0] == 1
+        assert connection.execute("SELECT title FROM collections").fetchone()[0] == "긴 연재 제목"
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT source_external_post_id FROM collection_entries ORDER BY position"
+            )
+        ] == [1, 2, 3]

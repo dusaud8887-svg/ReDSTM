@@ -61,6 +61,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   const details = new Map();
   let lane = "novel";
   let catalog = [];
+  let arcaliveWorks = [];
+  let arcaliveView = "files";
   let visible = [];
   let work = null;
   let chapterSource = [];
@@ -92,14 +94,15 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     params.set("lane", lane);
     if (search.value.trim()) params.set("q", search.value.trim());
     if (work) params.set("work", work.work_id);
-    if (lane === "arcalive" && folderBoard) params.set("board", folderBoard);
-    if (lane === "arcalive" && folderCategory) params.set("category", folderCategory);
+    if (lane === "arcalive" && arcaliveView === "works") params.set("view", "works");
+    if (lane === "arcalive" && arcaliveView === "files" && folderBoard) params.set("board", folderBoard);
+    if (lane === "arcalive" && arcaliveView === "files" && folderCategory) params.set("category", folderCategory);
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
     return params;
   }
 
   function defaultSort() {
-    return lane === "novel" && work ? "oldest" : "title";
+    return work ? "oldest" : "title";
   }
 
   function readSort(params) {
@@ -130,7 +133,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function rowKey(entry, { chaptersMode, folderMode }) {
     if (folderMode) return `folder:${entry.folder_label}`;
     if (chaptersMode) return `chapter:${entry.chapter_id ?? entry.source_chapter_id ?? entry.label}`;
-    if (lane === "novel") return `work:${entry.work_id}`;
+    if (entry.work_id) return `work:${entry.work_id}`;
     return String(entry.identity ?? entry.post_id ?? entry.title);
   }
 
@@ -157,7 +160,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!work) return null;
     let latest = null;
     for (const chapter of chapterSource) {
-      const record = history.history[identity(chapter, "novel", work)];
+      const record = history.history[identity(chapter, lane, work)];
       if (record?.readAt && (!latest || record.readAt > latest.record.readAt)) latest = { chapter, record };
     }
     return latest;
@@ -205,14 +208,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       name.className = "result-title";
       name.textContent = folderMode ? entry.folder_label
         : chaptersMode ? (entry.label || "회차")
-        : lane === "novel" ? (entry.title || entry.work_id)
+        : entry.work_id ? (entry.title || entry.work_id)
           : lane === "saved" ? (entry.title || entry.entry?.label || entry.identity)
             : (entry.title || entry.category || entry.identity);
       line.append(name);
       const meta = document.createElement("span");
       meta.className = "result-meta";
       if (chaptersMode) {
-        const key = identity(entry, "novel", work);
+        const key = identity(entry, lane, work);
         const saved = history.history[key];
         const progress = saved?.progress ?? 0;
         const parts = [
@@ -229,7 +232,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       } else {
         meta.textContent = folderMode
           ? `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`
-          : lane === "novel"
+          : entry.work_id
           ? workRowMeta(entry, works?.get(entry.work_id))
           : lane === "saved"
             ? [entry.lane === "novel" ? `${entry.entry?.label || "회차"}` : entry.entry?.board || "아카라이브",
@@ -247,7 +250,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     document.querySelector("#search-empty").hidden = true;
     status.textContent = chaptersMode
       ? chapterStatus(rows.length)
-      : `${rows.length.toLocaleString("ko-KR")}개 ${folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : lane === "arcalive" ? "글" : "자료"}`;
+      : `${rows.length.toLocaleString("ko-KR")}개 ${folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : arcaliveView === "works" && lane === "arcalive" && !work ? "작품" : lane === "arcalive" ? "글" : "자료"}`;
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
@@ -260,7 +263,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const total = chapterSource.length;
     let finished = 0;
     for (const chapter of chapterSource) {
-      if ((history.history[identity(chapter, "novel", work)]?.progress ?? 0) >= FINISHED) finished += 1;
+      if ((history.history[identity(chapter, lane, work)]?.progress ?? 0) >= FINISHED) finished += 1;
     }
     return [
       work?.title || "작품",
@@ -317,6 +320,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       renderRows(displayed.filter((chapter) => normalize(`${chapter.label || ""} ${chapterKind(chapter.kind)}`).includes(query)),
         { chaptersMode: true });
       return;
+    }
+    if (lane === "arcalive" && arcaliveView === "works") {
+      return renderRows(orderedWorks(arcaliveWorks.filter((item) =>
+        normalize(`${item.title} ${item.author} ${item.board} ${item.category}`).includes(query))));
     }
     const matching = orderedWorks(catalog.filter((item) =>
       normalize(`${item.title || item.category || ""} ${item.author || ""} ${item.board || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query)));
@@ -376,7 +383,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (pointer.schema !== 1 || pointer.lane !== selectedLane || !HASH.test(pointer.sha256)) {
       throw new Error("release_pointer_invalid");
     }
-    if (catalogs.get(selectedLane)?.sha256 === pointer.sha256) return catalogs.get(selectedLane).items;
+    if (catalogs.get(selectedLane)?.sha256 === pointer.sha256) {
+      if (selectedLane === "arcalive") arcaliveWorks = catalogs.get(selectedLane).works;
+      return catalogs.get(selectedLane).items;
+    }
     const release = await json(`/api/v1/text/release-manifest/${selectedLane}/${pointer.sha256}.json`);
     if (release.schema !== 1 || release.lane !== selectedLane || !Array.isArray(release.catalog_pages)) {
       throw new Error("release_manifest_invalid");
@@ -396,8 +406,21 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         onFirstPage(items.slice());
       }
     }
-    catalogs.set(selectedLane, { sha256: pointer.sha256, items });
-    if (selectedLane === "novel") details.clear();
+    const works = [];
+    if (selectedLane === "arcalive") {
+      for (const ref of release.work_catalog_pages ?? []) {
+        const match = /^published\/indexes\/arcalive\/([a-f0-9]{64})\.json$/.exec(ref.key || "");
+        if (!match || ref.sha256 !== match[1]) throw new Error("work_catalog_reference_invalid");
+        const page = await json(`/api/v1/text/index/arcalive/${match[1]}.json`);
+        if (page.schema !== 1 || page.lane !== "arcalive" || page.view !== "works" || !Array.isArray(page.items)) {
+          throw new Error("work_catalog_page_invalid");
+        }
+        works.push(...page.items);
+      }
+      arcaliveWorks = works;
+    }
+    catalogs.set(selectedLane, { sha256: pointer.sha256, items, works });
+    details.clear();
     return items;
   }
 
@@ -406,11 +429,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (cached) return cached;
     const hash = item.detail_key?.match(/\/([a-f0-9]{64})\.json$/)?.[1];
     if (!hash) throw new Error("work_index_invalid");
-    const detail = await json(`/api/v1/text/index/novel/${hash}.json`);
-    if (detail.schema !== 1 || detail.lane !== "novel" || !Array.isArray(detail.chapters)) {
+    const detailLane = item.work_id.startsWith("arcalive:") ? "arcalive" : "novel";
+    const detail = await json(`/api/v1/text/index/${detailLane}/${hash}.json`);
+    if (detail.schema !== 1 || detail.lane !== detailLane || !Array.isArray(detail.chapters)) {
       throw new Error("work_detail_invalid");
     }
-    if (migrateNovelChapterState(history, item, detail.chapters)) persist();
+    if (detailLane === "novel" && migrateNovelChapterState(history, item, detail.chapters)) persist();
     details.set(item.work_id, detail);
     return detail;
   }
@@ -421,7 +445,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     try {
       return (await workDetail(savedWork)).chapters;
     } catch {
-      const items = catalogs.get("novel")?.items ?? await loadCatalog("novel").catch(() => []);
+      const workLane = savedWork.work_id.startsWith("arcalive:") ? "arcalive" : "novel";
+      let items = workLane === "arcalive" ? catalogs.get("arcalive")?.works : catalogs.get("novel")?.items;
+      if (!items) {
+        await loadCatalog(workLane).catch(() => []);
+        items = workLane === "arcalive" ? arcaliveWorks : catalogs.get("novel")?.items;
+      }
+      items ||= [];
       const found = items.find((item) => item.work_id === savedWork.work_id
         || item.legacy_work_ids?.includes(savedWork.work_id));
       return found ? (await workDetail(found)).chapters : [];
@@ -434,6 +464,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     }
+    const views = document.querySelector("#arcalive-views");
+    views.hidden = lane !== "arcalive";
+    for (const button of views.querySelectorAll("[data-arcalive-view]")) {
+      const active = button.dataset.arcaliveView === arcaliveView;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
   }
 
   async function open(options = {}) {
@@ -442,12 +479,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const params = options instanceof URLSearchParams ? options : new URLSearchParams();
     const requestedLane = params.get("lane");
     lane = VIEWS.has(requestedLane) ? requestedLane : "novel";
+    arcaliveView = params.get("view") === "works" ? "works" : "files";
     setLaneButtons();
     search.value = params.get("q") || "";
     work = null;
     chapterSource = [];
-    folderBoard = lane === "arcalive" ? params.get("board") : null;
-    folderCategory = lane === "arcalive" ? params.get("category") : null;
+    folderBoard = lane === "arcalive" && arcaliveView === "files" ? params.get("board") : null;
+    folderCategory = lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
     readSort(params);
     closeReader();
     syncBackButton();
@@ -499,8 +537,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   // Opens the work, folder, or body a URL names. Returns true when a body was opened.
   async function openFromParams(params, activeRequest) {
     const workId = params.get("work");
-    if (workId && lane === "novel") {
-      const found = catalog.find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
+    if (workId && (lane === "novel" || arcaliveView === "works")) {
+      const found = (lane === "arcalive" ? arcaliveWorks : catalog)
+        .find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
       if (!found) return false;
       await openWork(found, false, activeRequest);
       readSort(params);
@@ -509,8 +548,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const chapterId = params.get("chapter");
       const chapter = chapterId && chapterSource.find((entry) =>
         String(entry.chapter_id) === chapterId || entry.legacy_chapter_ids?.includes(chapterId));
-      if (chapter && activeRequest === requestId) {
-        await openBody(chapter, { navigation: "route", activeRequest });
+      const item = params.get("item");
+      const selected = chapter || (item && chapterSource.find((entry) => entry.identity === item));
+      if (selected && activeRequest === requestId) {
+        await openBody(selected, { navigation: "route", activeRequest });
         return true;
       }
       // Home's 이어서 읽기 on a finished chapter: continue with the one after it.
@@ -550,14 +591,17 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     flushPosition();
     closeReader();
     search.value = params.get("q") || "";
-    folderBoard = lane === "arcalive" ? params.get("board") : null;
-    folderCategory = lane === "arcalive" ? params.get("category") : null;
-    const workId = lane === "novel" ? params.get("work") : null;
+    arcaliveView = params.get("view") === "works" ? "works" : "files";
+    setLaneButtons();
+    folderBoard = lane === "arcalive" && arcaliveView === "files" ? params.get("board") : null;
+    folderCategory = lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
+    const workId = lane === "novel" || arcaliveView === "works" ? params.get("work") : null;
     if (!workId) {
       work = null;
       chapterSource = [];
     } else if (work?.work_id !== workId) {
-      const found = catalog.find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
+      const found = (lane === "arcalive" ? arcaliveWorks : catalog)
+        .find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
       if (!found) return open(params);
       try {
         chapterSource = (await workDetail(found)).chapters;
@@ -594,7 +638,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function sequenceFor(entry, sourceLane, chapters) {
-    if (sourceLane === "novel") {
+    if (sourceLane === "novel" || (sourceLane === "arcalive" && chapters?.length)) {
       const entries = canonicalChapters(chapters);
       return { unit: "화", entries, index: entries.findIndex((chapter) => sameChapter(chapter, entry)), toc: true };
     }
@@ -619,8 +663,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const next = step(1);
     const gap = next && current ? labelGap(current.entry.label, next.entry.label) : 0;
     const position = sequence && sequence.index >= 0 ? ` · ${sequence.index + 1}/${sequence.entries.length}` : "";
-    const context = current?.lane === "novel"
-      ? `${current.work?.title || "소설"}${position}`
+    const context = current?.work
+      ? `${current.work.title}${position}`
       : [current?.entry.board, current?.entry.category].filter(Boolean).join(" · ") || "아카라이브";
     return {
       unit,
@@ -649,7 +693,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!HASH.test(hash || "")) throw new Error("object_hash_invalid");
     const [response, chapters] = await Promise.all([
       fetch(`/api/v1/text/object/${hash}`, { credentials: "same-origin", redirect: "error" }),
-      currentLane === "novel" && viewLane === "saved" && itemWork ? savedWorkChapters(itemWork).catch(() => []) : chapterSource,
+      viewLane === "saved" && itemWork ? savedWorkChapters(itemWork).catch(() => []) : chapterSource,
     ]);
     if (!response.ok) throw new Error(`request_${response.status}`);
     const text = await response.text();
@@ -665,11 +709,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       ...record,
       readAt: new Date().toISOString(),
       title: isNovel ? (entry.label || "") : (entry.title || ""),
-      work: isNovel ? (itemWork?.title || "") : "",
-      total: isNovel ? (itemWork?.chapter_count ?? 0) : 0,
+      work: itemWork?.title || "",
+      total: itemWork?.chapter_count ?? 0,
       route: route(),
-      listRoute: currentLane === "novel" && itemWork
-        ? `/text?${new URLSearchParams({ lane: "novel", work: itemWork.work_id })}` : listRoute(),
+      listRoute: itemWork
+        ? `/text?${new URLSearchParams({ lane: currentLane, ...(isNovel ? {} : { view: "works" }), work: itemWork.work_id })}` : listRoute(),
     };
     persist();
     shell.open({
@@ -705,7 +749,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const sorted = sortMode !== defaultSort() ? ` · ${SORT_LABELS[sortMode]}` : "";
     const query = search.value.trim() ? ` · “${search.value.trim()}”` : "";
     if (current?.viewLane === "saved") return { kicker: "텍스트 저장함", title: `저장한 자료${query}` };
-    if (current?.lane === "novel") return { kicker: "회차 목록", title: `${current.work?.title || "소설"}${sorted}${query}` };
+    if (current?.work) return { kicker: "회차 목록", title: `${current.work.title}${sorted}${query}` };
     return { kicker: "아카라이브", title: `${[folderBoard, folderCategory].filter(Boolean).join(" · ") || "글 목록"}${sorted}${query}` };
   }
 
@@ -724,7 +768,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const page = Number.isInteger(listPage) ? Math.min(Math.max(0, listPage), lastPage)
       : found >= 0 ? Math.floor(found / LIST_PAGE) : 0;
     const offset = page * LIST_PAGE;
-    const chapters = current.viewLane !== "saved" && current.lane === "novel";
+    const chapters = current.viewLane !== "saved" && Boolean(current.work);
     return shell.setList({
       ...listHeading(),
       total: rows.length,
@@ -817,8 +861,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function toToc() {
-    if (!current || current.lane !== "novel" || !current.work) return;
-    const tocParams = new URLSearchParams({ lane: "novel", work: current.work.work_id });
+    if (!current?.work) return;
+    const tocParams = new URLSearchParams({ lane: current.lane, ...(current.lane === "arcalive" ? { view: "works" } : {}), work: current.work.work_id });
     const tocRoute = `/text?${tocParams}`;
     if (window.history.state?.redstmParent === tocRoute) {
       window.history.back();
@@ -852,7 +896,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!Number.isInteger(index) || index < 0 || index >= visible.length) return;
     const selected = visible[index];
     rememberListPosition();
-    if (lane === "arcalive" && !folderBoard) {
+    if (lane === "arcalive" && arcaliveView === "files" && !folderBoard) {
       folderBoard = selected.folder_label;
       syncBackButton();
       onChange();
@@ -861,7 +905,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       list.scrollTop = 0;
       return;
     }
-    if (lane === "arcalive" && !folderCategory) {
+    if (lane === "arcalive" && arcaliveView === "files" && !folderCategory) {
       folderCategory = selected.folder_label;
       syncBackButton();
       renderCatalog();
@@ -873,7 +917,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const navigation = current ? "replace" : "push";
     const action = lane === "saved"
       ? openBody(selected.entry, { navigation, sourceLane: selected.lane, sourceWork: selected.work, savedIdentity: selected.identity })
-      : work || lane === "arcalive" ? openBody(selected, { navigation }) : openWork(selected);
+      : work || (lane === "arcalive" && arcaliveView === "files") ? openBody(selected, { navigation }) : openWork(selected);
     void action.catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });
   }
 
@@ -973,7 +1017,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       savedAt: new Date().toISOString(),
       lane: current.lane,
       entry: current.entry,
-      work: current.lane === "novel" ? current.work : null,
+      work: current.work,
       title: current.lane === "novel" ? current.work?.title : current.entry.title || current.entry.category,
     };
     persist();
@@ -1000,6 +1044,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const button = event.target.closest("[data-text-lane]");
     if (button) changeLane(button.dataset.textLane);
   });
+  document.querySelector("#arcalive-views").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-arcalive-view]");
+    if (!button || button.dataset.arcaliveView === arcaliveView) return;
+    const next = new URLSearchParams({ lane: "arcalive", ...(button.dataset.arcaliveView === "works" ? { view: "works" } : {}) });
+    void open(next);
+    window.history.pushState({ redstmText: true }, "", `/text?${next}`);
+  });
   document.querySelector("#text-work-back").addEventListener("click", () => {
     if (!current && (work || folderBoard)) up();
   });
@@ -1010,8 +1061,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }, { passive: true });
 
   function sortContext() {
-    if (lane === "novel" && work) return "chapters";
-    if (lane === "novel") return "works";
+    if (work) return "chapters";
+    if (lane === "novel" || lane === "arcalive" && arcaliveView === "works") return "works";
     return "titles";
   }
 
@@ -1046,8 +1097,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function searchPlaceholder() {
-    if (lane === "novel" && work) return "회차 찾기 (예: 120화, 외전)";
-    if (lane === "novel") return "작품 제목·작가 검색";
+    if (work) return "회차 찾기 (예: 120화, 외전)";
+    if (lane === "novel" || lane === "arcalive" && arcaliveView === "works") return "작품 제목·작가 검색";
     if (lane === "saved") return "저장한 자료·메모·태그 검색";
     if (folderCategory) return "글 제목 검색";
     return "게시판·분류 검색";
