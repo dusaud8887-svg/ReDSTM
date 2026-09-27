@@ -571,8 +571,16 @@ def _apply_list(db: sqlite3.Connection, unit: RequestUnit, value: Any) -> dict[s
                    site,source_work_id,source_url,slug,title,author,title_key,author_key,last_seen_at)
                    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(site,source_work_id) DO UPDATE SET
                    source_url=excluded.source_url,
-                   slug=excluded.slug,title=excluded.title,author=excluded.author,
-                   title_key=excluded.title_key,author_key=excluded.author_key,
+                   slug=CASE WHEN excluded.slug<>'' THEN excluded.slug
+                             ELSE text_novel_sources.slug END,
+                   title=CASE WHEN TRIM(excluded.title)<>'' THEN excluded.title
+                              ELSE text_novel_sources.title END,
+                   author=CASE WHEN TRIM(excluded.author)<>'' THEN excluded.author
+                               ELSE text_novel_sources.author END,
+                   title_key=CASE WHEN TRIM(excluded.title)<>'' THEN excluded.title_key
+                                  ELSE text_novel_sources.title_key END,
+                   author_key=CASE WHEN TRIM(excluded.author)<>'' THEN excluded.author_key
+                                   ELSE text_novel_sources.author_key END,
                    last_seen_at=excluded.last_seen_at""",
                 (
                     unit.source.name,
@@ -628,17 +636,23 @@ def _apply_work(
     now = _now()
     with db:
         source_row = db.execute(
-            "SELECT slug FROM text_novel_sources WHERE site=? AND source_work_id=?",
+            "SELECT slug,author FROM text_novel_sources WHERE site=? AND source_work_id=?",
             (unit.source.name, work_id),
         ).fetchone()
         slug = str(source_row["slug"]) if source_row else ""
+        author = author or (str(source_row["author"]) if source_row else "")
         db.execute(
             """INSERT INTO text_novel_sources(
                site,source_work_id,source_url,slug,title,author,title_key,author_key,last_seen_at)
                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(site,source_work_id) DO UPDATE SET
                source_url=excluded.source_url,
-               title=excluded.title,author=excluded.author,title_key=excluded.title_key,
-               author_key=excluded.author_key,last_seen_at=excluded.last_seen_at""",
+               title=excluded.title,
+               author=CASE WHEN TRIM(excluded.author)<>'' THEN excluded.author
+                           ELSE text_novel_sources.author END,
+               title_key=excluded.title_key,
+               author_key=CASE WHEN TRIM(excluded.author)<>'' THEN excluded.author_key
+                               ELSE text_novel_sources.author_key END,
+               last_seen_at=excluded.last_seen_at""",
             (
                 unit.source.name,
                 work_id,

@@ -934,11 +934,76 @@ def test_work_recrawl_repairs_imported_title_without_changing_identity(tmp_path:
                 "SELECT identity,source_chapter_id,title,author FROM text_archive_items"
             ).fetchone()
         ) == ("novel:blacktoon:42:7", "7", "작품", "작가")
+        db.execute("UPDATE text_novel_sources SET slug='known' WHERE source_work_id='42'")
+        collector._apply_list(
+            db,
+            collector.RequestUnit(unit.source, "list", "0", unit.source.base_url),
+            {
+                "content": [{"id": 42, "title": "", "author": "", "slug": ""}],
+                "total": 1,
+                "size": 96,
+            },
+        )
+        assert tuple(
+            db.execute(
+                "SELECT slug,title,author,title_key,author_key FROM text_novel_sources"
+            ).fetchone()
+        ) == ("known", "작품", "작가", importer._title_key("작품"), importer._title_key("작가"))
+        db.execute("UPDATE text_archive_items SET author='' WHERE source_work_id='42'")
+        collector._apply_work(
+            db, unit, {"work": {"id": 42, "title": "새 작품"}, "episodes": []}, None
+        )
+        assert tuple(db.execute("SELECT title,author FROM text_archive_items").fetchone()) == (
+            "새 작품",
+            "작가",
+        )
         with pytest.raises(collector.CollectorError, match="work_title_missing"):
             collector._apply_work(db, unit, {"work": {"id": 42}, "episodes": []}, None)
-        assert db.execute("SELECT title FROM text_novel_sources").fetchone()[0] == "작품"
+        assert tuple(db.execute("SELECT title,author FROM text_novel_sources").fetchone()) == (
+            "새 작품",
+            "작가",
+        )
     finally:
         db.close()
+
+
+def test_pc_import_keeps_known_work_metadata_when_new_chapter_omits_it(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    db_path = tmp_path / "text.sqlite"
+    objects = tmp_path / "objects"
+    receipts = inbox / "receipts"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    importer.import_batch(inbox, _BATCH_ID, db_path, objects, receipts)
+
+    next_id = "20260927T000000Z-pc-00000002"
+    _incoming_novel_batch(inbox, next_id)
+    batch = inbox / "drop" / next_id
+    manifest = json.loads((batch / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+    item.update(
+        identity="novel_chapter:toki:63670:8794078",
+        source_chapter_id="8794078",
+        source_url="https://toki31.com/novel/63670/8794078",
+        work_title="",
+        author="",
+    )
+    raw = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
+    (batch / "manifest.json").write_bytes(raw)
+    (batch / "ready.json").write_text(
+        json.dumps(
+            {"schema": 1, "batch_id": next_id, "manifest_sha256": hashlib.sha256(raw).hexdigest()}
+        ),
+        encoding="utf-8",
+    )
+    result = importer.import_batch(inbox, next_id, db_path, objects, receipts)
+    assert result is not None and result["items"][0]["status"] == "accepted"
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "SELECT title,author,title_key,author_key FROM text_novel_sources WHERE site='toki'"
+        ).fetchone() == ("작품", "작가", importer._title_key("작품"), importer._title_key("작가"))
+        assert db.execute(
+            "SELECT title,author FROM text_archive_items WHERE source_chapter_id='8794078'"
+        ).fetchone() == ("작품", "작가")
 
 
 def test_collector_keeps_indexing_work_after_first_hundred_attempts(tmp_path: Path) -> None:

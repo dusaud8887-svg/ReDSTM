@@ -1311,7 +1311,24 @@ def import_batch(
                     board = data.get("board")
                     post_id = data.get("post_id")
                     lane = data.get("content_lane")
-                    author = data.get("author", "")
+                    source_metadata = (
+                        db.execute(
+                            "SELECT title,author FROM text_novel_sources "
+                            "WHERE site=? AND source_work_id=?",
+                            (candidate["source_site"], candidate["source_work_id"]),
+                        ).fetchone()
+                        if candidate["lane"] == "novel"
+                        else None
+                    )
+                    title = str(
+                        data.get("work_title")
+                        or (source_metadata["title"] if source_metadata else "")
+                        or data.get("title")
+                        or data.get("category", "")
+                    )
+                    author = str(
+                        data.get("author") or (source_metadata["author"] if source_metadata else "")
+                    )
                     if candidate["lane"] == "arcalive" and not author:
                         author = arcalive_header(body)[2][:500]
                     db.execute(
@@ -1332,7 +1349,7 @@ def import_batch(
                             data.get("category", "") if candidate["lane"] == "arcalive" else "",
                             lane,
                             data["source_url"],
-                            data.get("work_title", data.get("title") or data.get("category", "")),
+                            title,
                             author,
                             data.get("chapter_label", ""),
                             data.get("chapter_kind", ""),
@@ -1352,8 +1369,6 @@ def import_batch(
                             "UPDATE text_archive_items SET text_sha256=? WHERE identity=?",
                             (text_digest, identity),
                         )
-                        title = str(data.get("work_title", ""))
-                        author = str(data.get("author", ""))
                         db.execute(
                             """INSERT INTO text_novel_sources(
                                site,source_work_id,source_url,slug,title,author,
@@ -1363,8 +1378,16 @@ def import_batch(
                                source_url=excluded.source_url,
                                slug=CASE WHEN text_novel_sources.slug=''
                                          THEN excluded.slug ELSE text_novel_sources.slug END,
-                               title=excluded.title,author=excluded.author,title_key=excluded.title_key,
-                               author_key=excluded.author_key,last_seen_at=excluded.last_seen_at""",
+                               title=CASE WHEN TRIM(excluded.title)<>'' THEN excluded.title
+                                          ELSE text_novel_sources.title END,
+                               author=CASE WHEN TRIM(excluded.author)<>'' THEN excluded.author
+                                           ELSE text_novel_sources.author END,
+                               title_key=CASE WHEN TRIM(excluded.title)<>'' THEN excluded.title_key
+                                              ELSE text_novel_sources.title_key END,
+                               author_key=CASE
+                                 WHEN TRIM(excluded.author)<>'' THEN excluded.author_key
+                                 ELSE text_novel_sources.author_key END,
+                               last_seen_at=excluded.last_seen_at""",
                             (
                                 candidate["source_site"],
                                 candidate["source_work_id"],
