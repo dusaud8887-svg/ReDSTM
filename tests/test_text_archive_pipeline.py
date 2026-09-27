@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scripts.text_archive import collector, compare_sources, importer, publisher
+from scripts.text_archive import collector, compare_sources, importer, publisher, repair_authors
 
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
@@ -286,6 +286,31 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
         == "noop"
     )
     assert calls == [("cat", "published/arcalive/release.json")]
+
+
+def test_arcalive_author_repair_verifies_objects_and_replays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(repair_authors, "operation_window", lambda **_: nullcontext())
+    inbox = tmp_path / "inbox"
+    _incoming_batch(inbox)
+    db_path = tmp_path / "state" / "text.sqlite"
+    objects = tmp_path / "objects"
+    importer.import_batch(inbox, _BATCH_ID, db_path, objects, inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        object_key = db.execute("SELECT object_key FROM text_archive_items").fetchone()[0]
+        db.execute("UPDATE text_archive_items SET author=''")
+    assert repair_authors.repair_authors(db_path, objects) == {
+        "scanned": 1,
+        "updated": 1,
+        "missing": 0,
+    }
+    assert repair_authors.repair_authors(db_path, objects)["scanned"] == 0
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE text_archive_items SET author=''")
+    (objects / object_key).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="failed verification"):
+        repair_authors.repair_authors(db_path, objects)
 
 
 def test_arcalive_catalog_can_pass_novel_canary_limit(tmp_path: Path) -> None:
