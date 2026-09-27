@@ -17,7 +17,7 @@ from typing import Any
 
 from filelock import FileLock, Timeout
 
-from crawler.archive import connect_archive
+from crawler.archive import archive_transaction, connect_archive
 from crawler.session import (
     AutomaticLoginThrottleError,
     SessionNetworkError,
@@ -40,6 +40,7 @@ from crawler.settings import (
     USER_AGENT,
 )
 from scripts.healthcheck import notify_dead_man
+from scripts.reconcile_works import reconcile_board
 from scripts.sync import _write_report
 
 _NETWORK_FAILURES = {"listing_fetch_failed", "network_error"}
@@ -390,6 +391,18 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 ):
                     if key in report:
                         board_result[key] = report[key]
+            if board_status == "succeeded" and outcomes.get("stored", 0) > 0:
+                try:
+                    with archive_transaction(args.archive) as connection:
+                        board_result["work_reconcile"] = reconcile_board(
+                            connection, board_id, apply=True
+                        )
+                except sqlite3.Error as error:
+                    # Crawled source data stays committed even when classification fails.
+                    board_result["work_reconcile"] = {
+                        "status": "failed",
+                        "error": type(error).__name__,
+                    }
             results.append(board_result)
             if report.get("stop_reason") == "schedule_paused":
                 status = "partial"
