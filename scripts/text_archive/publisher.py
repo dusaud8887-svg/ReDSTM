@@ -9,6 +9,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import closing
 from datetime import UTC, datetime
+from decimal import Decimal
 from itertools import groupby
 from pathlib import Path
 from typing import Any, TextIO
@@ -25,9 +26,18 @@ _AVAILABILITY_PAGE_SIZE = 500
 
 
 def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
-    """Same order as crawler.collections.parse_title, not import time."""
+    """Source episode numbers outrank labels and import time."""
     parsed = parse_title(str(row.get("chapter_label") or ""))
     order = parsed.order_key or (9, 9, 9, 10**12, 10**12)
+    if row.get("source_episode_number_normalized") is not None:
+        number = Decimal(str(row["source_episode_number_normalized"]))
+        order = (
+            order[0] if parsed.order_key else 0,
+            order[1] if parsed.order_key else 0,
+            order[2] if parsed.order_key else 1,
+            number,
+            number,
+        )
     identity = str(row.get("source_chapter_id") or row.get("canonical_chapter_id") or "")
     return (*order, parsed.base_key, identity)
 
@@ -36,6 +46,12 @@ def _latest_label(chapters: list[dict[str, Any]]) -> str:
     """Last numbered episode. A trailing prologue or epilogue is not the newest chapter."""
     for row in reversed(chapters):
         parsed = parse_title(str(row.get("chapter_label") or ""))
+        if (
+            row.get("source_episode_number_normalized") is not None
+            and row.get("chapter_kind") == "main"
+            and (parsed.order_key is None or parsed.order_key[2] == 1)
+        ):
+            return str(row.get("chapter_label") or "")
         if parsed.order_key is not None and parsed.order_key[2] == 1:
             return str(row.get("chapter_label") or "")
     return str(chapters[-1].get("chapter_label") or "") if chapters else ""
@@ -233,8 +249,13 @@ def build_publish_tree(
                         str(alias["alias_work_id"])
                     )
                 rows = db.execute(
-                    "SELECT * FROM text_archive_items WHERE lane=? "
-                    "ORDER BY canonical_work_id,imported_at,identity",
+                    """SELECT i.*,c.source_episode_number_raw,
+                              c.source_episode_number_normalized,c.source_toc_position,
+                              c.source_published_at
+                       FROM text_archive_items i LEFT JOIN text_novel_chapters c
+                         ON c.site=i.source_site AND c.source_work_id=i.source_work_id
+                         AND c.source_chapter_id=i.source_chapter_id
+                       WHERE i.lane=? ORDER BY i.canonical_work_id,i.imported_at,i.identity""",
                     (lane,),
                 )
                 for work_id, work_rows in groupby(
@@ -267,6 +288,10 @@ def build_publish_tree(
                                 "chapter_id": row["canonical_chapter_id"],
                                 "label": row["chapter_label"],
                                 "kind": row["chapter_kind"],
+                                "source_episode_number_raw": row["source_episode_number_raw"],
+                                "source_episode_number": row["source_episode_number_normalized"],
+                                "source_toc_position": row["source_toc_position"],
+                                "source_published_at": row["source_published_at"],
                                 "source_site": row["source_site"],
                                 "source_chapter_id": row["source_chapter_id"],
                                 "sha256": row["content_sha256"],

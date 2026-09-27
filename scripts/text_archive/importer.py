@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS text_novel_sources (
 CREATE TABLE IF NOT EXISTS text_novel_chapters (
   site TEXT NOT NULL, source_work_id TEXT NOT NULL, source_chapter_id TEXT NOT NULL,
   chapter_label TEXT NOT NULL DEFAULT '', chapter_kind TEXT NOT NULL DEFAULT 'main',
+  source_episode_number_raw TEXT, source_episode_number_normalized REAL,
+  source_toc_position INTEGER, source_published_at TEXT,
   access TEXT NOT NULL DEFAULT 'unknown', content_sha256 TEXT, status TEXT NOT NULL,
   text_sha256 TEXT,
   last_seen_at TEXT NOT NULL,
@@ -480,6 +482,7 @@ def _auto_link_basis(
         or not left["title_key"]
         or left["title_key"] != right["title_key"]
         or not left["author_key"]
+        or left["author_key"] in {"작가미상", "저자미상", "미상", "unknown", "anonymous"}
         or left["author_key"] != right["author_key"]
     ):
         return None
@@ -507,7 +510,7 @@ def _auto_link_basis(
                 )
             }
         )
-    hashes = len(signatures[0] & signatures[1])
+    hashes = len({digest for (_chapter, digest) in signatures[0] & signatures[1]})
     left_slug = str(left["slug"] or "").casefold()
     right_slug = str(right["slug"] or "").casefold()
     external_id_match = (
@@ -578,7 +581,7 @@ def list_novel_link_candidates(db_path: Path) -> list[dict[str, str]]:
                      ON l.site=c.left_site AND l.source_work_id=c.left_work_id
                    JOIN text_novel_sources r
                      ON r.site=c.right_site AND r.source_work_id=c.right_work_id
-                   WHERE c.status='candidate'
+                   WHERE c.status IN ('candidate','needs_review')
                    ORDER BY c.updated_at,c.left_site,c.left_work_id,c.right_site,c.right_work_id"""
             )
         ]
@@ -910,6 +913,14 @@ def _connect(path: Path) -> sqlite3.Connection:
         chapter_columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_chapters)")}
         if "text_sha256" not in chapter_columns:
             db.execute("ALTER TABLE text_novel_chapters ADD COLUMN text_sha256 TEXT")
+        for name, column_type in (
+            ("source_episode_number_raw", "TEXT"),
+            ("source_episode_number_normalized", "REAL"),
+            ("source_toc_position", "INTEGER"),
+            ("source_published_at", "TEXT"),
+        ):
+            if name not in chapter_columns:
+                db.execute(f"ALTER TABLE text_novel_chapters ADD COLUMN {name} {column_type}")
         _migrate_stable_work_ids(db)
         _migrate_normalized_titles(db)
         _migrate_weak_novel_links(db)
@@ -946,6 +957,7 @@ def _migrate_weak_novel_links(db: sqlite3.Connection) -> None:
                WHERE site=? AND source_work_id=?""",
             (row["right_site"], row["right_work_id"]),
         ).fetchone()
+        members = 0
         if left is not None and right is not None and left[0] == right[0]:
             members = db.execute(
                 "SELECT COUNT(*) FROM text_novel_work_group_sources WHERE canonical_work_id=?",
@@ -972,11 +984,16 @@ def _migrate_weak_novel_links(db: sqlite3.Connection) -> None:
                        WHERE alias_work_id=?""",
                     (new_id, f"novel:{row['right_site']}:{row['right_work_id']}"),
                 )
+        unresolved = left is not None and right is not None and left[0] == right[0] and members > 2
         db.execute(
-            """UPDATE text_novel_link_candidates SET status='candidate',
-               match_basis='normalized_title_author',updated_at=?
+            """UPDATE text_novel_link_candidates SET
+               status=CASE WHEN ? THEN 'needs_review' ELSE 'candidate' END,
+               match_basis=CASE WHEN ? THEN match_basis ELSE 'normalized_title_author' END,
+               updated_at=?
                WHERE left_site=? AND left_work_id=? AND right_site=? AND right_work_id=?""",
             (
+                unresolved,
+                unresolved,
                 _now(),
                 row["left_site"],
                 row["left_work_id"],

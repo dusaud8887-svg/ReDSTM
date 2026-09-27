@@ -275,7 +275,17 @@ def test_ambiguous_novel_link_can_be_promoted_without_canary(tmp_path: Path) -> 
         db.close()
 
 
-def test_unique_title_author_and_matching_body_hashes_auto_link(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("digests", "author", "linked"),
+    [
+        (("a" * 64, "b" * 64), "작가", True),
+        (("a" * 64, "a" * 64), "작가", False),
+        (("a" * 64, "b" * 64), "작가 미상", False),
+    ],
+)
+def test_unique_title_author_and_matching_body_hashes_auto_link(
+    tmp_path: Path, digests: tuple[str, str], author: str, linked: bool
+) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     with db:
         for site, work_id in (("blacktoon", "24753"), ("toki", "63670")):
@@ -283,10 +293,19 @@ def test_unique_title_author_and_matching_body_hashes_auto_link(tmp_path: Path) 
                 """INSERT INTO text_novel_sources(
                    site,source_work_id,slug,title,author,title_key,author_key,last_seen_at)
                    VALUES(?,?,?,?,?,?,?,?)""",
-                (site, work_id, work_id, "고유 작품", "작가", "고유 작품", "작가", "now"),
+                (
+                    site,
+                    work_id,
+                    work_id,
+                    "고유 작품",
+                    author,
+                    importer._title_key("고유 작품"),
+                    importer._title_key(author),
+                    "now",
+                ),
             )
             importer._canonical_work_id(db, site, work_id)
-            for chapter_id, digest in (("1", "a" * 64), ("2", "b" * 64)):
+            for chapter_id, digest in zip(("1", "2"), digests, strict=True):
                 db.execute(
                     """INSERT INTO text_novel_chapters(
                        site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
@@ -298,10 +317,10 @@ def test_unique_title_author_and_matching_body_hashes_auto_link(tmp_path: Path) 
     rows = db.execute(
         "SELECT canonical_work_id FROM text_novel_work_group_sources ORDER BY site"
     ).fetchall()
-    assert len(rows) == 2 and rows[0][0] == rows[1][0]
-    assert db.execute("SELECT status,match_basis FROM text_novel_link_candidates").fetchone()[
-        :
-    ] == ("auto_accepted", "normalized_title_author+body_sha256")
+    assert len(rows) == 2 and (rows[0][0] == rows[1][0]) is linked
+    assert db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == (
+        "auto_accepted" if linked else "candidate"
+    )
     db.close()
 
 
@@ -407,6 +426,37 @@ def test_old_label_only_link_is_split_and_covered_requeued(tmp_path: Path) -> No
         assert db.execute("SELECT status FROM text_novel_chapters").fetchone()[0] == "discovered"
         assert (
             db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == "candidate"
+        )
+    finally:
+        db.close()
+
+
+def test_three_source_weak_merge_remains_flagged_for_review(tmp_path: Path) -> None:
+    path = tmp_path / "text.sqlite"
+    db = importer._connect(path)
+    with db:
+        db.execute("DELETE FROM text_novel_identity_migrations WHERE version=3")
+        db.execute("INSERT INTO text_novel_work_groups VALUES('old','now')")
+        db.executemany(
+            "INSERT INTO text_novel_work_group_sources VALUES(?,?,'old')",
+            [("blacktoon", "1"), ("marumaru", "2"), ("toki", "3")],
+        )
+        db.execute(
+            """INSERT INTO text_novel_link_candidates VALUES(
+               'blacktoon','1','marumaru','2','normalized_title_author+chapter_sequence',
+               'auto_accepted','now')"""
+        )
+    db.close()
+    db = importer._connect(path)
+    try:
+        assert db.execute("SELECT status,match_basis FROM text_novel_link_candidates").fetchone()[
+            :
+        ] == ("needs_review", "normalized_title_author+chapter_sequence")
+        assert (
+            db.execute(
+                "SELECT COUNT(DISTINCT canonical_work_id) FROM text_novel_work_group_sources"
+            ).fetchone()[0]
+            == 1
         )
     finally:
         db.close()

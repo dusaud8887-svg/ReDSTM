@@ -365,6 +365,30 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
             f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
             tuple(earlier.values()),
         )
+        db.execute(
+            """INSERT INTO text_novel_chapters(
+               site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+               source_episode_number_raw,source_episode_number_normalized,
+               source_toc_position,access,status,last_seen_at)
+               VALUES('toki','63670','42','42화','main','42',42,1,'free','complete','now')"""
+        )
+        numbered = earlier.copy()
+        numbered["identity"] = "novel_chapter:toki:63670:12"
+        numbered["canonical_chapter_id"] = numbered["identity"]
+        numbered["source_chapter_id"] = "12"
+        numbered["chapter_label"] = "제12화: 귀환"
+        db.execute(
+            f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+            tuple(numbered.values()),
+        )
+        db.execute(
+            """INSERT INTO text_novel_chapters(
+               site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+               source_episode_number_raw,source_episode_number_normalized,
+               source_toc_position,access,status,last_seen_at)
+               VALUES('toki','63670','12','제12화: 귀환','main','12',12,0,
+                      'free','complete','now')"""
+        )
         for label, source_id, imported_at in (
             ("프롤로그", "prologue", "2098-01-01T00:00:00Z"),
             ("에필로그", "epilogue", "2100-01-01T00:00:00Z"),
@@ -385,7 +409,16 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
         for path in (tmp_path / "build" / "published" / "indexes" / "novel").glob("*.json")
     ]
     chapters = next(page["chapters"] for page in details if "chapters" in page)
-    assert [chapter["label"] for chapter in chapters] == ["프롤로그", "42화", "252화", "에필로그"]
+    assert [chapter["label"] for chapter in chapters] == [
+        "프롤로그",
+        "제12화: 귀환",
+        "42화",
+        "252화",
+        "에필로그",
+    ]
+    assert chapters[2]["source_episode_number_raw"] == "42"
+    assert chapters[2]["source_episode_number"] == 42
+    assert chapters[2]["source_toc_position"] == 1
     catalog = next(page["items"] for page in details if "items" in page)
     assert catalog[0]["latest_label"] == "252화"
 
@@ -788,7 +821,7 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
                     "author": "A",
                 },
                 "episodes": [
-                    {"id": 914174, "title": "1화", "isFree": True},
+                    {"id": 914174, "title": "1화", "episodeNumber": 1, "isFree": True},
                     {"id": 914175, "title": "2화", "price": 5},
                 ],
             }
@@ -821,6 +854,18 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
             "ORDER BY source_chapter_id"
         ).fetchall()
         assert rows == [("914174", "free", "complete"), ("914175", "point", "waiting")]
+        assert (
+            db.execute(
+                "SELECT title FROM text_novel_sources "
+                "WHERE site='blacktoon' AND source_work_id='24753'"
+            ).fetchone()[0]
+            == "T"
+        )
+        assert db.execute(
+            """SELECT source_episode_number_raw,source_episode_number_normalized,
+                      source_toc_position FROM text_novel_chapters
+               WHERE source_chapter_id='914174'"""
+        ).fetchone() == ("1", 1.0, 0)
         assert db.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 1
     body_path = objects / "objects" / "sha256" / chapter["sha256"][:2] / f"{chapter['sha256']}.md"
     assert body_path.read_text(encoding="utf-8") == "sample chapter\n"
@@ -1294,6 +1339,9 @@ def test_live_json_shape_keeps_unknown_access_and_rejects_paid_placeholder() -> 
             "id": "31027",
             "label": "1",
             "episode_number": 1,
+            "source_episode_number_raw": "1",
+            "source_toc_position": 0,
+            "source_published_at": None,
             "kind": "main",
             "access": "unknown",
         }
@@ -1303,6 +1351,14 @@ def test_live_json_shape_keeps_unknown_access_and_rejects_paid_placeholder() -> 
     )
     with pytest.raises(collector.CollectorError, match="requires_review"):
         collector._plain_text('[{"kind":"paid","text":"locked"}]')
+
+
+def test_work_title_is_independent_of_episode_order() -> None:
+    rows = [{"id": 1, "title": "1화 출발"}, {"id": 2, "title": "2화 재회"}]
+    for episodes in (rows, list(reversed(rows))):
+        detail = collector.parse_work_detail({"id": 7, "title": "실제 작품", "episodes": episodes})
+        assert detail.work_title == "실제 작품"
+        assert [row["source_toc_position"] for row in detail.episodes] == [0, 1]
 
 
 def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) -> None:

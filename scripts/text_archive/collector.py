@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import requests
 
@@ -169,7 +169,14 @@ def parse_catalog_page(value: Any) -> tuple[list[dict[str, Any]], int, int]:
     return valid, total, size
 
 
-def parse_work_detail(value: Any) -> tuple[str, str, str, list[dict[str, Any]]]:
+class WorkDetail(NamedTuple):
+    work_id: str
+    work_title: str
+    author: str
+    episodes: list[dict[str, Any]]
+
+
+def parse_work_detail(value: Any) -> WorkDetail:
     data = _payload(value)
     episodes: Any = None
     if isinstance(data, dict) and isinstance(data.get("work"), dict):
@@ -180,14 +187,14 @@ def parse_work_detail(value: Any) -> tuple[str, str, str, list[dict[str, Any]]]:
     work_id = str(data.get("id") or "")
     if not work_id.isdigit():
         raise CollectorError("work_id_invalid")
-    title = str(data.get("title") or "")[:500]
+    work_title = str(data.get("title") or "")[:500]
     author = str(data.get("authorName") or data.get("author") or "")[:300]
     if episodes is None:
         episodes = data.get("episodes", data.get("chapters"))
     if not isinstance(episodes, list):
         raise CollectorError("work_episodes_unknown")
     normalized: list[dict[str, Any]] = []
-    for row in episodes:
+    for position, row in enumerate(episodes):
         if not isinstance(row, dict):
             continue
         chapter_id = str(row.get("id") or "")
@@ -210,20 +217,31 @@ def parse_work_detail(value: Any) -> tuple[str, str, str, list[dict[str, Any]]]:
         raw_number = row.get("episodeNumber")
         if raw_number is None:
             raw_number = row.get("number")
-        episode_number = raw_number if type(raw_number) is int else None
-        title = str(row.get("title") or "").strip()
-        label = (title or (str(episode_number) if episode_number is not None else ""))[:300]
+        raw_number_text = str(raw_number) if raw_number is not None else None
+        episode_number = (
+            float(raw_number_text)
+            if raw_number_text is not None
+            and re.fullmatch(r"\d{1,12}(?:\.\d{1,6})?", raw_number_text)
+            else None
+        )
+        if episode_number is not None and episode_number.is_integer():
+            episode_number = int(episode_number)
+        chapter_title = str(row.get("title") or "").strip()
+        label = (chapter_title or (str(episode_number) if episode_number is not None else ""))[:300]
         kind = str(row.get("chapterKind") or row.get("kind") or "main")[:40]
         normalized.append(
             {
                 "id": chapter_id,
                 "label": label,
                 "episode_number": episode_number,
+                "source_episode_number_raw": raw_number_text,
+                "source_toc_position": position,
+                "source_published_at": str(row.get("publishedAt") or "") or None,
                 "kind": kind,
                 "access": access,
             }
         )
-    return work_id, title, author, normalized
+    return WorkDetail(work_id, work_title, author, normalized)
 
 
 def _plain_text(body_json: Any) -> str:
@@ -641,10 +659,16 @@ def _apply_work(
             db.execute(
                 """INSERT INTO text_novel_chapters(
                    site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
-                   access,status,last_seen_at)
-                   VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(site,source_work_id,source_chapter_id)
+                   source_episode_number_raw,source_episode_number_normalized,
+                   source_toc_position,source_published_at,access,status,last_seen_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(site,source_work_id,source_chapter_id)
                    DO UPDATE SET chapter_label=excluded.chapter_label,
-                   chapter_kind=excluded.chapter_kind,access=excluded.access,
+                   chapter_kind=excluded.chapter_kind,
+                   source_episode_number_raw=excluded.source_episode_number_raw,
+                   source_episode_number_normalized=excluded.source_episode_number_normalized,
+                   source_toc_position=excluded.source_toc_position,
+                   source_published_at=excluded.source_published_at,access=excluded.access,
                    status=CASE WHEN text_novel_chapters.status='complete' THEN 'complete'
                                ELSE excluded.status END,last_seen_at=excluded.last_seen_at""",
                 (
@@ -653,6 +677,10 @@ def _apply_work(
                     episode["id"],
                     episode["label"],
                     episode["kind"],
+                    episode["source_episode_number_raw"],
+                    episode["episode_number"],
+                    episode["source_toc_position"],
+                    episode["source_published_at"],
                     episode["access"],
                     status,
                     now,
