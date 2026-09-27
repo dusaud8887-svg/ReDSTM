@@ -220,11 +220,10 @@ test("Reader settings keep the same sentence on screen when the font size change
     const top = chrome + 12;
     return [...document.querySelectorAll("#archive-body p")].find((p) => p.getBoundingClientRect().bottom > top)?.textContent;
   });
-  if (mobileWidth(page)) {
-    // Scrolling hid the tools; a short tap on the text brings them back.
-    for (const type of ["pointerdown", "pointerup"]) {
-      await page.locator("#archive-body").dispatchEvent(type, { isPrimary: true, clientX: 120, clientY: 420 });
-    }
+  // Scrolling hid the tools on every width; a short tap on the text brings them back.
+  await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+  for (const type of ["pointerdown", "pointerup"]) {
+    await page.locator("#archive-body").dispatchEvent(type, { isPrimary: true, pointerType: "touch", clientX: 120, clientY: 420 });
   }
   await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
   const before = await topSentence();

@@ -70,7 +70,7 @@ const elements = Object.fromEntries(
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
-    "reading-progress", "immersive-toggle", "end-previous", "end-next",
+    "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
@@ -158,7 +158,6 @@ let moreOpener = null;
 let filterDraft = null;
 let catalogNote = "";
 const workerRequests = new Map();
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const textLibrary = createTextLibrary({
   readerPane: elements["reader-pane"],
   shell: {
@@ -2746,6 +2745,7 @@ function updateReadingProgress() {
   const progress = bodyProgress();
   elements["reading-progress"].style.width = `${progress * 100}%`;
   elements["reader-topbar-progress"].textContent = `${Math.round(progress * 100)}%`;
+  elements["reader-status"].textContent = `${Math.round(progress * 100)}%`;
   elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
@@ -3449,33 +3449,42 @@ elements["image-viewer"].addEventListener("close", () => elements["image-viewer-
 elements["image-viewer"].addEventListener("click", (event) => {
   if (event.target === elements["image-viewer"]) elements["image-viewer"].close();
 });
+// Reading chrome (docs/19 §4.3): reading downward folds the top and bottom bars away on every
+// screen width; a still tap toggles them, a deliberate scroll back up or reaching the end of
+// the body brings them back. Reduced motion only drops the slide animation (CSS).
+const CHROME_HIDE_AFTER = 48;
+const CHROME_SHOW_AFTER = 96;
+
+function setReaderChromeHidden(hidden) {
+  document.body.classList.toggle("reader-controls-hidden", hidden);
+  readerScrollDelta = 0;
+}
+
+function readerAtEnd() {
+  const end = document.getElementById("chapter-end");
+  if (!end || end.hidden) return false;
+  return end.getBoundingClientRect().top < elements["reader-pane"].getBoundingClientRect().bottom - 48;
+}
+
 elements["reader-pane"].addEventListener("scroll", () => {
   queueScrollSave();
   updateReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   const delta = current - lastReaderScroll;
-  if (current < 80) {
-    document.body.classList.remove("reader-controls-hidden");
-    readerScrollDelta = 0;
-    lastReaderScroll = current;
+  lastReaderScroll = current;
+  if (!document.body.classList.contains("reader-open")) return;
+  if (current < 80 || readerAtEnd()) {
+    setReaderChromeHidden(false);
     return;
   }
-  if (delta && !reducedMotion.matches && isNarrowScreen() && document.body.classList.contains("reader-open")) {
-    readerScrollDelta = Math.sign(readerScrollDelta) === Math.sign(delta)
-      ? readerScrollDelta + delta
-      : delta;
-    if (readerScrollDelta >= 50) {
-      document.body.classList.add("reader-controls-hidden");
-      readerScrollDelta = 0;
-    } else if (readerScrollDelta <= -30) {
-      document.body.classList.remove("reader-controls-hidden");
-      readerScrollDelta = 0;
-    }
-  }
-  lastReaderScroll = current;
+  if (!delta) return;
+  readerScrollDelta = Math.sign(readerScrollDelta) === Math.sign(delta) ? readerScrollDelta + delta : delta;
+  if (readerScrollDelta >= CHROME_HIDE_AFTER) setReaderChromeHidden(true);
+  else if (readerScrollDelta <= -CHROME_SHOW_AFTER) setReaderChromeHidden(false);
 }, { passive: true });
-// A short, still tap on the body brings hidden controls back. Scroll flings end in
-// pointercancel or move the pane, so they are not mistaken for taps.
+// A short, still touch on the text toggles the bars. Scroll flings end in pointercancel or move
+// the pane, so they are not mistaken for taps. A mouse click is left to text selection; the
+// mouse brings the bars back by moving to the top edge instead.
 elements["reader-pane"].addEventListener("pointerdown", (event) => {
   pointerStart = event.isPrimary
     ? { x: event.clientX, y: event.clientY, time: event.timeStamp, scroll: elements["reader-pane"].scrollTop }
@@ -3485,13 +3494,18 @@ elements["reader-pane"].addEventListener("pointercancel", () => { pointerStart =
 elements["reader-pane"].addEventListener("pointerup", (event) => {
   const start = pointerStart;
   pointerStart = null;
-  if (!start || !document.body.classList.contains("reader-controls-hidden")) return;
-  if (event.target.closest("a, button, input, select, textarea, img")) return;
+  if (!start || event.pointerType === "mouse" || !document.body.classList.contains("reader-open")) return;
+  if (event.target.closest("a, button, input, select, textarea, label, summary, img, [role='button'], .media-figure, .chapter-end, .reader-list, .reader-topbar, .reader-toolbar")) return;
   const still = Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10 &&
     event.timeStamp - start.time <= 500 &&
     Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
-  if (still && !String(getSelection() ?? "")) document.body.classList.remove("reader-controls-hidden");
+  if (!still || String(getSelection() ?? "")) return;
+  setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
 });
+elements["reader-pane"].addEventListener("pointermove", (event) => {
+  if (event.pointerType !== "mouse" || !document.body.classList.contains("reader-controls-hidden")) return;
+  if (event.clientY - elements["reader-pane"].getBoundingClientRect().top < 64) setReaderChromeHidden(false);
+}, { passive: true });
 
 elements["theme-toggle"].addEventListener("click", () => {
   settings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -3734,7 +3748,6 @@ function updateKeyboardState() {
 window.visualViewport?.addEventListener("resize", updateKeyboardState);
 document.addEventListener("focusout", () => requestAnimationFrame(updateKeyboardState));
 matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
-reducedMotion.addEventListener("change", () => document.body.classList.remove("reader-controls-hidden"));
 // Late web fonts can reflow the body; re-apply the saved position only if the reader has not
 // started scrolling in the meantime.
 document.fonts.ready.then(() => {

@@ -412,6 +412,11 @@ body.text-library-open .text-work-back { display: inline-flex; }
 .result-item.continue-row { border-left-color: var(--accent); background: var(--accent-soft); }
 .result-item.continue-row .result-title { color: var(--accent); }
 .reader-toolbar { position: sticky; top: 0; z-index: 7; min-height: 56px; display: flex; align-items: center; gap: 7px; padding: 6px max(20px, calc((100% - min(var(--prose-width), 900px)) / 2)); border-block: 1px solid var(--line); background: var(--reader); }
+/* Reading downward folds the tools away on every width (docs/19 §4.3); the progress line stays. */
+.reader-toolbar { transition: transform 160ms ease-in-out; }
+body.reader-controls-hidden .reader-toolbar { transform: translateY(calc(-100% - 2px)); }
+.reader-status { position: fixed; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 19; margin: 0; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--reader) 85%, transparent); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 160ms ease-in-out; }
+body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opacity: 1; }
 .reader-step { display: inline-flex; align-items: center; gap: 6px; }
 .step-button { min-height: 40px; display: inline-flex; align-items: center; gap: 4px; padding: 0 14px 0 8px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-size: 13px; font-weight: 650; white-space: nowrap; cursor: pointer; }
 .step-button.step-next { padding: 0 8px 0 14px; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); color: var(--accent); }

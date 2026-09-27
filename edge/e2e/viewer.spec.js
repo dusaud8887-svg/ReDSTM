@@ -952,6 +952,21 @@ test("shows progress while receiving a large post", async ({ page }) => {
   expect(states.some((state) => /^본문 \d+%$/.test(state))).toBe(true);
 });
 
+test("reading chrome still folds away when the device asks for reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await useCollectionFixture(page);
+  await openPost(page, standaloneKey);
+  for (let step = 0; step < 4; step += 1) {
+    await page.locator("#reader-pane").evaluate(async (element) => {
+      element.scrollTop += 60;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+  }
+  await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+  const bar = page.locator(page.viewportSize().width < 760 ? ".reader-bottom" : ".reader-toolbar");
+  await expect(bar).toHaveCSS("transition-duration", /^0s|1e-05s$/);
+});
+
 test("supports progress, immersive mode, and reader shortcuts", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, standaloneKey);
@@ -966,28 +981,56 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
     const width = await page.locator("#reading-progress").evaluate((element) => element.style.width);
     return Number.parseFloat(width);
   }).toBeGreaterThan(0);
-  if (page.viewportSize().width < 760) {
+  // Reading chrome folds away on every width (docs/19 §4.3).
+  {
+    const body = page.locator("body");
     const scrollBy = (delta) => page.locator("#reader-pane").evaluate(async (element, amount) => {
       element.scrollTop += amount;
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }, delta);
-    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+    const tap = async (pointerType = "touch") => {
+      await page.locator("#archive-body").dispatchEvent("pointerdown", { isPrimary: true, pointerType, clientX: 120, clientY: 400 });
+      await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, pointerType, clientX: 122, clientY: 401 });
+    };
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    await expect(page.locator("#reader-status")).toHaveText(/^\d+%$/);
+    await expect(page.locator("#reader-status")).toHaveCSS("opacity", "1");
     // A lone pointerup (the end of a scroll) must not count as a tap.
-    await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, clientX: 120, clientY: 400 });
-    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
-    await page.locator("#archive-body").dispatchEvent("pointerdown", { isPrimary: true, clientX: 120, clientY: 400 });
-    await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, clientX: 122, clientY: 401 });
-    await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+    await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, pointerType: "touch", clientX: 120, clientY: 400 });
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    await tap();
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
+    // The same still tap folds them away again.
+    await tap();
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    await tap();
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
+    // A mouse click is text selection, not a toggle; the top edge brings the bars back.
+    await tap("mouse");
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
     await scrollBy(20);
     await scrollBy(20);
-    await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
     await scrollBy(10);
-    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
-    await scrollBy(-10);
-    await scrollBy(-10);
-    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
-    await scrollBy(-10);
-    await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    const paneTop = await page.locator("#reader-pane").evaluate((element) => element.getBoundingClientRect().top);
+    await page.locator("#archive-body").dispatchEvent("pointermove", { pointerType: "mouse", clientX: 400, clientY: paneTop + 200 });
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    await page.locator("#archive-body").dispatchEvent("pointermove", { pointerType: "mouse", clientX: 400, clientY: paneTop + 20 });
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
+    await scrollBy(50);
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    // Re-reading a few lines up keeps the text clear; a deliberate scroll up shows the bars.
+    await scrollBy(-40);
+    await scrollBy(-40);
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    await scrollBy(-20);
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
+    // Reaching the end of the body shows the next/list tools.
+    await scrollBy(50);
+    await expect(body).toHaveClass(/reader-controls-hidden/);
+    await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect(body).not.toHaveClass(/reader-controls-hidden/);
   }
   await page.keyboard.press("f");
   await expect(page.locator("body")).toHaveClass(/immersive/);
