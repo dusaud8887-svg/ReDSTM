@@ -32,10 +32,6 @@ export function boardDisplayName(board, fallbackId = "") {
   return name || id;
 }
 
-export function boardSelectLabel(board, fallbackId = "") {
-  return boardDisplayName(board, fallbackId) || fallbackId;
-}
-
 export function boardGroupLabel(name) {
   const raw = String(name ?? "").trim();
   if (!raw) return "기타";

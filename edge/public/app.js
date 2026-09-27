@@ -61,7 +61,7 @@ const elements = Object.fromEntries(
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-bookmark", "reader-bottom-next", "reader-bottom-settings",
     "post-settings-actions", "settings-bookmark", "settings-bookmark-detail", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
     "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
-    "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove", "bookmark-save",
+    "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove",
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
