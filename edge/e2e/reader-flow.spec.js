@@ -553,3 +553,51 @@ test("Text bodies show [image] and [video] lines and readable markdown links", a
   await expect(link).toHaveText("https://novelpia.com/novel/391903");
   await expect(page.locator("#archive-body")).not.toContainText("unsafelink");
 });
+
+test("Arcalive images: archived copies replace expired links and missing ones are queued", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const releaseHash = "a".repeat(64);
+  const indexHash = "b".repeat(64);
+  const bodyHash = "c".repeat(64);
+  const stored = "20240329sac/7e4f8557ceebfb10692c4b35f198e52334ddc010b6026c5bfd7da73c636b3119.png";
+  const missing = "20231026sac/7c3492e4ce4b6052a9e2d123e337ca339964275147bd8fe8fe9ad4c4aa71623f.png";
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const queued = [];
+  await page.route("**/api/v1/text/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/text/media/resolve") {
+      const { paths } = route.request().postDataJSON();
+      expect(route.request().headers()["x-redstm-media"]).toBe("1");
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+        media: Object.fromEntries(paths.filter((item) => item === stored).map((item) => [item, { url: `/api/v1/text/media/${"d".repeat(64)}.webp`, width: 400, height: 300 }])),
+      }) });
+    }
+    if (path === "/api/v1/text/media/queue") {
+      queued.push(route.request().postDataJSON());
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ queued: 1 }) });
+    }
+    if (path.startsWith("/api/v1/text/media/")) return route.fulfill({ contentType: "image/png", body: png });
+    let payload;
+    if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
+    else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${indexHash}.json`, sha256: indexHash }],
+    };
+    else if (path.endsWith(`/index/arcalive/${indexHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", items: [{ identity: "arcalive:monmusu:102379431:text", title: "작은 가슴파의 유혹", category: "번역", board: "monmusu", post_id: 102379431, sha256: bodyHash }],
+    };
+    else if (path.endsWith(`/object/${bodyHash}`)) return route.fulfill({
+      contentType: "text/markdown",
+      body: `# 작은 가슴파의 유혹\n\n- channel: monmusu\n- url: https://arca.live/b/monmusu/102379431\n\n---\n\n[image] https://ac-o.arca.live/${stored}?expires=1785653375&key=a&type=orig\n\n본문\n\n[image] https://ac-o.arca.live/${missing}?expires=1785653375&key=b&type=orig\n[video] https://ac.arca.live/v/clip.mp4?expires=1&key=k`,
+    });
+    else return route.fulfill({ status: 404, body: "" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/text?lane=arcalive&board=monmusu&category=%EB%B2%88%EC%97%AD");
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.locator("#reader-title")).toHaveText("작은 가슴파의 유혹");
+  const archived = page.locator('#archive-body .media-figure[data-archived="true"] img');
+  await expect(archived).toHaveAttribute("src", `/api/v1/text/media/${"d".repeat(64)}.webp`);
+  await expect(page.locator("#archive-body .media-expired")).toHaveCount(2);
+  await expect(page.locator(`#archive-body .media-expired[data-arca-path="${missing}"]`)).toContainText("보관 대기 중");
+  expect(queued).toEqual([{ post_url: "https://arca.live/b/monmusu/102379431", paths: [missing] }]);
+});

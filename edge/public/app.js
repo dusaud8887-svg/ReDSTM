@@ -20,7 +20,10 @@ import {
   postReadingState,
 } from "/reading-model.js";
 import { createBoardNavigator } from "/board-navigator.js";
-import { decorateImages, enhanceHtmlMedia, renderPlainTextWithMedia } from "/media.js";
+import { arcaPostUrl } from "/arca-media.js";
+import {
+  applyArchivedMedia, arcaPaths, decorateImages, enhanceHtmlMedia, markQueuedMedia, renderPlainTextWithMedia,
+} from "/media.js";
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence } from "/sequence.js";
 import { captureTextAnchor, restoreTextAnchor } from "/text-anchor.js";
@@ -141,6 +144,7 @@ let readerListModel = null;
 // TypeMoon: the list a reading session came from, derived from its parent route.
 let listContext = null;
 let listRequestId = 0;
+let textRenderId = 0;
 let immersiveOpener = null;
 let editingBookmarkSummary = null;
 // True while the bookmark editor edits the open text chapter instead of a TypeMoon post.
@@ -807,9 +811,39 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   body.classList.add("plain-text");
   body.ariaLabel = "텍스트 본문";
   renderPlainTextWithMedia(body, text, { sourceUrl });
+  const renderId = String(++textRenderId);
+  body.dataset.renderId = renderId;
+  void archiveTextMedia(body, sourceUrl, renderId);
   openMobileReader();
   updateShellMode();
   requestAnimationFrame(() => elements["reader-title"].focus({ preventScroll: true }));
+}
+
+// Arcalive images: show archived copies, and queue the post (by its canonical URL) for the
+// browser extension when some are missing. Failures leave the body as rendered.
+async function archiveTextMedia(body, sourceUrl, renderId) {
+  const paths = arcaPaths(body).slice(0, 100);
+  if (!paths.length) return;
+  const headers = { "Content-Type": "application/json", "X-ReDSTM-Media": "1" };
+  let media = {};
+  try {
+    const response = await fetch("/api/v1/text/media/resolve", { method: "POST", headers, body: JSON.stringify({ paths }) });
+    if (response.ok) media = (await response.json()).media ?? {};
+  } catch {
+    return;
+  }
+  if (body.dataset.renderId !== renderId) return;
+  const missing = applyArchivedMedia(body, media);
+  const postUrl = arcaPostUrl(sourceUrl);
+  if (!missing.length || !postUrl) return;
+  try {
+    const response = await fetch("/api/v1/text/media/queue", {
+      method: "POST", headers, body: JSON.stringify({ post_url: postUrl, paths: missing }),
+    });
+    if (response.ok && body.dataset.renderId === renderId) markQueuedMedia(body, missing);
+  } catch {
+    // The next reading tries again.
+  }
 }
 
 function closeTextReader() {

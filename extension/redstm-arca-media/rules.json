@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [{ "header": "Referer", "operation": "set", "value": "https://arca.live/" }]
+    },
+    "condition": {
+      "requestDomains": ["arca.live", "namu.la"],
+      "resourceTypes": ["xmlhttprequest"],
+      "excludedInitiatorDomains": ["arca.live"]
+    }
+  }
+]

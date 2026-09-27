@@ -1,3 +1,5 @@
+import { arcaPathKey } from "./arca-media.js";
+
 // Turns direct image links in reading bodies into inline images. Only http(s) URLs whose path
 // ends in a raster image extension qualify; anything else stays a link. Images load without a
 // referrer; a failed image falls back to its original link without breaking the body.
@@ -104,7 +106,7 @@ function originalLink(href, label) {
   return link;
 }
 
-export function mediaFigure(href) {
+export function mediaFigure(href, { caption: captionText = "" } = {}) {
   const figure = document.createElement("figure");
   figure.className = "media-figure";
   const open = document.createElement("button");
@@ -119,7 +121,8 @@ export function mediaFigure(href) {
   image.src = href;
   open.append(image);
   const caption = document.createElement("figcaption");
-  caption.append(originalLink(href, `원본 · ${hostOf(href)}`));
+  if (captionText) caption.textContent = captionText;
+  else caption.append(originalLink(href, `원본 · ${hostOf(href)}`));
   figure.append(open, caption);
   watchFailure(image, href);
   return figure;
@@ -161,8 +164,12 @@ export function renderPlainTextWithMedia(container, text, { sourceUrl = "" } = {
       flush();
       const url = tagged?.href ?? href;
       const kind = tagged?.kind ?? "image";
-      fragment.append(isExpiredSignedUrl(url) ? expiredMedia(url, kind, sourceUrl)
-        : kind === "video" ? mediaVideo(url) : mediaFigure(url));
+      const node = isExpiredSignedUrl(url) ? expiredMedia(url, kind, sourceUrl)
+        : kind === "video" ? mediaVideo(url) : mediaFigure(url);
+      // Arcalive images can be swapped for the archived copy once it is known (videos are not kept).
+      const path = kind === "image" ? arcaPathKey(url) : null;
+      if (path) node.dataset.arcaPath = path;
+      fragment.append(node);
       return;
     }
     buffer += line + (index < lines.length - 1 ? "\n" : "");
@@ -229,5 +236,38 @@ export function decorateImages(container) {
       link.className = "image-fallback";
       image.replaceWith(link);
     }, { once: true });
+  }
+}
+
+export function arcaPaths(container) {
+  return [...new Set([...container.querySelectorAll("[data-arca-path]")].map((node) => node.dataset.arcaPath))];
+}
+
+// Replaces Arcalive images (live or expired) with archived copies; returns paths still missing.
+export function applyArchivedMedia(container, media) {
+  const missing = new Set();
+  for (const node of container.querySelectorAll("[data-arca-path]")) {
+    const archived = media[node.dataset.arcaPath];
+    if (!archived) {
+      missing.add(node.dataset.arcaPath);
+      continue;
+    }
+    const figure = mediaFigure(archived.url, { caption: "보관된 이미지" });
+    const image = figure.querySelector("img");
+    image.width = archived.width;
+    image.height = archived.height;
+    figure.dataset.archived = "true";
+    node.replaceWith(figure);
+  }
+  return [...missing];
+}
+
+// Expired links that are now queued say so, instead of only pointing at the source post.
+export function markQueuedMedia(container, paths) {
+  const queued = new Set(paths);
+  for (const note of container.querySelectorAll(".media-expired[data-arca-path]")) {
+    if (!queued.has(note.dataset.arcaPath) || note.dataset.queued) continue;
+    note.dataset.queued = "true";
+    note.firstChild.textContent = "보관 대기 중인 이미지 (PC 크롬 확장이 받아 오면 표시됩니다)";
   }
 }

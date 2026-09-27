@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "ReDSTM 이미지 보관 도우미",
+  "version": "1.0.0",
+  "description": "ReDSTM에서 읽은 아카라이브 글의 이미지를 이 크롬의 로그인으로 받아 ReDSTM 보관본에 저장합니다.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "alarms", "declarativeNetRequest"],
+  "host_permissions": [
+    "https://arca.live/*",
+    "https://*.arca.live/*",
+    "https://*.namu.la/*",
+    "https://redstm-edge.redstm-archive-private.workers.dev/*",
+    "http://127.0.0.1:8791/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "ReDSTM 이미지 보관" },
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "arca-referer", "enabled": true, "path": "rules.json" }]
+  }
+}

@@ -1,3 +1,5 @@
+import { textMediaResponse } from "./text-media.js";
+
 const HASH = /^[a-f0-9]{64}$/;
 const LANES = new Set(["novel", "arcalive"]);
 
@@ -29,8 +31,9 @@ async function readObject(request, env, key, contentType, immutable = true) {
 }
 
 export function textArchiveResponse(request, env) {
-  if (request.method !== "GET" && request.method !== "HEAD") return jsonError(405);
   const path = new URL(request.url).pathname;
+  if (path.startsWith("/api/v1/text/media/")) return textMediaResponse(request, env);
+  if (request.method !== "GET" && request.method !== "HEAD") return jsonError(405);
   let match = path.match(/^\/api\/v1\/text\/release\/(novel|arcalive)$/);
   if (match) return readObject(request, env, `published/${match[1]}/release.json`, "application/json; charset=utf-8", false);
   match = path.match(/^\/api\/v1\/text\/release-manifest\/(novel|arcalive)\/([a-f0-9]{64})\.json$/);
