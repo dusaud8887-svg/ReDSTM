@@ -310,30 +310,33 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#text-work-back")).toBeVisible();
   await page.locator("#result-list .result-item").first().click();
-  await expect(page.locator("#text-reader")).toBeVisible();
-  await expect(page.locator("#text-reader-body")).toContainText("안전한 텍스트");
-  await expect(page.locator("#text-reader-body p")).toHaveCount(0);
-  const textSettings = page.locator("#text-reader-settings");
-  await (await textSettings.isVisible() ? textSettings : page.locator("#text-reader-bottom-settings")).click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(page.locator("#reader")).toHaveAttribute("data-source", "text");
+  await expect(page.locator("#archive-body")).toContainText("안전한 텍스트");
+  await expect(page.locator("#archive-body p")).toHaveCount(0);
+  await expect(page.locator("#comments")).toBeHidden();
+  const mobileText = page.viewportSize().width < 760;
+  await page.locator(mobileText ? "#reader-bottom-settings" : "#reader-settings").click();
   await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
-  const textBookmark = page.locator("#text-reader-bookmark");
-  await (await textBookmark.isVisible() ? textBookmark : page.locator("#text-reader-bottom-bookmark")).click();
+  await page.locator(mobileText ? "#reader-top-bookmark" : "#bookmark-post").click();
+  await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
   await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = element.scrollHeight / 2; });
   await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await page.locator("#text-reader-bottom-list").evaluate((button) => button.click());
+  await page.locator("#end-list").click();
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.textState.v1")).history["novel:novel:fixture:1:1"]?.progress ?? 0)).toBeGreaterThan(0);
   await page.locator('[data-text-lane="saved"]').click();
   await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
   await page.locator("#result-list .result-item").first().click();
-  await expect(page.locator("#text-reader-body")).toContainText("첫 회차 본문");
-  const textListButton = page.locator("#text-reader-bottom-list");
-  if (await textListButton.isVisible()) await textListButton.click();
+  await expect(page.locator("#archive-body")).toContainText("첫 회차 본문");
+  // A saved chapter still knows its work's order.
+  await expect(page.locator("#next-post")).toBeEnabled();
+  await page.locator("#end-list").click();
   const browseButton = page.locator('button[data-destination="browse"]:visible').first();
   if (await browseButton.count()) await browseButton.click();
   else await page.locator(".bottom-nav button[data-destination='browse']").click();
   await expect(page).toHaveURL(/\/browse(?:\?|$)/);
-  await expect(page.locator("#text-reader")).toBeHidden();
+  await expect(page.locator("#reader")).toBeHidden();
 
   const oldIdentity = "novel:novel:fixture:legacy:1";
   await page.evaluate(({ oldIdentity, chapter }) => {
@@ -348,8 +351,8 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   }, { oldIdentity, chapter: chapters[0] });
   await page.goto(`/text?lane=novel&work=${encodeURIComponent("novel:fixture:legacy")}&chapter=1`);
   await expect(page).toHaveURL(/work=novel%3Afixture%3A1/);
-  await expect(page.locator("#text-reader-body")).toContainText("안전한 텍스트");
-  await expect(page.locator("#text-reading-progress")).toHaveAttribute("aria-valuenow", "40");
+  await expect(page.locator("#archive-body")).toContainText("안전한 텍스트");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.textState.v1")).history["novel:novel:fixture:1:1"]?.progress)).toBe(0.4);
   await expect.poll(() => page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem("redstm.textState.v1"));
     return state.bookmarks["novel:novel:fixture:1:1"]?.work?.work_id;
@@ -422,8 +425,9 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   await expect(page).toHaveURL(/category=WORM/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("대담한 합성 (Worm/The Gamer) 2부 파트 16");
   await page.locator("#result-list .result-item").first().click();
-  await expect(page.locator("#text-reader-title")).toHaveText("대담한 합성 (Worm/The Gamer) 2부 파트 16");
-  await expect(page.locator("#text-reader-body")).toHaveText("대담한 융합");
+  await expect(page.locator("#reader-title")).toHaveText("대담한 합성 (Worm/The Gamer) 2부 파트 16");
+  await expect(page.locator("#archive-body")).toHaveText("대담한 융합");
+  await expect(page.locator("#more-source")).toHaveAttribute("href", "https://arca.live/b/0765/108");
 });
 
 test("arcalive follows board/category/files even when titles look like a series", async ({ page }) => {
@@ -705,7 +709,7 @@ test("reviews a state import before applying it", async ({ page }, testInfo) => 
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.locator('button[data-destination="settings"]:visible').first().click();
-  await page.locator("#theme-select").selectOption("light");
+  await page.locator('[data-theme-choice="light"]').click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   const state = {
     schema_version: 2,
@@ -879,17 +883,18 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator("#aa-background")).toHaveValue("#808080");
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(128, 128, 128)");
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(0, 0, 0)");
-  if (mobile) await page.locator("#reader-bottom-settings").click();
-  await page.locator(mobile ? "#settings-mode" : "#mode-toggle").click();
-  await expect(page.locator(mobile ? "#settings-mode-reset" : "#mode-reset")).toBeVisible();
-  if (mobile) await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  if (mobile) await page.locator("#reader-bottom-more").click();
+  await page.locator(mobile ? "#more-mode" : "#mode-toggle").click();
+  if (mobile) await page.locator("#reader-bottom-more").click();
+  await expect(page.locator(mobile ? "#more-mode-reset" : "#mode-reset")).toBeVisible();
+  if (mobile) await page.locator("#reader-more button[aria-label='닫기']").click();
   expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(false);
   await expect(page.locator("#aa-controls")).toBeHidden();
   await page.reload();
   expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(false);
-  if (mobile) await page.locator("#reader-bottom-settings").click();
-  await page.locator(mobile ? "#settings-mode-reset" : "#mode-reset").click();
-  if (mobile) await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  if (mobile) await page.locator("#reader-bottom-more").click();
+  await page.locator(mobile ? "#more-mode-reset" : "#mode-reset").click();
+  await expect(page.locator("#reader-more")).toBeHidden();
   expect(await page.locator("#archive-body").evaluate((element) => element.classList.contains("aa"))).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa-fixture.png` });
@@ -900,13 +905,14 @@ test("applies and persists prose typography over legacy source styles", async ({
   await openPost(page, proseKey);
   await expect(page.locator("#aa-controls")).toBeHidden();
   await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
-  await page.locator("#theme-select").selectOption("light");
+  await page.locator('[data-theme-choice="light"]').click();
+  await expect(page.locator('[data-theme-choice="light"]')).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(251, 250, 248)");
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(21, 23, 26)");
-  await page.locator("#theme-select").selectOption("dark");
+  await page.locator('[data-theme-choice="dark"]').click();
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(17, 19, 24)");
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(244, 246, 248)");
-  await page.locator("#theme-select").selectOption("light");
+  await page.locator('[data-theme-choice="light"]').click();
   await page.locator("#prose-size").evaluate((input) => {
     input.value = "22";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -967,7 +973,11 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }, delta);
     await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
-    await page.locator("#reader-pane").dispatchEvent("pointerup");
+    // A lone pointerup (the end of a scroll) must not count as a tap.
+    await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, clientX: 120, clientY: 400 });
+    await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+    await page.locator("#archive-body").dispatchEvent("pointerdown", { isPrimary: true, clientX: 120, clientY: 400 });
+    await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, clientX: 122, clientY: 401 });
     await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
     await scrollBy(20);
     await scrollBy(20);
@@ -987,13 +997,13 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   else await page.keyboard.press("Escape");
   await expect(page.locator("body")).not.toHaveClass(/immersive/);
   await expect(page.locator("#reader-title")).toBeFocused();
-  const settingsButton = page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings");
-  await settingsButton.click();
-  await page.locator("#settings-immersive").click();
-  await expect(page.locator("#settings-dialog")).toBeHidden();
+  const moreButton = page.locator(page.viewportSize().width < 760 ? "#reader-bottom-more" : "#reader-toolbar-more");
+  await moreButton.click();
+  await page.locator("#more-immersive").click();
+  await expect(page.locator("#reader-more")).toBeHidden();
   await expect(page.locator("#immersive-exit")).toBeFocused();
   await page.locator("#immersive-exit").click();
-  await expect(settingsButton).toBeFocused();
+  await expect(moreButton).toBeFocused();
   await page.locator("#reader-title").focus();
   await page.keyboard.press("b");
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
@@ -1050,11 +1060,7 @@ test("searches and renders a representative AA post", async ({ page }, testInfo)
   await expect(page.locator("#export-state")).toBeVisible();
   await expect(page.locator("#import-state")).toBeVisible();
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
-  if (mobile) {
-    await page.locator("#reader-bottom-bookmark").click();
-  } else {
-    await page.locator("#bookmark-post").click();
-  }
+  await page.locator(mobile ? "#reader-top-bookmark" : "#bookmark-post").click();
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
 
   const widthFits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
@@ -1097,10 +1103,15 @@ test("restores the reading position after immediate SPA switches", async ({ page
       return position;
     });
     await expect(page.locator("#reader-title")).toHaveText("첫째");
-    await page.goBack();
+    await page.locator("#next-post").evaluate((button) => button.click());
     await expect(page.locator("#reader-title")).toHaveText("둘째");
     await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop))
       .toBeGreaterThan(postPosition - 20);
+    // The deep link got a board list under it; episode moves did not add entries.
+    await page.goBack();
+    await expect(page).toHaveURL(/\/browse\?board=board_a$/);
+    await page.goForward();
+    await expect(page.locator("#reader-title")).toHaveText("둘째");
   }
 
   await page.evaluate(() => { document.getElementById("reader-pane").scrollTop = 0; });
@@ -1141,8 +1152,8 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   await expect(page.locator(next)).toBeEnabled();
   if (mobile) {
     await page.locator("#reader-bottom-list").click();
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.locator("#home-title")).toHaveText("내 장서");
+    await expect(page).toHaveURL(/\/browse\?board=board_a$/);
+    await expect(page.locator(".result-item").first()).toBeVisible();
   }
 
   await page.goto(`/?fixture=standalone#${encodeURIComponent(standaloneKey)}`);
@@ -1222,8 +1233,8 @@ test("restores loaded collection pages, scroll, and focus after Back and reload"
 test("saves, restores, edits, and removes bookmark notes and tags", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, standaloneKey);
-  await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
-  await page.locator("#settings-bookmark-detail").click();
+  await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#more-note").click();
   await expect(page.locator("#bookmark-dialog")).toBeVisible();
   await expect(page.locator("#bookmark-remove")).toBeHidden();
   await page.locator("#bookmark-note").fill("다시 볼 장면");
@@ -1476,11 +1487,11 @@ test("labels standalone next/previous as board order and list next as the curren
   await useCollectionFixture(page);
   await page.goto("/read/board_a/3");
   await expect(page.locator("#reader-title")).toHaveText("비소속");
-  await expect(page.locator("#end-next span")).toHaveText("다음 글 · 게시판");
+  await expect(page.locator("#end-next-kicker")).toHaveText("다음 글 · 게시판");
   await page.goto("/browse");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.locator(".result-item", { hasText: "비소속" }).click();
-  await expect(page.locator("#end-next span")).toHaveText("다음 글 · 현재 결과");
+  await expect(page.locator("#end-next-kicker")).toHaveText("다음 글 · 현재 결과");
 });
 
 test("offers the next collection episode from Home after finishing the latest chapter", async ({ page }) => {
@@ -1595,4 +1606,10 @@ test("opens a direct Reader deep link without inventing a context list", async (
   await expect(page.locator("body")).toHaveClass(/reading/);
   await expect(page.locator("body")).not.toHaveClass(/reading-context/);
   if (page.viewportSize().width >= 760) await expect(page.locator(".catalog")).toBeHidden();
+  // Reloading does not stack another parent; one Back reaches the post's board list.
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/browse\?board=board_a$/);
+  await expect(page.locator(".result-item", { hasText: "비소속" })).toBeVisible();
 });

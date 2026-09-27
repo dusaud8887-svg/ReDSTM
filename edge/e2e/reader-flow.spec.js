@@ -1,0 +1,237 @@
+import { expect, test } from "@playwright/test";
+
+// Reading-flow contracts from docs/19: one history entry per reading session, Back returns to
+// the list viewport the session started from, and reading order never follows the list sort.
+
+const hashFor = (id) => id.toString(16).padStart(64, "0");
+const postKey = (id) => `posts/board_a/${id}-${hashFor(id)}.json.zst`;
+const collectionIndexKey = `collections/index-v2-${"4".repeat(64)}.json.zst`;
+
+function postPayload(id) {
+  return {
+    schema_version: 1,
+    post: {
+      board_id: "board_a", external_post_id: id, canonical_url: `https://example.test/${id}`,
+      title: `${id}편 제목`, author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1,
+      body_html: Array.from({ length: 40 }, (_, index) => `<p>${id}편 본문 ${index + 1}</p>`).join(""),
+      is_aa: false,
+    },
+    comments: [],
+  };
+}
+
+async function useLongCollection(page, count) {
+  const entries = Array.from({ length: count }, (_, index) => ({
+    position: index + 1, board_id: "board_a", external_post_id: index + 1,
+    title: `${index + 1}편 제목`, object_key: postKey(index + 1),
+  }));
+  const payloads = new Map([
+    ["release.json", {
+      schema_version: 1,
+      search: { object_key: "search/e2e.json.zst" },
+      collections: { object_key: collectionIndexKey },
+      boards: [{ board_id: "board_a", name: "자유게시판", group_name: "창작", post_count: count }],
+    }],
+    ["search/e2e.json.zst", {
+      schema_version: 1,
+      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
+      posts: entries.map((entry) => ["board_a", entry.external_post_id, entry.title, "작성자", null, "2026-07-11", hashFor(entry.external_post_id), false]),
+    }],
+    [collectionIndexKey, { schema_version: 1, collections: [{ id: 1, board_id: "board_a", kind: "series", title: "긴 연재", entries }] }],
+  ]);
+  await page.route("**/archive/**", (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const post = /^posts\/board_a\/(\d+)-/.exec(key);
+    const payload = post ? postPayload(Number(post[1])) : payloads.get(key);
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+}
+
+async function useLongNovel(page, count) {
+  const releaseHash = "d".repeat(64);
+  const catalogHash = "e".repeat(64);
+  const detailHash = "c".repeat(64);
+  const workId = "novel:fixture:long";
+  const bodyHash = (number) => number.toString(16).padStart(64, "a");
+  const chapters = Array.from({ length: count }, (_, index) => ({
+    chapter_id: String(index + 1), label: `${index + 1}화`, kind: "main",
+    source_site: "fixture", source_chapter_id: String(index + 1), sha256: bodyHash(index + 1),
+  }));
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let payload;
+    if (path.endsWith("/release/novel")) payload = { schema: 1, lane: "novel", sha256: releaseHash };
+    else if (path.endsWith(`/release-manifest/novel/${releaseHash}.json`)) payload = {
+      schema: 1, lane: "novel", catalog_pages: [{ key: `published/indexes/novel/${catalogHash}.json`, sha256: catalogHash }],
+    };
+    else if (path.endsWith(`/index/novel/${catalogHash}.json`)) payload = {
+      schema: 1, lane: "novel",
+      items: [{ work_id: workId, title: "긴 소설", author: "작가", chapter_count: count, detail_key: `published/indexes/novel/${detailHash}.json` }],
+    };
+    else if (path.endsWith(`/index/novel/${detailHash}.json`)) payload = { schema: 1, lane: "novel", work: { work_id: workId }, chapters };
+    else {
+      const object = /\/object\/([a-f0-9]{64})$/.exec(path);
+      const chapter = object && chapters.find((entry) => entry.sha256 === object[1]);
+      if (chapter) {
+        return route.fulfill({
+          contentType: "text/markdown",
+          body: `# 긴 소설-${chapter.label}\n#\nhttps://novel.example/${chapter.chapter_id}\n\n${chapter.label} 첫 줄\n${"본문 줄\n".repeat(80)}`,
+        });
+      }
+      return route.fulfill({ status: 404, body: "not found" });
+    }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  return workId;
+}
+
+function rowOffset(scrollerSelector, rowSelector) {
+  return (page) => page.evaluate(([scrollerQuery, rowQuery]) => {
+    const scroller = document.querySelector(scrollerQuery);
+    const row = document.querySelector(rowQuery);
+    return row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop;
+  }, [scrollerSelector, rowSelector]);
+}
+
+const mobileWidth = (page) => page.viewportSize().width < 760;
+
+test("TypeMoon: 200 → next → next → Back returns to the same table-of-contents viewport", async ({ page }) => {
+  await useLongCollection(page, 300);
+  await page.goto("/collections/1");
+  await expect(page.locator("#collection-title")).toHaveText("긴 연재");
+  const anchorOffset = rowOffset("#reader-pane", '.collection-entry[data-key="198"]');
+  await page.locator('.collection-entry[data-key="198"]').evaluate((row) => {
+    const pane = document.getElementById("reader-pane");
+    pane.scrollTop += row.getBoundingClientRect().top - pane.getBoundingClientRect().top - 40;
+  });
+  const before = await anchorOffset(page);
+  const historyLength = await page.evaluate(() => history.length);
+
+  await page.locator('.collection-entry[data-key="200"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("200편 제목");
+  const next = mobileWidth(page) ? "#reader-bottom-next" : "#next-post";
+  await page.locator(next).click();
+  await expect(page.locator("#reader-title")).toHaveText("201편 제목");
+  await page.locator(next).click();
+  await expect(page.locator("#reader-title")).toHaveText("202편 제목");
+  expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
+
+  await page.goBack();
+  await expect(page.locator("#collection-view")).toBeVisible();
+  await expect.poll(async () => Math.abs(await anchorOffset(page) - before)).toBeLessThanOrEqual(4);
+  await expect(page.locator('.collection-entry[data-key="202"]')).toHaveClass(/current/);
+
+  await page.goForward();
+  await expect(page.locator("#reader-title")).toHaveText("202편 제목");
+  // The in-app list button takes the same route as system Back.
+  await page.locator(mobileWidth(page) ? "#reader-bottom-list" : "#end-list").click();
+  await expect(page.locator("#collection-view")).toBeVisible();
+  await expect.poll(async () => Math.abs(await anchorOffset(page) - before)).toBeLessThanOrEqual(4);
+});
+
+test("TypeMoon: the chapter-end card leads to the next episode before comments", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/collections/1");
+  await page.locator('.collection-entry[data-key="1"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  await expect(page.locator("#end-next-kicker")).toHaveText("다음 편");
+  await expect(page.locator("#end-next-title")).toHaveText("2편 제목");
+  const order = await page.evaluate(() => {
+    const end = document.getElementById("chapter-end");
+    const comments = document.getElementById("comments");
+    return Boolean(end.compareDocumentPosition(comments) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(order).toBe(true);
+  await expect(page.locator("#end-toc")).toBeVisible();
+  await page.locator("#end-toc").click();
+  await expect(page.locator("#collection-view")).toBeVisible();
+  await expect(page).toHaveURL(/\/collections\/1$/);
+});
+
+test("Text: list sort never changes 다음 화, and Back restores the chapter list viewport", async ({ page }) => {
+  const workId = await useLongNovel(page, 300);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await expect(page.locator("#result-list .result-item").first()).toBeVisible();
+  // Show newest first; reading order must stay 200 → 201.
+  await page.locator("#sort-filter").evaluate((select) => {
+    select.value = "latest";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.locator("#result-list .result-title").first()).toHaveText("300화");
+  const row = '#result-list [data-key="chapter:200"]';
+  await page.locator(row).evaluate((element) => {
+    const list = document.getElementById("result-list");
+    list.scrollTop += element.getBoundingClientRect().top - list.getBoundingClientRect().top - 60;
+  });
+  const anchorOffset = rowOffset("#result-list", row);
+  const before = await anchorOffset(page);
+
+  await page.locator(row).click();
+  await expect(page.locator("#reader-title")).toHaveText("200화");
+  await expect(page.locator("#archive-body")).not.toContainText("https://novel.example");
+  await expect(page.locator("#more-source")).toHaveAttribute("href", "https://novel.example/200");
+  const next = mobileWidth(page) ? "#reader-bottom-next" : "#next-post";
+  await expect(page.locator(next)).toHaveAccessibleName(/다음 화: 201화/);
+  await page.locator(next).click();
+  await expect(page.locator("#reader-title")).toHaveText("201화");
+  await page.locator(next).click();
+  await expect(page.locator("#reader-title")).toHaveText("202화");
+
+  await page.goBack();
+  await expect(page.locator("#reader")).toBeHidden();
+  await expect(page.locator(row)).toBeVisible();
+  await expect.poll(async () => Math.abs(await anchorOffset(page) - before)).toBeLessThanOrEqual(4);
+  await expect(page.locator("#result-list .continue-row")).toContainText("202화");
+});
+
+test("Text: the chapter end offers the next chapter and the chapter list", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=3`);
+  await expect(page.locator("#reader-title")).toHaveText("3화");
+  await expect(page.locator("#end-next-kicker")).toHaveText("현재 보존된 마지막 회차");
+  await expect(page.locator("#end-next-title")).toHaveText("회차 목록으로");
+  await page.locator("#end-previous").click();
+  await expect(page.locator("#reader-title")).toHaveText("2화");
+  await expect(page.locator("#end-next-title")).toHaveText("3화");
+  await page.locator("#end-next").click();
+  await expect(page.locator("#reader-title")).toHaveText("3화");
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem("redstm.textState.v1")).history["novel:novel:fixture:long:2"]?.progress)).toBe(1);
+  // Deep link: one Back lands on the chapter list, not outside the app.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/text\?lane=novel&work=novel%3Afixture%3Along$/);
+  await expect(page.locator('#result-list [data-key="chapter:3"]')).toBeVisible();
+});
+
+test("Reader settings keep the same sentence on screen when the font size changes", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.evaluate(() => document.fonts.ready);
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = 900; });
+  const topSentence = () => page.evaluate(() => {
+    const pane = document.getElementById("reader-pane");
+    // The first line below whatever sticky chrome covers the top of the pane.
+    const chrome = [...document.querySelectorAll(".reader-toolbar, .reader-topbar")]
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.height && rect.top <= pane.getBoundingClientRect().top + 1)
+      .reduce((bottom, rect) => Math.max(bottom, rect.bottom), pane.getBoundingClientRect().top);
+    const top = chrome + 12;
+    return [...document.querySelectorAll("#archive-body p")].find((p) => p.getBoundingClientRect().bottom > top)?.textContent;
+  });
+  if (mobileWidth(page)) {
+    // Scrolling hid the tools; a short tap on the text brings them back.
+    for (const type of ["pointerdown", "pointerup"]) {
+      await page.locator("#archive-body").dispatchEvent(type, { isPrimary: true, clientX: 120, clientY: 420 });
+    }
+  }
+  await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+  const before = await topSentence();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator('[data-prose-size-delta="1"]').click();
+  await page.locator('[data-prose-size-delta="1"]').click();
+  await page.locator('[data-prose-size-delta="1"]').click();
+  await expect(page.locator("#prose-size-output")).toHaveText("21px");
+  expect(await topSentence()).toBe(before);
+});

@@ -19,6 +19,9 @@ import {
   postReadingLabel,
   postReadingState,
 } from "/reading-model.js";
+import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
+import { adjacentInSequence } from "/sequence.js";
+import { captureTextAnchor, restoreTextAnchor } from "/text-anchor.js";
 import { createTextLibrary } from "/text-library.js";
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
@@ -31,12 +34,12 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseFont: "serif",
+  theme: "system", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20, proseFont: "serif",
   aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
-  theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비",
+  theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
   proseFont: "본문 서체", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
@@ -45,9 +48,10 @@ const elements = Object.fromEntries(
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "scope-tabs", "text-lanes", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
-    "archive-body", "comment-count", "comment-list", "previous-post", "next-post", "bookmark-post", "source-link",
-    "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "aa-size",
-    "prose-size-output", "line-height-output", "prose-width-output", "aa-size-output", "reset-settings",
+    "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
+    "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
+    "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
+    "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls", "aa-inline-size",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
@@ -56,10 +60,12 @@ const elements = Object.fromEntries(
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-clear-all",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
-    "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-select",
+    "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
-    "reader-bottom-list", "reader-bottom-previous", "reader-bottom-bookmark", "reader-bottom-next", "reader-bottom-settings",
-    "post-settings-actions", "settings-bookmark", "settings-bookmark-detail", "settings-source", "settings-mode", "settings-mode-reset", "settings-immersive",
+    "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
+    "reader-bottom-previous-label", "reader-bottom-next-label",
+    "reader-more", "reader-more-context", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
+    "more-mode", "more-mode-label", "more-mode-reset", "more-immersive", "more-immersive-label",
     "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
     "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove",
   ].map((id) => [id, document.getElementById(id)]),
@@ -119,10 +125,29 @@ let continueCollectionId = null;
 let continueTargetPost = null;
 let immersiveOpener = null;
 let editingBookmarkSummary = null;
+// Which source owns the shared Reader shell: "typemoon", "text", or null when it is closed.
+let readerSource = null;
+let readerNavigation = null;
+let routeHandled = false;
+let pointerStart = null;
+let moreOpener = null;
 const workerRequests = new Map();
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const textLibrary = createTextLibrary({
   readerPane: elements["reader-pane"],
+  shell: {
+    open: openTextReader,
+    close: closeTextReader,
+    setNavigation: renderReaderNavigation,
+    setBookmarked: renderBookmarkState,
+    progress: bodyProgress,
+    syncScroll: syncScrollBaseline,
+    captureAnchor: () => captureTextAnchor(elements["archive-body"], elements["reader-pane"], readerTopInset()),
+    restoreAnchor: (anchor) => {
+      restoreTextAnchor(elements["archive-body"], elements["reader-pane"], anchor, readerTopInset());
+      syncScrollBaseline();
+    },
+  },
   onChange: () => {
     updateShellMode();
     if (currentDestination === "text") applyTextSortOptions();
@@ -313,6 +338,7 @@ function applySettings() {
   root.style.setProperty("--prose-size", `${settings.proseSize}px`);
   root.style.setProperty("--prose-line", settings.lineHeight);
   root.style.setProperty("--prose-width", `${settings.proseWidth}px`);
+  root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
   root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * settings.aaZoom}px`);
   root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * settings.aaZoom}px`);
@@ -320,20 +346,20 @@ function applySettings() {
   root.style.setProperty("--aa-ink", readableAaInk(settings.aaBackground));
   elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
   elements["theme-toggle"].title = elements["theme-toggle"].ariaLabel;
-  elements["theme-select"].value = settings.theme;
+  for (const choice of elements["theme-choices"].querySelectorAll("[data-theme-choice]")) {
+    choice.setAttribute("aria-checked", String(choice.dataset.themeChoice === settings.theme));
+  }
   document.querySelector('meta[name="theme-color"]').content = dark ? "#0b0d12" : "#ffffff";
   for (const [id, value, suffix] of [
     ["prose-size", settings.proseSize, "px"],
     ["line-height", settings.lineHeight, ""],
     ["prose-width", settings.proseWidth, "px"],
+    ["prose-margin", settings.proseMargin, "px"],
     ["aa-size", settings.aaSize, "px"],
   ]) {
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
-  const fitWidth = isNarrowScreen();
-  elements["prose-width"].disabled = fitWidth;
-  elements["prose-width-output"].value = fitWidth ? "화면 맞춤" : `${settings.proseWidth}px`;
   elements["prose-font"].value = settings.proseFont;
   elements["aa-inline-size"].value = `${settings.aaSize}px`;
   elements["aa-zoom-output"].value = `${Math.round(settings.aaZoom * 100)}%`;
@@ -444,7 +470,7 @@ function renderCover(
   actionLabel = "",
 ) {
   document.body.classList.remove("collection-detail-open");
-  elements.reader.hidden = true;
+  setReaderSource(null);
   elements["collection-view"].hidden = true;
   elements["empty-reader"].hidden = false;
   elements["home-title"].textContent = title;
@@ -654,12 +680,218 @@ function openMobileReader() {
   updateShellMode();
 }
 
-function closeMobileReader(focusSearch = currentDestination === "search") {
+function closeMobileReader(focusSearch = false) {
   document.body.classList.remove("reader-open");
   document.body.classList.remove("collection-detail-open");
   document.body.classList.remove("reader-controls-hidden");
   updateShellMode();
   if (focusSearch && currentDestination === "search") elements["search-input"].focus({ preventScroll: true });
+}
+
+// ---- Shared Reader shell -------------------------------------------------------------------
+// TypeMoon posts and text-archive chapters render into the same Reader DOM. The shell owns
+// visibility, navigation labels, the chapter-end card, and bookmark state; each source owns
+// its data and decides what "previous", "next", "list", and "toc" mean.
+
+function setReaderSource(source) {
+  readerSource = source;
+  elements.reader.hidden = !source;
+  elements.reader.dataset.source = source ?? "";
+  document.body.classList.toggle("reader-active", Boolean(source));
+  if (!source) {
+    readerNavigation = null;
+    elements["reader-more"].open && elements["reader-more"].close();
+    return;
+  }
+  elements["empty-reader"].hidden = true;
+  elements["collection-view"].hidden = true;
+  document.body.classList.remove("collection-detail-open");
+  const text = source === "text";
+  elements.comments.hidden = text;
+  elements["mode-toggle"].hidden = text;
+  if (text) {
+    elements["mode-reset"].hidden = true;
+    elements["aa-controls"].hidden = true;
+  }
+}
+
+function openTextReader({ kicker, title, meta, text, sourceUrl }) {
+  cancelReaderSelection();
+  if (currentSummary) persistReadingPosition();
+  currentSummary = null;
+  currentPayload = null;
+  currentCollection = null;
+  currentMode = "prose";
+  setReaderSource("text");
+  resetReaderChrome();
+  elements["reader-kicker"].textContent = kicker;
+  elements["reader-title"].textContent = title;
+  elements["reader-meta"].textContent = meta;
+  elements["collection-context"].hidden = true;
+  setSourceLink(sourceUrl);
+  document.title = `${title} — ReDSTM`;
+  const body = elements["archive-body"];
+  body.classList.remove("aa", "normalize-source-styles");
+  body.classList.add("plain-text");
+  body.ariaLabel = "텍스트 본문";
+  body.replaceChildren(document.createTextNode(text));
+  openMobileReader();
+  updateShellMode();
+  requestAnimationFrame(() => elements["reader-title"].focus({ preventScroll: true }));
+}
+
+function closeTextReader() {
+  if (readerSource !== "text") return;
+  setReaderSource(null);
+  document.body.classList.remove("reader-open", "reader-controls-hidden");
+  setImmersive(false, false);
+  updateShellMode();
+}
+
+// App-driven scrolls (restoring a position) are not reading gestures; keep them from hiding tools.
+function syncScrollBaseline() {
+  lastReaderScroll = elements["reader-pane"].scrollTop;
+  readerScrollDelta = 0;
+}
+
+function resetReaderChrome() {
+  elements["reading-progress"].style.width = "0%";
+  lastReaderScroll = 0;
+  readerScrollDelta = 0;
+  document.body.classList.remove("reader-controls-hidden");
+}
+
+function setSourceLink(url) {
+  const safe = typeof url === "string" && /^https?:\/\//i.test(url) ? url : "";
+  for (const link of [elements["source-link"], elements["more-source"]]) {
+    link.hidden = !safe;
+    if (safe) link.href = safe;
+    else link.removeAttribute("href");
+  }
+}
+
+// Sticky chrome (mobile context bar, desktop toolbar) covering the top of the scrollport.
+function readerTopInset() {
+  const paneTop = elements["reader-pane"].getBoundingClientRect().top;
+  let inset = 0;
+  for (const chrome of [document.getElementById("reader-topbar"), document.querySelector(".reader-toolbar")]) {
+    const rect = chrome.getBoundingClientRect();
+    if (rect.height && rect.top <= paneTop + 1 && rect.bottom > paneTop) inset = Math.max(inset, rect.bottom - paneTop);
+  }
+  return inset;
+}
+
+// Progress through the body itself, so long comment threads below do not hold "finished" back.
+function bodyProgress() {
+  const pane = elements["reader-pane"];
+  const body = elements["archive-body"];
+  const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
+  if (span > 0) return Math.min(1, Math.max(0, pane.scrollTop / span));
+  const maximum = pane.scrollHeight - pane.clientHeight;
+  return maximum > 0 ? Math.min(1, pane.scrollTop / maximum) : 0;
+}
+
+function subjectParticle(word) {
+  const code = String(word).trim().at(-1)?.charCodeAt(0) - 0xac00;
+  return code >= 0 && code <= 11171 && code % 28 === 0 ? "가" : "이";
+}
+
+// nav: { unit, qualifier, previous, next, note, endFallback, hasToc, context, pending }
+function renderReaderNavigation(nav) {
+  readerNavigation = nav;
+  const unit = nav.unit ?? "글";
+  const qualifier = nav.qualifier ? ` · ${nav.qualifier}` : "";
+  const previousLabel = `이전 ${unit}`;
+  const nextLabel = `다음 ${unit}`;
+  for (const [button, label, target] of [
+    [elements["previous-post"], previousLabel, nav.previous],
+    [elements["reader-bottom-previous"], previousLabel, nav.previous],
+    [elements["next-post"], nextLabel, nav.next],
+    [elements["reader-bottom-next"], nextLabel, nav.next],
+  ]) {
+    button.disabled = Boolean(nav.pending) || !target;
+    button.title = `${label}${qualifier}`;
+    button.ariaLabel = target?.title ? `${label}${qualifier}: ${target.title}` : `${label}${qualifier}`;
+  }
+  elements["previous-post-label"].textContent = previousLabel;
+  elements["next-post-label"].textContent = nextLabel;
+  elements["reader-bottom-previous-label"].textContent = previousLabel;
+  elements["reader-bottom-next-label"].textContent = nextLabel;
+
+  const endNext = elements["end-next"];
+  endNext.hidden = false;
+  if (nav.next) {
+    elements["end-next-kicker"].textContent = `${nextLabel}${qualifier}`;
+    elements["end-next-title"].textContent = nav.next.title || `${nextLabel} 열기`;
+    endNext.disabled = Boolean(nav.pending);
+    endNext.dataset.action = "next";
+  } else if (nav.endFallback) {
+    elements["end-next-kicker"].textContent = nav.endFallback.kicker;
+    elements["end-next-title"].textContent = nav.endFallback.label;
+    endNext.disabled = false;
+    endNext.dataset.action = nav.endFallback.action;
+  } else {
+    elements["end-next-kicker"].textContent = `${nextLabel}${qualifier}`;
+    elements["end-next-title"].textContent = nav.pending ? "순서 확인 중…" : `${nextLabel}${subjectParticle(nextLabel)} 없습니다`;
+    endNext.disabled = true;
+    endNext.dataset.action = "";
+    endNext.hidden = !nav.pending;
+  }
+  elements["end-previous"].hidden = !nav.previous;
+  elements["end-previous-kicker"].textContent = `${previousLabel}${qualifier}`;
+  elements["end-previous-title"].textContent = nav.previous?.title || "";
+  elements["end-toc"].hidden = !nav.hasToc;
+  elements["more-toc"].hidden = !nav.hasToc;
+  elements["chapter-end-note"].textContent = nav.note ?? "";
+  elements["chapter-end-note"].hidden = !nav.note;
+  elements["reader-topbar-title"].textContent = nav.context ?? "";
+  elements["reader-more-context"].textContent = nav.context ?? "";
+}
+
+function renderBookmarkState(active, { notes = false } = {}) {
+  const label = active ? "저장 취소" : "저장";
+  for (const button of [elements["bookmark-post"], elements["reader-top-bookmark"], elements["more-bookmark"]]) {
+    button.setAttribute("aria-pressed", String(active));
+    button.ariaLabel = label;
+    button.title = label;
+  }
+  elements["more-bookmark-label"].textContent = active ? "저장됨 · 취소" : "저장";
+  elements["more-note"].hidden = !notes;
+}
+
+function readerCommand(name) {
+  if (!readerSource) return;
+  if (name === "settings") return openSettings();
+  if (name === "more") return openReaderMore();
+  if (readerSource === "text") return textLibrary.command(name);
+  if (name === "previous") return typeMoonStep(-1);
+  if (name === "next") return typeMoonStep(1);
+  if (name === "end-next") {
+    const action = elements["end-next"].dataset.action;
+    if (action === "next") return typeMoonStep(1, { finished: true });
+    if (action === "toc") return openCurrentToc();
+    if (action === "list") return returnToList();
+    return;
+  }
+  if (name === "list") return returnToList();
+  if (name === "toc") return openCurrentToc();
+  if (name === "bookmark") return toggleTypeMoonBookmark();
+}
+
+function openReaderMore() {
+  const typeMoon = readerSource === "typemoon";
+  elements["more-mode"].hidden = !typeMoon;
+  elements["more-mode-reset"].hidden = !typeMoon || elements["mode-reset"].hidden;
+  elements["more-mode-label"].textContent = elements["mode-toggle"].textContent;
+  elements["more-immersive-label"].textContent = document.body.classList.contains("immersive") ? "집중 종료" : "집중 모드";
+  if (!elements["reader-more"].open) {
+    moreOpener = document.activeElement;
+    elements["reader-more"].showModal();
+  }
+}
+
+function closeReaderMore() {
+  if (elements["reader-more"].open) elements["reader-more"].close();
 }
 
 function updateDestinationButtons() {
@@ -947,14 +1179,17 @@ function persistCatalogState() {
   const search = currentSearchState();
   if (currentDestination === "bookmarks") search.sort = "latest";
   const focused = document.activeElement?.closest?.(".result-item");
+  const anchor = captureListAnchor(elements["result-list"], ".result-item[data-key]");
   userState.lastCatalogState = {
     destination: currentDestination,
     view: currentView,
     scope: currentScope,
     ...search,
     scrollTop: elements["result-list"].scrollTop,
+    anchorKey: anchor?.key ?? null,
+    anchorOffset: anchor?.offset ?? 0,
     loadedCount: currentScope === "collections" ? renderedCollections.length : renderedResults.length,
-    focusedPost: focused ? postIdentity(renderedResults[Number(focused.dataset.index)]) : "",
+    focusedPost: focused?.dataset.index ? postIdentity(renderedResults[Number(focused.dataset.index)]) : "",
     focusedCollectionId: Number(focused?.dataset.collectionId) || null,
     recentQueries,
   };
@@ -975,7 +1210,8 @@ function restoreCatalogPosition() {
       (state.collectionRead ?? "all") !== current.collectionRead ||
       (currentDestination !== "bookmarks" && state.sort !== current.sort)) return;
   requestAnimationFrame(() => {
-    elements["result-list"].scrollTop = Math.max(0, state.scrollTop ?? 0);
+    const list = elements["result-list"];
+    list.scrollTop = Math.max(0, state.scrollTop ?? 0);
     const collections = currentScope === "collections";
     const rendered = collections ? renderedCollections : renderedResults;
     const index = collections
@@ -988,9 +1224,15 @@ function restoreCatalogPosition() {
       return;
     }
     pendingCatalogRestore = null;
+    // Rows above the anchor can change height after reading (new badges), so align the row
+    // that was at the top instead of trusting the old pixel offset.
+    if (state.anchorKey) {
+      restoreListAnchor(list, { key: state.anchorKey, offset: state.anchorOffset, scrollTop: state.scrollTop },
+        ".result-item[data-key]");
+    }
     if (index >= 0) {
       const selector = collections ? `[data-collection-id="${state.focusedCollectionId}"]` : `[data-index="${index}"]`;
-      elements["result-list"].querySelector(selector)?.focus({ preventScroll: true });
+      list.querySelector(selector)?.focus({ preventScroll: true });
     }
   });
 }
@@ -1034,17 +1276,17 @@ function showDestination(destination, navigate = true, view = destination === "b
   currentPayload = null;
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
   elements["catalog-toggle"].setAttribute("aria-expanded", "true");
-  elements["post-settings-actions"].hidden = true;
   document.body.classList.toggle("text-library-open", destination === "text");
   updateDestinationLayout();
   if (destination === "library") renderCover();
   else {
-    elements.reader.hidden = true;
+    setReaderSource(null);
     elements["collection-view"].hidden = true;
     elements["empty-reader"].hidden = true;
     document.body.classList.remove("collection-detail-open");
   }
-  closeMobileReader(destination === "search");
+  // Only an explicit trip to Search raises the keyboard; Back into search results must not.
+  closeMobileReader(destination === "search" && navigate);
   if (destination === "text") {
     const params = navigate && !wasText ? new URLSearchParams() : new URLSearchParams(location.search);
     void textLibrary.open(params);
@@ -1073,7 +1315,6 @@ function setImmersive(active, restoreFocus = true) {
   elements["immersive-exit"].hidden = !active;
   elements["immersive-toggle"].setAttribute("aria-pressed", active);
   elements["immersive-toggle"].textContent = active ? "집중 종료" : "집중";
-  elements["settings-immersive"].textContent = active ? "집중 종료" : "집중";
   if (active) requestAnimationFrame(() => elements["immersive-exit"].focus());
   else if (wasActive) {
     const opener = immersiveOpener;
@@ -1120,7 +1361,54 @@ function routeCollectionId() {
   return route ? Number(route[1]) : null;
 }
 
+function currentRoute() {
+  return `${location.pathname}${location.search}`;
+}
+
+// A Reader, work table of contents, or text chapter opened straight from a link has no list
+// under it. Build that parent once, so the first Back lands on a list instead of leaving the app.
+function synthesizeParentEntry() {
+  if (history.state?.redstmParent || history.state?.redstmSynthetic) return;
+  const summary = routeSummary();
+  const collectionId = routeCollectionId();
+  let parent = null;
+  let state = null;
+  if (summary) {
+    parent = `/browse?board=${encodeURIComponent(summary.board_id)}`;
+    state = { redstmReader: true };
+  } else if (collectionId !== null) {
+    parent = "/browse?scope=collections";
+    state = { redstmCollection: true };
+  } else if (location.pathname === "/text") {
+    parent = textLibrary.parentRoute(new URLSearchParams(location.search));
+    state = { redstmText: true, redstmReader: true };
+  }
+  if (!parent) return;
+  const target = `${currentRoute()}${location.hash}`;
+  history.replaceState({ redstmSynthetic: true }, "", parent);
+  history.pushState({ ...state, redstmParent: parent }, "", target);
+}
+
+// Back from a Reader: return to the list that opened it when this session owns that entry,
+// otherwise replace the Reader in place with its destination list.
+function returnToList() {
+  if (history.state?.redstmParent) {
+    history.back();
+    return;
+  }
+  const destination = currentDestination;
+  const view = currentView;
+  const path = destination === "library" ? "/" : destination === "text" ? textLibrary.currentRoute() : destination === "bookmarks" ? savedUrl() : searchUrl();
+  history.replaceState(null, "", path);
+  showDestination(destination, false, view);
+}
+
 async function handleRoute() {
+  if (!routeHandled) {
+    routeHandled = true;
+    synthesizeParentEntry();
+  }
+  closeReaderMore();
   const summary = routeSummary();
   if (summary && currentDestination === "text") {
     textLibrary.leave();
@@ -1133,13 +1421,17 @@ async function handleRoute() {
       location.pathname === "/search" ? "search" :
       location.pathname === "/text" ? "text" :
       (location.pathname === "/browse" || location.pathname.startsWith("/collections")) ? "browse" : "library";
-    if (destination !== "library") applyCatalogRoute(destination);
-    if (collectionId !== null) {
-      currentDestination = ["browse", "search"].includes(destination) ? destination : "browse";
-      await openCollectionDetail(collectionId, false);
+    if (destination === "text" && currentDestination === "text") {
+      await textLibrary.route(new URLSearchParams(location.search));
     } else {
-      showDestination(destination, false, currentView);
-      if (destination !== "library") syncSearchRoute();
+      if (destination !== "library") applyCatalogRoute(destination);
+      if (collectionId !== null) {
+        currentDestination = ["browse", "search"].includes(destination) ? destination : "browse";
+        await openCollectionDetail(collectionId, "route");
+      } else {
+        showDestination(destination, false, currentView);
+        if (destination !== "library") syncSearchRoute();
+      }
     }
     if (settingsRoute) {
       openSettings();
@@ -1149,7 +1441,7 @@ async function handleRoute() {
     return;
   }
   if (elements["settings-dialog"].open) elements["settings-dialog"].close();
-  if (!samePost(summary, currentSummary)) await loadPost(summary, false);
+  if (!samePost(summary, currentSummary)) await loadPost(summary, "route");
   else document.title = `${currentSummary.title || "제목 없음"} — ReDSTM`;
 }
 
@@ -1182,13 +1474,15 @@ function handleWorkerMessage({ data }) {
     boardById = new Map((data.boardMetadata ?? []).map((board) => [board.board_id, board]));
     populateBoardFilter();
     elements["result-list"].classList.remove("loading");
-    renderCover();
+    // The text library boots on its own (see the end of this module); do not reset it here.
+    const textAlreadyOpen = routeHandled && currentDestination === "text";
+    if (!textAlreadyOpen) renderCover();
     if (routeSummary()) requestSearch();
     void hydrateSavedEntries().then(() => {
       if (!currentSummary && currentDestination === "library") renderCover();
       if (currentView !== "all") renderCurrentView();
     }).catch((error) => { elements["result-status"].textContent = error.message; });
-    void handleRoute();
+    if (!textAlreadyOpen) void handleRoute();
     return;
   }
   if (data.type === "results" && data.id === searchRequestId && currentDestination !== "text" && currentView === "all" && currentScope === "posts") {
@@ -1363,6 +1657,7 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
   button.type = "button";
   button.className = "result-item";
   button.dataset.index = index;
+  button.dataset.key = postIdentity(post) ?? `row:${index}`;
   button.classList.toggle("active", samePost(post, currentSummary));
   const title = document.createElement("strong");
   title.className = "result-title";
@@ -1587,6 +1882,7 @@ function collectionItemElement(collection) {
   button.type = "button";
   button.className = "result-item";
   button.dataset.collectionId = collection.id;
+  button.dataset.key = `collection:${collection.id}`;
   button.classList.toggle("active", collection.id === activeCollectionId);
   const title = document.createElement("strong");
   title.className = "result-title";
@@ -1694,7 +1990,9 @@ async function collectionReadingProgress(index) {
   return { progress, failedBoards };
 }
 
-async function openCollectionDetail(collectionId, navigate = true) {
+// navigation: "push" opens from a list, "replace" swaps the Reader for its table of contents,
+// "route" follows history (Back/Forward/deep link) and restores the saved list viewport.
+async function openCollectionDetail(collectionId, navigation = "push", { focusPosition = null } = {}) {
   if (currentSummary) persistReadingPosition();
   const viewId = ++readerViewId;
   postController?.abort();
@@ -1711,8 +2009,8 @@ async function openCollectionDetail(collectionId, navigate = true) {
     if (!["browse", "search"].includes(currentDestination)) currentDestination = "browse";
     updateDestinationLayout();
     updateDestinationButtons();
+    setReaderSource(null);
     elements["empty-reader"].hidden = true;
-    elements.reader.hidden = true;
     elements["collection-view"].hidden = false;
     document.body.classList.add("collection-detail-open");
     elements["collection-title"].textContent = collection.title;
@@ -1750,6 +2048,10 @@ async function openCollectionDetail(collectionId, navigate = true) {
       : unreadFocus
       ? `앞쪽 미독 ${skippedUnread.length.toLocaleString("ko-KR")}편 보기`
       : "";
+    const lastRead = collection.entries
+      .map((entry) => ({ entry, readAt: Date.parse(historyByIdentity.get(postIdentity(entry))?.readAt ?? "") }))
+      .filter((item) => Number.isFinite(item.readAt))
+      .sort((left, right) => right.readAt - left.readAt)[0]?.entry ?? null;
     const fragment = document.createDocumentFragment();
     for (const entry of collection.entries) {
       const item = document.createElement("li");
@@ -1758,6 +2060,11 @@ async function openCollectionDetail(collectionId, navigate = true) {
       button.className = "collection-entry";
       button.disabled = !entry.object_key;
       button.dataset.position = entry.position;
+      button.dataset.key = String(entry.position);
+      if (entry === lastRead) {
+        button.classList.add("current");
+        button.setAttribute("aria-current", "true");
+      }
       const position = document.createElement("span");
       position.className = "collection-entry-position";
       position.textContent = `${entry.position}편`;
@@ -1778,14 +2085,47 @@ async function openCollectionDetail(collectionId, navigate = true) {
     elements["collection-entry-list"].replaceChildren(fragment);
     elements["collection-entry-list"].dataset.collectionId = collection.id;
     document.title = `${collection.title} — ReDSTM`;
-    if (navigate) history.pushState({ redstmCollection: true }, "", `/collections/${collection.id}`);
+    const route = `/collections/${collection.id}`;
+    if (navigation === "push") {
+      history.pushState({ redstmCollection: true, redstmParent: currentRoute() }, "", route);
+    } else if (navigation === "replace") {
+      history.replaceState({ redstmCollection: true, redstmParent: history.state?.redstmParent ?? null }, "", route);
+    }
     openMobileReader();
-    requestAnimationFrame(() => elements["collection-title"].focus({ preventScroll: true }));
+    requestAnimationFrame(() => restoreCollectionViewport(route, navigation, focusPosition));
   } catch (error) {
     if (viewId !== readerViewId) return;
     renderArchiveError(error, "작품 목차를 열 수 없음");
   } finally {
     if (viewId === readerViewId) elements["reader-pane"].removeAttribute("aria-busy");
+  }
+}
+
+function restoreCollectionViewport(route, navigation, focusPosition) {
+  const pane = elements["reader-pane"];
+  const list = elements["collection-entry-list"];
+  const entryAt = (position) => list.querySelector(`.collection-entry[data-key="${Number(position)}"]`);
+  const snapshot = navigation === "replace" ? null : loadListPosition(route);
+  let focusTarget = elements["collection-title"];
+  if (focusPosition && entryAt(focusPosition)) {
+    const entry = entryAt(focusPosition);
+    pane.scrollTop += entry.getBoundingClientRect().top - pane.getBoundingClientRect().top - pane.clientHeight / 3;
+    focusTarget = entry;
+  } else if (snapshot) {
+    restoreListAnchor(pane, snapshot, ".collection-entry[data-key]");
+    const activated = snapshot.activatedKey && entryAt(snapshot.activatedKey);
+    if (activated) focusTarget = activated;
+  } else {
+    pane.scrollTop = 0;
+  }
+  focusTarget.focus({ preventScroll: true });
+}
+
+function rememberCollectionViewport(activatedPosition) {
+  const collectionId = elements["collection-entry-list"].dataset.collectionId;
+  const snapshot = captureListAnchor(elements["reader-pane"], ".collection-entry[data-key]");
+  if (collectionId && snapshot) {
+    saveListPosition(`/collections/${collectionId}`, { ...snapshot, activatedKey: String(activatedPosition) });
   }
 }
 
@@ -1981,10 +2321,8 @@ async function updateCollection() {
   const summary = currentSummary;
   currentCollection = null;
   elements["collection-context"].hidden = true;
-  elements["previous-post"].disabled = true;
-  elements["next-post"].disabled = true;
-  elements["end-previous"].disabled = true;
-  elements["end-next"].disabled = true;
+  // Hold the step buttons until membership decides whether they mean "episode" or "list row".
+  renderReaderNavigation({ ...typeMoonNavigation(), pending: true });
   try {
     const membership = await findCollection(summary);
     if (!samePost(summary, currentSummary)) return;
@@ -2004,7 +2342,9 @@ async function updateCollection() {
   }
 }
 
-async function loadPost(summary, navigate = true) {
+// navigation: "push" enters the Reader from a list or Home, "replace" moves within the same
+// reading session (previous/next, another row of a visible side list), "route" follows history.
+async function loadPost(summary, navigation = "push") {
   const viewId = ++readerViewId;
   if (currentSummary) persistReadingPosition();
   postController?.abort();
@@ -2023,7 +2363,7 @@ async function loadPost(summary, navigate = true) {
     if (viewId !== readerViewId) return;
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
     elements["archive-state"].textContent = "보존본";
-    showPost(payload, resolved, navigate);
+    showPost(payload, resolved, navigation);
   } catch (error) {
     if (viewId !== readerViewId || error.name === "AbortError") return;
     renderArchiveError(error, "본문을 열 수 없음");
@@ -2033,7 +2373,7 @@ async function loadPost(summary, navigate = true) {
   }
 }
 
-function showPost(payload, suppliedSummary, navigate) {
+function showPost(payload, suppliedSummary, navigation) {
   const post = payload.post;
   currentPayload = payload;
   currentSummary = {
@@ -2049,24 +2389,16 @@ function showPost(payload, suppliedSummary, navigate) {
     comment_count: payload.comments.length,
     views: post.views,
   };
-  elements["reading-progress"].style.width = "0%";
-  lastReaderScroll = 0;
-  readerScrollDelta = 0;
-  document.body.classList.remove("reader-controls-hidden");
+  setReaderSource("typemoon");
+  resetReaderChrome();
   const collapseCatalog = matchMedia("(min-width: 760px) and (max-width: 899px)").matches;
   document.body.classList.toggle("catalog-collapsed", collapseCatalog);
   elements["catalog-toggle"].setAttribute("aria-expanded", String(!collapseCatalog));
-  elements["empty-reader"].hidden = true;
-  elements["collection-view"].hidden = true;
-  elements.reader.hidden = false;
-  document.body.classList.remove("collection-detail-open");
   elements["reader-kicker"].textContent = [boardLabel(post.board_id) || post.board_id, post.category].filter(Boolean).join(" · ");
   elements["reader-title"].textContent = post.title || "제목 없음";
   document.title = `${post.title || "제목 없음"} — ReDSTM`;
   elements["reader-meta"].textContent = [post.author || "작성자 없음", formatSourceDate(post.created_at_raw) || post.created_at_raw, `조회 ${post.views ?? 0}`].filter(Boolean).join(" · ");
-  elements["source-link"].href = post.canonical_url;
-  elements["settings-source"].href = post.canonical_url;
-  elements["post-settings-actions"].hidden = false;
+  setSourceLink(post.canonical_url);
   renderPostBody();
   renderComments(payload.comments);
   rememberHistory(currentSummary);
@@ -2075,13 +2407,12 @@ function showPost(payload, suppliedSummary, navigate) {
   if (currentScope === "collections") renderCollectionResults();
   else renderResults(renderedResults, elements["result-status"].textContent);
   const nextUrl = `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`;
-  if (navigate) {
-    const previousDepth = history.state?.redstmReaderDepth;
-    const readerDepth = previousDepth === undefined ? 1 : previousDepth > 0 ? previousDepth + 1 : 0;
-    history.pushState({ redstmReader: true, redstmReaderDepth: readerDepth }, "", nextUrl);
+  // Only entering the Reader adds a history entry. Episode moves replace it, so one Back
+  // (system or the 목록 button) always returns to the list the session started from.
+  if (navigation === "push") {
+    history.pushState({ redstmReader: true, redstmParent: currentRoute() }, "", nextUrl);
   } else {
-    const readerDepth = Number(history.state?.redstmReaderDepth) || 0;
-    history.replaceState({ redstmReader: readerDepth > 0, redstmReaderDepth: readerDepth }, "", nextUrl);
+    history.replaceState({ ...(history.state ?? {}), redstmReader: true, redstmCollection: false }, "", nextUrl);
   }
   openMobileReader();
   updateShellMode();
@@ -2101,9 +2432,8 @@ function renderPostBody() {
   elements["archive-body"].ariaLabel = isAa ? "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다" : "글 본문";
   elements["aa-controls"].hidden = !isAa;
   elements["mode-toggle"].textContent = isAa ? "소설로 보기" : "AA로 보기";
-  elements["settings-mode"].textContent = elements["mode-toggle"].textContent;
   elements["mode-reset"].hidden = !override;
-  elements["settings-mode-reset"].hidden = !override;
+  elements["archive-body"].classList.remove("plain-text");
   if (isAa) {
     const canvas = document.createElement("div");
     canvas.className = "aa-canvas";
@@ -2186,20 +2516,22 @@ function readingPosition() {
   return elements["reader-pane"].scrollTop;
 }
 
+let restoredScroll = null;
 function restoreReadingPosition(summary) {
   const position = historyEntries.find((entry) => samePost(entry.summary, summary))?.scroll ?? 0;
   lastReaderScroll = position;
   readerScrollDelta = 0;
   elements["reader-pane"].scrollTop = position;
+  restoredScroll = elements["reader-pane"].scrollTop;
 }
 
 function persistReadingPosition() {
   clearTimeout(scrollTimer);
+  if (!currentSummary) return;
   const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
   if (entry) {
     entry.scroll = readingPosition();
-    const maximum = elements["reader-pane"].scrollHeight - elements["reader-pane"].clientHeight;
-    const measured = maximum > 0 ? Math.min(1, entry.scroll / maximum) : 0;
+    const measured = bodyProgress();
     entry.progress = postReadingState(entry.progress) === "finished"
       ? Math.max(entry.progress, measured)
       : measured;
@@ -2221,21 +2553,25 @@ function queueScrollSave() {
 }
 
 function updateReadingProgress() {
-  const maximum = elements["reader-pane"].scrollHeight - elements["reader-pane"].clientHeight;
-  const progress = maximum > 0 ? Math.min(1, elements["reader-pane"].scrollTop / maximum) : 0;
+  if (!readerSource) return;
+  const progress = bodyProgress();
   elements["reading-progress"].style.width = `${progress * 100}%`;
   elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
 function updateBookmarkButton() {
+  if (readerSource !== "typemoon") return;
+  renderBookmarkState(bookmarks.some((entry) => samePost(entry.summary, currentSummary)), { notes: true });
+}
+
+function toggleTypeMoonBookmark() {
+  if (!currentSummary) return;
   const active = bookmarks.some((entry) => samePost(entry.summary, currentSummary));
-  elements["bookmark-post"].setAttribute("aria-pressed", active);
-  elements["reader-bottom-bookmark"].setAttribute("aria-pressed", active);
-  elements["settings-bookmark"].setAttribute("aria-pressed", active);
-  elements["settings-bookmark"].textContent = active ? "저장 취소" : "저장";
-  elements["bookmark-post"].ariaLabel = active ? "저장 취소" : "저장";
-  elements["bookmark-post"].title = elements["bookmark-post"].ariaLabel;
-  elements["reader-bottom-bookmark"].ariaLabel = elements["bookmark-post"].ariaLabel;
+  bookmarks = active
+    ? bookmarks.filter((entry) => !samePost(entry.summary, currentSummary))
+    : [{ summary: currentSummary, savedAt: new Date().toISOString() }, ...bookmarks];
+  persistUserState();
+  renderAfterBookmarkChange();
 }
 
 function openBookmarkEditor(summary) {
@@ -2264,49 +2600,68 @@ function renderAfterBookmarkChange() {
 }
 
 function updateNavigation() {
-  const previous = adjacentPost(-1);
-  const next = adjacentPost(1);
+  if (readerSource === "typemoon") renderReaderNavigation(typeMoonNavigation());
+}
+
+function entryStep(entry) {
+  return entry ? { title: entry.title || "제목 없음", entry } : null;
+}
+
+// Collection members move in collection order; other posts move through the list the Reader
+// was opened from, frozen as rendered. A post missing from that list never borrows a neighbour.
+function typeMoonNavigation() {
   if (currentCollection) {
-    elements["previous-post"].disabled = !previous;
-    elements["next-post"].disabled = !next;
-  } else {
-    const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
-    elements["previous-post"].disabled = index <= 0;
-    elements["next-post"].disabled = index < 0 || index >= renderedResults.length - 1;
+    const { collection, index } = currentCollection;
+    const available = (entry) => Boolean(entry.object_key);
+    const previous = adjacentInSequence(collection.entries, index, -1, available);
+    const next = adjacentInSequence(collection.entries, index, 1, available);
+    const skipped = next.skipped.length;
+    const note = next.kind === "gap"
+      ? `${skipped <= 3 ? next.skipped.map((entry) => `${entry.position}편`).join("·") : `${skipped}편`}은 보존되지 않아 ${next.target.position}편으로 이어집니다.`
+      : next.kind === "unavailable-tail" ? `이후 ${skipped}편은 현재 보존되지 않았습니다.` : "";
+    return {
+      unit: "편",
+      previous: entryStep(previous.target),
+      next: entryStep(next.target),
+      note,
+      endFallback: next.target ? null : { kicker: "마지막 보존 편", label: "작품 목차로 돌아가기", action: "toc" },
+      hasToc: true,
+      context: `${collection.title} · ${index + 1}/${collection.entries.length}`,
+    };
   }
-  elements["end-previous"].disabled = !previous;
-  elements["end-next"].disabled = !next && !currentCollection;
-  elements["reader-bottom-previous"].disabled = elements["previous-post"].disabled;
-  elements["reader-bottom-next"].disabled = elements["next-post"].disabled;
-  const resultContext = ["browse", "search", "bookmarks"].includes(currentDestination)
-    && renderedResults.some((post) => samePost(post, currentSummary));
-  const previousLabel = currentCollection ? "이전 편" : resultContext ? "이전 글 · 현재 결과" : "이전 글 · 게시판";
-  const nextLabel = currentCollection ? "다음 편" : resultContext ? "다음 글 · 현재 결과" : "다음 글 · 게시판";
-  elements["end-previous"].querySelector("span").textContent = previousLabel;
-  elements["end-next"].querySelector("span").textContent = next ? nextLabel : currentCollection ? "작품 목차" : nextLabel;
-  elements["previous-post"].title = previousLabel;
-  elements["previous-post"].ariaLabel = previousLabel;
-  elements["next-post"].title = nextLabel;
-  elements["next-post"].ariaLabel = nextLabel;
-  elements["end-previous-title"].textContent = previous?.title || (previous ? `${previousLabel} 열기` : `${previousLabel}이 없습니다`);
-  elements["end-next-title"].textContent = next
-    ? next.title || `${nextLabel} 열기`
-    : currentCollection ? "작품 목차로 돌아가기" : `${nextLabel}이 없습니다`;
-}
-
-function collectionAdjacent(offset) {
-  if (!currentCollection) return null;
-  const entries = currentCollection.collection.entries;
-  for (let index = currentCollection.index + offset; entries[index]; index += offset) {
-    if (entries[index].object_key) return entries[index];
-  }
-  return null;
-}
-
-function adjacentPost(offset) {
-  if (currentCollection) return collectionAdjacent(offset);
   const index = renderedResults.findIndex((post) => samePost(post, currentSummary));
-  return renderedResults[index + offset];
+  const resultContext = index >= 0 && ["browse", "search", "bookmarks"].includes(currentDestination);
+  const step = (offset) => index < 0 ? null : entryStep(renderedResults[index + offset]);
+  const next = step(1);
+  return {
+    unit: "글",
+    qualifier: resultContext ? "현재 결과" : "게시판",
+    previous: step(-1),
+    next,
+    note: next || index < 0 ? "" : "목록의 마지막 글입니다.",
+    hasToc: false,
+    context: boardLabel(currentSummary?.board_id) || "",
+  };
+}
+
+function typeMoonStep(offset, { finished = false } = {}) {
+  if (!currentSummary || readerNavigation?.pending) return;
+  const target = (offset > 0 ? typeMoonNavigation().next : typeMoonNavigation().previous)?.entry;
+  if (!target) return;
+  if (finished) markCurrentFinished();
+  loadPost(target, "replace");
+}
+
+// The Reader was usually opened from this table of contents; go back to it instead of stacking
+// another copy. Otherwise the table of contents takes the Reader's place in history.
+function openCurrentToc() {
+  if (!currentCollection) return;
+  const { collection, index } = currentCollection;
+  if (history.state?.redstmParent === `/collections/${collection.id}`) {
+    history.back();
+    return;
+  }
+  void openCollectionDetail(collection.id, "replace", { focusPosition: collection.entries[index]?.position });
 }
 
 function updateTabs() {
@@ -2340,18 +2695,23 @@ elements["result-list"].addEventListener("click", (event) => {
       textLibrary.activate(button);
       return;
     }
-    if (button.dataset.collectionId) {
-      persistCatalogState();
-      void openCollectionDetail(Number(button.dataset.collectionId));
-    }
-    else {
-      persistCatalogState();
-      loadPost(renderedResults[Number(button.dataset.index)]);
-    }
+    // Picking another row from the side list while reading stays in the same session, so Back
+    // still means "the list" rather than "the previously opened row".
+    const withinSession = Boolean(history.state?.redstmReader || history.state?.redstmCollection);
+    const navigation = withinSession ? "replace" : "push";
+    if (!withinSession) persistCatalogState();
+    if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId), navigation);
+    else loadPost(renderedResults[Number(button.dataset.index)], navigation);
   }
 });
+// Continue from Home places the work's table of contents under the Reader, so Back walks
+// Reader → 목차 → 홈 without flashing the table of contents first.
 elements["continue-reading"].addEventListener("click", () => {
-  if (continueTargetPost) loadPost(continueTargetPost);
+  if (!continueTargetPost) return;
+  if (continueCollectionId) {
+    history.pushState({ redstmCollection: true, redstmParent: currentRoute() }, "", `/collections/${continueCollectionId}`);
+  }
+  loadPost(continueTargetPost);
 });
 elements["continue-toc"].addEventListener("click", () => {
   if (continueCollectionId) void openCollectionDetail(continueCollectionId);
@@ -2365,16 +2725,40 @@ elements["catalog-toggle"].addEventListener("click", () => {
   elements["catalog-toggle"].setAttribute("aria-expanded", String(!collapsed));
   elements["catalog-toggle"].ariaLabel = collapsed ? "목록 펼치기" : "목록 접기";
 });
-elements["catalog-back"].addEventListener("click", () => {
-  const readerDepth = Number(history.state?.redstmReaderDepth) || 0;
-  if (readerDepth > 0) history.go(-readerDepth);
-  else {
-    const destination = currentDestination;
-    const view = currentView;
-    const path = destination === "library" ? "/" : destination === "text" ? textLibrary.currentRoute() : destination === "bookmarks" ? savedUrl() : searchUrl();
-    history.replaceState(null, "", path);
-    showDestination(destination, false, view);
-  }
+for (const [id, command] of [
+  ["catalog-back", "list"], ["reader-bottom-list", "list"], ["end-list", "list"],
+  ["previous-post", "previous"], ["reader-bottom-previous", "previous"], ["end-previous", "previous"],
+  ["next-post", "next"], ["reader-bottom-next", "next"], ["end-next", "end-next"],
+  ["end-toc", "toc"], ["collection-context", "toc"],
+  ["bookmark-post", "bookmark"], ["reader-top-bookmark", "bookmark"],
+  ["reader-settings", "settings"], ["reader-bottom-settings", "settings"], ["reader-bottom-more", "more"], ["reader-toolbar-more", "more"],
+]) {
+  elements[id].addEventListener("click", () => readerCommand(command));
+}
+for (const [id, command] of [["more-toc", "toc"], ["more-bookmark", "bookmark"]]) {
+  elements[id].addEventListener("click", () => {
+    closeReaderMore();
+    readerCommand(command);
+  });
+}
+elements["more-note"].addEventListener("click", () => {
+  closeReaderMore();
+  if (currentSummary) openBookmarkEditor(currentSummary);
+});
+elements["more-source"].addEventListener("click", closeReaderMore);
+elements["more-mode"].addEventListener("click", () => {
+  closeReaderMore();
+  elements["mode-toggle"].click();
+});
+elements["more-mode-reset"].addEventListener("click", () => {
+  closeReaderMore();
+  elements["mode-reset"].click();
+});
+elements["more-immersive"].addEventListener("click", () => {
+  closeReaderMore();
+  const active = !document.body.classList.contains("immersive");
+  setImmersive(active);
+  if (active && moreOpener?.isConnected) immersiveOpener = moreOpener;
 });
 window.addEventListener("popstate", () => { void handleRoute(); });
 elements["settings-dialog"].addEventListener("close", () => {
@@ -2493,47 +2877,35 @@ for (const button of document.querySelectorAll("[data-destination]")) {
     showDestination(button.dataset.destination);
   });
 }
-elements["collection-context"].addEventListener("click", () => {
-  if (currentCollection) void openCollectionDetail(currentCollection.collection.id);
-});
 elements["collection-entry-list"].addEventListener("click", async (event) => {
   const button = event.target.closest(".collection-entry");
   if (!button || button.disabled) return;
+  rememberCollectionViewport(button.dataset.position);
   const collection = await loadCollectionDetail(Number(elements["collection-entry-list"].dataset.collectionId));
   const entry = collection?.entries[Number(button.dataset.position) - 1];
   if (entry?.object_key) loadPost(entry);
 });
 elements["collection-continue"].addEventListener("click", async () => {
+  const position = elements["collection-continue"].dataset.position;
   if (elements["collection-continue"].dataset.action === "unread") {
-    const target = elements["collection-entry-list"].querySelector(
-      `.collection-entry[data-position="${elements["collection-continue"].dataset.position}"]`,
-    );
+    const target = elements["collection-entry-list"].querySelector(`.collection-entry[data-position="${position}"]`);
     target?.focus({ preventScroll: false });
     target?.scrollIntoView({ block: "center" });
     return;
   }
+  rememberCollectionViewport(position);
   const collection = await loadCollectionDetail(Number(elements["collection-entry-list"].dataset.collectionId));
-  const entry = collection?.entries[Number(elements["collection-continue"].dataset.position) - 1];
+  const entry = collection?.entries[Number(position) - 1];
   if (entry?.object_key) loadPost(entry);
 });
 elements["collection-back"].addEventListener("click", () => {
-  if (history.state?.redstmCollection) history.back();
+  if (history.state?.redstmParent) history.back();
   else {
     history.replaceState(null, "", "/browse?scope=collections");
     setScope("collections");
     showDestination("browse", false);
   }
 });
-elements["bookmark-post"].addEventListener("click", () => {
-  if (!currentSummary) return;
-  const active = bookmarks.some((entry) => samePost(entry.summary, currentSummary));
-  bookmarks = active
-    ? bookmarks.filter((entry) => !samePost(entry.summary, currentSummary))
-    : [{ summary: currentSummary, savedAt: new Date().toISOString() }, ...bookmarks];
-  persistUserState();
-  renderAfterBookmarkChange();
-});
-elements["settings-bookmark-detail"].addEventListener("click", () => openBookmarkEditor(currentSummary));
 elements["bookmark-form"].addEventListener("submit", (event) => {
   event.preventDefault();
   if (!editingBookmarkSummary) return;
@@ -2566,22 +2938,6 @@ for (const button of document.querySelectorAll("[data-bookmark-close]")) {
   button.addEventListener("click", closeBookmarkEditor);
 }
 elements["bookmark-dialog"].addEventListener("cancel", () => { editingBookmarkSummary = null; });
-elements["previous-post"].addEventListener("click", () => {
-  const post = adjacentPost(-1);
-  if (post) loadPost(post);
-});
-elements["next-post"].addEventListener("click", () => {
-  const post = adjacentPost(1);
-  if (post) loadPost(post);
-});
-for (const [id, offset] of [["end-previous", -1], ["end-next", 1]]) {
-  elements[id].addEventListener("click", () => {
-    if (offset > 0) markCurrentFinished();
-    const post = adjacentPost(offset);
-    if (post) loadPost(post);
-    else if (offset > 0 && currentCollection) void openCollectionDetail(currentCollection.collection.id);
-  });
-}
 elements["reader-pane"].addEventListener("scroll", () => {
   queueScrollSave();
   updateReadingProgress();
@@ -2601,38 +2957,36 @@ elements["reader-pane"].addEventListener("scroll", () => {
   }
   lastReaderScroll = current;
 }, { passive: true });
+// A short, still tap on the body brings hidden controls back. Scroll flings end in
+// pointercancel or move the pane, so they are not mistaken for taps.
+elements["reader-pane"].addEventListener("pointerdown", (event) => {
+  pointerStart = event.isPrimary
+    ? { x: event.clientX, y: event.clientY, time: event.timeStamp, scroll: elements["reader-pane"].scrollTop }
+    : null;
+}, { passive: true });
+elements["reader-pane"].addEventListener("pointercancel", () => { pointerStart = null; }, { passive: true });
 elements["reader-pane"].addEventListener("pointerup", (event) => {
-  if (document.body.classList.contains("reader-controls-hidden") &&
-      !event.target.closest("a, button, input, select, textarea")) {
-    document.body.classList.remove("reader-controls-hidden");
-  }
+  const start = pointerStart;
+  pointerStart = null;
+  if (!start || !document.body.classList.contains("reader-controls-hidden")) return;
+  if (event.target.closest("a, button, input, select, textarea, img")) return;
+  const still = Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10 &&
+    event.timeStamp - start.time <= 500 &&
+    Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
+  if (still && !String(getSelection() ?? "")) document.body.classList.remove("reader-controls-hidden");
 });
 
 elements["theme-toggle"].addEventListener("click", () => {
   settings.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   saveSettings();
 });
-elements["theme-select"].addEventListener("change", () => {
-  settings.theme = elements["theme-select"].value;
-  saveSettings();
-});
-elements["reader-settings"].addEventListener("click", openSettings);
-elements["reader-bottom-list"].addEventListener("click", () => elements["catalog-back"].click());
-elements["reader-bottom-previous"].addEventListener("click", () => elements["previous-post"].click());
-elements["reader-bottom-bookmark"].addEventListener("click", () => elements["bookmark-post"].click());
-elements["reader-bottom-next"].addEventListener("click", () => elements["next-post"].click());
-elements["reader-bottom-settings"].addEventListener("click", openSettings);
+for (const choice of elements["theme-choices"].querySelectorAll("[data-theme-choice]")) {
+  choice.addEventListener("click", () => {
+    settings.theme = choice.dataset.themeChoice;
+    saveSettings();
+  });
+}
 elements["immersive-exit"].addEventListener("click", () => setImmersive(false));
-elements["settings-bookmark"].addEventListener("click", () => elements["bookmark-post"].click());
-elements["settings-mode"].addEventListener("click", () => elements["mode-toggle"].click());
-elements["settings-mode-reset"].addEventListener("click", () => elements["mode-reset"].click());
-elements["settings-immersive"].addEventListener("click", () => {
-  elements["immersive-toggle"].click();
-  if (document.body.classList.contains("immersive") && elements["settings-dialog"].open) {
-    immersiveOpener = isNarrowScreen() ? elements["reader-bottom-settings"] : elements["reader-settings"];
-    elements["settings-dialog"].close();
-  }
-});
 elements["immersive-toggle"].addEventListener("click", () => setImmersive(!document.body.classList.contains("immersive")));
 elements["mode-toggle"].addEventListener("click", () => {
   if (!currentPayload) return;
@@ -2647,16 +3001,33 @@ elements["mode-reset"].addEventListener("click", () => {
   persistUserState();
   renderPostBody();
 });
-for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["aa-size", "aaSize"]]) {
-  elements[id].addEventListener("input", () => {
-    settings[key] = Number(elements[id].value);
-    saveSettings();
-  });
-}
-elements["prose-font"].addEventListener("change", () => {
-  settings.proseFont = elements["prose-font"].value;
+// Typography changes keep the sentence at the top of the screen in place instead of the pixel
+// offset, which would land somewhere else once lines reflow.
+function changeTypography(mutate) {
+  const keepAnchor = readerSource && currentMode === "prose";
+  const anchor = keepAnchor ? captureTextAnchor(elements["archive-body"], elements["reader-pane"], readerTopInset()) : null;
+  mutate();
   saveSettings();
-});
+  if (anchor) {
+    restoreTextAnchor(elements["archive-body"], elements["reader-pane"], anchor, readerTopInset());
+    syncScrollBaseline();
+  }
+}
+for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["prose-margin", "proseMargin"], ["aa-size", "aaSize"]]) {
+  elements[id].addEventListener("input", () => changeTypography(() => {
+    settings[key] = Number(elements[id].value);
+  }));
+}
+for (const button of document.querySelectorAll("[data-prose-size-delta]")) {
+  button.addEventListener("click", () => changeTypography(() => {
+    const min = Number(elements["prose-size"].min);
+    const max = Number(elements["prose-size"].max);
+    settings.proseSize = Math.max(min, Math.min(max, settings.proseSize + Number(button.dataset.proseSizeDelta)));
+  }));
+}
+elements["prose-font"].addEventListener("change", () => changeTypography(() => {
+  settings.proseFont = elements["prose-font"].value;
+}));
 for (const button of document.querySelectorAll("[data-aa-size-delta]")) {
   button.addEventListener("click", () => {
     settings.aaSize = Math.max(9, Math.min(24, settings.aaSize + Number(button.dataset.aaSizeDelta)));
@@ -2806,12 +3177,12 @@ document.addEventListener("keydown", (event) => {
     showDestination("search");
     elements["search-input"].focus();
   } else if (event.key === "[") {
-    elements["previous-post"].click();
+    readerCommand("previous");
   } else if (event.key === "]") {
-    elements["next-post"].click();
+    readerCommand("next");
   } else if (event.key.toLowerCase() === "b") {
-    elements["bookmark-post"].click();
-  } else if (event.key.toLowerCase() === "f") {
+    readerCommand("bookmark");
+  } else if (event.key.toLowerCase() === "f" && readerSource) {
     setImmersive(!document.body.classList.contains("immersive"));
   }
 });
@@ -2825,25 +3196,35 @@ window.addEventListener("offline", () => {
 window.addEventListener("online", () => {
   if (archiveReady) elements["archive-state"].textContent = "보존본";
 });
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") {
-    if (currentSummary) persistReadingPosition();
-    else persistCatalogState();
-  }
-});
-window.addEventListener("pagehide", () => {
+function flushLifecycleState() {
   if (currentSummary) persistReadingPosition();
+  else if (readerSource === "text" || currentDestination === "text") textLibrary.flush();
   else persistCatalogState();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushLifecycleState();
 });
+window.addEventListener("pagehide", flushLifecycleState);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (settings.theme === "system") applySettings();
 });
-window.visualViewport?.addEventListener("resize", () => {
-  document.body.classList.toggle("keyboard-open", window.visualViewport.height < innerHeight * 0.75);
-});
+// Pinch zoom also shrinks the visual viewport; only a focused text field means a keyboard.
+function updateKeyboardState() {
+  const editing = document.activeElement?.matches?.("input:not([type='range'], [type='color'], [type='file']), textarea, [contenteditable]");
+  const shrunk = window.visualViewport ? window.visualViewport.height < innerHeight * 0.75 : false;
+  document.body.classList.toggle("keyboard-open", Boolean(editing && shrunk));
+}
+window.visualViewport?.addEventListener("resize", updateKeyboardState);
+document.addEventListener("focusout", () => requestAnimationFrame(updateKeyboardState));
 matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
 reducedMotion.addEventListener("change", () => document.body.classList.remove("reader-controls-hidden"));
+// Late web fonts can reflow the body; re-apply the saved position only if the reader has not
+// started scrolling in the meantime.
 document.fonts.ready.then(() => {
-  if (currentSummary) restoreReadingPosition(currentSummary);
+  if (currentSummary && restoredScroll !== null && Math.abs(elements["reader-pane"].scrollTop - restoredScroll) < 2) {
+    restoreReadingPosition(currentSummary);
+  }
 });
 applySettings();
+// Text archive routes do not depend on the TypeMoon search index; start them immediately.
+if (location.pathname === "/text") void handleRoute();

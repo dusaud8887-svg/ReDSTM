@@ -42,8 +42,8 @@ function sanitizeSettings(value, defaults = {}) {
 
   pick("theme", (value) => themes.has(value));
   for (const [key, minimum, maximum] of [
-    ["proseSize", 15, 24], ["lineHeight", 1.4, 2.2],
-    ["proseWidth", 560, 960], ["aaSize", 9, 24], ["aaZoom", 0.1, 3],
+    ["proseSize", 15, 28], ["lineHeight", 1.4, 2.2],
+    ["proseWidth", 560, 960], ["proseMargin", 12, 32], ["aaSize", 9, 24], ["aaZoom", 0.1, 3],
   ]) {
     pick(key, (value) => Number.isFinite(value) && value >= minimum && value <= maximum);
   }
