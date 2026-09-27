@@ -169,7 +169,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const fragment = document.createDocumentFragment();
     const resume = chaptersMode ? lastReadChapter() : null;
     const works = !chaptersMode && !folderMode && lane === "novel" ? workProgress() : null;
-    if (resume) {
+    // A work not started yet offers its first chapter the same way (not while searching).
+    const start = chaptersMode && !resume && !search.value.trim() ? canonicalChapters(chapterSource)[0] : null;
+    if (resume || start) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "result-item continue-row";
@@ -178,12 +180,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       line.className = "result-title-line";
       const name = document.createElement("span");
       name.className = "result-title";
-      name.textContent = `이어 읽기 · ${resume.chapter.label || "회차"}`;
+      const target = resume ? resumeTarget() : start;
+      name.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${target?.label || "회차"}`;
       line.append(name);
       const meta = document.createElement("span");
       meta.className = "result-meta";
-      const percent = Math.round((resume.record.progress ?? 0) * 100);
-      meta.textContent = percent >= FINISHED * 100 ? "다 읽음 · 다음 회차로 이어집니다" : `${percent}% 읽음`;
+      const percent = Math.round((resume?.record.progress ?? 0) * 100);
+      meta.textContent = !resume ? `전체 ${canonicalChapters(chapterSource).length.toLocaleString("ko-KR")}화`
+        : percent >= FINISHED * 100 ? `${resume.chapter.label || "이전 회차"} 다 읽음 · 다음 회차` : `${percent}% 읽음`;
       button.append(line, meta);
       const row = document.createElement("li");
       row.append(button);
@@ -838,7 +842,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function activate(button) {
     if (button.dataset.continue) {
-      const target = resumeTarget();
+      const target = resumeTarget() ?? canonicalChapters(chapterSource)[0];
       if (!target) return;
       rememberListPosition();
       void openBody(target, { navigation: current ? "replace" : "push" }).catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });

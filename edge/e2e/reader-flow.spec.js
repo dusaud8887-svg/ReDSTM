@@ -158,7 +158,7 @@ test("Text: list sort never changes 다음 화, and Back restores the chapter li
     select.value = "latest";
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await expect(page.locator("#result-list .result-title").first()).toHaveText("300화");
+  await expect(page.locator("#result-list .result-item[data-key] .result-title").first()).toHaveText("300화");
   const row = '#result-list [data-key="chapter:200"]';
   await page.locator(row).evaluate((element) => {
     const list = document.getElementById("result-list");
@@ -598,4 +598,83 @@ test("Arcalive images: archived copies replace expired links and missing ones ke
   await expect(page.locator(`#archive-body .media-expired[data-arca-path="${missing}"]`)).toContainText("만료된 이미지 링크");
   await expect(page.locator(`#archive-body .media-expired[data-arca-path="${missing}"] a`)).toHaveAttribute("href", "https://arca.live/b/monmusu/102379431");
   expect(requests).toEqual([[stored, missing]]);
+});
+
+test("Text keeps reading when the TypeMoon archive fails, and the error waits for TypeMoon screens", async ({ page }) => {
+  const workId = await useLongNovel(page, 5);
+  await page.route("**/archive/**", (route) => route.fulfill({ status: 503, body: "down" }));
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await page.locator('#result-list [data-key="chapter:2"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("2화");
+  await expect(page.locator("#archive-body")).toContainText("2화 첫 줄");
+  await page.waitForTimeout(500);
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(page.locator("body")).toHaveClass(/reader-active/);
+  await page.goBack();
+  await expect(page.locator("#reader")).toBeHidden();
+  await page.locator('[data-destination="library"]').filter({ visible: true }).first().click();
+  await expect(page.locator("#archive-state")).toHaveText("연결 오류");
+  await expect(page.locator("#home-title")).toHaveText("아카이브를 열 수 없음");
+});
+
+test("A work not started yet offers its first chapter, and finishing one names the next", async ({ page }) => {
+  const workId = await useLongNovel(page, 5);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  const start = page.locator("#result-list .continue-row");
+  await expect(start).toContainText("처음부터 읽기 · 1화");
+  // Searching for a chapter shows only matches.
+  await page.locator("#search-input").fill("3화");
+  await expect(start).toHaveCount(0);
+  await page.locator("#search-input").fill("");
+  await start.click();
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = pane.scrollHeight; });
+  await page.goBack();
+  await expect(page.locator("#result-list .continue-row")).toContainText("이어 읽기 · 2화");
+});
+
+test("Recent searches keep one entry per typed search and can be cleared", async ({ page }) => {
+  await useLongCollection(page, 30);
+  await page.goto("/search");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  // Each pause while typing runs a search; the URL shows which one ran.
+  for (const query of ["1", "12", "12편", "3편"]) {
+    await page.locator("#search-input").fill(query);
+    await expect(page).toHaveURL(new RegExp(`q=${encodeURIComponent(query)}(&|$)`));
+  }
+  await page.locator("#search-clear").click();
+  await expect(page.locator("#recent-queries li button:not(.recent-queries-clear)")).toHaveText(["3편", "12편"]);
+  await expect(page.locator("#result-status")).toHaveText("");
+  await page.locator(".recent-queries-clear").click();
+  await expect(page.locator("#recent-queries")).toBeHidden();
+});
+
+test("Arrow keys move between chapters on the desktop Reader", async ({ page }) => {
+  test.skip(mobileWidth(page), "Keyboard shortcuts are for wide screens");
+  await useLongCollection(page, 5);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator("#archive-body").click();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#reader-title")).toHaveText("3편 제목");
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+});
+
+test("Tapping the tab you are on returns a scrolled list to the top first", async ({ page }) => {
+  await useLongCollection(page, 80);
+  await page.goto("/browse");
+  await expect(page.locator("#result-list .result-item").first()).toBeVisible();
+  await page.locator("#result-list").evaluate((list) => { list.scrollTop = 1500; });
+  await page.locator('[data-destination="browse"]').filter({ visible: true }).first().click();
+  await expect.poll(() => page.locator("#result-list").evaluate((list) => list.scrollTop)).toBe(0);
+});
+
+test("Reading settings opened over a chapter leave the text visible on phones", async ({ page }) => {
+  test.skip(!mobileWidth(page), "Phone bottom sheet");
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await page.locator("#reader-bottom-settings").click();
+  const sheetTop = await page.locator("#settings-dialog").evaluate((dialog) => dialog.getBoundingClientRect().top);
+  expect(sheetTop).toBeGreaterThan(page.viewportSize().height * 0.35);
 });

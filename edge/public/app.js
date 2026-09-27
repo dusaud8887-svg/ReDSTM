@@ -107,6 +107,8 @@ let readerViewId = 0;
 let collectionProgressFailedBoards = new Set();
 let currentView = "all";
 let currentDestination = "library";
+// A TypeMoon archive failure that arrived while the text library was on screen.
+let deferredArchiveError = null;
 let messageId = 0;
 let searchRequestId = 0;
 let resultTotal = 0;
@@ -303,7 +305,12 @@ function updateShellMode() {
 function rememberQuery(query) {
   const trimmed = String(query ?? "").trim();
   if (!trimmed) return;
-  recentQueries = [trimmed, ...recentQueries.filter((item) => item !== trimmed)].slice(0, 5);
+  // Search runs while typing, so "세", "세이", "세이버" are one search: keep only the longest.
+  const sameSearch = (item) => item === trimmed || trimmed.startsWith(item) || item.startsWith(trimmed);
+  const latest = recentQueries[0];
+  const extendsLatest = latest && sameSearch(latest) && latest.length > trimmed.length;
+  recentQueries = extendsLatest ? recentQueries
+    : [trimmed, ...recentQueries.filter((item) => item !== trimmed && !(item === latest && sameSearch(item)))].slice(0, 5);
 }
 
 function appendHighlightedText(target, text, query) {
@@ -795,9 +802,10 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   currentPayload = null;
   currentCollection = null;
   currentMode = "prose";
+  const continuing = readerSource === "text";
   setReaderSource("text");
   resetReaderChrome();
-  collapseCatalogForReading();
+  if (!continuing) collapseCatalogForReading();
   elements["reader-kicker"].textContent = kicker;
   elements["reader-title"].textContent = title;
   elements["reader-meta"].textContent = meta;
@@ -856,7 +864,8 @@ function syncScrollBaseline() {
   readerScrollDelta = 0;
 }
 
-// Mid-width screens give the Reader the whole width while reading; the side list stays one tap away.
+// Mid-width screens give the Reader the whole width when reading starts; the side list stays one
+// tap away. Moving to another chapter keeps whatever the reader chose (an opened side list stays).
 function collapseCatalogForReading() {
   const collapse = matchMedia("(min-width: 760px) and (max-width: 899px)").matches;
   document.body.classList.toggle("catalog-collapsed", collapse);
@@ -1492,6 +1501,11 @@ function showDestination(destination, navigate = true, view = destination === "b
     if (currentScope === "collections") void renderCollectionCatalog();
     else requestSearch();
   }
+  if (destination !== "text" && deferredArchiveError) {
+    const error = deferredArchiveError;
+    deferredArchiveError = null;
+    renderArchiveError(error);
+  }
   updateDestinationButtons();
   const path = destination === "library" ? "/" : destination === "text" ? textLibrary.currentRoute() : destination === "bookmarks" ? savedUrl() : searchUrl();
   if (navigate && `${location.pathname}${location.search}` !== path) {
@@ -1651,6 +1665,12 @@ function handleWorkerMessage({ data }) {
     return;
   }
   if (data.type === "error") {
+    // The text library is a separate archive: a TypeMoon failure must not take over the page
+    // (or close a chapter) while it is on screen. It shows on the next TypeMoon screen instead.
+    if (currentDestination === "text" || readerSource === "text") {
+      deferredArchiveError = { code: data.code, message: data.message };
+      return;
+    }
     renderArchiveError({ code: data.code, message: data.message });
     return;
   }
@@ -1698,7 +1718,7 @@ function renderSearchEmpty() {
   elements["result-more"].hidden = true;
   elements["search-empty"].hidden = false;
   renderWidenActions(false);
-  elements["result-status"].textContent = "검색어를 입력하세요";
+  elements["result-status"].textContent = "";
   const hasRecent = recentQueries.length > 0;
   elements["search-empty-copy"].textContent = hasRecent ? "최근 검색" : "검색어를 입력하세요";
   elements["recent-queries"].hidden = !hasRecent;
@@ -1714,6 +1734,21 @@ function renderSearchEmpty() {
       renderCurrentView();
     });
     item.append(button);
+    elements["recent-queries"].append(item);
+  }
+  if (hasRecent) {
+    const item = document.createElement("li");
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "recent-queries-clear";
+    clear.textContent = "기록 지우기";
+    clear.addEventListener("click", () => {
+      recentQueries = [];
+      persistCatalogState();
+      renderSearchEmpty();
+      elements["search-input"].focus({ preventScroll: true });
+    });
+    item.append(clear);
     elements["recent-queries"].append(item);
   }
 }
@@ -2236,7 +2271,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     elements["collection-continue"].dataset.action = unreadFocus ? "unread" : "read";
     elements["collection-continue"].dataset.position = (continueEntry ?? unreadFocus)?.position ?? "";
     elements["collection-continue"].textContent = continueTarget.kind === "start"
-      ? `시작하기 · ${continueEntry.position}편 ${continueEntry.title || "제목 없음"}`
+      ? `처음부터 읽기 · ${continueEntry.position}편`
       : continueTarget.kind === "resume"
       ? `${continueEntry.position}편부터 이어 읽기`
       : continueTarget.kind === "next"
@@ -2585,9 +2620,10 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
     comment_count: payload.comments.length,
     views: post.views,
   };
+  const continuing = readerSource === "typemoon";
   setReaderSource("typemoon");
   resetReaderChrome();
-  collapseCatalogForReading();
+  if (!continuing) collapseCatalogForReading();
   elements["reader-kicker"].textContent = [boardLabel(post.board_id) || post.board_id, post.category].filter(Boolean).join(" · ");
   elements["reader-title"].textContent = post.title || "제목 없음";
   document.title = `${post.title || "제목 없음"} — ReDSTM`;
@@ -3341,6 +3377,15 @@ for (const tab of document.querySelectorAll("[data-view]")) {
 }
 for (const button of document.querySelectorAll("[data-destination]")) {
   button.addEventListener("click", () => {
+    // Tapping the tab you are on first returns a scrolled list to its top; at the top it
+    // does what it always did.
+    if (button.dataset.destination === currentDestination && !readerSource) {
+      const scroller = document.body.classList.contains("collection-detail-open") ? elements["reader-pane"] : elements["result-list"];
+      if (scroller.scrollTop > 0) {
+        scroller.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+        return;
+      }
+    }
     if (["browse", "search"].includes(button.dataset.destination)) setScope("posts");
     showDestination(button.dataset.destination);
   });
@@ -3707,9 +3752,9 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     showDestination("search");
     elements["search-input"].focus();
-  } else if (event.key === "[") {
+  } else if (event.key === "[" || (event.key === "ArrowLeft" && readerSource && currentMode !== "aa" && !event.altKey)) {
     readerCommand("previous");
-  } else if (event.key === "]") {
+  } else if (event.key === "]" || (event.key === "ArrowRight" && readerSource && currentMode !== "aa" && !event.altKey)) {
     readerCommand("next");
   } else if (event.key.toLowerCase() === "b") {
     readerCommand("bookmark");
