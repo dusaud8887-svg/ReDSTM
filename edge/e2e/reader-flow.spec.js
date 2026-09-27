@@ -583,7 +583,7 @@ test("Arcalive images: archived copies replace expired links and missing ones ar
       schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${indexHash}.json`, sha256: indexHash }],
     };
     else if (path.endsWith(`/index/arcalive/${indexHash}.json`)) payload = {
-      schema: 1, lane: "arcalive", items: [{ identity: "arcalive:monmusu:102379431:text", title: "작은 가슴파의 유혹", category: "번역", board: "monmusu", post_id: 102379431, sha256: bodyHash }],
+      schema: 1, lane: "arcalive", items: [{ identity: "arcalive:monmusu:102379431:text", title: "작은 가슴파의 유혹", author: "번역자", category: "번역", board: "monmusu", post_id: 102379431, sha256: bodyHash }],
     };
     else if (path.endsWith(`/object/${bodyHash}`)) return route.fulfill({
       contentType: "text/markdown",
@@ -593,6 +593,8 @@ test("Arcalive images: archived copies replace expired links and missing ones ar
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
   await page.goto("/text?lane=arcalive&board=monmusu&category=%EB%B2%88%EC%97%AD");
+  await page.locator("#search-input").fill("번역자");
+  await expect(page.locator("#result-list .result-item")).toContainText("번역자");
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#reader-title")).toHaveText("작은 가슴파의 유혹");
   const archived = page.locator('#archive-body .media-figure[data-archived="true"] img');

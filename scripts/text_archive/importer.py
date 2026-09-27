@@ -163,6 +163,20 @@ def _title_key(value: str) -> str:
     return re.sub(r"[^\w]+", "", unicodedata.normalize("NFKC", value).casefold())
 
 
+def arcalive_header(body: bytes) -> tuple[str, str | None, str]:
+    lines = body.decode("utf-8-sig").splitlines()
+    title = lines[0][2:].strip() if lines and lines[0].startswith("# ") else ""
+    separator = next((index for index, line in enumerate(lines[:16]) if line == "---"), -1)
+    fields: dict[str, str] = {}
+    for line in lines[1:separator] if separator > 0 else ():
+        if line.startswith("- "):
+            key, mark, value = line[2:].partition(":")
+            if mark:
+                fields[key.strip()] = value.strip()
+    author = fields.get("author", "")
+    return title, fields.get("category"), "" if author == "-" else author
+
+
 def mark_cross_source_covered(db: sqlite3.Connection, site: str, work_id: str) -> int:
     """Requeue unverified chapters; a matching label cannot prove body identity."""
     group = db.execute(
@@ -1297,6 +1311,9 @@ def import_batch(
                     board = data.get("board")
                     post_id = data.get("post_id")
                     lane = data.get("content_lane")
+                    author = data.get("author", "")
+                    if candidate["lane"] == "arcalive" and not author:
+                        author = arcalive_header(body)[2][:500]
                     db.execute(
                         """INSERT INTO text_archive_items(
                            identity,lane,source_site,source_work_id,source_chapter_id,
@@ -1316,7 +1333,7 @@ def import_batch(
                             lane,
                             data["source_url"],
                             data.get("work_title", data.get("title") or data.get("category", "")),
-                            data.get("author", ""),
+                            author,
                             data.get("chapter_label", ""),
                             data.get("chapter_kind", ""),
                             data.get("access", "unknown"),

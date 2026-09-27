@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from crawler.collections import parse_title
-from scripts.text_archive.importer import _chapter_key, _connect, _write_receipt, novel_text_sha256
+from scripts.text_archive.importer import (
+    _chapter_key,
+    _connect,
+    _write_receipt,
+    arcalive_header,
+    novel_text_sha256,
+)
 from scripts.text_archive.recovery_metadata import metadata_fingerprint
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
@@ -340,6 +346,7 @@ def build_publish_tree(
                             "post_id": row["source_post_id"],
                             "category": row["source_category"],
                             "title": row["title"],
+                            "author": row["author"],
                             "content_lane": row["content_lane"],
                             "sha256": row["content_sha256"],
                             "bytes": row["bytes"],
@@ -542,28 +549,15 @@ def _backfill_arcalive_metadata(db_path: Path, object_root: Path) -> int:
                 digest = hashlib.sha256(body).hexdigest()
                 if len(body) != row["bytes"] or digest != row["content_sha256"]:
                     raise OSError(f"Arcalive object failed verification: {row['identity']}")
-                lines = body.decode("utf-8-sig", errors="strict").splitlines()
-                title = lines[0][2:].strip() if lines and lines[0].startswith("# ") else ""
-                separator = next(
-                    (index for index, line in enumerate(lines[:16]) if line == "---"),
-                    -1,
-                )
-                category_line = (
-                    next(
-                        (line for line in lines[1:separator] if line.startswith("- category:")),
-                        None,
-                    )
-                    if separator > 0
-                    else None
-                )
-                if not title or category_line is None:
+                title, category, author = arcalive_header(body)
+                if not title or category is None:
                     raise ValueError(f"Arcalive Markdown header is invalid: {row['identity']}")
-                category = category_line.partition(":")[2].strip()
                 if category in {"", "-"}:
                     category = "미분류"
                 db.execute(
-                    "UPDATE text_archive_items SET title=?,source_category=? WHERE identity=?",
-                    (title[:500], category[:500], row["identity"]),
+                    """UPDATE text_archive_items SET title=?,source_category=?,
+                       author=CASE WHEN author='' THEN ? ELSE author END WHERE identity=?""",
+                    (title[:500], category[:500], author[:500], row["identity"]),
                 )
                 changed += 1
         return changed

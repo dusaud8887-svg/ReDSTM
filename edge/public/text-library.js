@@ -230,7 +230,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           : lane === "saved"
             ? [entry.lane === "novel" ? `${entry.entry?.label || "회차"}` : entry.entry?.board || "아카라이브",
               ...(entry.tags ?? []).map((tag) => `#${tag}`), entry.note || ""].filter(Boolean).join(" · ")
-            : [entry.category, entry.board].filter(Boolean).join(" · ") || "아카라이브";
+            : [entry.author, entry.category, entry.board].filter(Boolean).join(" · ") || "아카라이브";
       }
       if (meta.textContent) button.append(line, meta);
       else button.append(line);
@@ -330,7 +330,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (!folderBoard) return renderRows(group(matching, "board"), { folderMode: "board" });
       const boardItems = catalog.filter((item) => String(item.board) === folderBoard);
       const visibleBoard = query
-        ? boardItems.filter((item) => normalize(`${item.title || ""} ${item.category || ""}`).includes(query))
+        ? boardItems.filter((item) => normalize(`${item.title || ""} ${item.author || ""} ${item.category || ""}`).includes(query))
         : boardItems;
       if (!folderCategory) return renderRows(group(visibleBoard, "category"), { folderMode: "category" });
       return renderRows(visibleBoard.filter((item) => String(item.category || "미분류") === folderCategory));
@@ -673,7 +673,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       title: isNovel ? (entry.label || itemWork?.title || "회차") : (entry.title || "아카라이브 글"),
       meta: isNovel
         ? [itemWork?.author || "작가 미상", chapterKind(entry.kind)].filter(Boolean).join(" · ")
-        : [entry.category || "미분류", entry.post_id ? `#${entry.post_id}` : ""].filter(Boolean).join(" · "),
+        : [entry.author, entry.category || "미분류", entry.post_id ? `#${entry.post_id}` : ""].filter(Boolean).join(" · "),
       text: parsed.text,
       sourceUrl: parsed.sourceUrl,
     });

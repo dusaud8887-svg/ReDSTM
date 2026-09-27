@@ -226,8 +226,10 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     )
     assert result is not None and result["revision"] == 1
     with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT author FROM text_archive_items").fetchone() == ("작가",)
         db.execute(
-            "UPDATE text_archive_items SET title='소설',source_category='' WHERE lane='arcalive'"
+            "UPDATE text_archive_items SET title='소설',source_category='',author='' "
+            "WHERE lane='arcalive'"
         )
 
     remote: dict[str, bytes] = {}
@@ -260,14 +262,19 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     receipt = json.loads((receipts / f"{_BATCH_ID}.json").read_text(encoding="utf-8"))
     assert outcome["item_count"] == 1
     with sqlite3.connect(db_path) as db:
-        assert db.execute("SELECT title,source_category FROM text_archive_items").fetchone() == (
+        metadata = db.execute(
+            "SELECT title,source_category,author FROM text_archive_items"
+        ).fetchone()
+        assert metadata == (
             "fixture article title",
             "소설",
+            "작가",
         )
     catalog_file = next((tmp_path / "build" / "published" / "indexes" / "arcalive").glob("*.json"))
     published_item = json.loads(catalog_file.read_text(encoding="utf-8"))["items"][0]
     assert published_item["title"] == "fixture article title"
     assert published_item["category"] == "소설"
+    assert published_item["author"] == "작가"
     assert receipt["revision"] == 2
     assert receipt["items"][0]["published_at"]
     assert remote["published/arcalive/release.json"]
