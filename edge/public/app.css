@@ -451,6 +451,22 @@ body.text-library-open .text-work-back { display: inline-flex; }
 .archive-body.aa :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; display: block; margin: 0; padding: 0; white-space: nowrap !important; font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; background: transparent !important; }
 .archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
 .archive-body.plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.media-figure { margin: 1.2em 0; }
+.media-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; background: var(--surface); cursor: zoom-in; }
+.media-open img { display: block; max-width: 100%; max-height: 80vh; height: auto; margin: 0 auto; border-radius: 8px; }
+.media-figure figcaption { margin-top: 4px; font-family: var(--font-ui); font-size: 12px; line-height: 1.4; }
+.media-figure figcaption a { color: var(--muted); }
+.media-figure.failed { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; font-family: var(--font-ui); font-size: 13px; }
+.media-failed { margin: 0 !important; color: var(--muted); }
+.media-retry { min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--page); color: var(--ink); cursor: pointer; }
+.media-figure.failed figcaption { flex-basis: 100%; margin: 0; }
+.archive-body a[data-image] { text-decoration-style: dotted; }
+.image-viewer { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0; background: rgb(0 0 0 / 92%); }
+.image-viewer::backdrop { background: rgb(0 0 0 / 80%); }
+.image-viewer form { height: 100%; max-height: none; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: auto; }
+.image-viewer img { max-width: 100%; max-height: 100%; margin: auto; object-fit: contain; }
+.image-viewer-actions { display: flex; justify-content: space-between; gap: 8px; padding: 10px 16px max(10px, env(safe-area-inset-bottom)); }
+.image-viewer-actions :is(a, button) { min-height: 48px; display: inline-flex; align-items: center; padding: 0 18px; border: 1px solid rgb(255 255 255 / 35%); border-radius: 999px; background: transparent; color: #fff; font-weight: 650; text-decoration: none; cursor: pointer; }
 .image-fallback { display: inline-block; padding: 6px 8px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 12px; }
 
 .comments { border-top: 1px solid var(--line); padding: 36px max(32px, calc((100% - var(--prose-width)) / 2)) 72px; }

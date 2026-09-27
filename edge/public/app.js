@@ -20,6 +20,7 @@ import {
   postReadingState,
 } from "/reading-model.js";
 import { createBoardNavigator } from "/board-navigator.js";
+import { decorateImages, enhanceHtmlMedia, renderPlainTextWithMedia } from "/media.js";
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence } from "/sequence.js";
 import { captureTextAnchor, restoreTextAnchor } from "/text-anchor.js";
@@ -60,6 +61,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
+    "image-viewer", "image-viewer-image", "image-viewer-source",
     "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
     "reading-progress", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
@@ -748,7 +750,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   body.classList.remove("aa", "normalize-source-styles");
   body.classList.add("plain-text");
   body.ariaLabel = "텍스트 본문";
-  body.replaceChildren(document.createTextNode(text));
+  renderPlainTextWithMedia(body, text);
   openMobileReader();
   updateShellMode();
   requestAnimationFrame(() => elements["reader-title"].focus({ preventScroll: true }));
@@ -2507,6 +2509,7 @@ function renderPostBody() {
   elements["mode-toggle"].textContent = isAa ? "소설로 보기" : "AA로 보기";
   elements["mode-reset"].hidden = !override;
   elements["archive-body"].classList.remove("plain-text");
+  delete elements["archive-body"].dataset.mediaEnhanced;
   if (isAa) {
     const canvas = document.createElement("div");
     canvas.className = "aa-canvas";
@@ -2518,6 +2521,7 @@ function renderPostBody() {
   normalizeReaderTypography(elements["archive-body"]);
   applySettings();
   decorateImages(elements["archive-body"]);
+  if (!isAa) enhanceHtmlMedia(elements["archive-body"]);
   requestAnimationFrame(() => updateAaOverflowCue(true));
 }
 
@@ -2529,20 +2533,10 @@ function normalizeReaderTypography(container) {
   }
 }
 
-function decorateImages(container) {
-  for (const image of container.querySelectorAll("img")) {
-    image.loading = "lazy";
-    image.referrerPolicy = "no-referrer";
-    image.addEventListener("error", () => {
-      const link = document.createElement("a");
-      link.className = "image-fallback";
-      link.href = image.src;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.textContent = image.alt || "이미지 링크";
-      image.replaceWith(link);
-    }, { once: true });
-  }
+function openImageViewer(href) {
+  elements["image-viewer-image"].src = href;
+  elements["image-viewer-source"].href = href;
+  if (!elements["image-viewer"].open) elements["image-viewer"].showModal();
 }
 
 function renderComments(comments) {
@@ -3021,6 +3015,20 @@ for (const button of document.querySelectorAll("[data-bookmark-close]")) {
   button.addEventListener("click", closeBookmarkEditor);
 }
 elements["bookmark-dialog"].addEventListener("cancel", () => { editingBookmarkSummary = null; });
+// Inline images and image links open a full-screen viewer; Back or 닫기 returns to the text.
+elements["archive-body"].addEventListener("click", (event) => {
+  if (currentMode === "aa") return;
+  const trigger = event.target.closest(".media-open, a[data-image], img");
+  if (!trigger || !elements["archive-body"].contains(trigger)) return;
+  const href = trigger.dataset.image ?? trigger.querySelector?.("img")?.src ?? trigger.src;
+  if (!href) return;
+  event.preventDefault();
+  openImageViewer(href);
+});
+elements["image-viewer"].addEventListener("close", () => elements["image-viewer-image"].removeAttribute("src"));
+elements["image-viewer"].addEventListener("click", (event) => {
+  if (event.target === elements["image-viewer"]) elements["image-viewer"].close();
+});
 elements["reader-pane"].addEventListener("scroll", () => {
   queueScrollSave();
   updateReadingProgress();

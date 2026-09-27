@@ -312,6 +312,16 @@
       </form>
     </dialog>
 
+    <dialog class="image-viewer" id="image-viewer" aria-label="이미지 보기">
+      <form method="dialog">
+        <img id="image-viewer-image" alt="본문 이미지 크게 보기" referrerpolicy="no-referrer">
+        <div class="image-viewer-actions">
+          <a id="image-viewer-source" href="#" target="_blank" rel="noreferrer">원본 열기</a>
+          <button value="close" aria-label="닫기">닫기</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="board-dialog" aria-labelledby="board-dialog-title">
       <form method="dialog">
         <header><div><p>고르면 바로 그 게시판만 보여 줍니다</p><h2 id="board-dialog-title" tabindex="-1">게시판 선택</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>

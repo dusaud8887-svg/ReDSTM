@@ -235,3 +235,61 @@ test("Reader settings keep the same sentence on screen when the font size change
   await expect(page.locator("#prose-size-output")).toHaveText("21px");
   expect(await topSentence()).toBe(before);
 });
+
+test("Image links in a body show as images, fail softly, and open a closable viewer", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("https://img.example.test/**", (route) => route.request().url().includes("missing")
+    ? route.fulfill({ status: 404, body: "" })
+    : route.fulfill({ contentType: "image/png", body: png }));
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: false,
+        body_html: [
+          '<p><a href="https://img.example.test/a.png">https://img.example.test/a.png</a></p>',
+          "<p>https://img.example.test/b.jpg?size=large</p>",
+          "<p>https://img.example.test/missing.png</p>",
+          '<p>문장 속 <a href="https://img.example.test/c.gif">그림</a>과 https://example.test/page 링크</p>',
+        ].join(""),
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const figures = page.locator("#archive-body .media-figure");
+  await expect(figures).toHaveCount(3);
+  await expect(figures.nth(0).locator("img")).toHaveAttribute("src", "https://img.example.test/a.png");
+  await expect(figures.nth(1).locator("img")).toHaveAttribute("src", "https://img.example.test/b.jpg?size=large");
+  await expect(figures.nth(2)).toHaveClass(/failed/);
+  await expect(figures.nth(2)).toContainText("이미지를 불러오지 못했습니다");
+  await expect(figures.nth(2).locator("a")).toHaveAttribute("href", "https://img.example.test/missing.png");
+  // A captioned link inside a sentence stays text; plain page links are untouched.
+  await expect(page.locator('#archive-body a[data-image]')).toHaveText("그림");
+  await figures.nth(0).locator(".media-open").click();
+  const viewer = page.getByRole("dialog", { name: "이미지 보기" });
+  await expect(viewer).toBeVisible();
+  await expect(viewer.locator("img")).toHaveAttribute("src", "https://img.example.test/a.png");
+  await viewer.getByRole("button", { name: "닫기" }).click();
+  await expect(viewer).toBeHidden();
+  await expect(page).toHaveURL(/\/read\/board_a\/2$/);
+});
+
+test("Text bodies turn standalone image lines into images", async ({ page }) => {
+  const workId = await useLongNovel(page, 2);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await page.route("https://img.example.test/**", (route) => route.fulfill({ contentType: "image/png", body: png }));
+  await page.route(`**/api/v1/text/object/${(1).toString(16).padStart(64, "a")}`, (route) => route.fulfill({
+    contentType: "text/markdown",
+    body: "# 긴 소설-1화\n#\nhttps://novel.example/1\n\n첫 줄\nhttps://img.example.test/cover.jpg\n마지막 줄 https://example.test/x",
+  }));
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await expect(page.locator("#archive-body .media-figure img")).toHaveAttribute("src", "https://img.example.test/cover.jpg");
+  await expect(page.locator("#archive-body")).toContainText("첫 줄");
+  await expect(page.locator('#archive-body a[href="https://example.test/x"]')).toHaveText("https://example.test/x");
+});
