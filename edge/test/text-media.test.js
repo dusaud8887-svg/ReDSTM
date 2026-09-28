@@ -35,6 +35,9 @@ test("derives stable Arcalive path keys", () => {
   assert.equal(arcaPathKey("https://ac.namu.la/20230607sac/ca7acfbf53a12de0.webp"), "20230607sac/ca7acfbf53a12de0.webp");
   assert.equal(arcaPathKey("https://evil.example/20230607sac/ca7acfbf53a12de0.webp"), null);
   assert.equal(arcaPathKey("https://ac-o.arca.live/../etc/passwd"), null);
+  // Older posts use a two-character directory instead of a date code.
+  assert.equal(arcaPathKey("https://ac-o.arca.live/ba/ca7acfbf53a12de0.jpg?expires=1"), "ba/ca7acfbf53a12de0.jpg");
+  assert.equal(arcaPathKey("https://ac-o.arca.live/b/ca7acfbf53a12de0.jpg"), null);
 });
 
 test("resolves only the path keys archived in R2", async () => {

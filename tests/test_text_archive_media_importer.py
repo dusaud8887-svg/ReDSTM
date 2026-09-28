@@ -200,3 +200,8 @@ def test_unready_batch_returns_none(tmp_path: Path) -> None:
     )
     (directory / "ready.json").unlink()
     assert _import(tmp_path, FakeR2()) is None
+
+
+def test_path_key_accepts_the_older_two_character_directory() -> None:
+    assert media_importer._PATH_KEY.fullmatch("ba/" + "a" * 16 + ".jpg")
+    assert not media_importer._PATH_KEY.fullmatch("b/" + "a" * 16 + ".jpg")

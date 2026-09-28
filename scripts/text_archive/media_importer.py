@@ -21,7 +21,7 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _BATCH_ID = re.compile(r"\d{8}T\d{6}Z-media-[a-f0-9]{8}\Z")
 # Same rule as edge/public/arca-media.js PATH_KEY.
-_PATH_KEY = re.compile(r"[a-z0-9]{6,20}/[a-f0-9]{16,128}\.(?:png|jpe?g|webp|gif|avif)\Z")
+_PATH_KEY = re.compile(r"[a-z0-9]{2,20}/[a-f0-9]{16,128}\.(?:png|jpe?g|webp|gif|avif)\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _POST = re.compile(r"arcalive:[A-Za-z0-9_-]{1,80}:[1-9][0-9]{0,12}:text\Z")
 _TYPES = {"image/webp": "webp", "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif"}

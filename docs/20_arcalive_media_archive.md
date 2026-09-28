@@ -37,16 +37,16 @@
   - `text_media_posts(identity PK, file_path, content_sha256, status pending|done|gone|failed, attempts, next_attempt_at, last_error, updated_at)` — 글 단위 진행.
   - `text_media_items(path_key PK, identity, status ready|batched|stored|failed, file_name, content_type, bytes, sha256, width, height, batch_id, last_error, updated_at)` — 이미지 단위. 경로 키가 같으면 한 번만 받는다.
   - `text_media_batches(batch_id PK, manifest_sha256, state queued|uncertain|sent|done|rejected, error, updated_at)`.
-- 발견: 주기마다 outbox의 대상 행 중 `text_media_posts`에 없거나 본문 sha256이 바뀐(글 수정 재전송) 것을 `pending`으로 넣는다. 새로 받은 글도, 이미 있는 1만 4천여 글(백필)도 같은 방식으로 들어간다. 순서는 outbox `updated_at` 오름차순.
+- 발견: 주기마다 outbox의 대상 행 중 `text_media_posts`에 없거나 본문 sha256이 바뀐(글 수정 재전송) 것을 `pending`으로 넣는다. 새로 받은 글도, 이미 있는 1만 4천여 글(백필)도 같은 방식으로 들어간다. 순서는 outbox 삽입 순서(rowid). `updated_at`은 큰 `receipt_json` 뒤에 있어 정렬하면 전체 overflow page를 읽으므로 쓰지 않는다.
 
 ### 2.2 수집 (글 하나)
 
-1. md 파일에서 `[image]` 줄의 URL을 읽어 경로 키를 뽑는다(Reader `arcaPathKey`와 같은 규칙: 호스트 `arca.live`/`namu.la`, 경로 `^[a-z0-9]{6,20}/[a-f0-9]{16,128}\.(png|jpe?g|webp|gif|avif)$`). 이미 `ready/batched/stored`인 키는 건너뛴다. 남는 키가 없으면 `done`.
+1. md 파일에서 `[image]` 줄의 URL을 읽어 경로 키를 뽑는다(Reader `arcaPathKey`와 같은 규칙: 호스트 `arca.live`/`namu.la`, 경로 `^[a-z0-9]{2,20}/[a-f0-9]{16,128}\.(png|jpe?g|webp|gif|avif)$`; 2026-09-28부터 옛 글의 두 글자 디렉터리 `ba/<해시>.jpg`도 포함 — 표본 604줄 중 12줄). 이미 `ready/batched/stored`인 키는 건너뛴다. 남는 키가 없으면 `done`.
 2. 모든 남은 URL의 `expires`가 지금+1시간 이후면 그 주소로 받는다. 아니면 앱 API로 글을 다시 읽어(`_media_from_html`) 경로 키 → 새 서명 주소를 얻는다. API가 글 없음(404·삭제)이면 `gone`.
 3. 다운로드: 세션 `get_bytes(url, referer=<글 주소>?p=1, family="arcalive")`(다운로드와 같은 속도 제한을 공유).
 4. 전처리:
    - 접근 거부 이미지 해시, 이미지가 아닌 응답은 실패(`placeholder`/`not_image`).
-   - GIF는 그대로(움짤 보존). AVIF 등 네 형식 밖의 이미지는 Pillow로 열리면 WebP로 바꾼다.
+   - 움짤(GIF·움직이는 WebP/PNG)은 영상처럼 통째로 보관하지 않는다. 용량이 커서 **첫 프레임만** WebP 정지 이미지로 저장한다(2026-09-28 결정). AVIF 등 네 형식 밖의 이미지는 Pillow로 열리면 WebP로 바꾼다.
    - 그 외는 Pillow로 열어 가로 1600px 초과면 비율 유지 축소, WebP q80으로 저장. 결과가 원본보다 크고 원본이 1600px 이하면 원본을 그대로 쓴다.
    - 결과 8MiB 초과는 실패(`too_large`).
    - 저장: `<appdata>/text-media-cache/<sha256>.<ext>`, 상태 `ready`.

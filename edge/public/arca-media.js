@@ -2,7 +2,8 @@
 // through short-lived signed URLs (?expires=…&key=…); the CDN path is the stable identity.
 
 const MEDIA_HOST = /(^|\.)(arca\.live|namu\.la)$/i;
-const PATH_KEY = /^[a-z0-9]{6,20}\/[a-f0-9]{16,128}\.(?:png|jpe?g|webp|gif|avif)$/;
+// Older posts use a two-character directory (`ba/<hash>.jpg`) instead of a date code.
+const PATH_KEY = /^[a-z0-9]{2,20}\/[a-f0-9]{16,128}\.(?:png|jpe?g|webp|gif|avif)$/;
 
 // "https://ac-o.arca.live/20230607sac/<hash>.webp?expires=…" → "20230607sac/<hash>.webp"
 export function arcaPathKey(href) {
