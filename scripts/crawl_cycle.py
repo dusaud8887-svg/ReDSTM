@@ -391,7 +391,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
                 ):
                     if key in report:
                         board_result[key] = report[key]
-            if board_status == "succeeded":
+            if board_status == "succeeded" or outcomes.get("stored", 0) > 0:
                 try:
                     with archive_transaction(args.archive) as connection:
                         board_result["work_reconcile"] = reconcile_board(

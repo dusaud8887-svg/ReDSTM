@@ -165,6 +165,44 @@ def test_cycle_runs_enabled_boards_sequentially(
     assert report["boards_failed"] == 0
 
 
+def test_partial_cycle_reconciles_stored_posts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _args(tmp_path)
+    args.board = "a"
+    monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *a, **k: None)
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        _output_path(command).write_text(
+            json.dumps(
+                {
+                    "status": "partial",
+                    "scheduled_posts": 1,
+                    "outcomes": {"stored": 1},
+                    "failures": ["listing_boundary_incomplete"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=2)
+
+    calls: list[str] = []
+
+    def reconcile(_connection: object, board: str, *, apply: bool) -> dict[str, object]:
+        assert apply
+        calls.append(board)
+        return {"board_id": board, "applied": 1}
+
+    monkeypatch.setattr("scripts.crawl_cycle.subprocess.run", run)
+    monkeypatch.setattr("scripts.crawl_cycle.reconcile_board", reconcile)
+
+    report = run_cycle(args)
+
+    assert report["status"] == "partial"
+    assert calls == ["a"]
+    assert report["boards"][0]["work_reconcile"] == {"board_id": "a", "applied": 1}
+
+
 def test_cycle_stops_at_board_boundary_when_time_budget_expires(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
