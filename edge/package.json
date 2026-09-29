@@ -22,5 +22,8 @@
   },
   "dependencies": {
     "jose": "^6.2.8"
+  },
+  "overrides": {
+    "undici": "7.29.1"
   }
 }
