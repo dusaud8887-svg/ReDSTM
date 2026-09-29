@@ -16,7 +16,7 @@ from crawler.archive import (
     RUNTIME_SCHEMA_POLICY,
     SCHEMA_VERSION,
     archive_health,
-    connect_archive,
+    archive_transaction,
     initialize_archive,
     require_archive_schema,
 )
@@ -83,7 +83,7 @@ def validate_release_pair(current: Path, previous: Path, *, runner: Any = subpro
 
 def migration_source_version(archive: Path) -> int:
     archive = archive.expanduser().resolve(strict=True)
-    with connect_archive(archive, read_only=True) as connection:
+    with archive_transaction(archive, read_only=True) as connection:
         if int(connection.execute("PRAGMA application_id").fetchone()[0]) != APPLICATION_ID:
             raise RuntimeError("canonical archive application id is invalid")
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])

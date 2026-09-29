@@ -13,7 +13,7 @@ from scrapy.settings import Settings
 from scrapy.utils.project import get_project_settings
 
 from crawler import settings as crawler_settings
-from crawler.archive import connect_archive, require_archive_schema
+from crawler.archive import archive_transaction, require_archive_schema
 from crawler.session import SessionRefreshError, ensure_session_export, load_session_export
 from crawler.settings import (
     REDSTM_FRONTIER_LEASE_SECONDS,
@@ -28,7 +28,7 @@ from scripts.healthcheck import notify_dead_man
 
 
 def _capture_summary(archive: Path, run_id: str) -> dict[str, int]:
-    with connect_archive(archive, read_only=True) as connection:
+    with archive_transaction(archive, read_only=True) as connection:
         counts = {
             str(row["outcome"]): int(row["count"])
             for row in connection.execute(
@@ -41,7 +41,7 @@ def _capture_summary(archive: Path, run_id: str) -> dict[str, int]:
 
 
 def _capture_failure_codes(archive: Path, run_id: str) -> list[str]:
-    with connect_archive(archive, read_only=True) as connection:
+    with archive_transaction(archive, read_only=True) as connection:
         return [
             str(row[0])
             for row in connection.execute(
@@ -110,7 +110,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     try:
         require_archive_schema(archive)
         interrupted_runs = store.interrupt_stale_crawl_runs()
-        with connect_archive(archive, read_only=True) as connection:
+        with archive_transaction(archive, read_only=True) as connection:
             board = connection.execute(
                 "SELECT inventory_next_page, incremental_anchor_post_id "
                 "FROM boards WHERE board_id = ? AND is_enabled = 1",
@@ -188,7 +188,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         # A failed first page leaves the cursor at 1. Do not stamp that board as
         # covered; the next full-catalog pass must retry it from page 1.
         if args.inventory and (inventory_completed or inventory_next_page > inventory_start_page):
-            with connect_archive(archive) as connection:
+            with archive_transaction(archive) as connection:
                 connection.execute(
                     """
                     UPDATE boards SET inventory_next_page = ?,
@@ -202,7 +202,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 type(latest_post_id) is not int or latest_post_id < 1
             ):
                 raise RuntimeError("incremental anchor candidate is invalid")
-            with connect_archive(archive) as connection:
+            with archive_transaction(archive) as connection:
                 connection.execute(
                     """
                     UPDATE boards SET incremental_anchor_post_id =

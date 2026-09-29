@@ -1,4 +1,4 @@
-import { findPost, prepareSearch, searchPage, searchPosts } from "./search-core.js";
+import { discoverPosts, findPost, prepareSearch, searchPage, searchPosts } from "./search-core.js";
 
 const INDEX_LOAD_RETRY_DELAY_MS = 2_000;
 const RECENT_POST_LIMIT = 6;
@@ -70,6 +70,7 @@ export function createIndexLoader({
 }
 
 const getIndex = createIndexLoader();
+let discoverCache = null;
 
 async function handleMessage({ data }) {
   const id = data?.id;
@@ -83,6 +84,7 @@ async function handleMessage({ data }) {
         boardMetadata,
         count: index.rows.length,
         hasIsAa: index.hasIsAa,
+        hasStats: index.hasStats,
         recentPosts: searchPosts(index, { limit: RECENT_POST_LIMIT }).posts,
         publishedAt,
       });
@@ -103,6 +105,13 @@ async function handleMessage({ data }) {
     }
     if (data?.type === "page") {
       self.postMessage({ type: "page", id, ...searchPage(index, data) });
+      return;
+    }
+    if (data?.type === "discover") {
+      // The index never changes within a session, so one scan per day serves every Home visit.
+      const key = `${data.year}-${data.month}-${data.day}-${data.limit}`;
+      if (discoverCache?.key !== key) discoverCache = { key, found: discoverPosts(index, data) };
+      self.postMessage({ type: "discover", id, ...discoverCache.found });
       return;
     }
     if (data?.type === "resolve") {

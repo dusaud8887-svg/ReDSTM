@@ -37,4 +37,5 @@ test("reads episode numbers from Korean and Japanese chapter labels", () => {
   assert.equal(labelGap("31화", "34화"), 2);
   assert.equal(labelGap("31화", "32화"), 0);
   assert.equal(labelGap("외전", "32화"), 0);
+  assert.equal(labelGap("50화", "1화"), 0);
 });

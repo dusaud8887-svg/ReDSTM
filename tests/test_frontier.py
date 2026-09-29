@@ -113,6 +113,19 @@ def test_latest_listing_expectation_survives_retry_and_can_be_cleared(tmp_path: 
             store.seed("write_free21", 2, f"{url}2", expected_comment_count=invalid)
 
 
+def test_inventory_does_not_requeue_an_unchanged_captured_post(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    store.seed("write_free21", 1, "https://www.typemoon.net/write_free21/1", captured=True)
+    store.seed("write_free21", 2, "https://www.typemoon.net/write_free21/2")
+    # A later changed listing still reopens the captured row.
+    assert store.claim_identity("write_free21", 1, lease_seconds=60) is None
+    assert store.claim_identity("write_free21", 2, lease_seconds=60) is not None
+    store.seed("write_free21", 1, "https://www.typemoon.net/write_free21/1", reopen_done=True)
+    assert store.claim_identity("write_free21", 1, lease_seconds=60) is not None
+
+
 def test_reopen_done_and_claim_only_requested_identity(tmp_path: Path) -> None:
     path = tmp_path / "frontier.sqlite"
     store = FrontierStore(path)

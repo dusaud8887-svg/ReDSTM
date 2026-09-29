@@ -733,7 +733,7 @@ expected_comment_count nullable  # latest listing observation, >= 0
 PRIMARY KEY(board_id, external_post_id)
 ```
 
-`running` row는 두 lease 필드가 모두 있어야 한다. batch claim은 `BEGIN IMMEDIATE` 안에서 만료된 row를 `retry`로 돌리고 새 token/만료시각을 기록한다. 완료 갱신은 key와 token이 모두 일치할 때만 허용해, 종료된 이전 process가 재임대된 작업을 늦게 완료 처리하지 못하게 한다. v4는 기존 frontier를 현재 post projection의 댓글 수로 backfill하고 목차-only row는 `NULL`을 유지한다. 이후 listing의 최신 댓글 수를 claim/retry/recovery lease까지 보존한다. title+본문이 있으면 댓글이 listing 기대치보다 적어도 본문을 저장하고 frontier는 `incomplete_comments` retry로 남겨 댓글만 다시 받는다. 본문이 없으면 기존처럼 `parse_failed`다. restricted/parse/fetch/storage 실패는 기대값을 지우지 않는다.
+`running` row는 두 lease 필드가 모두 있어야 한다. batch claim은 `BEGIN IMMEDIATE` 안에서 만료된 row를 `retry`로 돌리고 새 token/만료시각을 기록한다. 완료 갱신은 key와 token이 모두 일치할 때만 허용해, 종료된 이전 process가 재임대된 작업을 늦게 완료 처리하지 못하게 한다. v4는 기존 frontier를 현재 post projection의 댓글 수로 backfill하고 목차-only row는 `NULL`을 유지한다. 이후 listing의 최신 댓글 수를 claim/retry/recovery lease까지 보존한다. title+본문이 있으면 댓글이 listing 기대치보다 적어도 본문을 저장하고 frontier는 `incomplete_comments` retry로 남겨 댓글만 다시 받는다. 단 이미 저장된 version보다 댓글이 적은 capture는 기존 본문·댓글을 유지하고 retry만 한다. `incomplete_comments`는 비밀·삭제 댓글처럼 끝내 보이지 않는 댓글이 listing 수에 포함될 수 있어 5회 시도 후 `dead`로 끝난다. 본문이 없으면 기존처럼 `parse_failed`다. restricted/parse/fetch/storage 실패는 기대값을 지우지 않는다.
 
 #### `crawl_runs`
 
@@ -777,6 +777,13 @@ board_id, external_post_id, title, author, category, created_at_raw, payload_sha
 다음 export 계약 확장에서 tuple 끝에 `is_aa`를 추가해 catalog row의 AA 표시와 content-mode
 filter 근거를 만든다. viewer는 7/8-field를 모두 수용하는 버전을 먼저 배포하고, exporter 변경은
 이미 게시된 release를 재작성하지 않는다.
+
+2026-09-28 확장(repository target): tuple 끝에 `views, comment_count`(0 이상 정수, post payload와 같은
+export 시점 값)를 더한 10-field를 쓰고, 작품 summary에 보존된 편의 합계 `views`/`comments`를 더한다
+(`COLLECTION_EXPORT_REVISION` 3). viewer와 release validator는 7/8/10-field와 합계 없는 작품
+summary를 모두 수용하며, 합계가 있을 때만 조회·댓글 정렬과 오늘의 발견 가중치를 켠다. 작품 합계는
+revision 차이로 다음 export에서 갱신되고, search tuple은 글이 바뀌는 다음 export나 full export에서
+10-field가 된다. 조회 수는 수집 당시 값이라 오래된 글일수록 과거 시점 값이다.
 
 browser Web Worker는 NFKC/lowercase 검색 문자열을 준비하고 250ms debounce, 결과 100건 상한으로
 선형 scan한다. 전체 282,239건 실측은 gzip 21,276,963 bytes, 준비 1.433초, RSS 증가
@@ -920,8 +927,9 @@ HTML selector는 Scrapy가 포함하는 `parsel/lxml`만 사용한다. `httpx`, 
 ### 8.3 incremental sync 목표와 현재 차이
 
 현재 `scripts.sync`는 일반 run에서 board별 page 1부터 `max_pages` 상한 안에서 listing metadata
-변경을 비교한다. schema v4의 exact `incremental_anchor_post_id`를 찾은 뒤 설정된 2개 overlap page까지
-읽으며, anchor가 아직 없는 bootstrap에서만 공지 제외 unchanged 20건을 fallback boundary로 쓴다.
+변경을 비교한다. schema v4의 exact `incremental_anchor_post_id`(anchor 글이 삭제·이동됐으면 그보다
+오래된 첫 일반 글)를 찾은 뒤 설정된 2개 overlap page까지 읽으며, anchor가 아직 없는 bootstrap에서만
+공지 제외 unchanged 20건을 fallback boundary로 쓴다.
 `--inventory`는 schema v4의 board별
 `inventory_next_page`부터 bounded page window를 읽고 미완료면 다음 run에서 이어 간다. schema v4는
 listing의 댓글 기대치를 frontier/lease에 보존해 detail 댓글 누락을 fail-closed한다.
@@ -954,7 +962,8 @@ schema-v3-only application으로 여는 rollback 허가가 아니다.
 
 1. 공지/pinned row를 일반 row와 구분한다.
 2. 신규 key 또는 list metadata 변경을 frontier에 넣는다.
-3. exact anchor를 우선 경계로 사용하고, anchor가 없는 bootstrap에서만 unchanged streak를 fallback으로 쓴다.
+3. exact anchor(삭제됐으면 그보다 오래된 첫 일반 글)를 우선 경계로 사용하고, anchor가 없는 bootstrap에서만
+   unchanged streak를 fallback으로 쓴다.
 4. boundary 이전에 page 구조 이상이나 parser warning이 있으면 조기 종료하지 않는다.
 5. board의 reported total/page count와 inventory cursor를 snapshot으로 남긴다.
 
@@ -1049,12 +1058,13 @@ storage_error
   positive signal로 `missing`을 확정한다.
 - `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
-  6시간에서 멈춘다. `parse_drift`·`storage_error`는 5회 시도 후 `dead`로 전이하고
+  6시간에서 멈춘다. `parse_drift`·`storage_error`·`incomplete_comments`는 5회 시도 후 `dead`로 전이하고
   `network_error`는 원본 outage가 항목을 영구 탈락시키지 않도록 무기한 retry하며, `auth_required`는
   session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
-- `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `network_error`·`parse_drift`·
-  `storage_error`를 오류별·건수 제한으로 선택해 다시 pending에 넣으며, 그 실행 수를 report한다.
+- `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `parse_drift`·`storage_error`·
+  `incomplete_comments`를 오류별·건수 제한으로 선택해 다시 pending에 넣으며(`--requeue-dead`),
+  그 실행 수를 report한다. `network_error`는 dead가 되지 않으므로 재투입 대상이 아니다.
 - 429는 같은 request 안에서 재시도하지 않는다. `rate_limited`로 기록하고 frontier 기본 backoff와
   `Retry-After` 중 더 긴 시각까지 미룬다. `Retry-After`는 최대 24시간으로 제한한다.
 

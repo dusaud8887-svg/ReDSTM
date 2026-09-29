@@ -21,6 +21,8 @@ _MAX_RESPONSE_BYTES = 128 * 1024
 _RETRY_DELAYS = (2.0, 5.0, 15.0)
 _MAX_RETRY_DELAY_SECONDS = 60.0
 _UNAVAILABLE_COOLDOWN_SECONDS = 60.0
+# Unreadable replies to one queued report before it is dropped so it cannot block the queue.
+_PROTOCOL_ERROR_ATTEMPTS = 3
 _CONNECT_TIMEOUT_SECONDS = 5.0
 _TOTAL_REQUEST_TIMEOUT_SECONDS = 15.0
 _ACTIONS = {
@@ -323,6 +325,13 @@ class ControlClient:
         if time.monotonic() < self._unavailable_until:
             store.enqueue(kind, path, payload, idempotency_key)
             return DeliveryResult.RETRYABLE_QUEUED
+        # Older reports are still queued: this one goes behind them. Sent directly, a run's
+        # finish or events could reach the Worker before its queued start (404 run_not_found,
+        # which counts as a permanent rejection).
+        if store.stats()["rows"]:
+            store.enqueue(kind, path, payload, idempotency_key)
+            self.flush(store)
+            return DeliveryResult.RETRYABLE_QUEUED
         try:
             self.post(path, payload, idempotency_key)
         except ControlRejectedError as error:
@@ -330,6 +339,11 @@ class ControlClient:
             return DeliveryResult.PERMANENTLY_REJECTED
         except ControlUnavailableError:
             self._unavailable_until = time.monotonic() + _UNAVAILABLE_COOLDOWN_SECONDS
+            store.enqueue(kind, path, payload, idempotency_key)
+            return DeliveryResult.RETRYABLE_QUEUED
+        except ControlProtocolError:
+            # An unreadable reply gets the same bounded retries as a queued report instead of
+            # being lost (a lost run start turns every later event into run_not_found).
             store.enqueue(kind, path, payload, idempotency_key)
             return DeliveryResult.RETRYABLE_QUEUED
         self._unavailable_until = 0.0
@@ -351,6 +365,16 @@ class ControlClient:
             except ControlUnavailableError:
                 self._unavailable_until = time.monotonic() + _UNAVAILABLE_COOLDOWN_SECONDS
                 attempts = int(item["attempts"])
+                delay = _RETRY_DELAYS[min(attempts, len(_RETRY_DELAYS) - 1)]
+                store.defer(int(item["id"]), datetime.now(UTC) + timedelta(seconds=delay))
+                break
+            except ControlProtocolError:
+                # An unreadable reply: retry a few times, then drop the item so it cannot hold
+                # every later report (and marker claims) behind it for the rest of a run.
+                attempts = int(item["attempts"])
+                if attempts + 1 >= _PROTOCOL_ERROR_ATTEMPTS:
+                    store.reject(int(item["id"]), "control_protocol_error")
+                    continue
                 delay = _RETRY_DELAYS[min(attempts, len(_RETRY_DELAYS) - 1)]
                 store.defer(int(item["id"]), datetime.now(UTC) + timedelta(seconds=delay))
                 break

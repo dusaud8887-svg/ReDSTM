@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import (
@@ -328,6 +328,15 @@ def _urllib_home_html(session: SessionExport, *, timeout: float) -> str:
     )
 
 
+def _impersonate_text(response: Any) -> str:
+    # urllib raises HTTPError for 4xx/5xx (mapped to SessionNetworkError by the callers); curl_cffi
+    # returns the page. An origin error or WAF page is an outage, not a logged-out session.
+    status = int(getattr(response, "status_code", 200))
+    if status >= 400:
+        raise SessionNetworkError(f"TypeMoon responded with HTTP {status}")
+    return str(response.text)
+
+
 def _impersonate_home_html(session: SessionExport, *, timeout: float, target: str) -> str:
     from curl_cffi import requests as cffi_requests
 
@@ -341,7 +350,7 @@ def _impersonate_home_html(session: SessionExport, *, timeout: float, target: st
             timeout=timeout,
             proxy=active_origin_proxy(),
         )
-        return str(response.text)
+        return _impersonate_text(response)
 
 
 def _session_is_authenticated(session: SessionExport, *, timeout: float) -> bool:
@@ -410,31 +419,33 @@ def _impersonate_login(
 
     with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
         proxy = active_origin_proxy()
-        login_html = str(
+        login_html = _impersonate_text(
             client.get(
                 _LOGIN_PAGE_URL,
                 headers=_impersonate_headers(user_agent),
                 timeout=timeout,
                 proxy=proxy,
-            ).text
+            )
         )
         fields = _login_fields(login_html, user_id, password)
-        client.post(
-            _LOGIN_CHECK_URL,
-            data=fields,
-            headers=_impersonate_headers(
-                user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
-            ),
-            timeout=timeout,
-            proxy=proxy,
+        _impersonate_text(
+            client.post(
+                _LOGIN_CHECK_URL,
+                data=fields,
+                headers=_impersonate_headers(
+                    user_agent, Referer=_LOGIN_PAGE_URL, Origin=_BASE_URL.rstrip("/")
+                ),
+                timeout=timeout,
+                proxy=proxy,
+            )
         )
-        home_html = str(
+        home_html = _impersonate_text(
             client.get(
                 _BASE_URL,
                 headers=_impersonate_headers(user_agent, Referer=_LOGIN_PAGE_URL),
                 timeout=timeout,
                 proxy=proxy,
-            ).text
+            )
         )
         # curl_cffi exposes a standard http.cookiejar.CookieJar, so the caller's cookie
         # extraction is identical to the urllib path.

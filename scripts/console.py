@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import sqlite3
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from crawler.archive import connect_archive
+from crawler.archive import archive_transaction
 
 _COOKIE = "redstm_console"
 _STATIC = {
@@ -64,7 +65,7 @@ def _backup_history(root: Path | None) -> list[dict[str, Any]]:
 
 
 def build_status(profile: ConsoleProfile) -> dict[str, Any]:
-    with connect_archive(profile.archive, read_only=True) as connection:
+    with archive_transaction(profile.archive, read_only=True) as connection:
         frontier = {state: 0 for state in ("pending", "running", "retry", "done", "dead")}
         frontier.update(
             {
@@ -210,7 +211,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 return
             try:
                 body = json.dumps(build_status(self.console.profile), ensure_ascii=False).encode()
-            except OSError, ValueError:
+            except OSError, ValueError, sqlite3.Error:
                 self._send(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                     b'{"error":"status_unavailable"}',
@@ -231,6 +232,13 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.OK, body, content_type)
 
     def do_POST(self) -> None:
+        # Read the (bounded) body before any early reply: closing a socket with unread data
+        # sends RST, which can discard the response before the client reads it.
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        raw = self.rfile.read(length) if 0 < length <= 4096 else b""
         expected_origin = f"http://{self.console.expected_host}"
         if not self._valid_host() or self.headers.get("Origin") != expected_origin:
             self._send(HTTPStatus.FORBIDDEN)
@@ -241,16 +249,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         if self.headers.get_content_type() != "application/json":
             self._send(HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
             return
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self._send(HTTPStatus.BAD_REQUEST)
-            return
         if not 0 < length <= 4096:
             self._send(HTTPStatus.BAD_REQUEST)
             return
         try:
-            payload = json.loads(self.rfile.read(length))
+            payload = json.loads(raw)
             supplied = payload.get("token") if isinstance(payload, dict) else None
         except json.JSONDecodeError, UnicodeDecodeError:
             supplied = None

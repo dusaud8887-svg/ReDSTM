@@ -17,7 +17,7 @@ from typing import Any
 
 from filelock import FileLock, Timeout
 
-from crawler.archive import archive_transaction, connect_archive
+from crawler.archive import archive_transaction
 from crawler.session import (
     AutomaticLoginThrottleError,
     SessionNetworkError,
@@ -68,7 +68,7 @@ def _boards(
     inventory: bool = False,
     inventory_since: str | None = None,
 ) -> list[str]:
-    with connect_archive(archive, read_only=True) as connection:
+    with archive_transaction(archive, read_only=True) as connection:
         # Stickiness: finish in-progress boards (next_page > 1) before starting fresh ones.
         # Among in-progress, most recently checkpointed first so the active board continues.
         # Among not-yet-done page-1 boards, oldest / never-touched first for fairness.
@@ -110,7 +110,7 @@ def _inventory_pass_coverage(
     board_id: str | None = None,
 ) -> dict[str, int]:
     """Pass-level board coverage for inventory reports (completed / in progress / pending)."""
-    with connect_archive(archive, read_only=True) as connection:
+    with archive_transaction(archive, read_only=True) as connection:
         board_filter = " AND board_id = ?" if board_id is not None else ""
         parameters: tuple[object, ...] = (started_at,)
         if board_id is not None:

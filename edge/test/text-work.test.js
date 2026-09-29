@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { migrateNovelChapterState, migrateNovelState, orderChapters } from "../public/text-work.js";
+import { migrateNovelChapterState, migrateNovelState, novelRecordWorkId, orderChapters } from "../public/text-work.js";
+
+test("finds the work of a novel reading record with production-shaped ids", () => {
+  const workId = "novel:1b2c3d4e-0000-4000-8000-000000000001";
+  const key = `novel:${workId}:novel:bookkor:123:456`;
+  const known = new Set([workId, "novel:other"]);
+  assert.equal(novelRecordWorkId(key, {}, known), workId);
+  // A record's own workId covers works missing from the loaded catalog; the key wins otherwise.
+  assert.equal(novelRecordWorkId(key, { workId: "novel:renamed" }, new Set()), "novel:renamed");
+  assert.equal(novelRecordWorkId(key, { workId: "novel:stale-alias" }, known), workId);
+  assert.equal(novelRecordWorkId(key, {}, new Set()), null);
+  assert.equal(novelRecordWorkId("arcalive:board:1:body", {}, known), null);
+});
 
 test("migrates reading progress and bookmarks from old linked-work URLs", () => {
   const state = {

@@ -8,7 +8,7 @@ import pytest
 
 from crawler.archive import connect_archive, decompress_body, initialize_archive
 from crawler.frontier import FrontierLease, FrontierStore
-from crawler.items import CapturedPostItem, CommentItem
+from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.settings import REDSTM_FRONTIER_MAX_ATTEMPTS
 from crawler.store import PARSER_VERSION, ArchiveStore
@@ -499,6 +499,77 @@ def test_store_keeps_body_and_retries_when_comments_are_incomplete(
         assert tuple(frontier_row) == ("retry", "incomplete_comments")
 
 
+def test_listing_only_post_stores_its_body_when_comments_are_incomplete(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    # Inventory saw the post (5 comments on the listing) before any body was captured.
+    store.store_discovered_post(
+        DiscoveredPostItem(
+            board_id="ss_temp01",
+            external_post_id=7,
+            canonical_url=url,
+            title="listing title",
+            author=None,
+            category=None,
+            created_at_raw=None,
+            comment_count=5,
+        ),
+        seen_at=_NOW,
+    )
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=5)
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
+    run_id = store.start_run("sync", now=_NOW)
+
+    result = store.store_post(
+        run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="c.warc.gz", lease=lease
+    )
+
+    assert result.changed is True
+    with connect_archive(path, read_only=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT latest_version_id FROM posts WHERE external_post_id = 7"
+            ).fetchone()[0]
+            is not None
+        )
+        frontier_row = connection.execute(
+            "SELECT state, last_error_code FROM crawl_frontier"
+        ).fetchone()
+        assert tuple(frontier_row) == ("retry", "incomplete_comments")
+
+
+def test_incomplete_comments_end_dead_after_the_capped_attempts(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    store.store_post(run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="a.warc.gz")
+    frontier = FrontierStore(path)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    frontier.seed("ss_temp01", 7, url, expected_comment_count=9)
+    lease = frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(minutes=1)
+    )
+    assert lease is not None
+    store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW + timedelta(minutes=1),
+        raw_sha256="b" * 64,
+        warc_file="b.warc.gz",
+        lease=replace(lease, attempts=REDSTM_FRONTIER_MAX_ATTEMPTS),
+    )
+    with connect_archive(path, read_only=True) as connection:
+        frontier_row = connection.execute(
+            "SELECT state, last_error_code FROM crawl_frontier"
+        ).fetchone()
+        assert tuple(frontier_row) == ("dead", "incomplete_comments")
+
+
 def test_partial_comment_retry_preserves_existing_projection(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
@@ -529,6 +600,38 @@ def test_partial_comment_retry_preserves_existing_projection(tmp_path: Path) -> 
         assert db.execute("SELECT comment_count FROM posts").fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
         assert db.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "retry"
+
+
+def test_short_comment_capture_still_stores_a_changed_body(tmp_path: Path) -> None:
+    # Not lossy: the capture has as many comments as the stored version, just fewer than the
+    # listing count (hidden or deleted comments), so the edited body must not be discarded.
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    first = store.store_post(
+        run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="first.warc.gz"
+    )
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7", expected_comment_count=3)
+    lease = frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(minutes=1)
+    )
+    assert lease is not None
+    second = store.store_post(
+        run_id,
+        _post(body="edited"),
+        captured_at=_NOW + timedelta(minutes=1),
+        raw_sha256="b" * 64,
+        warc_file="second.warc.gz",
+        lease=lease,
+    )
+    assert second.changed is True
+    assert second.version_id != first.version_id
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT COUNT(*) FROM comments").fetchone()[0] == 1
+        row = db.execute("SELECT state, last_error_code FROM crawl_frontier").fetchone()
+        assert tuple(row) == ("retry", "incomplete_comments")
 
 
 def test_retry_backoff_keeps_network_failures_retryable(tmp_path: Path) -> None:

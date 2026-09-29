@@ -8,6 +8,13 @@ export const SEARCH_FIELDS = [
   "payload_sha256",
 ];
 const SEARCH_FIELDS_WITH_AA = [...SEARCH_FIELDS, "is_aa"];
+// Newer releases append popularity signals; 7- and 8-field indexes remain valid.
+const SEARCH_FIELDS_WITH_STATS = [...SEARCH_FIELDS_WITH_AA, "views", "comment_count"];
+export const SEARCH_SORTS = ["latest", "oldest", "views", "comments"];
+
+function isCount(value) {
+  return Number.isInteger(value) && value >= 0;
+}
 
 function normalize(value) {
   return String(value ?? "")
@@ -16,10 +23,12 @@ function normalize(value) {
 }
 
 export function prepareSearch(payload) {
-  const hasIsAa = JSON.stringify(payload?.fields) === JSON.stringify(SEARCH_FIELDS_WITH_AA);
+  const fields = JSON.stringify(payload?.fields);
+  const hasStats = fields === JSON.stringify(SEARCH_FIELDS_WITH_STATS);
+  const hasIsAa = hasStats || fields === JSON.stringify(SEARCH_FIELDS_WITH_AA);
   if (
     payload?.schema_version !== 1 ||
-    (!hasIsAa && JSON.stringify(payload.fields) !== JSON.stringify(SEARCH_FIELDS)) ||
+    (!hasIsAa && fields !== JSON.stringify(SEARCH_FIELDS)) ||
     !Array.isArray(payload.posts)
   ) {
     throw new Error("Unsupported search index schema");
@@ -38,7 +47,8 @@ export function prepareSearch(payload) {
       typeof row[0] !== "string" ||
       !Number.isInteger(row[1]) ||
       !/^[0-9a-f]{64}$/.test(row[6]) ||
-      (hasIsAa && typeof row[7] !== "boolean" && row[7] !== 0 && row[7] !== 1)
+      (hasIsAa && typeof row[7] !== "boolean" && row[7] !== 0 && row[7] !== 1) ||
+      (hasStats && (!isCount(row[8]) || !isCount(row[9])))
     ) {
       throw new Error("Invalid search index row");
     }
@@ -67,14 +77,30 @@ export function prepareSearch(payload) {
     boards: [...boards].sort(),
     boardAa,
     hasIsAa,
+    hasStats,
     identities,
+    popularity: new Map(),
   };
 }
 
-function result(row, hasIsAa) {
+// Row positions ordered by a popularity column (most first; the newer post wins a tie). Built
+// once per column, then filtered in order like the date sorts, so typing stays cheap.
+function popularityOrder(index, sort) {
+  let order = index.popularity.get(sort);
+  if (!order) {
+    const column = sort === "views" ? 8 : 9;
+    order = Uint32Array.from(index.rows.keys());
+    order.sort((left, right) => index.rows[right][column] - index.rows[left][column] || left - right);
+    index.popularity.set(sort, order);
+  }
+  return order;
+}
+
+function result(row, index) {
   return {
-    ...Object.fromEntries(SEARCH_FIELDS.map((field, index) => [field, row[index]])),
-    is_aa: hasIsAa ? Boolean(row[7]) : undefined,
+    ...Object.fromEntries(SEARCH_FIELDS.map((field, position) => [field, row[position]])),
+    is_aa: index.hasIsAa ? Boolean(row[7]) : undefined,
+    ...(index.hasStats ? { views: row[8], comment_count: row[9] } : {}),
     object_key: `posts/${row[0]}/${row[1]}-${row[6]}.json.zst`,
   };
 }
@@ -106,8 +132,11 @@ export function searchPosts(
   if (mode !== "all" && !index.hasIsAa) {
     throw new Error("Search mode is unavailable for this release");
   }
-  if (!new Set(["latest", "oldest"]).has(sort)) {
+  if (!SEARCH_SORTS.includes(sort)) {
     throw new Error("Unsupported search sort");
+  }
+  if ((sort === "views" || sort === "comments") && !index.hasStats) {
+    throw new Error("Popularity sort is unavailable for this release");
   }
   if (!new Set(["all", "title", "author"]).has(target)) {
     throw new Error("Unsupported search target");
@@ -119,10 +148,11 @@ export function searchPosts(
   const normalizedCategory = normalize(category);
   const posts = [];
   let total = 0;
-  const start = sort === "latest" ? 0 : index.rows.length - 1;
-  const end = sort === "latest" ? index.rows.length : -1;
-  const step = sort === "latest" ? 1 : -1;
-  for (let position = start; position !== end; position += step) {
+  // Rows are stored newest first; popularity sorts walk a prebuilt order instead.
+  const order = sort === "views" || sort === "comments" ? popularityOrder(index, sort) : null;
+  const count = index.rows.length;
+  for (let step = 0; step < count; step += 1) {
+    const position = order ? order[step] : sort === "latest" ? step : count - 1 - step;
     const row = index.rows[position];
     if (boardId && row[0] !== boardId) continue;
     if (normalizedCategory && index.categories[position] !== normalizedCategory) continue;
@@ -135,7 +165,7 @@ export function searchPosts(
     if (tokens.length && !tokenMatches) continue;
     // `total` is the running match index; collect the window [offset, offset + limit).
     if (collect) collect.push(row);
-    else if (total >= offset && posts.length < limit) posts.push(result(row, index.hasIsAa));
+    else if (total >= offset && posts.length < limit) posts.push(result(row, index));
     total += 1;
   }
   return { posts, total };
@@ -156,9 +186,9 @@ export function searchPage(index, { around = "", page = null, pageSize = 10, ...
   const pageIndex = Number.isInteger(page) ? Math.min(Math.max(0, page), lastPage)
     : found >= 0 ? Math.floor(found / pageSize) : 0;
   const offset = pageIndex * pageSize;
-  const summary = (row) => (row ? result(row, index.hasIsAa) : null);
+  const summary = (row) => (row ? result(row, index) : null);
   return {
-    posts: matches.slice(offset, offset + pageSize).map((row) => result(row, index.hasIsAa)),
+    posts: matches.slice(offset, offset + pageSize).map((row) => result(row, index)),
     total: matches.length,
     offset,
     found,
@@ -167,8 +197,36 @@ export function searchPage(index, { around = "", page = null, pageSize = 10, ...
   };
 }
 
+const SOURCE_DATE = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/;
+const HOT_WINDOW = 2000;
+
+// Home discovery lists, cheap enough to compute on every Home visit.
+// onThisDay: posts written on today's month/day in earlier years (most discussed first when the
+//   release has counts, otherwise the most recent year first).
+// hot: the most discussed of the newest HOT_WINDOW posts; empty without counts.
+export function discoverPosts(index, { year, month, day, limit = 6 } = {}) {
+  const onThisDay = [];
+  for (let position = 0; position < index.rows.length; position += 1) {
+    const date = SOURCE_DATE.exec(String(index.rows[position][5] ?? ""));
+    if (!date || Number(date[2]) !== month || Number(date[3]) !== day || Number(date[1]) >= year) continue;
+    onThisDay.push(position);
+  }
+  const byDiscussion = (left, right) =>
+    index.rows[right][9] - index.rows[left][9] || index.rows[right][8] - index.rows[left][8] || left - right;
+  if (index.hasStats) onThisDay.sort(byDiscussion);
+  const hot = index.hasStats
+    ? [...index.rows.keys()].slice(0, HOT_WINDOW).filter((position) => index.rows[position][9] > 0)
+      .sort(byDiscussion).slice(0, limit)
+    : [];
+  return {
+    onThisDay: onThisDay.slice(0, limit).map((position) => result(index.rows[position], index)),
+    onThisDayTotal: onThisDay.length,
+    hot: hot.map((position) => result(index.rows[position], index)),
+  };
+}
+
 export function findPost(index, boardId, externalPostId) {
   if (typeof boardId !== "string" || !Number.isInteger(externalPostId)) return null;
   const row = index.identities.get(`${boardId}:${externalPostId}`);
-  return row ? result(row, index.hasIsAa) : null;
+  return row ? result(row, index) : null;
 }

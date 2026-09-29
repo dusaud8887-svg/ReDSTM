@@ -16,6 +16,59 @@ export function postReadingLabel(progress, { seen = false } = {}) {
   return seen ? "처음만 봄" : "";
 }
 
+// Silent reading of Korean prose runs at roughly 500 characters a minute; whitespace is not read.
+const CHARACTERS_PER_MINUTE = 500;
+
+export function readingMinutes(text) {
+  const characters = String(text ?? "").replace(/\s+/g, "").length;
+  return characters ? Math.max(1, Math.round(characters / CHARACTERS_PER_MINUTE)) : 0;
+}
+
+export function readingTimeLabel(minutes) {
+  const value = Math.round(Number(minutes));
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value < 60) return `약 ${value}분`;
+  const hours = Math.floor(value / 60);
+  const rest = value % 60;
+  return rest ? `약 ${hours}시간 ${rest}분` : `약 ${hours}시간`;
+}
+
+// What is left of a body of `minutes` after reading `progress` (0–1) of it.
+export function remainingTimeLabel(minutes, progress) {
+  if (!(minutes > 0)) return "";
+  const ratio = Math.min(1, Math.max(0, Number(progress) || 0));
+  if (ratio >= FINISHED_PROGRESS) return "끝까지 읽음";
+  const left = Math.ceil(minutes * (1 - ratio));
+  return left <= 1 ? "1분 안에 끝" : `남은 시간 ${readingTimeLabel(left)}`;
+}
+
+// A repeatable random sequence for a text seed (FNV-1a hash into mulberry32), so a "today's
+// pick" stays the same all day and on every device, and changes with the date.
+export function seededRandom(text) {
+  let state = 0x811c9dc5;
+  for (const character of String(text)) {
+    state ^= character.codePointAt(0);
+    state = Math.imul(state, 0x01000193);
+  }
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let value = Math.imul(state ^ (state >>> 15), 1 | state);
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// `count` items drawn without replacement, each with probability proportional to weight(item)
+// (Efraimidis–Spirakis keys), deterministic for a seed.
+export function weightedPicks(items, { seed, count, weight = () => 1 }) {
+  const random = seededRandom(seed);
+  return items
+    .map((item) => ({ item, key: random() ** (1 / Math.max(Number(weight(item)) || 0, 1e-6)) }))
+    .sort((left, right) => right.key - left.key)
+    .slice(0, count)
+    .map(({ item }) => item);
+}
+
 export function formatSourceDate(value) {
   if (value == null || value === "") return "";
   const text = String(value).trim();

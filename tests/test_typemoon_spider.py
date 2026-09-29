@@ -556,6 +556,39 @@ def test_comment_margin_depth_uses_exact_fifteen_pixel_dom_invariant() -> None:
     ]
 
 
+@pytest.mark.parametrize("oversized", ["wire", "decompressed"])
+def test_oversized_detail_takes_the_capped_storage_code_not_network_error(oversized: str) -> None:
+    from datetime import UTC, datetime
+
+    from scrapy.exceptions import DownloadCancelledError, IgnoreRequest
+    from twisted.python.failure import Failure
+
+    from crawler.frontier import FrontierLease
+
+    recorded: dict[str, object] = {}
+
+    class _Store:
+        def record_outcome(self, run_id: str, **kwargs: object) -> int:
+            recorded.update(kwargs)
+            return 1
+
+    spider = TypeMoonSpider()
+    spider.store = _Store()  # type: ignore[assignment]
+    spider.run_id = "run"
+    url = "https://www.typemoon.net/write_free21/62068"
+    lease = FrontierLease("write_free21", 62068, url, 1, "token", datetime(2026, 7, 11, tzinfo=UTC))
+    failure = Failure(
+        DownloadCancelledError("received response size exceeds 67108864 bytes")
+        if oversized == "wire"
+        else IgnoreRequest("Ignored response because it exceeds DOWNLOAD_MAXSIZE")
+    )
+    failure.request = Request(url=url, meta={"frontier_lease": lease})  # type: ignore[attr-defined]
+
+    spider.detail_error(failure)
+
+    assert recorded["error_code"] == "storage_error"
+
+
 def test_unknown_detail_shape_is_parse_failed() -> None:
     spider = TypeMoonSpider()
     response = HtmlResponse(

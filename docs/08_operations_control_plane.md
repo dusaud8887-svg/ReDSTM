@@ -108,6 +108,11 @@ crawl을 계속한다. scheduled mode는 control 환경변수가 누락·불완�
 - Worker는 runner application audience와 허용 route를 함께 검증하고 credential header 값은 log하지 않음
 - browser user JWT는 runner poll/event route 사용 금지
 - service token은 browser command create route 사용 금지
+- Worker는 Access policy와 별개로 JWT 종류도 검증한다(defense in depth). runner route는
+  `common_name`(service token Client ID)이 있고 `email`이 없는 service-token JWT만, user route
+  (`/ops`, `/api/v1/ops/*`, reader/archive)는 `email`이 있는 user identity JWT만 받는다. Access
+  policy가 실수로 넓어져도 교차 사용은 403이다.
+  [Application token claims](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/application-token/)
 
 [Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)은
 자동화된 system이 Access application에 접근하기 위한 credential pair를 제공한다.
@@ -165,6 +170,14 @@ stack trace, SQL, local path와 upstream body는 포함하지 않는다. 400/401
 | `POST /api/v1/runner/runs` | scheduled/manual run 시작 |
 | `POST /api/v1/runner/runs/{id}/events:batch` | sequence event 최대 50개 |
 | `POST /api/v1/runner/runs/{id}/finish` | terminal summary와 command 결과 |
+| `POST /api/v1/runner/frontier-failures` | board별 dead frontier 목록 generation 동기화 |
+
+`frontier-failures`는 한 generation을 `external_post_id` 오름차순의 서로 겹치지 않는 최대 100건
+batch로 보내고 마지막 batch만 `complete=true`다. Worker는 값이 바뀐 행만 다시 쓰고 각 batch의 최대
+id 한 행에만 generation을 찍는다. 각 batch는 직전 batch 경계와 자기 최대 id 사이에서 보고되지 않은
+행을, complete batch는 그 위의 모든 행을 지운다. 따라서 변경 없는 board 보고의 D1 write는 행 수가
+아니라 batch 수(행 100개당 1)다. `/api/v1/ops/failures`는 `last_attempt_at DESC`(NULL은 마지막),
+board, post 순서의 keyset page를 `frontier_failures_recent_idx` range seek로 읽는다.
 
 runner route는 Access Service Auth만, ops route는 browser Access user JWT만 통과한다. route별
 authorization test는 URL prefix 전체와 unknown method를 포함한다.
@@ -371,7 +384,10 @@ terminal 결과의 전송 상태는 `pending`, `delivered`, `permanently_rejecte
 heartbeat가 `runner_id`와 `active_command_id`를 함께 보내면 Worker는 같은 runner가 claim한 행만
 2분 연장하고 갱신 여부를 반환한다. 둘 중 하나만 보내면 400이다. claim poll 직전 Worker는 run_id가
 없는 만료 claim만 위 규칙으로 재조정한다. 이미 run에 연결된 claim은 local ledger replay가 끝낼 수
-있도록 자동 재queue하지 않는다.
+있도록 자동 재queue하지 않는다. `/ops` overview와 일일 maintenance도 만료된 queued command는
+expired로 정리하지만, 만료 claim은 runner heartbeat가 10분(run liveness) 넘게 끊겼을 때만 같은
+규칙으로 재조정한다. 짧은 단절 중에는 runner outbox의 run 시작 보고가 아직 도착 전일 수 있어서,
+그 아래에서 재queue하면 시작 보고가 거부되기 때문이다.
 
 ### 7.5 Event/finish
 
@@ -382,6 +398,10 @@ heartbeat가 `runner_id`와 `active_command_id`를 함께 보내면 Worker는 �
 - pause/resume처럼 run 없는 marker는 `/api/v1/runner/commands/{id}/finish`로 claiming runner만 끝낸다
 - D1 event 실패는 local run을 중단하지 않고 bounded retry
 - 재연결 후 sequence unique key로 idempotent replay
+- stale-run reaper가 연결 끊김 동안 `failed/run_stale`로 닫은 run(`safe_summary_json.code`)과
+  연결 command(`safe_message`)는 추정일 뿐이므로, 재연결한 runner의 event는 계속 받고 run/command
+  finish는 실제 terminal 결과로 한 번 덮어쓴다. 그 밖의 terminal 상태와 덮어쓴 결과는 불변이며
+  다른 결과의 finish는 `409 run_terminal`/`command_terminal`이다.
 
 ## 8. Automatic schedule
 
@@ -391,7 +411,7 @@ Remote command와 무관하게 systemd가 실행한다.
 |---|---|
 | incremental cycle | 6시간 |
 | 최신 글 증분 수집 | 6시간마다; 이전 cycle 실행 중이면 이번 slot은 pass |
-| due 본문 재시도 | 증분 뒤 20건·최대 2시간의 단일 batch; 실패분은 다음 slot로 defer |
+| 본문 미확보 채우기 | 증분 앞에 `fill-missing-content` 최대 4시간·120건; 남은 분량은 다음 slot로 이어감 |
 | delta publish | marker 유무와 무관하게 증분 reconcile |
 | 전체 board 목차 | 수동 `full-catalog`; 첫 page부터 끝까지 다시 수집한 뒤 누락 본문 pass로 이어감 |
 | 전체 게시글 본문 | `full-catalog` 완료 후 같은 command에서 자동 실행하거나 수동 `full-content`로 전부 다시 수집 |
@@ -401,7 +421,8 @@ pause-after-current는 진행 중 collection에 협력적 stop marker를 전달�
 보류한다. resume-schedule은 두 marker를 해제한다.
 운영 목표 상태는 자동 enabled지만, 웹의 `일시정지 해제`는 비활성 systemd timer를 켜지 않는다.
 
-각 6시간 cycle은 최신 page incremental, due 실패 20건의 최대 2시간 재시도, 변경분 게시를 수행한다.
+각 6시간 cycle은 본문 미확보 글 채우기(최대 4시간·120건), 최신 page incremental, 변경분 게시를 이 순서로
+수행한다(`scripts/control_runner.py` scheduled run).
 직전 기준 게시글이 발견된 page 뒤 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와
 전체 본문 pass는 자동 cycle에 섞지 않는다.
 수동 전체 목차는 `inventory_next_page`와 scope marker로 모든 row를 다시 읽으며, 수동 전체 본문은
@@ -597,7 +618,8 @@ incremental export/publish의 terminal safe code는 기존 `publish.pending`을 
 - 매일 03:00 UTC Worker cron이 8시간을 넘긴 running run/연결 command를 `failed/run_stale`로
   reconcile한 뒤 indexed DELETE를 실행한다. 단 runner가 10분 이내 heartbeat에서
   `active_run_id`로 보고하고 있는 run은 나이와 무관하게 살아 있는 것으로 보고 reconcile하지
-  않는다(full catalog/content 수동 run은 정상적으로 며칠까지 실행된다). run 삭제 시
+  않는다(full catalog/content 수동 run은 정상적으로 며칠까지 실행된다). 10분 넘는 연결 끊김으로
+  살아 있는 run이 `run_stale`로 닫혀도 runner의 실제 finish가 나중에 덮어쓴다(§7.5). run 삭제 시
   `run_events`는 foreign-key cascade로 함께 지운다. queued/claimed와 current upsert row는
   retention 삭제 대상이 아니다.
 

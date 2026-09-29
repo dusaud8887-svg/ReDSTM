@@ -158,6 +158,46 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     );
     assert.equal(runnerDeniedFromTextLibrary.status, 403);
 
+    // Route roles also check the token kind, not only the Access audience.
+    const sign = (claims, aud) => new SignJWT(claims)
+      .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+      .setIssuer(issuer)
+      .setAudience(aud)
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    for (const claims of [
+      { email: "reader@example.test", sub: "user-id" },
+      { email: "reader@example.test", common_name: "oracle-runner" },
+      { sub: "" },
+    ]) {
+      const denied = await workerFetch(
+        new Request(
+          "https://archive.example/api/v1/runner/release-smoke?expected_release_sha256=invalid",
+          { headers: { ...runnerHeaders, "Cf-Access-Jwt-Assertion": await sign(claims, runnerAudience) } },
+        ),
+        accessEnvironment,
+      );
+      assert.equal(denied.status, 403, JSON.stringify(claims));
+    }
+    for (const claims of [{ common_name: "oracle-runner", sub: "" }, { sub: "user-id" }]) {
+      const userToken = await sign(claims, audience);
+      const health = await workerFetch(
+        new Request("https://archive.example/health", {
+          headers: { "Cf-Access-Jwt-Assertion": userToken },
+        }),
+        accessEnvironment,
+      );
+      assert.equal(health.status, 403, JSON.stringify(claims));
+      const opsDenied = await workerFetch(
+        new Request("https://archive.example/api/v1/ops/overview", {
+          headers: { ...runnerHeaders, "Cf-Access-Jwt-Assertion": userToken },
+        }),
+        accessEnvironment,
+      );
+      assert.equal(opsDenied.status, 403, JSON.stringify(claims));
+    }
+
     const invalid = await workerFetch(
       new Request("https://archive.example/health", {
         headers: { "Cf-Access-Jwt-Assertion": token },
@@ -168,6 +208,25 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     assert.equal(invalid.headers.has("WWW-Authenticate"), false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("serves open-ended and suffix ranges with exact Content-Range", async () => {
+  for (const [header, range, expected, length] of [
+    ["bytes=4-", { offset: 4 }, "bytes 4-9/10", "6"],
+    ["bytes=-3", { suffix: 3 }, "bytes 7-9/10", "3"],
+    ["bytes=-30", { suffix: 30 }, "bytes 0-9/10", "10"],
+  ]) {
+    const env = environment({
+      ARCHIVE: {
+        async get() { return archiveObject("0123456789", range); },
+        async head() { return archiveObject("0123456789"); },
+      },
+    });
+    const result = await workerFetch(request("/archive/warc/run.warc.gz", { headers: { Range: header } }), env);
+    assert.equal(result.status, 206);
+    assert.equal(result.headers.get("Content-Range"), expected);
+    assert.equal(result.headers.get("Content-Length"), length);
   }
 });
 
@@ -336,7 +395,12 @@ test("scheduled maintenance reconciles stale runs and retains terminal evidence 
   const scheduledTime = Date.parse("2026-07-12T03:00:00Z");
   await worker.scheduled({ scheduledTime, cron: "0 3 * * *" }, env, {});
 
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 7);
+  // Overdue queued commands expire and lapsed claims are settled even with no runner polling.
+  assert.match(statements[4].sql, /SET state = 'expired'/);
+  assert.match(statements[5].sql, /SET state = 'queued'.*WHERE state = 'claimed'/s);
+  assert.match(statements[6].sql, /safe_message = 'claim_lost'/);
+  assert.equal(statements[4].parameters[1], "2026-07-12T03:00:00.000Z");
   assert.match(statements[0].sql, /UPDATE commands SET state = 'failed'/);
   assert.match(statements[1].sql, /UPDATE runs SET state = 'failed'/);
   assert.match(statements[1].sql, /started_at < \?/);

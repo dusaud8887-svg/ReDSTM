@@ -23,6 +23,7 @@ _MAX_BATCH_BYTES = 32 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 256 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BATCH_ID = re.compile(r"\d{8}T\d{6}Z-pc-[a-f0-9]{8}\Z")
+_TEXT_ITEM_FIELDS = ("work_title", "author", "category", "chapter_label", "chapter_kind", "access")
 _BOARD = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
 _SITE_HOSTS = {
     "toki": re.compile(r"(?:toki\d*\.com|manatoki\d*\.(?:com|net))\Z", re.I),
@@ -260,7 +261,7 @@ def _json_file(path: Path, limit: int) -> tuple[dict[str, Any], bytes]:
         raise BatchRejectedError("batch_file_too_large")
     try:
         value = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeError) as exc:
+    except (json.JSONDecodeError, UnicodeError, RecursionError) as exc:
         raise BatchRejectedError("batch_json_invalid") from exc
     if not isinstance(value, dict):
         raise BatchRejectedError("batch_json_invalid")
@@ -787,6 +788,12 @@ def _safe_batch(
         item = dict(raw_item)
         if len(json.dumps(item, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
             raise BatchRejectedError("item_metadata_too_large")
+        # These go straight into SQLite parameters and published indexes as text.
+        if any(
+            item.get(key) is not None and not isinstance(item.get(key), str)
+            for key in _TEXT_ITEM_FIELDS
+        ):
+            raise BatchRejectedError("item_metadata_invalid")
         relative = item.get("relative_path")
         body_path: Path | None = None
         reason = ""
@@ -1498,7 +1505,12 @@ def _record_batch_rejection(inbox_root: Path, batch_id: str, reason: str) -> Non
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
-    fd, name = tempfile.mkstemp(prefix=".rejected-", dir=batch_dir)
+    # The production unit mounts the drop read-only; receipts/<id>.status.json above is what
+    # keeps the batch from being picked again, so this marker is best-effort.
+    try:
+        fd, name = tempfile.mkstemp(prefix=".rejected-", dir=batch_dir)
+    except OSError:
+        return
     temporary = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:
@@ -1522,6 +1534,7 @@ def _next_ready_batch(inbox_root: Path) -> str | None:
                 and not (directory / "ready.json").is_symlink()
                 and not rejected.is_file()
                 and not (inbox_root / "receipts" / f"{directory.name}.json").is_file()
+                and not (inbox_root / "receipts" / f"{directory.name}.status.json").exists()
             ):
                 return directory.name
     return None

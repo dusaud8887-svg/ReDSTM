@@ -1,12 +1,13 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
-import { migrateNovelChapterState, migrateNovelState, orderChapters } from "/text-work.js";
+import { migrateNovelChapterState, migrateNovelState, novelRecordWorkId, orderChapters } from "/text-work.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
 const VIEWS = new Set([...LANES, "saved"]);
 const HASH = /^[a-f0-9]{64}$/;
 const FINISHED = 0.95;
+const HISTORY_LIMIT = 10_000;
 const ROW_SELECTOR = ".result-item[data-key]";
 const LIST_PAGE = 10;
 const SORT_LABELS = { oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최신 화순" };
@@ -77,11 +78,51 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let moving = false;
   // Page of the list shown under the body; null follows the current chapter.
   let listPage = null;
+  // True between open() and leave(): the library owns the shared result list.
+  let active = false;
 
-  function persist() {
-    try { localStorage.setItem(STATE_KEY, JSON.stringify(history)); }
-    catch (error) { console.warn("Text reading state could not be saved", error); }
+  // The whole state is rewritten every few hundred ms while reading, so opened chapters are
+  // capped (oldest first) instead of growing until localStorage runs out.
+  function pruneHistory() {
+    const keys = Object.keys(history.history);
+    if (keys.length <= HISTORY_LIMIT) return;
+    keys.sort((left, right) => String(history.history[right].readAt || "").localeCompare(String(history.history[left].readAt || "")));
+    for (const key of keys.slice(HISTORY_LIMIT)) delete history.history[key];
   }
+
+  // Failures show in the shared archive state label, the same way TypeMoon reading state does.
+  function persist() {
+    const archiveState = document.querySelector("#archive-state");
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify(history));
+      if (archiveState) delete archiveState.dataset.storageFailed;
+      if (archiveState?.textContent === "로컬 저장 실패") archiveState.textContent = "보존본";
+    } catch (error) {
+      if (archiveState) {
+        archiveState.dataset.storageFailed = "true";
+        archiveState.textContent = "로컬 저장 실패";
+      }
+      console.warn("Text reading state could not be saved", error);
+    }
+  }
+
+  // Another tab saved text reading state: take it over (every save writes the whole object, so
+  // keeping the old copy would erase that tab's records on this tab's next save).
+  window.addEventListener("storage", (event) => {
+    if (event.key !== STATE_KEY || !event.newValue) return;
+    const incoming = readState();
+    history.history = incoming.history;
+    history.bookmarks = incoming.bookmarks;
+    // The result list is shared with TypeMoon screens; redraw only while the library owns it.
+    if (!active) return;
+    if (current) {
+      updateBookmark();
+      publishList();
+    } else if (catalog.length || lane === "saved") {
+      if (lane === "saved") catalog = savedEntries();
+      renderCatalog();
+    }
+  });
 
   function identity(entry, sourceLane = lane, sourceWork = work) {
     return sourceLane === "novel"
@@ -132,18 +173,20 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function rowKey(entry, { chaptersMode, folderMode }) {
     if (folderMode) return `folder:${entry.folder_label}`;
-    if (chaptersMode) return `chapter:${entry.chapter_id ?? entry.source_chapter_id ?? entry.label}`;
+    // Arcalive work chapters have no chapter id; their identity is unique where titles repeat.
+    if (chaptersMode) return `chapter:${entry.chapter_id ?? entry.source_chapter_id ?? entry.identity ?? entry.label}`;
     if (entry.work_id) return `work:${entry.work_id}`;
     return String(entry.identity ?? entry.post_id ?? entry.title);
   }
 
   // { finished, reading, lastReadAt } per novel work, from local reading records.
   function workProgress() {
+    const knownWorkIds = new Set((catalogs.get("novel")?.items ?? []).map((item) => item.work_id));
     const progress = new Map();
     for (const [key, record] of Object.entries(history.history)) {
-      const match = /^novel:(.+):[^:]+$/.exec(key);
-      if (!match || !record) continue;
-      const item = progress.get(match[1]) ?? { finished: 0, reading: 0, lastReadAt: "", record: null };
+      const workId = record ? novelRecordWorkId(key, record, knownWorkIds) : null;
+      if (!workId) continue;
+      const item = progress.get(workId) ?? { finished: 0, reading: 0, lastReadAt: "", record: null };
       const value = record.progress ?? 0;
       if (value >= FINISHED) item.finished += 1;
       else if (value > 0) item.reading += 1;
@@ -151,7 +194,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         item.lastReadAt = String(record.readAt || "");
         item.record = record;
       }
-      progress.set(match[1], item);
+      progress.set(workId, item);
     }
     return progress;
   }
@@ -339,7 +382,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         return [...grouped.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR"));
       };
       if (!folderBoard) return renderRows(group(matching, "board"), { folderMode: "board" });
-      const boardItems = catalog.filter((item) => String(item.board) === folderBoard);
+      const boardItems = catalog.filter((item) => String(item.board || "미분류") === folderBoard);
       const visibleBoard = query
         ? boardItems.filter((item) => normalize(`${item.title || ""} ${item.author || ""} ${item.category || ""}`).includes(query))
         : boardItems;
@@ -391,34 +434,35 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (release.schema !== 1 || release.lane !== selectedLane || !Array.isArray(release.catalog_pages)) {
       throw new Error("release_manifest_invalid");
     }
-    const items = [];
-    let showedFirstPage = false;
-    for (const ref of release.catalog_pages) {
+    const catalogPage = async (ref) => {
       const match = new RegExp(`^published/indexes/${selectedLane}/([a-f0-9]{64})\\.json$`).exec(ref.key || "");
       if (!match || ref.sha256 !== match[1]) throw new Error("catalog_reference_invalid");
       const page = await json(`/api/v1/text/index/${selectedLane}/${match[1]}.json`);
       if (page.schema !== 1 || page.lane !== selectedLane || !Array.isArray(page.items)) {
         throw new Error("catalog_page_invalid");
       }
-      items.push(...page.items);
-      if (!showedFirstPage && onFirstPage) {
-        showedFirstPage = true;
-        onFirstPage(items.slice());
+      return page.items;
+    };
+    const workPage = async (ref) => {
+      const match = /^published\/indexes\/arcalive\/([a-f0-9]{64})\.json$/.exec(ref.key || "");
+      if (!match || ref.sha256 !== match[1]) throw new Error("work_catalog_reference_invalid");
+      const page = await json(`/api/v1/text/index/arcalive/${match[1]}.json`);
+      if (page.schema !== 1 || page.lane !== "arcalive" || page.view !== "works" || !Array.isArray(page.items)) {
+        throw new Error("work_catalog_page_invalid");
       }
-    }
-    const works = [];
-    if (selectedLane === "arcalive") {
-      for (const ref of release.work_catalog_pages ?? []) {
-        const match = /^published\/indexes\/arcalive\/([a-f0-9]{64})\.json$/.exec(ref.key || "");
-        if (!match || ref.sha256 !== match[1]) throw new Error("work_catalog_reference_invalid");
-        const page = await json(`/api/v1/text/index/arcalive/${match[1]}.json`);
-        if (page.schema !== 1 || page.lane !== "arcalive" || page.view !== "works" || !Array.isArray(page.items)) {
-          throw new Error("work_catalog_page_invalid");
-        }
-        works.push(...page.items);
-      }
-      arcaliveWorks = works;
-    }
+      return page.items;
+    };
+    // The first page shows as soon as it arrives; the rest load together, kept in page order.
+    const [firstRef, ...restRefs] = release.catalog_pages;
+    const items = firstRef ? [...await catalogPage(firstRef)] : [];
+    if (firstRef && onFirstPage) onFirstPage(items.slice());
+    const [rest, workPages] = await Promise.all([
+      Promise.all(restRefs.map(catalogPage)),
+      selectedLane === "arcalive" ? Promise.all((release.work_catalog_pages ?? []).map(workPage)) : [],
+    ]);
+    for (const page of rest) items.push(...page);
+    const works = workPages.flat();
+    if (selectedLane === "arcalive") arcaliveWorks = works;
     catalogs.set(selectedLane, { sha256: pointer.sha256, items, works });
     details.clear();
     return items;
@@ -474,6 +518,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   async function open(options = {}) {
+    active = true;
     const activeRequest = ++requestId;
     flushPosition();
     const params = options instanceof URLSearchParams ? options : new URLSearchParams();
@@ -542,6 +587,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         .find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
       if (!found) return false;
       await openWork(found, false, activeRequest);
+      // A newer navigation took over while the work detail loaded.
+      if (activeRequest !== requestId) return false;
       readSort(params);
       renderCatalog();
       if (found.work_id !== workId) replaceRoute();
@@ -695,6 +742,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       fetch(`/api/v1/text/object/${hash}`, { credentials: "same-origin", redirect: "error" }),
       viewLane === "saved" && itemWork ? savedWorkChapters(itemWork).catch(() => []) : chapterSource,
     ]);
+    if (activeRequest !== requestId) return;
     if (!response.ok) throw new Error(`request_${response.status}`);
     const text = await response.text();
     if (activeRequest !== requestId) return;
@@ -710,11 +758,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       readAt: new Date().toISOString(),
       title: isNovel ? (entry.label || "") : (entry.title || ""),
       work: itemWork?.title || "",
+      ...(isNovel && itemWork?.work_id ? { workId: itemWork.work_id } : {}),
       total: itemWork?.chapter_count ?? 0,
       route: route(),
       listRoute: itemWork
         ? `/text?${new URLSearchParams({ lane: currentLane, ...(isNovel ? {} : { view: "works" }), work: itemWork.work_id })}` : listRoute(),
     };
+    pruneHistory();
     persist();
     shell.open({
       kicker: isNovel ? (itemWork?.title || "소설") : ["아카라이브", entry.board].filter(Boolean).join(" · "),
@@ -869,7 +919,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return;
     }
     const parent = window.history.state?.redstmParent ?? null;
-    void open(tocParams).then(() => {
+    const opening = open(tocParams);
+    // open() takes its request id synchronously; a later navigation must keep its own URL.
+    const tocRequest = requestId;
+    void opening.then(() => {
+      if (requestId !== tocRequest) return;
       window.history.replaceState({ redstmText: true, redstmParent: parent }, "", tocRoute);
     });
   }
@@ -974,8 +1028,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const frozen = sequence;
     void openBody(target, { navigation: "replace", sourceLane, sourceWork, savedIdentity })
       .then(() => {
-        // Keep the order the reader started with, even if the list behind it was re-sorted.
-        if (current && frozen) {
+        // Keep the order the reader started with, even if the list behind it was re-sorted —
+        // unless another body (a side-list tap) replaced this move before it arrived.
+        if (current && frozen && sameChapter(current.entry, target)) {
           sequence = { ...frozen, index: frozen.entries.findIndex((entry) => sameChapter(entry, target)) };
           shell.setNavigation(navigation());
           publishList();
@@ -1134,6 +1189,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function inWork() { return Boolean(work); }
   function currentRoute() { return route(); }
   function leave() {
+    active = false;
     ++requestId;
     flushPosition();
     current = null;

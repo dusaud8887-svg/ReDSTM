@@ -1,3 +1,16 @@
+// The work a novel reading record belongs to. Keys are `novel:<work_id>:<chapter_id>` and both
+// ids contain colons (`novel:<uuid>`, `novel:<site>:<work>:<chapter>`), so a key cannot be split by
+// pattern. The key's prefix is matched against the known work ids first (aliases re-key records,
+// see moveNovelStateKey); the record's own workId covers works not in the loaded catalog.
+export function novelRecordWorkId(key, record, knownWorkIds) {
+  if (!key.startsWith("novel:")) return null;
+  for (let boundary = key.indexOf(":", 6); boundary > 0; boundary = key.indexOf(":", boundary + 1)) {
+    const candidate = key.slice(6, boundary);
+    if (knownWorkIds.has(candidate)) return candidate;
+  }
+  return typeof record?.workId === "string" && record.workId ? record.workId : null;
+}
+
 // The server's chapter array is the reading order; view sorting only changes the list.
 export function orderChapters(rows, mode) {
   const ordered = [...rows];

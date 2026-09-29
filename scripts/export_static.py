@@ -22,7 +22,7 @@ from crawler.archive import (
     APPLICATION_ID,
     MIGRATIONS,
     SCHEMA_VERSION,
-    connect_archive,
+    archive_transaction,
     decompress_body,
 )
 from crawler.pipelines import NormalizedComment, NormalizedPost
@@ -44,11 +44,16 @@ _SEARCH_FIELDS = [
     "payload_sha256",
 ]
 _SEARCH_FIELDS_WITH_AA = [*_SEARCH_FIELDS, "is_aa"]
+# Popularity signals for discovery sorting in the Reader. Older 7/8-field indexes stay valid.
+_SEARCH_FIELDS_WITH_STATS = [*_SEARCH_FIELDS_WITH_AA, "views", "comment_count"]
 _COMPRESSION_LEVEL = 15
 _AGGREGATE_COMPRESSION_LEVEL = 6
 _COLLECTION_DETAIL_SHARDS = 64
 _EXPORT_STATE_SCHEMA_VERSION = 1
-COLLECTION_EXPORT_REVISION = 2
+# 3: collection summaries carry views/comments totals. A bump rebuilds the collection objects
+# of an existing release on its next export; the search tuple is rebuilt only by an export that
+# changes posts, or a full export (docs/00 §7.3).
+COLLECTION_EXPORT_REVISION = 3
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _SOURCE_PROJECTION_VERSION = "source-projection-v1"
 
@@ -474,6 +479,8 @@ def _search_row_bytes(
                 summary.created_at_raw,
                 summary.payload_sha256,
                 summary.is_aa,
+                summary.views,
+                summary.comment_count,
             )
         )[:-1]
 
@@ -574,7 +581,7 @@ def _stage_search_object(
 
     def chunks() -> Iterator[bytes]:
         nonlocal post_count
-        yield b'{"fields":' + _json_bytes(_SEARCH_FIELDS_WITH_AA)[:-1] + b',"posts":['
+        yield b'{"fields":' + _json_bytes(_SEARCH_FIELDS_WITH_STATS)[:-1] + b',"posts":['
         for row in _search_row_bytes(connection, post_refs):
             if post_count:
                 yield b","
@@ -1075,9 +1082,11 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
     search, _ = _read_ref(root, manifest.get("search"))
     search_rows = search.get("posts")
     search_fields = search.get("fields")
-    if search_fields not in (_SEARCH_FIELDS, _SEARCH_FIELDS_WITH_AA) or not isinstance(
-        search_rows, list
-    ):
+    if search_fields not in (
+        _SEARCH_FIELDS,
+        _SEARCH_FIELDS_WITH_AA,
+        _SEARCH_FIELDS_WITH_STATS,
+    ) or not isinstance(search_rows, list):
         raise ValueError("invalid search index")
     assert isinstance(search_fields, list)
     search_posts = {
@@ -1086,6 +1095,10 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
         if isinstance(row, list)
         and len(row) == len(search_fields)
         and (search_fields == _SEARCH_FIELDS or isinstance(row[7], bool) or row[7] in (0, 1))
+        and (
+            search_fields != _SEARCH_FIELDS_WITH_STATS
+            or all(type(value) is int and value >= 0 for value in row[8:10])
+        )
     }
     if len(search_posts) != len(search_rows) or search_posts != board_posts:
         raise ValueError("search index does not match board manifests")
@@ -1114,6 +1127,10 @@ def validate_release(root: Path, release: str) -> dict[str, int | str]:
                         or summary["unavailable_count"] < 0
                         or summary["unavailable_count"] > summary["entry_count"]
                     )
+                )
+                or any(
+                    key in summary and (type(summary[key]) is not int or summary[key] < 0)
+                    for key in ("views", "comments")
                 )
                 or summary["id"] in collection_summaries
             ):
@@ -1284,7 +1301,7 @@ def validate_incremental_release(root: Path, release: str) -> dict[str, int | st
         ):
             raise ValueError("invalid export state source")
         source = Path(source_identity["path"]).expanduser().resolve(strict=True)
-        with connect_archive(source, read_only=True) as connection:
+        with archive_transaction(source, read_only=True) as connection:
             current_identity = _source_identity(source, connection)
             compatible_schema_versions = _database_projection_schema_versions(connection)
         state = _read_state(_state_path(root), current_identity, compatible_schema_versions)
@@ -1512,7 +1529,7 @@ def _collection_entry(
 def _stage_collection_objects(
     connection: sqlite3.Connection,
     writer: _ObjectWriter,
-    object_key_for_row: Callable[[sqlite3.Row], str | None],
+    summary_for_row: Callable[[sqlite3.Row], StaticPostSummary | None],
 ) -> tuple[
     list[tuple[int, _StagedObject]],
     list[tuple[str, _StagedObject]],
@@ -1520,18 +1537,30 @@ def _stage_collection_objects(
     int,
     int,
 ]:
+    # summary_for_row: the post summary this release references for an entry, or None when the
+    # entry has no preserved post. Totals come from those summaries (the values in the post
+    # objects and the search tuple), not live `posts.views`, which recaptures keep changing.
+    def object_key_for_row(row: sqlite3.Row) -> str | None:
+        summary = summary_for_row(row)
+        return summary.object_key if summary is not None else None
+
     collection_count = int(connection.execute("SELECT COUNT(*) FROM collections").fetchone()[0])
     entry_count = int(connection.execute("SELECT COUNT(*) FROM collection_entries").fetchone()[0])
-    unavailable_by_id = {
-        collection_id: sum(
-            1
-            for row in _collection_entry_rows(connection, collection_id)
-            if object_key_for_row(row) is None
-        )
-        for collection_id in (
-            int(row["id"]) for row in connection.execute("SELECT id FROM collections ORDER BY id")
-        )
-    }
+    unavailable_by_id: dict[int, int] = {}
+    popularity_by_id: dict[int, tuple[int, int]] = {}
+    for collection_id in (
+        int(row["id"]) for row in connection.execute("SELECT id FROM collections ORDER BY id")
+    ):
+        unavailable = views = comments = 0
+        for row in _collection_entry_rows(connection, collection_id):
+            summary = summary_for_row(row)
+            if summary is None:
+                unavailable += 1
+                continue
+            views += summary.views
+            comments += summary.comment_count
+        unavailable_by_id[collection_id] = unavailable
+        popularity_by_id[collection_id] = (views, comments)
     summaries = [
         {
             "id": int(row["id"]),
@@ -1541,6 +1570,9 @@ def _stage_collection_objects(
             "entry_count": int(row["entry_count"]),
             "unavailable_count": unavailable_by_id.get(int(row["id"]), 0),
             "latest_created_at": row["latest_created_at"],
+            # Popularity of the preserved episodes, for discovery sorting in the Reader.
+            "views": popularity_by_id.get(int(row["id"]), (0, 0))[0],
+            "comments": popularity_by_id.get(int(row["id"]), (0, 0))[1],
         }
         for row in connection.execute(
             """
@@ -1777,7 +1809,7 @@ def _write_projection_release(
 
     staged_search, search_post_count = _stage_search_object(connection, writer, post_refs)
 
-    def collection_object_key(row: sqlite3.Row) -> str | None:
+    def collection_post(row: sqlite3.Row) -> StaticPostSummary | None:
         if row["latest_version_id"] is None:
             return None
         stored = _base_post_ref(
@@ -1785,7 +1817,7 @@ def _write_projection_release(
             str(row["board_id"]),
             int(row["external_post_id"]),
         )
-        return stored.summary.object_key if stored is not None else None
+        return stored.summary if stored is not None else None
 
     (
         staged_collection_details,
@@ -1793,7 +1825,7 @@ def _write_projection_release(
         collection_summaries,
         collection_count,
         collection_entry_count,
-    ) = _stage_collection_objects(connection, writer, collection_object_key)
+    ) = _stage_collection_objects(connection, writer, collection_post)
 
     counts = {
         "post_count": post_count,
@@ -1895,6 +1927,10 @@ def _promote_release(
         "base": base,
         "pending": pending,
     }
+    # Objects are staged without per-file fsync; flush them once before the durable journal and
+    # pointer name them, so a power loss cannot leave release.json over truncated objects.
+    if hasattr(os, "sync"):
+        os.sync()
     _write_state(state_path, journal)
     activation = (
         activate_release(root, cast(str, pending["release_key"]))
@@ -1922,10 +1958,10 @@ def _full_export_static(
     writer = _ObjectWriter(output)
     board_posts: dict[str, list[dict[str, object]]] = defaultdict(list)
     search_rows: list[tuple[str, StaticPostSummary]] = []
-    object_key_by_post_id: dict[int, str] = {}
+    summary_by_post_id: dict[int, StaticPostSummary] = {}
     comment_count = 0
 
-    with connect_archive(source, read_only=True) as connection:
+    with archive_transaction(source, read_only=True) as connection:
         if int(connection.execute("PRAGMA application_id").fetchone()[0]) != APPLICATION_ID:
             raise ValueError("source is not a ReDSTM canonical archive")
         if int(connection.execute("PRAGMA user_version").fetchone()[0]) != SCHEMA_VERSION:
@@ -2001,7 +2037,7 @@ def _full_export_static(
                 }
                 board_posts[prepared.summary.board_id].append(post_ref)
                 search_rows.append((prepared.created_at_source, prepared.summary))
-                object_key_by_post_id[prepared.post_id] = prepared.summary.object_key
+                summary_by_post_id[prepared.post_id] = prepared.summary
                 comment_count += prepared.summary.comment_count
                 if len(search_rows) % 1000 == 0:
                     print(
@@ -2063,7 +2099,7 @@ def _full_export_static(
         search_payload = _json_bytes(
             {
                 "schema_version": 1,
-                "fields": _SEARCH_FIELDS_WITH_AA,
+                "fields": _SEARCH_FIELDS_WITH_STATS,
                 "posts": [
                     [
                         summary.board_id,
@@ -2074,6 +2110,8 @@ def _full_export_static(
                         summary.created_at_raw,
                         summary.payload_sha256,
                         summary.is_aa,
+                        summary.views,
+                        summary.comment_count,
                     ]
                     for _, summary in ordered_search
                 ],
@@ -2089,10 +2127,10 @@ def _full_export_static(
             "post_count": len(ordered_search),
         }
 
-        def collection_object_key(row: sqlite3.Row) -> str | None:
+        def collection_post(row: sqlite3.Row) -> StaticPostSummary | None:
             if row["latest_version_id"] is None or row["post_id"] is None:
                 return None
-            return object_key_by_post_id.get(int(row["post_id"]))
+            return summary_by_post_id.get(int(row["post_id"]))
 
         (
             staged_collection_details,
@@ -2100,7 +2138,7 @@ def _full_export_static(
             collection_summaries,
             collection_count,
             collection_entry_count,
-        ) = _stage_collection_objects(connection, writer, collection_object_key)
+        ) = _stage_collection_objects(connection, writer, collection_post)
         collection_ref = _write_collection_objects(
             writer,
             staged_collection_details,
@@ -2165,15 +2203,15 @@ def _refresh_collection_aggregates(
 ) -> dict[str, Any]:
     writer = _ObjectWriter(output)
 
-    def collection_object_key(row: sqlite3.Row) -> str | None:
+    def collection_post(row: sqlite3.Row) -> StaticPostSummary | None:
         if row["latest_version_id"] is None or row["post_id"] is None:
             return None
         board_id = row["board_id"] or row["collection_board_id"]
         stored = _base_post_ref(base.post_refs, str(board_id), int(row["external_post_id"]))
-        return stored.summary.object_key if stored is not None else None
+        return stored.summary if stored is not None else None
 
     details, memberships, summaries, collection_count, entry_count = _stage_collection_objects(
-        connection, writer, collection_object_key
+        connection, writer, collection_post
     )
     if (
         collection_count != fingerprint["collection_count"]
@@ -2263,7 +2301,7 @@ def _incremental_export_static(
             )
 
     writer = _ObjectWriter(output)
-    with connect_archive(source, read_only=True) as connection:
+    with archive_transaction(source, read_only=True) as connection:
         current_identity = _source_identity(source, connection)
         compatible_schema_versions = _database_projection_schema_versions(connection)
         if not _source_identity_matches(
@@ -2400,7 +2438,7 @@ def export_static(
         raise FileNotFoundError(f"not a file: {source}")
     output = output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    with connect_archive(source, read_only=True) as connection:
+    with archive_transaction(source, read_only=True) as connection:
         identity = _source_identity(source, connection)
         compatible_schema_versions = _database_projection_schema_versions(connection)
     if identity["application_id"] != APPLICATION_ID or identity["schema_version"] != SCHEMA_VERSION:

@@ -133,6 +133,21 @@ test("keeps setting ranges and rejects unknown schemas", () => {
     aaBackground: "#abcdef", aaPreserveStyles: false,
   });
   assert.deepEqual(plan.summary.defaultedSettings, ["aaSize"]);
+  const reading = planImport(JSON.stringify({
+    schema_version: 2,
+    settings: { ...defaults, readerSurface: "paper", proseAlign: "justify" },
+    history: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  }), { ...defaults, readerSurface: "default", proseAlign: "start" });
+  assert.equal(reading.state.settings.readerSurface, "paper");
+  assert.equal(reading.state.settings.proseAlign, "justify");
+  const unknown = planImport(JSON.stringify({
+    schema_version: 2,
+    settings: { ...defaults, readerSurface: "neon", proseAlign: "center" },
+    history: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  }), { ...defaults, readerSurface: "default", proseAlign: "start" });
+  assert.equal(unknown.state.settings.readerSurface, "default");
+  assert.equal(unknown.state.settings.proseAlign, "start");
+  assert.deepEqual(unknown.summary.defaultedSettings, ["proseAlign", "readerSurface"]);
   assert.throws(() => planImport(JSON.stringify({ schema_version: 3 }), defaults),
     /지원하지 않는 상태 파일 형식/);
 });

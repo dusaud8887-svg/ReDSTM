@@ -9,6 +9,12 @@
   "display": "standalone",
   "background_color": "#fbfaf8",
   "theme_color": "#d92d3d",
+  "shortcuts": [
+    { "name": "이어서 읽기", "short_name": "이어 읽기", "url": "/?continue=1", "icons": [{ "src": "/icons/app-icon-192.png", "sizes": "192x192" }] },
+    { "name": "검색", "url": "/search", "icons": [{ "src": "/icons/app-icon-192.png", "sizes": "192x192" }] },
+    { "name": "보관함", "url": "/saved", "icons": [{ "src": "/icons/app-icon-192.png", "sizes": "192x192" }] },
+    { "name": "텍스트 장서", "url": "/text", "icons": [{ "src": "/icons/app-icon-192.png", "sizes": "192x192" }] }
+  ],
   "icons": [
     {
       "src": "/icons/app-icon-192.png",

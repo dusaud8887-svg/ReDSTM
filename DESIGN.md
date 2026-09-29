@@ -188,6 +188,20 @@ Red 사용 지도(화면당 신호 한 곳 원칙의 구체화):
 - focus token은 텍스트가 아니라 focus indicator 전용이다(light 3.2:1은 non-text 3:1만 통과).
 - 텍스트 선택 배경은 accent-soft, 글자색은 ink를 유지한다.
 
+본문 면 `종이`(설정 → 배경)는 Reader(`.reader`, 하단 읽기 도구, 진행 표시)에만 적용하는 따뜻한 읽기
+면이다. app chrome, catalog, dialog는 위 token을 그대로 쓴다. 같은 token 이름을 Reader 범위에서 다시
+정의하며, light는 red를 `#C42534`(hover `#A51F2C`)로 한 단계 낮춰 작은 red label이 종이 면에서도
+4.5:1 이상을 유지한다.
+
+| token | 종이 light | 종이 dark |
+|---|---|---|
+| reader | `#F6F0E4` | `#1C1914` |
+| page (Reader 안 버튼·목록 면) | `#FBF7EF` | `#211D17` |
+| surface | `#EFE7D7` | `#26211B` |
+| ink / muted / subtle | `#2B2520` / `#5C5247` / `#8A7F70` | `#EBE3D5` / `#B8AD9B` / `#8C8272` |
+| line / line-strong | `#E4DAC7` / `#D2C5AD` | `#3A3329` / `#4B4336` |
+| accent-soft | `#F8E4DC` | `#3B2420` |
+
 AA background는 content-mode setting이며 app theme token과 독립적이다. aa-light/aa-dark token은
 `단색` 정규화 mode의 기본값이고, `보존` mode는 사용자 aaBackground와 sanitizer를 통과한 원본색을
 쓰며 app theme 전환이 AA stage 색을 바꾸지 않는다.
@@ -276,7 +290,10 @@ Chrome 치수:
 - bottom navigation: 높이 56px + safe-area, icon 20px + label 11px/500, active만 red
 - Reader bottom bar: 높이 52px + safe-area, 5개 action 등분, label nowrap
 - medium top app bar 56px, rail 폭 72px(icon 20px + label 10px 또는 tooltip)
-- `<meta name="theme-color">`는 theme별 page token(light `#FFFFFF`, dark `#0B0D12`)을 따른다
+- `<meta name="theme-color">`는 theme별 page token(light `#FFFFFF`, dark `#0B0D12`)을 따른다.
+  `시스템`에서는 media별 두 meta가 각자 scheme 색을 유지하고, 명시한 `밝게/어둡게`는 두 meta를 모두
+  그 색으로 덮는다(OS와 달라도 브라우저 바가 앱을 따른다). 종이 면 본문을 여는 동안은 Reader 색
+  (`#F6F0E4`/`#1C1914`)을 따른다
 
 ## 6. 공간·형태·깊이
 
@@ -299,9 +316,11 @@ Chrome 치수:
 - 한 벌의 1.75px round stroke, currentColor, visible label/tooltip
 - 전체 icon package/runtime dependency는 추가하지 않는다.
 
-Icon 목록은 다음 16개로 고정한다: 장서, 검색, 저장(외곽), 저장(채움), 설정, 운영, 목록,
-이전 chevron, 다음 chevron, 닫기, 원문(external), 몰입, 테마 해, 테마 달, 경고, 새로고침.
-이 목록 밖 icon이 필요하면 이 문서를 먼저 바꾼다.
+Icon 목록은 다음 18개로 고정한다: 장서, 검색, 저장(외곽), 저장(채움), 설정, 운영, 목록,
+이전 chevron, 다음 chevron, 닫기, 원문(external), 몰입, 테마 해, 테마 달, 경고, 새로고침,
+링크(더보기 `링크 복사`), 화면 켜짐(더보기 `화면 켜 두기`).
+이 목록 밖 icon이 필요하면 이 문서를 먼저 바꾼다. 조건 해제 chip과 검색어 지우기도 `×` 문자 대신 닫기
+icon을 쓴다.
 
 Motion:
 
@@ -323,9 +342,14 @@ Motion:
 
 1. 검색
 2. 이어읽기 한 건
-3. 새로 보존된 글 최대 6건
-4. 최근 읽은 글 최대 6건
-5. 마지막 게시 시각의 quiet freshness label
+3. 읽던 작품(`새 편` 표시 우선), 자주 보는 게시판(게시판 선택 시트의 즐겨찾기 → 최근 순, 최대 8개 chip)
+4. 오늘의 발견: 오늘의 추천 작품 3, 요즘 화제 4, 이날의 기록 3(각각 비면 숨김; 데스크톱 900px 이상 3열)
+5. 새로 보존된 글 최대 6건
+6. 최근 읽은 글 최대 6건
+7. 마지막 게시 시각의 quiet freshness label
+
+자주 보는 게시판은 즐겨찾기나 최근 기록이 있을 때만 보이며, 누르면 형식·검색 조건 없이 그 게시판
+전체를 둘러보기로 연다.
 
 history가 없으면 이어읽기 영역을 숨기고 검색을 primary로 둔다. crawler queue/disk/error는 Home에
 표시하지 않는다.
@@ -333,7 +357,8 @@ history가 없으면 이어읽기 영역을 숨기고 검색을 primary로 둔�
 ### 8.2 Catalog
 
 - row 68~76px
-- title 2줄, board/author/date 1줄
+- title 2줄, board/author/date 1줄(수가 있는 release는 `조회 · 댓글`을 줄인 숫자로 덧붙임)
+- 결과 건수 줄 오른쪽에 정렬 pill(36px, 필터 시트 밖)
 - selected state: 3px red rail + accent-soft fill
 - 0건은 query/filter를 유지하고 각각 해제 가능
 - skeleton은 실제 row 높이와 일치
@@ -360,13 +385,17 @@ history가 없으면 이어읽기 영역을 숨기고 검색을 primary로 둔�
 - source color on/off, ivory/white/custom background
 - stage-only horizontal scroll, native selection/touch 유지
 
-Mobile compact AA bar는 A− / 현재값 / A+ / zoom / 설정만 둔다. preset, source color, background,
+Mobile compact AA bar는 A− / 현재값 / A+ / 맞춤 / zoom / 설정만 둔다. `맞춤`은 가장 넓은 줄이 가로 스크롤
+없이 들어오는 zoom으로 줄이며 100%를 넘겨 키우지 않는다(이미 들어오면 100%). preset, source color, background,
 canvas width는 settings sheet로 이동한다.
 
 ## 9. Settings
 
-- theme: system/light/dark 3-state
-- prose: size, line height, width, serif/sans
+- theme: system/light/dark 3-state, 본문 면 기본/종이
+- prose: size, line height, width(데스크톱)/좌우 여백(모바일), serif/sans, 문단 정렬 왼쪽/양쪽(AA에는
+  적용하지 않음)
+- 읽기 동작: 화면 탭으로 넘기기 끄기/켜기. 소설 본문의 두 손가락 조작은 페이지 확대 대신 글자 크기를
+  바꾼다(15–28px). OS 글꼴 배율과 데스크톱 브라우저 확대는 그대로 동작한다
 - AA: preset, size, zoom, canvas, source color, background
 - data: state export/import/reset
 - control 변경은 즉시 preview하며 일반 설정에 Save button 없음
@@ -410,7 +439,8 @@ Operations는 Reader와 token을 공유하지만 더 조밀하다. 표·목록�
 - 200% browser zoom과 320px reflow
 - Korean label을 장식 목적으로 uppercase 영문으로 대체하지 않음
 - loading/empty/error/unavailable/stale를 서로 다른 text state로 표현
-- keyboard: /, arrows, Enter, Escape, [, ], b, f
+- keyboard: /, arrows, Enter, Escape, [, ], b, f, ?(760px 이상에서 설정의 단축키 목록). Ctrl/⌘/Alt와
+  함께 누른 키는 브라우저 몫이다
 - Light/Dark 각각 Home, catalog, prose, AA, settings, Operations screenshot
 - actual Android: safe-area, toolbar no-wrap, Back, Saitamaar, pinch, tab restore
 - actual Android 추가 gate: 가상 키보드와 bottom navigation 겹침 없음, 열린 dialog/sheet가

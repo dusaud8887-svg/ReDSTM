@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from crawler.archive import connect_archive, decompress_body
+from crawler.archive import archive_transaction, decompress_body
 from crawler.static_archive import extract_image_references
 
 
@@ -20,7 +20,7 @@ def inventory_images(archive: Path) -> dict[str, Any]:
     post_count = 0
     posts_with_images = 0
     reference_count = 0
-    with connect_archive(archive, read_only=True) as connection:
+    with archive_transaction(archive, read_only=True) as connection:
         rows = connection.execute(
             """
             SELECT p.canonical_url, v.body_html_zstd

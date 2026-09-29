@@ -24,9 +24,10 @@ export function episodeNumber(label) {
 }
 
 // Episodes the label numbering skips between two adjacent entries, e.g. 31화 → 34화 is 2.
+// Numbering that restarts or runs backwards (a new season at 1화) is not a gap.
 export function labelGap(fromLabel, toLabel) {
   const from = episodeNumber(fromLabel);
   const to = episodeNumber(toLabel);
   if (from === null || to === null) return 0;
-  return Math.max(0, Math.abs(to - from) - 1);
+  return Math.max(0, to - from - 1);
 }

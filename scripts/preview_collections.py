@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from crawler.archive import connect_archive
+from crawler.archive import archive_transaction
 from crawler.collections import PostTitle, preview_collections
 
 
@@ -20,7 +20,7 @@ def preview(source: Path, board_id: str | None = None) -> dict[str, Any]:
         query += " AND board_id = ?"
         parameters = (board_id,)
     query += " ORDER BY board_id, external_post_id"
-    with connect_archive(source, read_only=True) as connection:
+    with archive_transaction(source, read_only=True) as connection:
         current = connection.execute(
             """
             SELECT COUNT(DISTINCT c.id), COUNT(ce.position)

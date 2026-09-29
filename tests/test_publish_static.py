@@ -513,6 +513,33 @@ def test_publish_defers_a_new_pointer_until_the_active_release_is_smoked(
     assert json.loads(smoke_pending.read_text(encoding="utf-8"))["release_key"] == active_key
 
 
+def test_verified_publish_stops_retrying_a_release_after_repeated_smoke_rollbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active_key, active_body, _ = _graph_release(tmp_path, "a")
+    rejected_key, _rejected_body, _ = _graph_release(tmp_path, "b")
+    (tmp_path / ".publish-smoke-rollbacks.json").write_text(
+        json.dumps({"release_key": rejected_key, "rollbacks": 3}), encoding="utf-8"
+    )
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(stdout=active_body)
+
+    monkeypatch.setattr(
+        "scripts.publish_static.validate_incremental_release",
+        lambda root, release: {"release_key": rejected_key, "post_count": 1},
+    )
+
+    with pytest.raises(IncrementalExportError) as raised:
+        publish_static(tmp_path, "r2:redstm-archive", verified_incremental=True, runner=run)
+
+    assert raised.value.code == "incremental_publish_release_smoke_rejected"
+    assert [command[1] for command in commands] == ["cat"]
+    assert active_key != rejected_key
+
+
 def test_reconcile_pending_smoke_recovers_the_active_release_without_export(
     tmp_path: Path,
 ) -> None:
@@ -1337,6 +1364,11 @@ def test_activate_rollback_reuses_the_attempted_release_ledger(tmp_path: Path) -
     assert durable["remote_objects"] == 10
     assert not (tmp_path / ".publish-ledger.pending.json").exists()
     assert smoke_pending.is_file()
+    assert report["smoke_rollbacks"] == 1
+    assert json.loads((tmp_path / ".publish-smoke-rollbacks.json").read_text(encoding="utf-8")) == {
+        "release_key": attempted_key,
+        "rollbacks": 1,
+    }
 
 
 def test_activate_blocks_an_unrelated_transition_while_smoke_is_pending(

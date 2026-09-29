@@ -318,7 +318,7 @@ def archive_transaction(
 def initialize_archive(path: str | Path) -> None:
     archive_path = Path(path).expanduser().resolve()
     archive_path.parent.mkdir(parents=True, exist_ok=True)
-    with connect_archive(archive_path) as connection:
+    with archive_transaction(archive_path) as connection:
         # connect_archive already put the connection in WAL/synchronous=NORMAL, which also
         # converts a legacy DELETE archive in place. Confirm the persistent mode took so a
         # brand-new archive is never left in rollback-journal mode.

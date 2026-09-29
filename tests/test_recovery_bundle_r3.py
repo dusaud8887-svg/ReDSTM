@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,6 +44,41 @@ def test_rejection_status_and_next_ready_batch(tmp_path: Path) -> None:
     ready.mkdir()
     (ready / "ready.json").write_text("{}")
     assert importer._next_ready_batch(inbox) == second
+
+
+def test_rejection_with_read_only_drop_still_frees_the_queue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Production mounts the drop read-only: only receipts/<id>.status.json can be written.
+    inbox = tmp_path / "inbox"
+    bad = inbox / "drop" / BID
+    bad.mkdir(parents=True)
+    manifest = b"{broken"
+    (bad / "manifest.json").write_bytes(manifest)
+    (bad / "ready.json").write_text(
+        json.dumps(
+            {"schema": 1, "batch_id": BID, "manifest_sha256": hashlib.sha256(manifest).hexdigest()}
+        )
+    )
+
+    original_mkstemp = importer.tempfile.mkstemp
+
+    def read_only(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        if Path(kwargs.get("dir", "")) == bad:
+            raise PermissionError("read-only file system")
+        return original_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(importer.tempfile, "mkstemp", read_only)
+    importer._record_batch_rejection(inbox, BID, "batch_json_invalid")
+    assert not (bad / "rejected.json").exists()
+    assert importer._next_ready_batch(inbox) is None
+
+
+def test_deeply_nested_json_is_a_terminal_rejection(tmp_path: Path) -> None:
+    p = tmp_path / "manifest.json"
+    p.write_bytes(b"[" * 100_000 + b"]" * 100_000)
+    with pytest.raises(importer.BatchRejectedError):
+        importer._json_file(p, 256 * 1024)
 
 
 def test_server_refuses_unbound_rejection(tmp_path: Path) -> None:

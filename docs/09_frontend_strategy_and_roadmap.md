@@ -52,7 +52,12 @@
 - 최대 20~30분 집중 canary의 idle/running/degraded/stale/failed 상태 증거
 - 100건 초과 글·작품 탐색은 목록 하단 "더 보기"로 구현했다. 작품은 summary index, 게시판별
   membership, 64개 detail shard를 지연 로드하며 v1 단일 collection payload도 읽는다.
-- cross-tab user-state 충돌 처리와 실제 Android collection 메모리 측정은 남은 P1
+- cross-tab user-state 충돌: 다른 탭이 저장하면(`storage` event) 이 탭이 그 상태를 그대로 받아들인다
+  (TypeMoon `redstm.userState.v2`, 텍스트 `redstm.textState.v1`). 저장은 전체 상태를 쓰므로 예전
+  복사본을 들고 있던 탭이 다음 스크롤 저장에서 다른 탭의 저장·기록을 지우던 문제를 막는다. 250ms 안에
+  두 탭이 동시에 저장하면 나중 저장이 이긴다(병합·tombstone 없음). localStorage 사본은 들여쓰기 없는
+  JSON이고 내보내기 파일만 들여쓴다(2026-09-28, local)
+- 실제 Android collection 메모리 측정은 남은 P1
 
 문서의 완료 상태는 behavior baseline과 live visual acceptance를 분리한다.
 
@@ -149,7 +154,9 @@ Freshness 계약:
 | search | existing Web Worker |
 | async cancellation | AbortController |
 | theme | CSS custom properties + `color-scheme` 동기화 |
-| Android 상단 크롬 색 | `theme-color` meta를 테마 적용 시 JS로 page token(light `#FFFFFF`/dark `#0B0D12`)과 동기화 |
+| Android 상단 크롬 색 | `theme-color` meta를 테마 적용 시 JS로 page token(light `#FFFFFF`/dark `#0B0D12`)과 동기화; 명시 테마는 media별 두 meta 모두, 종이 면 본문 중에는 Reader 색 (`DESIGN.md §5`) |
+| 화면 켜 두기 | Screen Wake Lock, 사용자가 켠 동안·본문이 열린 동안만; 자동 요청 금지 |
+| 링크 복사 | Clipboard API, 실패 시 Web Share |
 | persistence | versioned localStorage JSON |
 | transition | CSS, View Transition progressive only |
 | command/status | fetch + bounded polling |
@@ -225,7 +232,9 @@ fork할 project는 없다.
 
 Search index/release 호환 규칙:
 
-- viewer는 현행 7-field search tuple과 `is_aa`가 뒤에 추가된 8-field tuple을 모두 수용한다.
+- viewer는 현행 7-field search tuple과 `is_aa`가 뒤에 추가된 8-field tuple, 그 뒤에 `views`,
+  `comment_count`가 붙은 10-field tuple을 모두 수용한다(`00 §7.3`). 조회·댓글 정렬은 10-field
+  release에서만 보이고, 인기순 순서는 worker가 column별로 한 번 만들어 재사용한다.
   catalog row의 AA 배지는 `is_aa`가 있는 release에서만 표시하고 그 전에는 추측하지 않는다.
 - board filter label은 `release.json` `boards[]`의 `name`/`group_name`이 있으면 사용하고 없으면
   `board_id`를 그대로 표시한다. 두 필드는 A2.4의 export 계약 확장에서 추가된다.

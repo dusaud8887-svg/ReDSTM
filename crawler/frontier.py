@@ -125,7 +125,14 @@ class FrontierStore:
         *,
         reopen_done: bool = False,
         expected_comment_count: int | None = None,
+        captured: bool = False,
     ) -> None:
+        """Queue a post, or refresh an existing row.
+
+        captured marks a listing row that matches an already body-captured post: a new row for
+        it starts done (inventory is listing coverage, not a re-request of every detail), so
+        only the 30-day stale audit or a listing change reopens it.
+        """
         if expected_comment_count is not None and (
             type(expected_comment_count) is not int or expected_comment_count < 0
         ):
@@ -134,9 +141,9 @@ class FrontierStore:
             connection.execute(
                 """
                 INSERT INTO crawl_frontier (
-                    board_id, external_post_id, url, priority, expected_comment_count
+                    board_id, external_post_id, url, priority, expected_comment_count, state
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (board_id, external_post_id) DO UPDATE SET
                     url = excluded.url,
                     priority = excluded.priority,
@@ -164,6 +171,7 @@ class FrontierStore:
                     url,
                     priority,
                     expected_comment_count,
+                    "done" if captured else "pending",
                     reopen_done,
                     reopen_done,
                     reopen_done,

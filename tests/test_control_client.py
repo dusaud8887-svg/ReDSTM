@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import pytest
 from scripts.control_client import (
     _CONNECT_TIMEOUT_SECONDS,
     _MAX_RETRY_DELAY_SECONDS,
+    _PROTOCOL_ERROR_ATTEMPTS,
     _TOTAL_REQUEST_TIMEOUT_SECONDS,
     _UNAVAILABLE_COOLDOWN_SECONDS,
     ControlClient,
@@ -409,6 +411,67 @@ def test_permanent_outbox_rejection_is_removed_before_later_delivery(tmp_path: P
     assert rejection is not None
     assert rejection["rejected_count"] == 1
     assert rejection["last_code"] == "invalid_heartbeat"
+
+
+def test_new_report_goes_behind_queued_reports(tmp_path: Path) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    store.enqueue(
+        "run_start",
+        "/api/v1/runner/runs",
+        {"kind": "sync", "command_id": None},
+        "start-run-0001",
+    )
+    paths: list[str] = []
+
+    def sender(
+        path: str, _body: bytes, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        paths.append(path)
+        return 200, {}, _response(headers, {"accepted": True})
+
+    client = ControlClient("https://archive.example", "client-id", "client-secret", sender=sender)
+    client.send_or_enqueue(
+        store,
+        "run_finish",
+        "/api/v1/runner/runs/run-1/finish",
+        {"state": "succeeded", "safe_summary_code": "ok", "counters": {}},
+        "finish-run-0001",
+    )
+    assert paths == ["/api/v1/runner/runs", "/api/v1/runner/runs/run-1/finish"]
+    assert store.stats()["rows"] == 0
+
+
+def test_unreadable_replies_are_retried_then_dropped(tmp_path: Path) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+    calls = 0
+
+    def garbled(
+        _path: str, _body: bytes, _headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        nonlocal calls
+        calls += 1
+        return 200, {}, b"not json"
+
+    client = ControlClient("https://archive.example", "client-id", "client-secret", sender=garbled)
+    result = client.send_or_enqueue(
+        store,
+        "heartbeat",
+        "/api/v1/runner/heartbeat",
+        {"runner_version": "git-1", "state": "idle"},
+        "heartbeat-garbled",
+    )
+    assert result is DeliveryResult.RETRYABLE_QUEUED
+    assert store.stats()["rows"] == 1
+    for _ in range(_PROTOCOL_ERROR_ATTEMPTS):
+        with sqlite3.connect(tmp_path / "control.sqlite") as connection:
+            connection.execute("UPDATE outbox SET next_attempt_at = NULL")
+        connection.close()
+        client.flush(store)
+    assert store.stats()["rows"] == 0
+    rejection = store.rejection()
+    assert rejection is not None
+    assert rejection["last_code"] == "control_protocol_error"
+    assert calls == 1 + _PROTOCOL_ERROR_ATTEMPTS
 
 
 def test_non_json_permanent_rejection_cannot_poison_the_outbox(tmp_path: Path) -> None:

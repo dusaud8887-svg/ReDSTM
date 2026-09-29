@@ -175,6 +175,13 @@ test("renders bounded operations and confirms a fixed command", async ({ page },
   expect(received[0].headers["idempotency-key"]).toMatch(/^web-[0-9a-f-]{36}$/);
   expect(received[0].body).toEqual({ action: "sync-now", args: {} });
   expect(received[1].headers["idempotency-key"]).toMatch(/^cancel-[0-9a-f-]{36}$/);
+  // Esc after an earlier confirm must not send: the dialog's previous returnValue is stale.
+  await page.locator('.control-list [data-action="sync-now"]').click();
+  await expect(page.getByRole("dialog", { name: "증분 수집 지금 실행" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "증분 수집 지금 실행" })).toBeHidden();
+  await page.waitForTimeout(300);
+  expect(received).toHaveLength(2);
 });
 
 test("filters only the bounded run history already loaded in the page", async ({ page }) => {

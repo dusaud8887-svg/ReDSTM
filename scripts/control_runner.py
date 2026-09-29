@@ -83,6 +83,8 @@ _DAILY_INTERVAL_SECONDS = 24 * 60 * 60
 _WEEKLY_INTERVAL_SECONDS = 7 * _DAILY_INTERVAL_SECONDS
 _SNAPSHOT_TIME_BUDGET_SECONDS = 30
 _LIVE_SNAPSHOT_INTERVAL_SECONDS = 5 * 60
+# How long a child left behind by a runner error gets to exit on SIGTERM before SIGKILL.
+_CHILD_TERMINATE_GRACE_SECONDS = 60
 _DEFAULT_DISK_LOW_BYTES = 40 * 1024**3
 _DEFAULT_DISK_STOP_BYTES = 20 * 1024**3
 _DEFAULT_CONTROL_REJECTION_WARNING_SECONDS = _DAILY_INTERVAL_SECONDS
@@ -1745,7 +1747,10 @@ class ControlRunner:
             if pause_file.exists():
                 return
             if command_id is not None:
-                self.store.touch_command(command_id)
+                try:
+                    self.store.touch_command(command_id)
+                except sqlite3.Error:
+                    pass
             self._heartbeat("degraded", run_id=run_id, step=step, command_id=command_id)
             time.sleep(min(30, seconds - elapsed))
 
@@ -1761,6 +1766,7 @@ class ControlRunner:
         output_handle: BinaryIO | None = stdout.open("wb") if stdout is not None else None
         output: BinaryIO | int = output_handle or subprocess.DEVNULL
         next_snapshot_at = time.monotonic()
+        process: subprocess.Popen[bytes] | None = None
         try:
             process = subprocess.Popen(
                 command,
@@ -1776,7 +1782,11 @@ class ControlRunner:
                 except subprocess.TimeoutExpired:
                     self._claim_marker()
                     if command_id is not None:
-                        self.store.touch_command(command_id)
+                        # Bookkeeping only: a busy control.sqlite must not fail a healthy child.
+                        try:
+                            self.store.touch_command(command_id)
+                        except sqlite3.Error:
+                            pass
                     self._heartbeat("running", run_id=run_id, step=step, command_id=command_id)
                     now = time.monotonic()
                     if (
@@ -1791,8 +1801,25 @@ class ControlRunner:
                         }
                         and now >= next_snapshot_at
                     ):
-                        self._archive_snapshot_event(run_id, self._next_progress_sequence(run_id))
+                        # Telemetry only: a busy archive read must not terminate the child below.
+                        try:
+                            self._archive_snapshot_event(
+                                run_id, self._next_progress_sequence(run_id)
+                            )
+                        except OSError, ValueError, sqlite3.Error:
+                            pass
                         next_snapshot_at = now + _LIVE_SNAPSHOT_INTERVAL_SECONDS
+        except BaseException:
+            # The runner is leaving early: do not leave the child writing the archive with
+            # nobody reporting it. SIGTERM first so it can close cleanly.
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=_CHILD_TERMINATE_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            raise
         finally:
             if output_handle is not None:
                 output_handle.close()

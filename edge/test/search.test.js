@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SEARCH_FIELDS, findPost, prepareSearch, searchPage, searchPosts } from "../public/search-core.js";
+import { SEARCH_FIELDS, discoverPosts, findPost, prepareSearch, searchPage, searchPosts } from "../public/search-core.js";
 import { createIndexLoader } from "../public/search-worker.js";
 
 const payload = {
@@ -41,6 +41,44 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.throws(() => searchPosts(index, { target: "unknown" }), /target/);
   assert.throws(() => searchPosts(index, { match: "unknown" }), /match/);
   assert.throws(() => prepareSearch({ ...payload, fields: [] }), /schema/);
+});
+
+const statsPayload = {
+  schema_version: 1,
+  fields: [...SEARCH_FIELDS, "is_aa", "views", "comment_count"],
+  posts: [
+    ["write", 5, "오늘 글", "가", null, "2026.09.28", "a".repeat(64), false, 10, 1],
+    ["write", 4, "인기 글", "나", null, "2025.09.28 11:00", "b".repeat(64), false, 900, 3],
+    ["aa", 3, "화제 AA", "다", null, "2024-09-28", "c".repeat(64), true, 50, 40],
+    ["write", 2, "평범한 글", "라", null, "2024-03-01", "d".repeat(64), false, 900, 0],
+    ["write", 1, "첫 글", "마", null, "2023.9.28", "e".repeat(64), false, 5, 0],
+  ],
+};
+
+test("sorts by views or comments with the newer post winning ties", () => {
+  const index = prepareSearch(statsPayload);
+  const ids = (options) => searchPosts(index, options).posts.map((post) => post.external_post_id);
+  assert.equal(index.hasStats, true);
+  assert.deepEqual(ids({ sort: "views" }), [4, 2, 3, 5, 1]);
+  assert.deepEqual(ids({ sort: "comments" }), [3, 4, 5, 2, 1]);
+  assert.deepEqual(ids({ sort: "views", boardId: "write", limit: 2 }), [4, 2]);
+  assert.deepEqual(ids({ sort: "comments", query: "글" }), [4, 5, 2, 1]);
+  const first = searchPosts(index, { limit: 1 }).posts[0];
+  assert.deepEqual([first.views, first.comment_count], [10, 1]);
+  assert.throws(() => searchPosts(prepareSearch(payload), { sort: "views" }), /unavailable/);
+  assert.throws(() => prepareSearch({ ...statsPayload, posts: [[...statsPayload.posts[0].slice(0, 8), -1, 0]] }), /row/);
+});
+
+test("discovers posts from this day in earlier years and the most discussed recent posts", () => {
+  const index = prepareSearch(statsPayload);
+  const found = discoverPosts(index, { year: 2026, month: 9, day: 28 });
+  // Today's own post is not "N년 전"; the most discussed comes first.
+  assert.deepEqual(found.onThisDay.map((post) => post.external_post_id), [3, 4, 1]);
+  assert.equal(found.onThisDayTotal, 3);
+  assert.deepEqual(found.hot.map((post) => post.external_post_id), [3, 4, 5]);
+  const plain = discoverPosts(prepareSearch(payload), { year: 2027, month: 3, day: 2 });
+  assert.deepEqual(plain.onThisDay.map((post) => post.external_post_id), [2]);
+  assert.deepEqual(plain.hot, []);
 });
 
 test("paginates matches with a stable offset window over a constant total", () => {

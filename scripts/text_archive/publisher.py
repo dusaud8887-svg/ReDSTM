@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -34,6 +35,14 @@ _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
 _RCLONE_TIMEOUT_S = 5 * 60
 _AVAILABILITY_PAGE_SIZE = 500
+# Release manifests kept per lane besides the active one; older unreferenced indexes are pruned.
+_RELEASE_RETENTION = 5
+# Remote keys deleted per publish so a backlog never holds the run past its rclone timeout.
+_PRUNE_BATCH_LIMIT = 500
+# A pruned key's ledger row carries this until R2 confirms the delete, so it is never
+# mistaken for a verified upload and is retried by the next prune.
+_PRUNING = "pruning"
+_PRUNABLE_KEY = r"published/(?:releases|indexes)/{lane}/[a-f0-9]{{64}}\.json"
 
 
 def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -175,11 +184,21 @@ def _share_availability(path: Path, receipts_root: Path) -> None:
     path.chmod(0o640)
 
 
+def _write_content_addressed(path: Path, body: bytes) -> None:
+    """The name is the body hash and writes are atomic, so a same-size file is this body.
+
+    A damaged file still cannot reach R2: the upload path hashes it before sending.
+    """
+    if path.is_file() and not path.is_symlink() and path.stat().st_size == len(body):
+        return
+    _write(path, body)
+
+
 def _indexed_file(root: Path, prefix: str, value: Any) -> tuple[str, bytes]:
     body = _json_bytes(value)
     digest = hashlib.sha256(body).hexdigest()
     key = f"published/indexes/{prefix}/{digest}.json"
-    _write(root / key, body)
+    _write_content_addressed(root / key, body)
     return key, body
 
 
@@ -463,7 +482,7 @@ def build_publish_tree(
             )
             release_sha = hashlib.sha256(release_body).hexdigest()
             release_key = f"published/releases/{lane}/{release_sha}.json"
-            _write(output_root / release_key, release_body)
+            _write_content_addressed(output_root / release_key, release_body)
             _plan_write(index_plan, release_key, release_sha)
             pointer = _json_bytes(
                 {"schema": 1, "lane": lane, "release_key": release_key, "sha256": release_sha}
@@ -489,15 +508,16 @@ def build_publish_tree(
                 stream.flush()
                 os.fsync(stream.fileno())
         db.execute("COMMIT")
+        # Objects upload straight from the content-addressed store, which already has the
+        # published layout under objects/sha256/. Only objects not yet verified in R2 are read.
         for target_key, digest, source_key, size in _plan_rows(plans["objects"]):
-            target = output_root / target_key
-            if target.is_file() and not target.is_symlink() and target.stat().st_size == int(size):
-                if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
-                    continue
+            if source_key != target_key.removeprefix("published/"):
+                raise ValueError(f"local content object is not content-addressed: {digest}")
+            if _published_hash(db, target_key) == digest:
+                continue
             body = (object_root / source_key).read_bytes()
             if len(body) != int(size) or hashlib.sha256(body).hexdigest() != digest:
                 raise ValueError(f"local content object failed verification: {digest}")
-            _write_immutable(output_root / target_key, body)
         return {
             "lane": lane,
             "item_count": item_count,
@@ -526,12 +546,13 @@ def _run(argv: list[str], runner: Any) -> bytes:
 
 def _publish_object_batch(
     build_root: Path,
+    object_root: Path,
     remote: str,
     objects: list[tuple[str, str]],
     runner: Any,
 ) -> None:
     """Transfer a small immutable group, then SHA-256-check every R2 body."""
-    source = build_root / "published/objects/sha256"
+    source = object_root / "objects/sha256"
     names = [key.removeprefix("published/objects/sha256/") for key, _ in objects]
     selection = build_root / "pending-objects.txt"
     checksums = build_root / "pending-objects.sha256"
@@ -626,6 +647,108 @@ def _published_hash(db: sqlite3.Connection, key: str) -> str | None:
     return str(row[0]) if row else None
 
 
+def _retained_keys(db_path: Path, build_root: Path, lane: str, active_release: str) -> set[str]:
+    """Active release, the newest verified releases, and every index they reference."""
+    with closing(sqlite3.connect(db_path)) as db:
+        recent = [
+            str(row[0])
+            for row in db.execute(
+                "SELECT key FROM text_archive_publications WHERE key LIKE ? AND sha256<>? "
+                "ORDER BY verified_at DESC, rowid DESC LIMIT ?",
+                (f"published/releases/{lane}/%", _PRUNING, _RELEASE_RETENTION),
+            )
+        ]
+    keep: set[str] = set()
+    for release_key in dict.fromkeys([active_release, *recent]):
+        # A kept release whose local copy is gone cannot be walked; the caller then skips pruning.
+        release = json.loads((build_root / release_key).read_bytes())
+        keep.add(release_key)
+        for ref in [*release["catalog_pages"], *release.get("work_catalog_pages", [])]:
+            page_key = str(ref["key"])
+            if page_key in keep:
+                continue
+            keep.add(page_key)
+            page = json.loads((build_root / page_key).read_bytes())
+            keep.update(str(item["detail_key"]) for item in page["items"] if "detail_key" in item)
+    return keep
+
+
+def _prune_lane(
+    db_path: Path, build_root: Path, lane: str, active_release: str, remote: str, runner: Any
+) -> dict[str, Any]:
+    """Drop superseded releases and indexes locally and in R2. Content objects are never pruned."""
+    pattern = re.compile(_PRUNABLE_KEY.format(lane=lane))
+    keep = _retained_keys(db_path, build_root, lane, active_release)
+    local_removed = 0
+    for directory in ("releases", "indexes"):
+        for path in (build_root / "published" / directory / lane).glob("*.json"):
+            key = path.relative_to(build_root).as_posix()
+            if pattern.fullmatch(key) and key not in keep:
+                path.unlink(missing_ok=True)
+                local_removed += 1
+    with closing(sqlite3.connect(db_path)) as db, db:
+        candidates = [
+            str(row[0])
+            for row in db.execute(
+                "SELECT key FROM text_archive_publications "
+                "WHERE key LIKE 'published/releases/' || ? || '/%' "
+                "OR key LIKE 'published/indexes/' || ? || '/%' ORDER BY rowid",
+                (lane, lane),
+            )
+            if pattern.fullmatch(str(row[0])) and str(row[0]) not in keep
+        ]
+        batch = candidates[:_PRUNE_BATCH_LIMIT]
+        # Unclaim first: if the delete dies halfway, a later release re-uploads the key.
+        db.executemany(
+            "UPDATE text_archive_publications SET sha256=? WHERE key=?",
+            [(_PRUNING, key) for key in batch],
+        )
+    result: dict[str, Any] = {
+        "status": "pruned",
+        "kept_keys": len(keep),
+        "local_removed": local_removed,
+        "remote_removed": 0,
+        "remote_pending": len(candidates) - len(batch),
+    }
+    if not batch:
+        return result
+    selection = build_root / f"pending-prune-{lane}.txt"
+    _write(selection, ("\n".join(key.removeprefix("published/") for key in batch) + "\n").encode())
+    try:
+        with operation_window(lock_wait_seconds=30):
+            _run(
+                [
+                    "rclone",
+                    "--config",
+                    _RCLONE_CONFIG,
+                    "delete",
+                    f"{remote}/published",
+                    "--files-from-raw",
+                    str(selection),
+                    "--checkers",
+                    "2",
+                    "--contimeout",
+                    "10s",
+                    "--timeout",
+                    "60s",
+                    "--retries",
+                    "1",
+                    "--low-level-retries",
+                    "2",
+                ],
+                runner,
+            )
+    finally:
+        selection.unlink(missing_ok=True)
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.executemany(
+            "DELETE FROM text_archive_publications WHERE key=? AND sha256=?",
+            [(key, _PRUNING) for key in batch],
+        )
+    result["remote_removed"] = len(batch)
+    return result
+
+
 def _backfill_arcalive_metadata(db_path: Path, object_root: Path) -> int:
     """Correct legacy catalog rows from their hash-verified Markdown headers."""
     db = _connect(db_path)
@@ -642,14 +765,16 @@ def _backfill_arcalive_metadata(db_path: Path, object_root: Path) -> int:
                 if len(body) != row["bytes"] or digest != row["content_sha256"]:
                     raise OSError(f"Arcalive object failed verification: {row['identity']}")
                 title, category, author = arcalive_header(body)
-                if not title or category is None:
-                    raise ValueError(f"Arcalive Markdown header is invalid: {row['identity']}")
-                if category in {"", "-"}:
+                # category is optional in the import manifest and headers are not checked at
+                # import, so a header without one files the post as 미분류 instead of stopping
+                # every later Arcalive publish.
+                if category is None or category in {"", "-"}:
                     category = "미분류"
                 db.execute(
-                    """UPDATE text_archive_items SET title=?,source_category=?,
+                    """UPDATE text_archive_items SET
+                       title=CASE WHEN ?='' THEN title ELSE ? END,source_category=?,
                        author=CASE WHEN author='' THEN ? ELSE author END WHERE identity=?""",
-                    (title[:500], category[:500], author[:500], row["identity"]),
+                    (title[:500], title[:500], category[:500], author[:500], row["identity"]),
                 )
                 changed += 1
         return changed
@@ -860,6 +985,8 @@ def publish_lane(
         metadata_digest = hashlib.sha256(
             f"arcalive-works-v1:{metadata_digest}".encode()
         ).hexdigest()
+    # Pre-flight gate: yield before the unwindowed catalog build (the novel lane has no
+    # earlier window) when TypeMoon is publishing or memory/disk is below the floor.
     with operation_window(lock_wait_seconds=30):
         pass
     if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
@@ -898,7 +1025,7 @@ def publish_lane(
         def publish_batch() -> None:
             if pending_objects:
                 batch = pending_objects[:]
-                _publish_object_batch(build_root, remote, batch, runner)
+                _publish_object_batch(build_root, object_root, remote, batch, runner)
                 for key, digest in batch:
                     _record_publication(db_path, key, digest)
                 pending_objects.clear()
@@ -916,7 +1043,7 @@ def publish_lane(
                 key, digest = row[:2]
                 if _published_hash(db, key) == digest:
                     continue
-                local = build_root / key
+                local = object_root / row[2] if plan == "object_plan" else build_root / key
                 body = local.read_bytes()
                 if hashlib.sha256(body).hexdigest() != digest:
                     raise ValueError(f"local publish file failed verification: {key}")
@@ -983,6 +1110,21 @@ def publish_lane(
         "item_count": tree["item_count"],
         "release_sha256": tree["release_sha256"],
     }
+    # The new pointer is verified; retention is cleanup and never fails the publish.
+    try:
+        result["prune"] = _prune_lane(
+            db_path, build_root, lane, str(tree["release_key"]), remote, runner
+        )
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        sqlite3.Error,
+        RuntimeWindowError,
+        subprocess.SubprocessError,
+    ) as exc:
+        result["prune"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}
     if lane == "novel":
         result["availability"] = build_availability_snapshot(db_path, receipts_root)
     return result

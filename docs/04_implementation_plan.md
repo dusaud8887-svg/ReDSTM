@@ -258,10 +258,10 @@ robots fetch 제거).
 이번 detail scheduling만 cap하도록 고쳤다. 당시 schema v3은 board별 `inventory_next_page`를 저장해 bounded
 inventory가 다음 page에서 재개된다. schema v4는 기존 post 댓글 수와 board별 최신 frontier ID를 backfill하고,
 listing의 최신 댓글 기대치를 claim/retry/recovery lease까지 보존한다. title+본문이 있으면 댓글이
-기대치보다 적어도 본문을 저장하고 frontier는 `incomplete_comments` retry로 남긴다. 본문이 없으면
+기대치보다 적어도 본문을 저장하고 frontier는 `incomplete_comments` retry(5회 후 dead)로 남긴다. 본문이 없으면
 `parse_failed`다. 실패는 기대값을 보존한다. 완료 때만 cursor/`last_inventory_at`을 확정한다.
 당시 v4 migration/flow 회귀는 local만 통과했고, 이후 Oracle migration/doctor까지 완료했다. dead는
-`network_error`·`parse_drift`·`storage_error`를 오류별·건수 제한으로 명시 재개할 수 있다. inventory는 listing
+`parse_drift`·`storage_error`·`incomplete_comments`를 오류별·건수 제한으로 명시 재개할 수 있다. inventory는 listing
 coverage이며 기존 detail 전체를 다시 요청하는 작업이 아니다.
 
 #### A2.2 46-board cycle

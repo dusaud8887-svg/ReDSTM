@@ -98,7 +98,7 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_RECOVERY_HEALTHCHECK_URL` | `access.env` optional | recovery dead-man 사용 시 | 예 | `scripts.recover_queue` |
 | `REDSTM_BACKUP_HEALTHCHECK_URL` | `access.env` optional | 비활성 backup command를 수동 사용할 때 | 예 | `scripts.backup_archive` |
 | `REDSTM_RESTORE_HEALTHCHECK_URL` | `access.env` optional | 수동 restore rehearsal 사용 시 | 예 | `scripts.restore_archive` |
-| `REDSTM_ORIGIN_PROXY` | `access.env` optional | TypeMoon HTTPS만 경유할 HTTP CONNECT proxy (`http://127.0.0.1:18080`). 시작 시 listener가 없으면 이 process는 직접 연결 | 아니오 | session/listing/detail |
+| `REDSTM_ORIGIN_PROXY` | `access.env` optional | TypeMoon HTTPS만 경유할 HTTP CONNECT proxy (`http://127.0.0.1:18080`). 요청마다 listener를 0.5초 안에 확인해, 없으면 그 요청은 직접 연결하고 tunnel이 돌아오면 다시 경유한다 | 아니오 | session/listing/detail |
 
 워크스테이션에서 홈 경로를 켜려면 `scripts/windows/start-origin-egress.cmd`를 실행한다. 이미 떠 있으면 다시 만들지 않는다. 이 계정의 Windows 시작프로그램에 같은 스크립트 바로가기를 두면 로그인 때 자동으로 붙는다.
 
@@ -138,7 +138,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | frontier | lease | 3600초 (detail 3회 전송 + 처리·종료 여유) | `crawler/settings.py` |
 | frontier | attempts/backoff | network는 120초부터 최대 6시간 간격으로 무기한; parse/storage는 5회 | `crawler/settings.py` |
 | source protection | `Retry-After`/breaker | 최대 24시간 / parse·429 연속 3회, network 연속 5회 | `crawler/settings.py` |
-| incremental | persisted boundary | exact board anchor 뒤 2 page | schema v4 + `crawler/settings.py` |
+| incremental | persisted boundary | exact board anchor(삭제 시 그보다 오래된 첫 글) 뒤 2 page | schema v4 + `crawler/settings.py` |
 | incremental | bootstrap fallback | anchor가 없을 때만 공지 제외 unchanged 20건 | `crawler/settings.py` |
 | session | local lifetime/login throttle/revalidate | 4시간 / 30분 / 30분 | `crawler/settings.py` |
 | archive | SQLite journal/synchronous | WAL / NORMAL (reader가 crawl writer를 막지 않음; legacy DELETE 아카이브는 첫 write connect에서 자가 전환) | `crawler/archive.py` |

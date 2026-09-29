@@ -417,6 +417,39 @@ def test_incremental_anchor_requires_configured_overlap_page(tmp_path: Path) -> 
     assert spider.listing_completed is True
 
 
+def test_deleted_incremental_anchor_uses_the_first_older_row(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_pages=3,
+        max_posts=1,
+        anchor_post_id=100,
+        overlap_pages=0,
+    )
+    page_one = HtmlResponse(
+        "https://www.typemoon.net/write_free21",
+        request=Request("https://www.typemoon.net/write_free21"),
+        body=(
+            b"<table><tbody>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/101'>"
+            b"<span class='subject'>new</span></a></td></tr>"
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/99'>"
+            b"<span class='subject'>older than the deleted anchor</span></a></td></tr>"
+            b"</tbody></table>"
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = list(spider.parse_listing(page_one))
+
+    assert spider.listing_completed is True
+    assert not any(isinstance(item, Request) and "page=2" in item.url for item in outputs)
+
+
 def test_exact_anchor_disables_unchanged_streak_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2,7 +2,7 @@
 
 상태: 구현 계약(2026-09-27). 이전 크롬 확장 방식(`extension/redstm-arca-media`, 대기열 API)은 폐기했다.
 
-배포(2026-09-27): Worker는 `8d4343c`를 포함한 main `1c216c6`(version `f1d93054`), Oracle text release `20260927T115629Z`(`redstm-text-media.{service,path,timer}` 활성), 뉴토미 `ebe8fa1` 빌드(`dist/Newtomi Downloader`). 실제 글 1개(`arcalive:monmusu:102379431`)로 수집 → SFTP → media_importer → R2(`content-type` image/webp·image/png) → 영수증 → drop 정리까지 확인했다. media importer도 공용 `operation_window`를 따르므로 루트 여유가 40GiB 아래면 `disk_below_floor`로 미뤘다가 여유가 돌아오면 이어서 처리한다(같은 날 스냅샷 압축 중 실제로 발생).
+배포(2026-09-27): Worker는 `8d4343c`를 포함한 main `1c216c6`(version `f1d93054`), Oracle text release `20260927T115629Z`(`redstm-text-media.{service,path,timer}` 활성), 뉴토미 `ebe8fa1` 빌드(`dist/Newtomi Downloader`). 실제 글 1개(`arcalive:monmusu:102379431`)로 수집 → SFTP → media_importer → R2(`content-type` image/webp·image/png) → 영수증 → drop 정리까지 확인했다. media importer도 공용 `operation_window`를 따르므로 루트 여유가 40GiB 아래면 `disk_below_floor`로 미뤘다가 여유가 돌아오면 이어서 처리한다(같은 날 스냅샷 압축 중 실제로 발생). 텍스트 publisher의 오래된 release·index 정리(`docs/18` 게시 보존)는 `published/releases|indexes/` 아래만 지우며 `media/arca/` 키는 건드리지 않는다.
 
 ## 1. 문제와 결정
 

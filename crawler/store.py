@@ -36,6 +36,28 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
+def _retry_capped(
+    connection: sqlite3.Connection, lease: FrontierLease, error_code: str, at: datetime
+) -> None:
+    """Retry with backoff, or end in dead once a capped error code used up its attempts
+    (docs/00 §8.5; the same rule record_outcome applies)."""
+    if (
+        error_code in REDSTM_CAPPED_RETRY_ERROR_CODES
+        and lease.attempts >= REDSTM_FRONTIER_MAX_ATTEMPTS
+    ):
+        transition_lease(
+            connection, lease, state="dead", error_code=error_code, next_attempt_at=None
+        )
+        return
+    transition_lease(
+        connection,
+        lease,
+        state="retry",
+        error_code=error_code,
+        next_attempt_at=retry_backoff(max(lease.attempts, 1), at),
+    )
+
+
 class ArchiveStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -132,8 +154,9 @@ class ArchiveStore:
         captured_at_text = _timestamp(captured_at)
         created_at_source = normalize_source_timestamp(post.created_at_raw, base=captured_at)
         with archive_transaction(self.path) as connection:
-            self._require_running_run(connection, run_id)
+            # Check the run under the write lock, so finish_run cannot land in between.
             connection.execute("BEGIN IMMEDIATE")
+            self._require_running_run(connection, run_id)
             existing_post = connection.execute(
                 """
                 SELECT id, canonical_url, title, author, category, created_at_source,
@@ -142,11 +165,20 @@ class ArchiveStore:
                 """,
                 (post.board_id, post.external_post_id),
             ).fetchone()
+            # A short comment list is still stored (with a capped incomplete_comments retry
+            # below) unless it would replace more comments than the stored version has; only
+            # then does the post keep its body and just retry. A listing-only row (no version
+            # yet) always stores its body first.
             if (
                 existing_post is not None
+                and existing_post["latest_version_id"] is not None
                 and lease is not None
                 and lease.expected_comment_count is not None
                 and len(post.comments) < lease.expected_comment_count
+                and len(post.comments)
+                < connection.execute(
+                    "SELECT COUNT(*) FROM comments WHERE post_id = ?", (existing_post["id"],)
+                ).fetchone()[0]
             ):
                 connection.execute(
                     """INSERT INTO captures (
@@ -164,17 +196,12 @@ class ArchiveStore:
                         post.warc_record_id,
                     ),
                 )
-                transition_lease(
-                    connection,
-                    lease,
-                    state="retry",
-                    error_code="incomplete_comments",
-                    next_attempt_at=retry_backoff(max(lease.attempts, 1), captured_at),
-                )
+                capture_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+                _retry_capped(connection, lease, "incomplete_comments", captured_at)
                 return StoreResult(
                     int(existing_post["id"]),
                     int(existing_post["latest_version_id"]),
-                    int(connection.execute("SELECT last_insert_rowid()").fetchone()[0]),
+                    capture_id,
                     False,
                 )
             effective_author = (
@@ -347,13 +374,7 @@ class ArchiveStore:
             if lease is not None:
                 expected = lease.expected_comment_count
                 if expected is not None and len(post.comments) < expected:
-                    transition_lease(
-                        connection,
-                        lease,
-                        state="retry",
-                        error_code="incomplete_comments",
-                        next_attempt_at=retry_backoff(max(lease.attempts, 1), captured_at),
-                    )
+                    _retry_capped(connection, lease, "incomplete_comments", captured_at)
                 else:
                     complete_lease(connection, lease, stored_comment_count=len(post.comments))
             return StoreResult(post_id, version_id, capture_cursor.lastrowid, changed)
@@ -481,10 +502,13 @@ class ArchiveStore:
         fetched_at_text = _timestamp(fetched_at)
         with archive_transaction(self.path) as connection:
             self._require_running_run(connection, run_id)
+            # The WARC conditions let SQLite use the partial captures_raw_sha256_idx instead of
+            # scanning every capture for each listing page.
             previous = connection.execute(
-                "SELECT 1 FROM captures WHERE entity_type = 'listing' AND url = ? "
-                "AND raw_sha256 = ? AND outcome IN ('stored', 'unchanged') LIMIT 1",
-                (url, raw_sha256),
+                "SELECT 1 FROM captures WHERE raw_sha256 = ? AND url = ? "
+                "AND warc_file IS NOT NULL AND warc_record_id IS NOT NULL "
+                "AND entity_type = 'listing' AND outcome IN ('stored', 'unchanged') LIMIT 1",
+                (raw_sha256, url),
             ).fetchone()
             cursor = connection.execute(
                 """

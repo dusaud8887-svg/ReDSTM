@@ -1,6 +1,8 @@
 import {
   CLIENT_FUTURE_CLOCK_SKEW_MS,
   NEXT_SCHEDULE_MAX_AHEAD_MS,
+  STALE_RUN_CODE,
+  commandLeaseStatements,
   envelope,
   failure,
   runView,
@@ -17,7 +19,6 @@ const MAX_CURSOR_VALUE_LENGTH = 128;
 const RECENT_ISSUE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SUCCESS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const FAILURE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
-const STALE_RUN_CODE = "run_stale";
 const ARCHIVE_OBJECT_KEY_MAX_LENGTH = 1024;
 const RELEASE_COUNT_FIELDS = [
   "post_count",
@@ -73,25 +74,46 @@ async function failuresPage(env, requestId, url) {
   if (cursor && !/^\d+$/.test(cursor[2])) {
     throw Object.assign(new Error("Page cursor is invalid"), { status: 400 });
   }
-  const clauses = [];
-  const parameters = [];
-  if (boardId) {
-    clauses.push("board_id = ?");
-    parameters.push(boardId);
+  // Order is "newest attempt first, never-attempted (NULL) last", then board and post. SQLite
+  // already sorts NULL last under DESC, so the dated part walks frontier_failures_recent_idx
+  // with a range seek from the cursor and the NULL part is a second seek on the same index,
+  // queried only when the dated part cannot fill the page. A cursor whose first value is ""
+  // points into the NULL part (timestamps are never empty strings).
+  const boardClause = boardId ? "board_id = ? AND " : "";
+  const boardParameters = boardId ? [boardId] : [];
+  const columns = "board_id, external_post_id, attempts, error_code, last_attempt_at";
+  let rows = [];
+  if (!cursor || cursor[0] !== "") {
+    const after = cursor
+      ? `AND last_attempt_at <= ? AND (last_attempt_at < ? OR board_id > ? OR ` +
+        "(board_id = ? AND external_post_id > ?))"
+      : "";
+    const result = await env.CONTROL_DB.prepare(
+      `SELECT ${columns} FROM frontier_failures
+       WHERE ${boardClause}last_attempt_at IS NOT NULL ${after}
+       ORDER BY last_attempt_at DESC, board_id, external_post_id LIMIT ?`,
+    ).bind(
+      ...boardParameters,
+      ...(cursor ? [cursor[0], cursor[0], cursor[1], cursor[1], Number(cursor[2])] : []),
+      limit + 1,
+    ).all();
+    rows = result.results ?? [];
   }
-  if (cursor) {
-    clauses.push("(COALESCE(last_attempt_at, '') < ? OR " +
-      "(COALESCE(last_attempt_at, '') = ? AND " +
-      "(board_id > ? OR (board_id = ? AND external_post_id > ?))))");
-    parameters.push(cursor[0], cursor[0], cursor[1], cursor[1], Number(cursor[2]));
+  if (rows.length <= limit) {
+    const nullCursor = cursor && cursor[0] === "";
+    const result = await env.CONTROL_DB.prepare(
+      `SELECT ${columns} FROM frontier_failures
+       WHERE ${boardClause}last_attempt_at IS NULL${nullCursor
+         ? " AND (board_id > ? OR (board_id = ? AND external_post_id > ?))"
+         : ""}
+       ORDER BY board_id, external_post_id LIMIT ?`,
+    ).bind(
+      ...boardParameters,
+      ...(nullCursor ? [cursor[1], cursor[1], Number(cursor[2])] : []),
+      limit + 1 - rows.length,
+    ).all();
+    rows = rows.concat(result.results ?? []);
   }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const result = await env.CONTROL_DB.prepare(
-    `SELECT board_id, external_post_id, attempts, error_code, last_attempt_at
-     FROM frontier_failures ${where}
-     ORDER BY COALESCE(last_attempt_at, '') DESC, board_id, external_post_id LIMIT ?`,
-  ).bind(...parameters, limit + 1).all();
-  const rows = result.results ?? [];
   const page = rows.slice(0, limit);
   const last = page.at(-1);
   return envelope(requestId, {
@@ -427,6 +449,11 @@ async function releaseSmoke(env, requestId, url) {
          (SELECT last_inventory_at FROM board_status LIMIT 1) AS last_inventory_at,
          (SELECT inventory_pass_started_at FROM board_status LIMIT 1)
            AS inventory_pass_started_at,
+         (SELECT collection_enabled FROM board_status LIMIT 1) AS collection_enabled,
+         (SELECT operation FROM commands LIMIT 1) AS operation,
+         (SELECT collection_mode FROM commands LIMIT 1) AS collection_mode,
+         (SELECT active_post_id FROM runner_status LIMIT 1) AS active_post_id,
+         (SELECT COUNT(*) FROM frontier_failures) AS frontier_failures,
          (SELECT COUNT(*) FROM sqlite_master
           WHERE type = 'index' AND name = 'commands_active_conflict_group_idx')
            AS command_integrity`,
@@ -506,11 +533,34 @@ export async function runControlMaintenance(env, now = new Date()) {
          OR (state IN ('partial', 'failed') AND finished_at < ?)
        )`,
     ).bind(successBefore, failureBefore),
+    ...commandLeaseStatements(
+      env,
+      now.toISOString(),
+      "",
+      new Date(now.getTime() - RUNNER_RUN_LIVENESS_MS).toISOString(),
+    ),
   ]);
 }
 
 async function overview(env, requestId) {
   const now = new Date();
+  // Settle overdue commands and lapsed claims first, so "active commands" is not stuck. A cheap
+  // probe keeps the usual overview a pure read.
+  const nowText = now.toISOString();
+  const overdue = await env.CONTROL_DB.prepare(
+    `SELECT 1 AS overdue FROM commands
+     WHERE (state = 'queued' AND expires_at <= ?)
+        OR (state = 'claimed' AND claim_expires_at <= ? AND run_id IS NULL)
+     LIMIT 1`,
+  ).bind(nowText, nowText).first();
+  if (overdue) {
+    await env.CONTROL_DB.batch(commandLeaseStatements(
+      env,
+      nowText,
+      "",
+      new Date(now.getTime() - RUNNER_RUN_LIVENESS_MS).toISOString(),
+    ));
+  }
   const runner = await env.CONTROL_DB.prepare(
     "SELECT * FROM runner_status WHERE id = 1",
   ).first();

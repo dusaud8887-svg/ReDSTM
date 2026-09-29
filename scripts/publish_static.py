@@ -29,6 +29,7 @@ _RCLONE_EXCLUDES = (
     "/.publish-ledger.json",
     "/.publish-ledger.pending.json",
     "/.publish-smoke.pending.json",
+    "/.publish-smoke-rollbacks.json",
     "/.publish.lock",
     "/.export-state.json",
     "*.partial",
@@ -86,6 +87,43 @@ def _pending_ledger_path(root: Path) -> Path:
 
 def _pending_smoke_path(root: Path) -> Path:
     return root / ".publish-smoke.pending.json"
+
+
+# A release rolled back after a failed post-publish smoke is retried by later incremental
+# publishes (smoke can fail for a moment while the edge propagates), but after this many rollbacks
+# of the same release the automatic path stops flipping the pointer to it. A new export (another
+# release key) or an explicit operator publish is not held back.
+_MAX_SMOKE_ROLLBACKS = 3
+
+
+def _smoke_rollbacks_path(root: Path) -> Path:
+    return root / ".publish-smoke-rollbacks.json"
+
+
+def _smoke_rollbacks(root: Path, release_key: str) -> int:
+    try:
+        value = json.loads(_smoke_rollbacks_path(root).read_bytes())
+    except OSError, ValueError:
+        return 0
+    if not isinstance(value, dict) or value.get("release_key") != release_key:
+        return 0
+    count = value.get("rollbacks")
+    return count if type(count) is int and count > 0 else 0
+
+
+def _record_smoke_rollback(root: Path, release_key: str) -> int:
+    count = _smoke_rollbacks(root, release_key) + 1
+    path = _smoke_rollbacks_path(root)
+    partial = path.with_suffix(f"{path.suffix}.partial")
+    try:
+        partial.write_text(
+            json.dumps({"release_key": release_key, "rollbacks": count}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(partial, path)
+    finally:
+        partial.unlink(missing_ok=True)
+    return count
 
 
 def _object_key(ref: object) -> str:
@@ -938,6 +976,13 @@ def _publish_static_locked(
             ),
         }
 
+    rollbacks = _smoke_rollbacks(root, release_key)
+    if verified_incremental and rollbacks >= _MAX_SMOKE_ROLLBACKS:
+        raise IncrementalExportError(
+            "incremental_publish_release_smoke_rejected",
+            f"release failed its post-publish smoke and was rolled back {rollbacks} times; "
+            "the pointer stays on the active release until a new export or an explicit publish",
+        )
     previous_release_key = (
         _verified_previous_release(root, target, remote_pointer, runner)
         if isinstance(remote_pointer, bytes)
@@ -1247,6 +1292,13 @@ def _activate_remote_release_locked(
     ).stdout
     if remote_pointer != release_body:
         raise RuntimeError("remote release pointer verification failed")
+    smoke_rollbacks = None
+    if pending_smoke is not None:
+        # Only a smoke-failure rollback reaches here with a pending smoke marker (checked above).
+        try:
+            smoke_rollbacks = _record_smoke_rollback(root, str(pending_smoke["release_key"]))
+        except OSError:
+            smoke_rollbacks = None
     ledger_written = False
     if budget is not None:
         try:
@@ -1284,6 +1336,7 @@ def _activate_remote_release_locked(
         "ledger_written": ledger_written,
         "ledger_recovered": recovered_from_attempt is not None,
         "mode": "activate",
+        **({"smoke_rollbacks": smoke_rollbacks} if smoke_rollbacks is not None else {}),
     }
 
 

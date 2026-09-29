@@ -89,7 +89,7 @@ def _json_file(path: Path, limit: int) -> tuple[dict[str, Any], bytes]:
     raw = path.read_bytes()
     try:
         value = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise MediaBatchRejectedError(f"{path.name}_invalid") from exc
     if not isinstance(value, dict):
         raise MediaBatchRejectedError(f"{path.name}_invalid")

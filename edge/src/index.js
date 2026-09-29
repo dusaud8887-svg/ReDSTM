@@ -65,8 +65,16 @@ async function authorized(request, env, role) {
       const audience = role === "runner" ? env.RUNNER_POLICY_AUD : env.POLICY_AUD;
       if (!audience) return null;
       const { payload } = await jwtVerify(token, jwks, { issuer, audience });
-      const subject = payload.email || payload.common_name || payload.sub;
-      return typeof subject === "string" ? { role, subject } : false;
+      // Defense in depth behind the per-route Access applications (docs/08 §4.2, §5.3): an
+      // Access service-token JWT carries common_name (the Client ID) and no email, and a user
+      // identity JWT carries email. Runner routes accept only the former, user routes only the
+      // latter, even if an Access policy is ever widened by mistake.
+      const email = typeof payload.email === "string" && payload.email ? payload.email : null;
+      const serviceToken = typeof payload.common_name === "string" && payload.common_name
+        ? payload.common_name
+        : null;
+      if (role === "runner") return serviceToken && !email ? { role, subject: serviceToken } : false;
+      return email ? { role, subject: email } : false;
     } catch {
       return false;
     }
@@ -124,6 +132,18 @@ async function staticAssetResponse(request, env) {
   return secured;
 }
 
+// R2 reports the range as requested: {offset, length}, {offset} for "bytes=100-", or {suffix}
+// for "bytes=-100". Turn it into the absolute byte span the body actually carries.
+function servedRange(range, size) {
+  if (Number.isInteger(range.suffix)) {
+    const length = Math.min(range.suffix, size);
+    return { offset: size - length, length };
+  }
+  const offset = Math.min(Number.isInteger(range.offset) ? range.offset : 0, size);
+  const length = Math.min(Number.isInteger(range.length) ? range.length : size - offset, size - offset);
+  return { offset, length };
+}
+
 async function archiveResponse(request, env, key, ctx) {
   if (request.method === "HEAD") {
     const object = await env.ARCHIVE.head(key);
@@ -144,14 +164,12 @@ async function archiveResponse(request, env, key, ctx) {
 
   const headers = objectHeaders(object, key);
   let status = 200;
-  if (options.range && object.range) {
+  const range = options.range && object.range ? servedRange(object.range, object.size) : null;
+  if (range) {
     status = 206;
-    headers.set(
-      "Content-Range",
-      `bytes ${object.range.offset}-${object.range.offset + object.range.length - 1}/${object.size}`,
-    );
+    headers.set("Content-Range", `bytes ${range.offset}-${range.offset + range.length - 1}/${object.size}`);
   }
-  const length = options.range && object.range ? object.range.length : object.size;
+  const length = range ? range.length : object.size;
   const fixed = new FixedLengthStream(length);
   ctx.waitUntil(object.body.pipeTo(fixed.writable));
   headers.set("Content-Length", String(length));

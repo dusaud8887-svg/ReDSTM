@@ -126,7 +126,16 @@ DB 연결 시 숫자 source ID로 보완한다.
    검증한 뒤 페이지별 checkpoint를 저장한다. 이전 snapshot에서 빠진 항목은 자동 삭제하지 않는다.
    snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 500건씩 파일로
    내보낸다. 게시 트리는 같은 SQLite 읽기 시점에서 500건 페이지와 JSONL 게시 계획을 파일로
-   내보내며, 원문 객체 복사 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
+   내보내며, 원문 객체 확인 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
+6. 게시 보존: 새 pointer readback이 끝난 뒤에만 lane별로 가장 최근에 검증된 release 5개
+   (`publisher._RELEASE_RETENTION`)와 활성 pointer의 release, 그리고 이들이 참조하는 catalog·work
+   catalog·작품 상세 index를 남긴다. 나머지 `published/releases/{lane}/`·`published/indexes/{lane}/`
+   파일은 로컬 build와 R2에서 지운다. 순서는 게시 원장(`text_archive_publications`)의 최초 검증 시각이다.
+   원장 행을 먼저 `pruning`으로 바꿔 재참조 시 다시 올라가게 한 다음 `rclone delete --files-from-raw`로
+   실행당 최대 500키를 지우고, 성공한 키의 원장 행만 삭제한다. 삭제 실패·양보·보존 release의 로컬 사본
+   누락은 게시를 실패시키지 않고 결과 JSON `prune.status=failed`로 보고하며 `pruning` 행은 다음 게시가
+   재시도한다. `published/objects/`(참조가 끊긴 본문 객체 포함), `media/`, receipt, 원본은 지우지 않는다.
+   no-op 게시는 정리하지 않는다. 저장된 Reader 기록이 지워진 상세 index를 가리키면 현재 catalog로 되돌아간다.
 
 아카라이브 2개 배치 40건은 실제 신규 bucket에 게시·readback·revision 2 receipt까지 확인했다. PC 전송은 SFTP의 SSH 압축(`-C`)을 사용하므로 원본 바이트/SHA 검증 계약은 바뀌지 않는다. R2 Class A/B, 1,000화 압축 크기,
 작품 단위 묶음 여부, 텍스트 bucket 비용/중단선은 아직 측정되지 않아 대량 게시를 지원한다고 주장하지 않는다.
@@ -330,6 +339,14 @@ manifest 해시 검증까지 실측했다. 수집/게시 원본의 쓰기 권한
 새 배치 경로의 실제 R2 SHA-256 readback 뒤 게시 원장 건수 증가와 소설 availability
 `current.json`의 그룹 읽기 갱신을 확인했다. 재실행 때 이미 검증된 원문 build 파일은
 다시 쓰지 않고 동일 바이트 여부만 확인한다. 전체 아카라이브 backfill은 진행 중이다.
+
+2026-09-29 게시 I/O·보존 개선: 게시마다 전체 장서를 다시 쓰고 해시하던 경로를 없앴다. 이름이 본문
+SHA-256인 index·release 파일은 같은 크기의 파일이 이미 있으면 다시 쓰지 않는다. build 아래에 원문 객체
+사본을 만들지 않고 content-addressed 저장소(`/srv/redstm-text/objects/objects/sha256/`)에서 바로 R2로
+올리며, 게시 원장에 같은 해시로 검증된 객체는 다시 읽지 않는다. 미게시 객체만 업로드 전에 크기·SHA를
+확인하고, R2 SHA readback 계약은 그대로다. 기존 `/srv/redstm-text/build/published/objects/` 사본은 더
+쓰이지 않으며 자동으로 지우지 않는다. 오래된 release·index는 위 6번 보존 규칙으로 정리해 40GiB
+`disk_below_floor` 양보선까지 무한히 늘지 않게 한다.
 
 2026-09-25 텍스트 뷰어 배포: `74a5f367260a9d3b27b83fc890c5a2316c374a26`를
 `scripts.release deploy-cloudflare`로 배포했다. Worker version은

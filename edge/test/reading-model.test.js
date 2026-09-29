@@ -12,6 +12,11 @@ import {
   formatSourceDate,
   postReadingLabel,
   postReadingState,
+  readingMinutes,
+  readingTimeLabel,
+  remainingTimeLabel,
+  seededRandom,
+  weightedPicks,
 } from "../public/reading-model.js";
 
 const entry = (position, id, available = true) => ({
@@ -25,6 +30,46 @@ const entry = (position, id, available = true) => ({
 function historyMap(records) {
   return new Map(Object.entries(records).map(([identity, value]) => [identity, value]));
 }
+
+test("estimates reading time from characters, ignoring whitespace", () => {
+  assert.equal(readingMinutes(""), 0);
+  assert.equal(readingMinutes("   \n\t "), 0);
+  assert.equal(readingMinutes("가"), 1);
+  assert.equal(readingMinutes(`${"가 ".repeat(1500)}\n`), 3);
+  assert.equal(readingTimeLabel(0), "");
+  assert.equal(readingTimeLabel(12), "약 12분");
+  assert.equal(readingTimeLabel(60), "약 1시간");
+  assert.equal(readingTimeLabel(95), "약 1시간 35분");
+});
+
+test("seeded picks are stable for a day, change with the seed, and favour weight", () => {
+  const first = seededRandom("2026-09-28");
+  const again = seededRandom("2026-09-28");
+  const values = Array.from({ length: 5 }, () => first());
+  assert.deepEqual(Array.from({ length: 5 }, () => again()), values);
+  assert.ok(values.every((value) => value >= 0 && value < 1));
+  assert.notDeepEqual(Array.from({ length: 5 }, seededRandom("2026-09-29")), values);
+
+  const items = Array.from({ length: 20 }, (_, index) => ({ id: index, weight: index === 7 ? 1000 : 1 }));
+  const picks = weightedPicks(items, { seed: "2026-09-28", count: 3, weight: (item) => item.weight });
+  assert.equal(picks.length, 3);
+  assert.equal(new Set(picks.map((item) => item.id)).size, 3);
+  assert.deepEqual(weightedPicks(items, { seed: "2026-09-28", count: 3, weight: (item) => item.weight }), picks);
+  // A heavily weighted item is picked on almost every seed.
+  const hits = Array.from({ length: 50 }, (_, day) =>
+    weightedPicks(items, { seed: `day-${day}`, count: 3, weight: (item) => item.weight }).some((item) => item.id === 7));
+  assert.ok(hits.filter(Boolean).length >= 45);
+  assert.deepEqual(weightedPicks([], { seed: "x", count: 3 }), []);
+});
+
+test("describes the time left in a body from its progress", () => {
+  assert.equal(remainingTimeLabel(0, 0.5), "");
+  assert.equal(remainingTimeLabel(10, 0), "남은 시간 약 10분");
+  assert.equal(remainingTimeLabel(10, 0.42), "남은 시간 약 6분");
+  assert.equal(remainingTimeLabel(10, 0.93), "1분 안에 끝");
+  assert.equal(remainingTimeLabel(10, 0.95), "끝까지 읽음");
+  assert.equal(remainingTimeLabel(10, 7), "끝까지 읽음");
+});
 
 test("classifies progress as unread, reading, or finished", () => {
   assert.equal(postReadingState(undefined), "unread");

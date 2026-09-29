@@ -1,8 +1,14 @@
 import {
   CLIENT_FUTURE_CLOCK_SKEW_MS,
+  COMMAND_MAX_CLAIM_ATTEMPTS,
   NEXT_SCHEDULE_MAX_AHEAD_MS,
+  STALE_COMMAND_SQL,
+  STALE_RUN_CODE,
+  STALE_RUN_SQL,
+  commandLeaseStatements,
   envelope,
   failure,
+  reapedAsStale,
   runView,
   validCounters,
 } from "./control-common.js";
@@ -12,7 +18,6 @@ const CONTROL_BODY_MAX_BYTES = 16 * 1024;
 const TELEMETRY_BODY_MAX_BYTES = 64 * 1024;
 const COMMAND_TTL_MS = 15 * 60 * 1000;
 const COMMAND_CLAIM_LEASE_MS = 2 * 60 * 1000;
-const COMMAND_MAX_CLAIM_ATTEMPTS = 2;
 const RUN_EVENT_BATCH_MAX_ITEMS = 50;
 const protocol = "1";
 const actions = new Set([
@@ -56,6 +61,8 @@ const safeWarnings = new Set([
   "maintenance",
 ]);
 const identifierPattern = /^[a-zA-Z0-9_.:-]{1,128}$/;
+// Strings only: a regex test would coerce ["abc"] or 123 into a matching string.
+const isIdentifier = (value) => typeof value === "string" && identifierPattern.test(value);
 const idempotencyPattern = /^[a-zA-Z0-9_.:-]{8,128}$/;
 
 function commandConflictGroup(action) {
@@ -278,7 +285,7 @@ async function claimCommand(request, env, requestId) {
     return failure(requestId, 400, "invalid_idempotency_key", "Idempotency key is invalid");
   }
   const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
-  if (!identifierPattern.test(body.runner_id || "") ||
+  if (!isIdentifier(body.runner_id || "") ||
       (body.command_kind !== undefined && body.command_kind !== "marker")) {
     return failure(requestId, 400, "invalid_runner", "Runner claim is invalid");
   }
@@ -291,23 +298,7 @@ async function claimCommand(request, env, requestId) {
   if (replay) return envelope(requestId, { command: commandView(replay) });
   const now = new Date();
   const nowText = now.toISOString();
-  await env.CONTROL_DB.batch([
-    env.CONTROL_DB.prepare(
-      `UPDATE commands SET state = 'expired', finished_at = ?, safe_message = 'expired'
-       WHERE state = 'queued' AND expires_at <= ?`,
-    ).bind(nowText, nowText),
-    env.CONTROL_DB.prepare(
-      `UPDATE commands SET state = 'queued', claimed_at = NULL, claim_expires_at = NULL,
-         runner_id = NULL, claim_idempotency_key = NULL
-       WHERE state = 'claimed' AND claim_expires_at <= ?
-         AND claim_attempts < ? AND run_id IS NULL ${markerFilter}`,
-    ).bind(nowText, COMMAND_MAX_CLAIM_ATTEMPTS),
-    env.CONTROL_DB.prepare(
-      `UPDATE commands SET state = 'failed', finished_at = ?, safe_message = 'claim_lost'
-       WHERE state = 'claimed' AND claim_expires_at <= ?
-         AND claim_attempts >= ? AND run_id IS NULL ${markerFilter}`,
-    ).bind(nowText, nowText, COMMAND_MAX_CLAIM_ATTEMPTS),
-  ]);
+  await env.CONTROL_DB.batch(commandLeaseStatements(env, nowText, markerFilter));
   let claimed;
   try {
     claimed = await env.CONTROL_DB.prepare(
@@ -339,10 +330,10 @@ async function heartbeat(request, env, requestId) {
   const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   const commandLease = body.active_command_id != null || body.runner_id != null;
   const receivedAt = new Date();
-  if (!identifierPattern.test(body.runner_version || "") || !runnerStates.has(body.state) ||
+  if (!isIdentifier(body.runner_version || "") || !runnerStates.has(body.state) ||
       (body.safe_warning_code != null && !safeWarnings.has(body.safe_warning_code)) ||
       [body.active_run_id, body.active_step, body.active_board_id].some(
-        (value) => value != null && !identifierPattern.test(value),
+        (value) => value != null && !isIdentifier(value),
       ) ||
       (body.active_post_id != null &&
         (!Number.isSafeInteger(body.active_post_id) || body.active_post_id < 1)) ||
@@ -352,7 +343,7 @@ async function heartbeat(request, env, requestId) {
           receivedAt.getTime() + NEXT_SCHEDULE_MAX_AHEAD_MS) ||
       (commandLease && (
         !/^[0-9a-f-]{36}$/i.test(body.active_command_id || "") ||
-        !identifierPattern.test(body.runner_id || "")
+        !isIdentifier(body.runner_id || "")
       )) ||
       (body.disk_free_bytes != null &&
         (!Number.isSafeInteger(body.disk_free_bytes) || body.disk_free_bytes < 0))) {
@@ -408,7 +399,7 @@ async function heartbeat(request, env, requestId) {
 
 async function startRun(request, env, requestId) {
   const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
-  if (!identifierPattern.test(body.run_id || "") || !runKinds.has(body.kind) ||
+  if (!isIdentifier(body.run_id || "") || !runKinds.has(body.kind) ||
       !runSources.has(body.source) || !validTimestamp(body.requested_at) ||
       !validTimestamp(body.started_at) ||
       (body.command_id != null && !/^[0-9a-f-]{36}$/i.test(body.command_id)) ||
@@ -512,7 +503,7 @@ function validBoardCounters(value) {
 async function recordBoardStatus(request, env, requestId) {
   const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
   const receivedAt = new Date();
-  if (!identifierPattern.test(body.board_id || "") || !boardOutcomes.has(body.last_outcome) ||
+  if (!isIdentifier(body.board_id || "") || !boardOutcomes.has(body.last_outcome) ||
       (body.board_name != null &&
         (typeof body.board_name !== "string" || body.board_name.length > 128)) ||
       (body.group_name != null &&
@@ -596,59 +587,101 @@ async function recordBoardStatus(request, env, requestId) {
 async function recordFrontierFailures(request, env, requestId) {
   const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   if (!/^[a-z0-9_]{1,64}$/.test(body.board_id || "") ||
-      !identifierPattern.test(body.generation || "") ||
+      !isIdentifier(body.generation || "") ||
       typeof body.complete !== "boolean" || !Array.isArray(body.items) ||
       body.items.length > 100 || body.items.some((item) =>
         !item || typeof item !== "object" || Array.isArray(item) ||
         !Number.isSafeInteger(item.external_post_id) || item.external_post_id < 1 ||
         !Number.isSafeInteger(item.attempts) || item.attempts < 0 ||
-        !identifierPattern.test(item.error_code || "") ||
+        !isIdentifier(item.error_code || "") ||
         !validTimestamp(item.last_attempt_at))) {
     return failure(requestId, 400, "invalid_frontier_failures", "Failure batch is invalid");
   }
-  const statements = body.items.map((item) => env.CONTROL_DB.prepare(
-    `INSERT INTO frontier_failures (
-       board_id, external_post_id, attempts, error_code, last_attempt_at, sync_generation
-     ) VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(board_id, external_post_id) DO UPDATE SET
-       attempts = excluded.attempts, error_code = excluded.error_code,
-       last_attempt_at = excluded.last_attempt_at,
-       sync_generation = excluded.sync_generation`,
-  ).bind(
-    body.board_id,
+  // A generation arrives as batches with ascending, disjoint external_post_id ranges (the runner
+  // reports ORDER BY external_post_id in chunks of 100) and ends with complete=true. Only the
+  // highest id of each batch is stamped with the generation; unchanged rows are not rewritten.
+  // Each batch sweeps the rows it no longer reports between the previous batch's stamped
+  // boundary and its own highest id, and the complete batch sweeps everything above that.
+  // Items travel as one JSON parameter, which keeps every statement far below D1's
+  // bound-parameter limit.
+  if (!body.items.length && !body.complete) {
+    return envelope(requestId, { accepted: 0 }, 202);
+  }
+  const ids = body.items.map((item) => item.external_post_id);
+  const lowestId = ids.length ? Math.min(...ids) : Number.MAX_SAFE_INTEGER;
+  const highestId = ids.length ? Math.max(...ids) : null;
+  const items = JSON.stringify(body.items.map((item) => [
     item.external_post_id,
     item.attempts,
     item.error_code,
     timestampValue(item.last_attempt_at),
-    body.generation,
-  ));
-  if (body.complete) {
+  ]));
+  const statements = [
+    env.CONTROL_DB.prepare(
+      `DELETE FROM frontier_failures
+       WHERE board_id = ?
+         AND external_post_id > COALESCE((
+           SELECT MAX(boundary.external_post_id) FROM frontier_failures AS boundary
+           WHERE boundary.board_id = ? AND boundary.sync_generation = ?
+             AND boundary.external_post_id < ?
+         ), 0)
+         AND (? IS NULL OR external_post_id <= ?)
+         AND external_post_id NOT IN (
+           SELECT json_extract(reported.value, '$[0]') FROM json_each(?) AS reported
+         )`,
+    ).bind(
+      body.board_id,
+      body.board_id,
+      body.generation,
+      lowestId,
+      body.complete ? null : highestId,
+      body.complete ? null : highestId,
+      items,
+    ),
+  ];
+  if (ids.length) {
     statements.push(env.CONTROL_DB.prepare(
-      "DELETE FROM frontier_failures WHERE board_id = ? AND sync_generation <> ?",
-    ).bind(body.board_id, body.generation));
+      `INSERT INTO frontier_failures (
+         board_id, external_post_id, attempts, error_code, last_attempt_at, sync_generation
+       )
+       SELECT ?, json_extract(reported.value, '$[0]'), json_extract(reported.value, '$[1]'),
+         json_extract(reported.value, '$[2]'), json_extract(reported.value, '$[3]'), ?
+       FROM json_each(?) AS reported WHERE true
+       ON CONFLICT(board_id, external_post_id) DO UPDATE SET
+         attempts = excluded.attempts, error_code = excluded.error_code,
+         last_attempt_at = excluded.last_attempt_at,
+         sync_generation = excluded.sync_generation
+       WHERE frontier_failures.attempts IS NOT excluded.attempts
+          OR frontier_failures.error_code IS NOT excluded.error_code
+          OR frontier_failures.last_attempt_at IS NOT excluded.last_attempt_at
+          OR (frontier_failures.external_post_id = ?
+              AND frontier_failures.sync_generation IS NOT excluded.sync_generation)`,
+    ).bind(body.board_id, body.generation, items, highestId));
   }
-  if (statements.length) await env.CONTROL_DB.batch(statements);
+  await env.CONTROL_DB.batch(statements);
   return envelope(requestId, { accepted: body.items.length }, 202);
 }
 
 async function finishCommand(request, env, requestId, commandId) {
   const body = await readJson(request, CONTROL_BODY_MAX_BYTES);
-  if (!identifierPattern.test(body.runner_id || "") || !terminalStates.has(body.state) ||
-      (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
+  if (!isIdentifier(body.runner_id || "") || !terminalStates.has(body.state) ||
+      (body.safe_summary_code != null && !isIdentifier(body.safe_summary_code))) {
     return failure(requestId, 400, "invalid_command_finish", "Command result is invalid");
   }
   const existing = await env.CONTROL_DB.prepare(
     "SELECT * FROM commands WHERE command_id = ?",
   ).bind(commandId).first();
   if (!existing) return failure(requestId, 404, "command_not_found", "Command was not found");
-  if (terminalStates.has(existing.state)) {
+  const reaped = existing.state === "failed" && existing.safe_message === STALE_RUN_CODE;
+  if (terminalStates.has(existing.state) && !reaped) {
     return existing.state === body.state
       ? envelope(requestId, commandView(existing))
       : failure(requestId, 409, "command_terminal", "Command has a different terminal state");
   }
   const result = await env.CONTROL_DB.prepare(
     `UPDATE commands SET state = ?, finished_at = ?, safe_message = ?
-     WHERE command_id = ? AND state = 'claimed' AND runner_id = ? RETURNING *`,
+     WHERE command_id = ? AND (state = 'claimed' OR ${STALE_COMMAND_SQL}) AND runner_id = ?
+     RETURNING *`,
   ).bind(
     body.state,
     new Date().toISOString(),
@@ -664,9 +697,9 @@ async function finishCommand(request, env, requestId, commandId) {
 function validEvent(event) {
   return event && typeof event === "object" && !Array.isArray(event) &&
     Number.isSafeInteger(event.sequence) && event.sequence >= 0 &&
-    identifierPattern.test(event.step || "") && identifierPattern.test(event.state || "") &&
+    isIdentifier(event.step || "") && isIdentifier(event.state || "") &&
     validTimestamp(event.recorded_at) && validCounters(event.counters ?? {}) &&
-    (event.safe_message == null || identifierPattern.test(event.safe_message));
+    (event.safe_message == null || isIdentifier(event.safe_message));
 }
 
 async function recordEvents(request, env, requestId, runId) {
@@ -680,10 +713,11 @@ async function recordEvents(request, env, requestId, runId) {
     return failure(requestId, 400, "invalid_events", "Run events are invalid");
   }
   const run = await env.CONTROL_DB.prepare(
-    "SELECT state FROM runs WHERE run_id = ?",
+    "SELECT state, safe_summary_json FROM runs WHERE run_id = ?",
   ).bind(runId).first();
   if (!run) return failure(requestId, 404, "run_not_found", "Run was not found");
-  if (run.state !== "running") {
+  // A run the reaper marked run_stale is still the runner's live run: keep its telemetry.
+  if (run.state !== "running" && !reapedAsStale(run)) {
     return failure(requestId, 409, "run_terminal", "Run is already terminal");
   }
   await env.CONTROL_DB.batch(
@@ -709,15 +743,15 @@ async function finishRun(request, env, requestId, runId) {
   const body = await readJson(request, TELEMETRY_BODY_MAX_BYTES);
   if (!terminalStates.has(body.state) || !validCounters(body.counters ?? {}) ||
       (body.counters_reported != null && typeof body.counters_reported !== "boolean") ||
-      (body.release_id != null && !identifierPattern.test(body.release_id)) ||
-      (body.safe_summary_code != null && !identifierPattern.test(body.safe_summary_code))) {
+      (body.release_id != null && !isIdentifier(body.release_id)) ||
+      (body.safe_summary_code != null && !isIdentifier(body.safe_summary_code))) {
     return failure(requestId, 400, "invalid_finish", "Run result is invalid");
   }
   const run = await env.CONTROL_DB.prepare(
     "SELECT * FROM runs WHERE run_id = ?",
   ).bind(runId).first();
   if (!run) return failure(requestId, 404, "run_not_found", "Run was not found");
-  if (run.state !== "running") {
+  if (run.state !== "running" && !reapedAsStale(run)) {
     return run.state === body.state
       ? envelope(requestId, runView(run))
       : failure(requestId, 409, "run_terminal", "Run has a different terminal state");
@@ -728,11 +762,11 @@ async function finishRun(request, env, requestId, runId) {
   if (typeof body.counters_reported === "boolean") {
     safeSummary.counters_reported = body.counters_reported;
   }
-  await env.CONTROL_DB.batch([
+  const [finished] = await env.CONTROL_DB.batch([
     env.CONTROL_DB.prepare(
       `UPDATE runs SET state = ?, finished_at = ?, changed_posts = ?, failed_posts = ?,
          boards_ok = ?, boards_failed = ?, release_id = ?, safe_summary_json = ?
-       WHERE run_id = ? AND state = 'running'`,
+       WHERE run_id = ? AND (state = 'running' OR ${STALE_RUN_SQL})`,
     ).bind(
       body.state,
       finishedAt,
@@ -746,9 +780,17 @@ async function finishRun(request, env, requestId, runId) {
     ),
     env.CONTROL_DB.prepare(
       `UPDATE commands SET state = ?, finished_at = ?, safe_message = ?
-       WHERE run_id = ? AND state = 'claimed'`,
+       WHERE run_id = ? AND (state = 'claimed' OR ${STALE_COMMAND_SQL})`,
     ).bind(body.state, finishedAt, body.safe_summary_code ?? null, runId),
   ]);
+  // Another writer (the stale-run reaper) closed the run between the read and the update:
+  // report what D1 holds rather than a result that was never stored.
+  if (finished?.meta?.changes === 0) {
+    const stored = await env.CONTROL_DB.prepare("SELECT * FROM runs WHERE run_id = ?").bind(runId).first();
+    return stored?.state === body.state
+      ? envelope(requestId, runView(stored))
+      : failure(requestId, 409, "run_terminal", "Run has a different terminal state");
+  }
   return envelope(requestId, runView({
     ...run,
     ...counters,

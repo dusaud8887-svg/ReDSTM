@@ -643,7 +643,7 @@ def test_object_batch_uses_downloaded_sha256_before_accepting(
     for content in (b"first", b"second"):
         digest = hashlib.sha256(content).hexdigest()
         key = f"published/objects/sha256/{digest[:2]}/{digest}.md"
-        path = tmp_path / key
+        path = tmp_path / key.removeprefix("published/")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         objects.append((key, digest))
@@ -653,6 +653,7 @@ def test_object_batch_uses_downloaded_sha256_before_accepting(
         assert kwargs["timeout"] == 5 * 60
         calls.append(argv[3])
         if argv[3] == "copy":
+            assert argv[4] == str(tmp_path / "objects/sha256")
             assert argv[argv.index("--transfers") + 1] == "2"
             return subprocess.CompletedProcess(argv, 0, b"", b"")
         assert argv[3:5] == ["hashsum", "SHA256"]
@@ -665,7 +666,9 @@ def test_object_batch_uses_downloaded_sha256_before_accepting(
         raise subprocess.CalledProcessError(1, argv)
 
     with pytest.raises(OSError, match="readback mismatch"):
-        publisher._publish_object_batch(tmp_path, "r2text:redstm-text-archive", objects, rclone)
+        publisher._publish_object_batch(
+            tmp_path / "build", tmp_path, "r2text:redstm-text-archive", objects, rclone
+        )
     assert calls == ["copy", "hashsum"]
 
 
@@ -1744,3 +1747,147 @@ def test_pc_markdown_and_plain_body_are_the_same_novel_text(tmp_path: Path) -> N
     with sqlite3.connect(db_path) as db:
         assert db.execute("SELECT COUNT(*) FROM text_archive_conflicts").fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM text_archive_objects").fetchone()[0] == 1
+
+
+def _novel_archive(tmp_path: Path) -> tuple[Path, Path, Path]:
+    inbox = tmp_path / "inbox"
+    batch_id = "20260923T140000Z-pc-00000009"
+    _incoming_novel_batch(inbox, batch_id)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, batch_id, db_path, tmp_path / "objects", inbox / "receipts")
+    return db_path, tmp_path / "objects", inbox / "receipts"
+
+
+def _fake_r2(remote: dict[str, bytes], *, fail_delete: bool = False) -> Any:
+    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        operation = argv[3]
+        if operation in {"copy", "delete"}:
+            prefix = argv[5 if operation == "copy" else 4].split("redstm-text-archive/", 1)[1]
+            names = Path(argv[argv.index("--files-from-raw") + 1]).read_text().split()
+            if operation == "delete" and fail_delete:
+                raise subprocess.CalledProcessError(1, argv)
+            for name in names:
+                if operation == "copy":
+                    remote[f"{prefix}/{name}"] = (Path(argv[4]) / name).read_bytes()
+                else:
+                    remote.pop(f"{prefix}/{name}", None)
+        elif operation == "copyto":
+            remote[argv[5].split("redstm-text-archive/", 1)[1]] = Path(argv[4]).read_bytes()
+        elif operation == "cat":
+            body = remote[argv[4].split("redstm-text-archive/", 1)[1]]
+            return subprocess.CompletedProcess(argv, 0, body, b"")
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    return rclone
+
+
+def _republish(
+    db_path: Path, objects: Path, build: Path, receipts: Path, run: int, rclone: Any
+) -> Any:
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE text_archive_items SET imported_at=? WHERE lane='novel'",
+            (f"2026-09-29T00:00:{run:02d}Z",),
+        )
+    return publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)
+
+
+def test_rebuild_keeps_unchanged_files_and_reads_only_unpublished_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, objects, _ = _novel_archive(tmp_path)
+    build = tmp_path / "build"
+    first = publisher.build_publish_tree(db_path, objects, build, "novel")
+    written: list[Path] = []
+    original_write = publisher._write
+
+    def record_write(path: Path, body: bytes) -> None:
+        written.append(path)
+        original_write(path, body)
+
+    monkeypatch.setattr(publisher, "_write", record_write)
+    second = publisher.build_publish_tree(db_path, objects, build, "novel")
+    assert second["release_key"] == first["release_key"]
+    assert written == [build / "published/novel/release.json"]
+    assert not (build / "published/objects").exists()
+
+    target_key, digest, source_key, _ = next(publisher._plan_rows(second["object_plan"]))
+    (objects / source_key).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="failed verification"):
+        publisher.build_publish_tree(db_path, objects, build, "novel")
+    publisher._record_publication(db_path, target_key, digest)
+    (objects / source_key).unlink()
+    publisher.build_publish_tree(db_path, objects, build, "novel")
+
+
+def test_retention_keeps_recent_releases_and_their_references(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(publisher, "_RELEASE_RETENTION", 2)
+    db_path, objects, receipts = _novel_archive(tmp_path)
+    build = tmp_path / "build"
+    remote: dict[str, bytes] = {}
+    rclone = _fake_r2(remote)
+    results = [_republish(db_path, objects, build, receipts, run, rclone) for run in range(5)]
+    releases = [f"published/releases/novel/{result['release_sha256']}.json" for result in results]
+    assert len(set(releases)) == 5
+    assert results[-1]["prune"]["status"] == "pruned"
+
+    def keys(prefix: str) -> set[str]:
+        return {key for key in remote if key.startswith(prefix)}
+
+    assert keys("published/releases/") == set(releases[-2:])
+    local = {path.relative_to(build).as_posix() for path in (build / "published").rglob("*.json")}
+    assert local == {
+        *keys("published/releases/"),
+        *keys("published/indexes/"),
+        "published/novel/release.json",
+    }
+    kept_pages = {
+        page["key"] for key in releases[-2:] for page in json.loads(remote[key])["catalog_pages"]
+    }
+    detail_keys = {
+        item["detail_key"] for key in kept_pages for item in json.loads(remote[key])["items"]
+    }
+    # The unchanged work detail dates from the first run and survives because kept pages use it.
+    assert len(detail_keys) == 1
+    assert keys("published/indexes/") == kept_pages | detail_keys
+    assert len(keys("published/objects/")) == 1
+    pointer = json.loads(remote["published/novel/release.json"])
+    assert pointer["release_key"] == releases[-1]
+    with sqlite3.connect(db_path) as db:
+        ledger = {
+            row[0]
+            for row in db.execute(
+                "SELECT key FROM text_archive_publications WHERE key LIKE 'published/%/novel/%'"
+            )
+        }
+    assert ledger == keys("published/releases/") | keys("published/indexes/")
+
+
+def test_failed_prune_keeps_the_publish_and_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(publisher, "_RELEASE_RETENTION", 1)
+    db_path, objects, receipts = _novel_archive(tmp_path)
+    build = tmp_path / "build"
+    remote: dict[str, bytes] = {}
+    _republish(db_path, objects, build, receipts, 0, _fake_r2(remote))
+    failed = _republish(db_path, objects, build, receipts, 1, _fake_r2(remote, fail_delete=True))
+    assert failed["prune"]["status"] == "failed"
+    new_release = f"published/releases/novel/{failed['release_sha256']}.json"
+    assert json.loads(remote["published/novel/release.json"])["release_key"] == new_release
+    assert len([key for key in remote if key.startswith("published/releases/")]) == 2
+    with sqlite3.connect(db_path) as db:
+        pruning = db.execute(
+            "SELECT COUNT(*) FROM text_archive_publications WHERE sha256='pruning'"
+        ).fetchone()[0]
+    assert pruning == 2  # the old release and its catalog page stay queued for the next run
+
+    retried = _republish(db_path, objects, build, receipts, 2, _fake_r2(remote))
+    assert retried["prune"]["remote_removed"] == 4
+    assert [key for key in remote if key.startswith("published/releases/")] == [
+        f"published/releases/novel/{retried['release_sha256']}.json"
+    ]

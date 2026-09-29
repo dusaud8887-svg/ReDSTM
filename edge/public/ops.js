@@ -176,11 +176,16 @@ function shortId(value) {
   return typeof value === "string" && value.length > 16 ? `${value.slice(0, 12)}…${value.slice(-4)}` : value || "—";
 }
 
+const API_TIMEOUT_MS = 20_000;
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers);
   headers.set("X-Request-Id", crypto.randomUUID());
   headers.set("X-ReDSTM-Protocol", "1");
-  const response = await fetch(path, { ...options, headers, cache: "no-store" });
+  // A hung request would otherwise stall the sequential auto-refresh loop for good.
+  const response = await fetch(path, {
+    signal: AbortSignal.timeout(API_TIMEOUT_MS), ...options, headers, cache: "no-store",
+  });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.data) {
     throw new Error(payload?.error?.code || `http_${response.status}`);
@@ -557,10 +562,10 @@ function renderRuns() {
   const state = byId("run-state-filter").value;
   const query = byId("run-query").value.trim().normalize("NFKC").toLocaleLowerCase("ko-KR");
   const visible = runItems
-    .filter((run) => state === "all" ||
-      (state === "succeeded" && run.state === "succeeded") ||
-      (state === "warning" && ["partial", "degraded", "stale"].includes(run.state)) ||
-      (state === "error" && ["failed", "expired", "cancelled"].includes(run.state)))
+    // Run states are running/succeeded/partial/failed (D1 runs.state).
+    .filter((run) => state === "all" || run.state === state ||
+      (state === "warning" && run.state === "partial") ||
+      (state === "error" && run.state === "failed"))
     .filter((run) => !query || runSearchText(run).includes(query));
   list.replaceChildren();
   if (!visible.length) {
@@ -773,16 +778,25 @@ function renderReleases(data) {
   }
 }
 
+// Sections whose last refresh failed; the banner stays until each of them loads again.
+const failedScopes = new Set();
+
 function showError(error, scopes = "운영 정보") {
   const banner = byId("error-banner");
-  const impact = Array.isArray(scopes) ? scopes.join(" · ") : scopes;
+  for (const scope of Array.isArray(scopes) ? scopes : [scopes]) failedScopes.add(scope);
   const code = error instanceof Error ? error.message : "unknown";
   banner.hidden = false;
-  banner.textContent = `일부 갱신 실패 · 영향: ${impact} · ${code} · 새로고침으로 다시 시도하세요.`;
+  banner.textContent = `일부 갱신 실패 · 영향: ${[...failedScopes].join(" · ")} · ${code} · 새로고침으로 다시 시도하세요.`;
+}
+
+function clearError(scope) {
+  failedScopes.delete(scope);
+  if (!failedScopes.size) byId("error-banner").hidden = true;
 }
 
 async function loadAll() {
   byId("refresh").disabled = true;
+  failedScopes.clear();
   byId("error-banner").hidden = true;
   const tasks = [
     ["자동 수집 상태", loadOverview()],
@@ -874,6 +888,9 @@ if (typeof document !== "undefined") {
       ? `${title} · ${button.dataset.board}`
       : title;
     byId("dialog-impact").textContent = impact;
+    // Esc closes a dialog without touching returnValue; a stale "confirm" from the previous
+    // command must not send this one.
+    byId("command-dialog").returnValue = "";
     byId("command-dialog").showModal();
   });
   byId("command-dialog").addEventListener("close", () => {
@@ -895,7 +912,15 @@ async function refreshLoop() {
   const delay = lastRunner?.state === "running" ? ACTIVE_REFRESH_MS : IDLE_REFRESH_MS;
   await new Promise((resolve) => setTimeout(resolve, delay));
   if (!document.hidden) {
-    await loadOverview().catch((error) => showError(error, "자동 수집 상태"));
+    // Only the light overview while a run is active; when idle, release counts follow too (they
+    // change at publish, so they would otherwise stay at page-load values).
+    const running = lastRunner?.state === "running";
+    for (const [scope, task] of [
+      ["자동 수집 상태", () => loadOverview()],
+      ...(running ? [] : [["Reader 글·댓글", () => api("/api/v1/ops/releases").then(renderReleases)]]),
+    ]) {
+      await task().then(() => clearError(scope), (error) => showError(error, scope));
+    }
   }
   void refreshLoop();
 }

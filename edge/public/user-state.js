@@ -5,6 +5,9 @@ const stablePostIdPattern = /^([a-z0-9_]+):([1-9]\d*)$/;
 const objectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const themes = new Set(["system", "light", "dark"]);
 const proseFonts = new Set(["serif", "sans"]);
+const readerSurfaces = new Set(["default", "paper"]);
+const proseAlignments = new Set(["start", "justify"]);
+const toggles = new Set(["off", "on"]);
 const aaBackgroundPattern = /^#[0-9a-f]{6}$/i;
 const BOOKMARK_NOTE_LIMIT = 1000;
 const BOOKMARK_TAG_LIMIT = 10;
@@ -48,6 +51,9 @@ function sanitizeSettings(value, defaults = {}) {
     pick(key, (value) => Number.isFinite(value) && value >= minimum && value <= maximum);
   }
   pick("proseFont", (value) => proseFonts.has(value));
+  pick("proseAlign", (value) => proseAlignments.has(value));
+  pick("readerSurface", (value) => readerSurfaces.has(value));
+  pick("tapPaging", (value) => toggles.has(value));
   pick("aaCanvasWidth", (value) => [null, 680, 800].includes(value));
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),
     (value) => value.toLowerCase());
@@ -59,7 +65,7 @@ function timestampMap(value, timestampKey) {
   if (!isRecord(value)) return {};
   const result = {};
   for (const [identity, entry] of Object.entries(value)) {
-    if (!validStablePostId(identity) || !isRecord(entry) ||
+    if (!validStablePostId(identity) || !isRecord(entry) || typeof entry[timestampKey] !== "string" ||
         Number.isNaN(Date.parse(entry[timestampKey]))) continue;
     result[identity] = { [timestampKey]: entry[timestampKey] };
     if (timestampKey === "readAt" && Number.isFinite(entry.progress) && entry.progress >= 0 && entry.progress <= 1) {
@@ -178,9 +184,16 @@ function normalizeV2State(value, defaultSettings = {}) {
   };
 }
 
+// The backup file people download: normalized and indented for reading.
 export function exportUserState(state) {
   const normalized = normalizeV2State(state, state?.settings);
   return `${JSON.stringify(normalized, null, 2)}\n`;
+}
+
+// The localStorage copy: the same normalized state without indentation. It is rewritten on
+// every scroll save, so its size matters more than its readability.
+export function serializeUserState(state) {
+  return JSON.stringify(normalizeV2State(state, state?.settings));
 }
 
 export function planImport(text, defaultSettings = {}) {

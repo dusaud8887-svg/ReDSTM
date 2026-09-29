@@ -226,6 +226,9 @@ test("Reader settings keep the same sentence on screen when the font size change
     await page.locator("#archive-body").dispatchEvent(type, { isPrimary: true, pointerType: "touch", clientX: 120, clientY: 420 });
   }
   await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+  // Let the bars finish sliding in: clicking a still-moving sticky button makes Playwright
+  // scroll the pane to the button's in-flow position, which a real tap never does.
+  await page.waitForFunction(() => document.getAnimations().length === 0);
   const before = await topSentence();
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
   await page.locator('[data-prose-size-delta="1"]').click();
@@ -273,6 +276,8 @@ test("Image links in a body show as images, fail softly, and open a closable vie
   const viewer = page.getByRole("dialog", { name: "이미지 보기" });
   await expect(viewer).toBeVisible();
   await expect(viewer.locator("img")).toHaveAttribute("src", "https://img.example.test/a.png");
+  // A picture smaller than the screen has nothing to zoom into.
+  await expect(viewer.locator("#image-viewer-zoom")).toBeHidden();
   await viewer.getByRole("button", { name: "닫기" }).click();
   await expect(viewer).toBeHidden();
   await expect(page).toHaveURL(/\/read\/board_a\/2$/);
@@ -677,4 +682,226 @@ test("Reading settings opened over a chapter leave the text visible on phones", 
   await page.locator("#reader-bottom-settings").click();
   const sheetTop = await page.locator("#settings-dialog").evaluate((dialog) => dialog.getBoundingClientRect().top);
   expect(sheetTop).toBeGreaterThan(page.viewportSize().height * 0.35);
+});
+
+test("The Reader estimates reading time and the 더보기 sheet shows what is left", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#reader-length")).toHaveText("약 1분");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await expect(page.locator("#more-remaining")).toHaveText(/^(남은 시간 약 \d+분|1분 안에 끝)$/);
+  await page.locator("#more-position").evaluate((input) => {
+    input.value = "100";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#more-remaining")).toHaveText("끝까지 읽음");
+});
+
+test("종이 surface and 양쪽 맞춤 apply to the Reader and survive a reload", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const readerBackground = () => page.locator("#reader").evaluate((element) => getComputedStyle(element).backgroundColor);
+  const plain = await readerBackground();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator('[data-reader-surface="paper"]').click();
+  await expect(page.locator('[data-reader-surface="paper"]')).toHaveAttribute("aria-checked", "true");
+  await expect.poll(readerBackground).not.toBe(plain);
+  await expect(page.locator("#archive-body")).toHaveCSS("text-align", "start");
+  await page.locator('[data-prose-align="justify"]').click();
+  await expect(page.locator("#archive-body")).toHaveCSS("text-align", "justify");
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(readerBackground).not.toBe(plain);
+  await expect(page.locator("#archive-body")).toHaveCSS("text-align", "justify");
+  // The app chrome keeps its own tokens; the browser bar matches the paper while reading.
+  expect(await page.locator("html").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(255, 255, 255)");
+  const themeColors = () => page.locator('meta[name="theme-color"]').evaluateAll((metas) => metas.map((meta) => meta.content));
+  expect(await themeColors()).toEqual(["#f6f0e4", "#1c1914"]);
+});
+
+test("The browser bar follows the chosen theme even when the OS theme differs", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await useLongCollection(page, 3);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const themeColors = () => page.locator('meta[name="theme-color"]').evaluateAll((metas) => metas.map((meta) => meta.content));
+  expect(await themeColors()).toEqual(["#ffffff", "#0b0d12"]);
+  await page.goto("/settings");
+  await page.locator('[data-theme-choice="light"]').click();
+  expect(await themeColors()).toEqual(["#ffffff", "#ffffff"]);
+});
+
+test("더보기 copies a link that reopens the same chapter", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#more-link").click();
+  await expect(page.locator("#reader-more")).toBeHidden();
+  await expect(page.locator("#aa-zoom-indicator")).toHaveText("링크를 복사했습니다");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(page.url());
+});
+
+test("AA 맞춤 shrinks a wide picture to the stage width and never enlarges past 100%", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: true,
+        body_html: `<div class="AA_Text"><p>${"＿".repeat(150)}</p><p>（　´∀｀）</p></div>`,
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#archive-body")).toHaveClass(/(^|\s)aa(\s|$)/);
+  await expect(page.locator("#reader-length")).toBeHidden();
+  const overflow = () => page.locator("#archive-body").evaluate((body) => body.scrollWidth - body.clientWidth);
+  expect(await overflow()).toBeGreaterThan(100);
+  await page.locator("#aa-fit").click();
+  await expect(page.locator("#aa-zoom-output")).not.toHaveText("100%");
+  await expect.poll(overflow).toBeLessThanOrEqual(1);
+  // Zoomed out further, 맞춤 comes back up but stops at 100% for a picture that already fits.
+  await page.locator("#aa-zoom-reset").click();
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  await page.locator("#mode-toggle").evaluate((button) => button.click());
+  await expect(page.locator("#archive-body")).toHaveClass(/(^|\s)aa(\s|$)/);
+  await page.locator('[data-aa-zoom-delta="-0.25"]').click();
+  await expect(page.locator("#aa-zoom-output")).toHaveText("75%");
+  await page.locator("#aa-fit").click();
+  await expect(page.locator("#aa-zoom-output")).toHaveText("100%");
+});
+
+test("화면 탭으로 넘기기 turns a screen per tap and leaves the middle to the bars", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: { tapPaging: "on" }, history: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+  })));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const pane = page.locator("#reader-pane");
+  const box = await pane.boundingBox();
+  const tapAt = async (ratio) => {
+    const y = box.y + box.height * ratio;
+    await page.locator("#archive-body").dispatchEvent("pointerdown", { isPrimary: true, pointerType: "touch", clientX: box.x + 60, clientY: y });
+    await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, pointerType: "touch", clientX: box.x + 60, clientY: y });
+  };
+  await pane.evaluate((element) => { element.scrollTop = 400; });
+  const scrollTop = () => pane.evaluate((element) => element.scrollTop);
+  await tapAt(0.85);
+  await expect.poll(scrollTop).toBeGreaterThan(400 + box.height * 0.5);
+  await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+  const afterForward = await scrollTop();
+  await tapAt(0.1);
+  await expect.poll(scrollTop).toBeLessThan(afterForward - box.height * 0.5);
+  // The middle band still shows and hides the tools.
+  await tapAt(0.45);
+  await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+});
+
+test("Two fingers on prose change the font size and keep the sentence", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#archive-body")).toHaveCSS("touch-action", "pan-x pan-y");
+  const pinch = (from, to) => page.locator("#archive-body").evaluate((body, [start, end]) => {
+    const touches = (gap) => [0, 1].map((identifier) => new Touch({
+      identifier, target: body, clientX: 150 + (identifier ? gap : 0), clientY: 400,
+    }));
+    body.dispatchEvent(new TouchEvent("touchstart", { touches: touches(start), bubbles: true }));
+    body.dispatchEvent(new TouchEvent("touchmove", { touches: touches(end), bubbles: true }));
+    body.dispatchEvent(new TouchEvent("touchend", { touches: [], bubbles: true }));
+  }, [from, to]);
+  await pinch(100, 150);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings.proseSize)).toBe(27);
+  await expect(page.locator("#aa-zoom-indicator")).toHaveText("글자 27px");
+  await pinch(200, 20);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings.proseSize)).toBe(15);
+});
+
+test("The author in the Reader opens that author's posts without raising the keyboard", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await page.locator(".reader-author").click();
+  await expect(page).toHaveURL(/\/search\?q=%EC%9E%91%EC%84%B1%EC%9E%90&target=author$/);
+  await expect(page.locator(".result-item")).toHaveCount(3);
+  await expect(page.locator("#search-input")).not.toBeFocused();
+});
+
+test("화면 켜 두기 holds a wake lock only while the body is open", async ({ page }) => {
+  await page.addInitScript(() => {
+    // A stand-in wake lock that records requests and releases.
+    window.__wake = { held: 0, requests: 0 };
+    const sentinel = () => {
+      const target = new EventTarget();
+      target.release = async () => {
+        window.__wake.held -= 1;
+        target.dispatchEvent(new Event("release"));
+      };
+      return target;
+    };
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: { request: async () => { window.__wake.requests += 1; window.__wake.held += 1; return sentinel(); } },
+    });
+  });
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const more = page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more");
+  await more.click();
+  const wake = page.locator("#more-wake");
+  await expect(wake).toHaveAttribute("aria-pressed", "false");
+  await wake.click();
+  await expect(wake).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate(() => window.__wake.held)).toBe(1);
+  await page.locator("#reader-more button[aria-label='닫기']").click();
+  // Moving to the next episode keeps it; leaving the Reader releases it.
+  await page.locator(mobileWidth(page) ? "#reader-bottom-next" : "#next-post").click();
+  await expect(page.locator("#reader-title")).toHaveText("3편 제목");
+  expect(await page.evaluate(() => window.__wake.held)).toBe(1);
+  await page.goBack();
+  await expect(page.locator("#reader")).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__wake.held)).toBe(0);
+});
+
+test("The image viewer shows a large picture at its own size and fits it again", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="2000"><rect width="3000" height="2000" fill="#468"/></svg>';
+  await page.route("https://img.example.test/**", (route) => route.fulfill({ contentType: "image/svg+xml", body: svg }));
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: false,
+        body_html: '<p><a href="https://img.example.test/big.png">https://img.example.test/big.png</a></p>',
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await page.locator("#archive-body .media-open").click();
+  const viewer = page.getByRole("dialog", { name: "이미지 보기" });
+  const zoom = viewer.locator("#image-viewer-zoom");
+  await expect(zoom).toBeVisible();
+  const width = () => viewer.locator("img").evaluate((image) => image.getBoundingClientRect().width);
+  expect(await width()).toBeLessThanOrEqual(page.viewportSize().width);
+  await zoom.click();
+  await expect(zoom).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(width).toBe(3000);
+  // Panned to the middle of the picture, with the actions still on screen.
+  expect(await viewer.locator("form").evaluate((form) => form.scrollLeft)).toBeGreaterThan(0);
+  await expect(zoom).toBeInViewport();
+  await zoom.click();
+  await expect.poll(width).toBeLessThanOrEqual(page.viewportSize().width);
 });

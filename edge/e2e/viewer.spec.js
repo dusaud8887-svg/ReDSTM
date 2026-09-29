@@ -1253,6 +1253,7 @@ test("publishes install metadata without registering offline behavior", async ({
   const manifest = await response.json();
   expect(manifest.display).toBe("standalone");
   expect(manifest.icons.map((icon) => icon.sizes)).toEqual(expect.arrayContaining(["192x192", "512x512", "any"]));
+  expect(manifest.shortcuts.map((shortcut) => shortcut.url)).toEqual(["/?continue=1", "/search", "/saved", "/text"]);
   expect(await page.evaluate(async () => "serviceWorker" in navigator
     ? (await navigator.serviceWorker.getRegistrations()).length : 0)).toBe(0);
 });
@@ -1733,13 +1734,251 @@ test("keeps filter sheet edits as a draft until applied", async ({ page }) => {
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.locator("#filter-toggle").click();
   await expect(page.getByRole("dialog", { name: "필터" })).toBeVisible();
-  await setSelect(page, "sort-filter", "oldest");
-  await expect(page).not.toHaveURL(/sort=oldest/);
+  await setSelect(page, "search-target", "title");
+  await expect(page).not.toHaveURL(/target=title/);
   await page.locator("#filter-dialog button[aria-label='닫기']").click();
-  await expect(page.locator("#sort-filter")).toHaveValue("latest");
+  await expect(page.locator("#search-target")).toHaveValue("all");
   await page.locator("#filter-toggle").click();
-  await setSelect(page, "sort-filter", "oldest");
+  await setSelect(page, "search-target", "title");
   await page.locator("#filter-apply").click();
   await expect(page.getByRole("dialog", { name: "필터" })).toBeHidden();
+  await expect(page).toHaveURL(/target=title/);
+});
+
+async function usePopularityFixture(page) {
+  const fields = ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa", "views", "comment_count"];
+  const detailKey = `collections/details-v2/00-${"7".repeat(64)}.json.zst`;
+  const payloads = new Map([
+    ["release.json", {
+      schema_version: 1,
+      search: { object_key: "search/e2e.json.zst" },
+      collections: { object_key: collectionIndexKey },
+      boards: [{ board_id: "board_a", name: "자유게시판", group_name: "창작", post_count: 3 }],
+    }],
+    ["search/e2e.json.zst", {
+      schema_version: 1, fields,
+      posts: [
+        ["board_a", 3, "조용한 새 글", "작성자", null, "2026-07-11", standaloneHash, false, 12, 0],
+        ["board_a", 2, "댓글 많은 글", "작성자", null, "2026-07-10", secondHash, false, 300, 48],
+        ["board_a", 1, "조회 많은 글", "작성자", null, "2026-07-09", firstHash, false, 25000, 3],
+      ],
+    }],
+    [collectionIndexKey, {
+      schema_version: 2, shard_count: 64,
+      collections: [
+        { id: 1, board_id: "board_a", kind: "series", title: "가 조용한 연재", entry_count: 1, latest_created_at: "2026-07-11T00:00:00Z", views: 10, comments: 1 },
+        { id: 2, board_id: "board_a", kind: "series", title: "나 인기 연재", entry_count: 1, latest_created_at: "2026-07-01T00:00:00Z", views: 90000, comments: 5 },
+      ],
+      detail_shards: [{ shard: 0, object_key: detailKey }], memberships: [],
+    }],
+  ]);
+  await page.route("**/archive/**", (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const payload = payloads.get(key);
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+}
+
+test("offers view and comment sorts when the release carries counts", async ({ page }) => {
+  await usePopularityFixture(page);
+  await page.goto("/browse?sort=comments");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const sort = page.locator("#sort-filter");
+  await expect(sort).toHaveValue("comments");
+  await expect(page.locator(".result-item .result-title")).toHaveText(["댓글 많은 글", "조회 많은 글", "조용한 새 글"]);
+  await sort.selectOption("views");
+  await expect(page).toHaveURL(/sort=views/);
+  await expect(page.locator(".result-item .result-title").first()).toHaveText("조회 많은 글");
+  await expect(page.locator(".result-item").first().locator(".result-stats")).toHaveText("조회 2.5만 · 댓글 3");
+  // Works: the popularity sort from a link waits for the lazily loaded work index.
+  await page.goto("/browse?scope=collections&sort=views");
+  await expect(page.locator(".result-item .result-title")).toHaveText(["나 인기 연재", "가 조용한 연재"]);
+  await expect(page.locator("#sort-filter")).toHaveValue("views");
+  await expect(page).toHaveURL(/sort=views/);
+});
+
+test("오늘의 발견 suggests unread works, discussed posts, and this day in past years", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-09-28T10:00:00"));
+  const fields = ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa", "views", "comment_count"];
+  const membershipKey = `collections/membership-v2/board_a-${"6".repeat(64)}.json.zst`;
+  const hotKey = `posts/board_a/3-${standaloneHash}.json.zst`;
+  const payloads = new Map([
+    ["release.json", {
+      schema_version: 1,
+      search: { object_key: "search/e2e.json.zst" },
+      collections: { object_key: collectionIndexKey },
+      boards: [{ board_id: "board_a", name: "자유게시판", group_name: "창작", post_count: 3 }],
+    }],
+    ["search/e2e.json.zst", {
+      schema_version: 1, fields,
+      posts: [
+        ["board_a", 3, "화제의 글", "작성자", null, "2026-09-20", standaloneHash, false, 100, 30],
+        ["board_a", 2, "삼 년 전 오늘 글", "작성자", null, "2023-09-28", secondHash, false, 10, 0],
+        ["board_a", 4, "사 년 전 화제 글", "작성자", null, "2022-09-28", "8".repeat(64), false, 10, 7],
+        ["board_a", 1, "조용한 글", "작성자", null, "2022-01-01", firstHash, false, 1, 0],
+      ],
+    }],
+    [collectionIndexKey, {
+      schema_version: 2, shard_count: 64,
+      collections: [
+        { id: 1, board_id: "board_a", kind: "series", title: "읽던 연재", entry_count: 3, latest_created_at: "2026-09-27T00:00:00Z", views: 5, comments: 1 },
+        { id: 2, board_id: "board_a", kind: "series", title: "추천 연재", entry_count: 4, latest_created_at: "2026-01-01T00:00:00Z", views: 900, comments: 20 },
+        { id: 3, board_id: "board_a", kind: "oneshot", title: "짧은 단편 묶음", entry_count: 9, latest_created_at: "2026-01-01T00:00:00Z", views: 900, comments: 20 },
+      ],
+      detail_shards: [], memberships: [{ board_id: "board_a", object_key: membershipKey }],
+    }],
+    [membershipKey, { schema_version: 1, board_id: "board_a", members: [[1, 1, 1]] }],
+    [hotKey, postPayload(3, "화제의 글")],
+  ]);
+  await page.route("**/archive/**", (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const payload = payloads.get(key);
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    history: { "board_a:1": { readAt: "2026-09-01T00:00:00Z", progress: 0.5 } },
+  })));
+  await page.goto("/");
+  const discover = page.locator("#discover");
+  await expect(discover).toBeVisible();
+  await expect(page.locator("#discover-picks .home-item strong")).toHaveText(["추천 연재"]);
+  await expect(page.locator("#discover-picks")).toContainText("조회 900 · 댓글 20");
+  await expect(page.locator("#discover-hot .home-item strong")).toHaveText(["화제의 글", "사 년 전 화제 글"]);
+  await expect(page.locator("#discover-day-title")).toHaveText("이날의 기록 · 9월 28일");
+  // Already shown as 요즘 화제, the four-year-old post is not repeated here.
+  await expect(page.locator("#discover-day .home-item strong")).toHaveText(["삼 년 전 오늘 글"]);
+  await expect(page.locator("#discover-day")).toContainText("3년 전");
+  // The work read before its newest episode is flagged and listed first.
+  await expect(page.locator("#reading-works-list .home-item").first()).toContainText("읽던 연재");
+  await expect(page.locator("#reading-works-list .home-badge")).toHaveText("새 편");
+  await page.locator("#discover-hot .home-item").first().click();
+  await expect(page.locator("#reader-title")).toHaveText("화제의 글");
+  await expect(page.locator("#reader-list-kicker")).toHaveText("게시판");
+});
+
+test("sorts from the result bar on every width, outside the filter sheet", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/browse");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const sort = page.locator("#result-bar #sort-filter");
+  await expect(sort).toBeVisible();
+  await sort.selectOption("oldest");
   await expect(page).toHaveURL(/sort=oldest/);
+  await expect(page.locator(".result-item .result-title").first()).toHaveText("첫째");
+  // This fixture's index has no counts, so popularity sorts are not offered.
+  await expect(sort.locator("option")).toHaveText(["최신순", "오래된순"]);
+});
+
+test("keeps the filtered result status unchanged while reading and saving", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/browse?board=board_a");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const status = page.locator("#result-status");
+  await expect(status).toHaveText("자유게시판 · 3건");
+  await page.locator(".result-item", { hasText: "비소속" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  await page.locator("#reader-title").focus();
+  await page.keyboard.press("b");
+  await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
+  await expect(status).toHaveText("자유게시판 · 3건");
+});
+
+test("offers starred and recent boards on Home as one-tap shortcuts", async ({ page }) => {
+  await useBoardFilterFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#home-boards")).toBeHidden();
+  await page.evaluate(() => localStorage.setItem("redstm.boardNav.v1", JSON.stringify({
+    favorites: ["write_free"], recents: ["aa_19", "write_free", "gone_board"], expanded: [],
+  })));
+  // Arrive at Home from a filtered search: the shortcut must not inherit those filters.
+  await page.goto("/search?q=AA&mode=aa&target=title");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await page.locator('[data-destination="library"]').filter({ visible: true }).first().click();
+  // Favourites first, then recents, without duplicates or boards missing from this release.
+  await expect(page.locator("#home-board-list button")).toHaveText(["창작집담", "19금 AA"]);
+  await page.locator("#home-board-list button", { hasText: "창작집담" }).click();
+  await expect(page).toHaveURL(/\/browse\?board=write_free$/);
+  await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
+});
+
+test("a second tab's bookmarks survive this tab's next reading save", async ({ page, context }) => {
+  await useCollectionFixture(page);
+  await openPost(page, secondKey);
+  const other = await context.newPage();
+  await useCollectionFixture(other);
+  await openPost(other, standaloneKey);
+  await other.locator("#reader-title").focus();
+  await other.keyboard.press("b");
+  await expect(other.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
+  // The first tab keeps reading; its scroll save must not drop the other tab's bookmark.
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = 300; });
+  const bookmarks = () => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("redstm.userState.v2")).bookmarks));
+  await expect.poll(async () => {
+    await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop += 5; });
+    return bookmarks();
+  }).toContain("board_a:3");
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")));
+  expect(Object.keys(stored.history)).toEqual(expect.arrayContaining(["board_a:2", "board_a:3"]));
+  expect(await page.evaluate(() => localStorage.getItem("redstm.userState.v2").includes("\n"))).toBe(false);
+});
+
+test("leaves browser shortcuts with modifier keys to the browser", async ({ page }) => {
+  await useCollectionFixture(page);
+  await openPost(page, standaloneKey);
+  await page.locator("#reader-title").focus();
+  await page.keyboard.press("Control+f");
+  await page.keyboard.press("Control+b");
+  await expect(page.locator("body")).not.toHaveClass(/immersive/);
+  await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "false");
+  await page.keyboard.press("f");
+  await expect(page.locator("body")).toHaveClass(/immersive/);
+});
+
+test("draws the reading progress along the Home continue card", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    history: { "board_a:3": { readAt: "2026-09-28T00:00:00Z", progress: 0.42 } },
+  })));
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#continue-title")).toHaveText("비소속");
+  await expect(page.locator("#continue-meta")).toContainText("42%");
+  expect(await page.locator("#continue-reading").evaluate((card) =>
+    card.style.getPropertyValue("--continue-progress"))).toBe("42%");
+  const piece = await page.locator("#continue-reading").evaluate((card) => {
+    const after = getComputedStyle(card, "::after");
+    return Number.parseFloat(after.width) / card.getBoundingClientRect().width;
+  });
+  expect(piece).toBeGreaterThan(0.38);
+  expect(piece).toBeLessThan(0.46);
+});
+
+test("the 이어서 읽기 app shortcut opens the continued post with Home behind it", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    history: { "board_a:3": { readAt: "2026-09-28T00:00:00Z", progress: 0.42 } },
+  })));
+  await useCollectionFixture(page);
+  await page.goto("/?continue=1");
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  await expect(page).toHaveURL(/\/read\/board_a\/3$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator("#continue-title")).toHaveText("비소속");
+});
+
+test("lists the keyboard shortcuts on ? at desktop widths", async ({ page }) => {
+  test.skip(page.viewportSize().width < 760, "Phones have no hardware keyboard shortcuts list");
+  await useCollectionFixture(page);
+  await openPost(page, standaloneKey);
+  await page.locator("#reader-title").focus();
+  await page.keyboard.press("Shift+Slash");
+  await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
+  await expect(page.locator("#settings-keys")).toHaveAttribute("open", "");
+  await expect(page.locator("#settings-keys")).toContainText("집중 모드");
+  await expect(page.locator("#settings-keys")).toBeInViewport();
 });

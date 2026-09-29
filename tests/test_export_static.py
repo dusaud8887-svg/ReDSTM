@@ -295,6 +295,44 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     assert membership["unavailable"] == [99]
 
 
+def test_collection_totals_use_the_released_post_values_not_live_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    full = export_static(source, output)
+    # A recapture that only changes views updates posts.views but is not a new post version.
+    _store_post(
+        source,
+        replace(_post("ss_temp01", 1, "소설 첫째", "prose body", comments=1), views=999),
+        _NOW + timedelta(hours=1),
+    )
+    monkeypatch.setattr(
+        export_static_module,
+        "COLLECTION_EXPORT_REVISION",
+        export_static_module.COLLECTION_EXPORT_REVISION + 1,
+    )
+    refreshed = export_static(source, output, incremental_only=True)
+    assert refreshed["mode"] == "incremental_collections"
+    release = json.loads((output / "release.json").read_bytes())
+    index = _json_zstd(output / release["collections"]["object_key"])
+    search = _json_zstd(output / release["search"]["object_key"])
+    views_in_search = {(row[0], row[1]): row[8] for row in search["posts"]}
+    summary = next(item for item in index["collections"] if item["id"] == 1)
+    assert summary["views"] == views_in_search[("ss_temp01", 1)] == 1
+    # A full export rebuilds the post objects, and its totals follow them.
+    fresh = tmp_path / "fresh"
+    assert full["mode"] == "full"
+    export_static(source, fresh)
+    fresh_release = json.loads((fresh / "release.json").read_bytes())
+    fresh_index = _json_zstd(fresh / fresh_release["collections"]["object_key"])
+    fresh_search = _json_zstd(fresh / fresh_release["search"]["object_key"])
+    fresh_views = {(row[0], row[1]): row[8] for row in fresh_search["posts"]}
+    fresh_summary = next(item for item in fresh_index["collections"] if item["id"] == 1)
+    assert fresh_summary["views"] == fresh_views[("ss_temp01", 1)]
+
+
 def test_stale_collection_export_revision_restages_collections_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -428,7 +466,7 @@ def test_release_body_carries_no_generation_timestamp(tmp_path: Path) -> None:
     assert forbidden.isdisjoint(release.keys())
 
 
-def test_search_index_appends_is_aa_field(tmp_path: Path) -> None:
+def test_search_index_appends_is_aa_and_popularity_fields(tmp_path: Path) -> None:
     source = tmp_path / "canonical.sqlite"
     output = tmp_path / "static"
     _canonical(source)
@@ -445,22 +483,43 @@ def test_search_index_appends_is_aa_field(tmp_path: Path) -> None:
         "created_at_raw",
         "payload_sha256",
         "is_aa",
+        "views",
+        "comment_count",
     ]
     rows = {(row[0], row[1]): row for row in search["posts"]}
     assert bool(rows[("aa_a01", 2)][7]) is True
     assert bool(rows[("ss_temp01", 1)][7]) is False
+    assert rows[("aa_a01", 2)][8:] == [2, 2]
+    assert rows[("ss_temp01", 1)][8:] == [1, 1]
 
 
-def test_validator_keeps_seven_field_release_rollback_compatible(tmp_path: Path) -> None:
+def test_collection_summaries_total_preserved_views_and_comments(tmp_path: Path) -> None:
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    export_static(source, output)
+
+    release = json.loads((output / "release.json").read_bytes())
+    index = _json_zstd(output / release["collections"]["object_key"])
+    summaries = {summary["id"]: summary for summary in index["collections"]}
+    # The missing episode and its orphan comment do not count.
+    assert (summaries[1]["views"], summaries[1]["comments"]) == (1, 1)
+    assert (summaries[2]["views"], summaries[2]["comments"]) == (0, 0)
+
+
+@pytest.mark.parametrize("kept_fields", [7, 8])
+def test_validator_keeps_older_search_releases_rollback_compatible(
+    tmp_path: Path, kept_fields: int
+) -> None:
     source = tmp_path / "canonical.sqlite"
     output = tmp_path / "static"
     _canonical(source)
     export_static(source, output)
     release = json.loads((output / "release.json").read_bytes())
     search = _json_zstd(output / release["search"]["object_key"])
-    search["fields"].pop()
+    del search["fields"][kept_fields:]
     for row in search["posts"]:
-        row.pop()
+        del row[kept_fields:]
     payload = export_static_module._json_bytes(search)
     body = zstd.compress(payload, level=15)
     payload_sha256 = export_static_module._sha256(payload)

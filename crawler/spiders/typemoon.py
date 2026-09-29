@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import scrapy
 from parsel import Selector
+from scrapy.exceptions import DownloadCancelledError, IgnoreRequest
 
 from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
@@ -540,6 +541,11 @@ class TypeMoonSpider(scrapy.Spider):
                 status_code, "network_error"
             )
             if status_code is not None
+            # A page over DOWNLOAD_MAXSIZE is cancelled locally (on the wire, or as IgnoreRequest
+            # when HttpCompressionMiddleware decompresses past it); it is neither an outage (the
+            # network breaker) nor worth retrying forever, so it takes the capped storage code.
+            else "storage_error"
+            if isinstance(failure.value, DownloadCancelledError | IgnoreRequest)
             else "network_error"
         )
         self.store.record_outcome(
@@ -832,6 +838,7 @@ class TypeMoonSpider(scrapy.Spider):
                     str(item["canonical_url"]),
                     reopen_done=not unchanged,
                     expected_comment_count=int(item["comment_count"]),
+                    captured=unchanged,
                 )
             if (
                 not self.listing_only
@@ -843,10 +850,14 @@ class TypeMoonSpider(scrapy.Spider):
                 self._seen.add(identity)
                 if self.scheduled_posts + len(self._pending_details) < self.max_posts:
                     self._pending_details.append(identity)
+            # The exact anchor, or the first older row when the anchor post was deleted or
+            # moved since the last sync (listings run newest id first); otherwise the boundary
+            # could never be found again and every sync would stay partial.
             if (
                 not self.inventory
                 and self._boundary_page is None
-                and self.anchor_post_id == external_post_id
+                and self.anchor_post_id is not None
+                and external_post_id <= self.anchor_post_id
             ):
                 self._boundary_page = page + self.overlap_pages
             if unchanged:

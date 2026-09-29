@@ -9,7 +9,7 @@
 - 1단계 PC 전송은 별도 inbox R2 버킷이 아니라 **제한 SSH/SFTP 수신 경로**다. 원본 약 556MiB 중 유효 아카라이브 20개만 먼저 받아 크기/SHA/경로/중복/재시작을 검증한다. 새 수신 계정은 강제 SFTP·제한 디렉터리로 묶고 배포 키 및 TypeMoon rclone remote와 분리한다. Oracle만 텍스트 게시 버킷의 writer다.
 - Oracle의 블랙툰·마루마루 경량 JSON 수집은 아카라이브 canary와 별도 비공개 열람이 끝난 뒤의 **별도 canary**다. 토끼·뉴토끼·SBXH의 시험 경로는 Oracle에서 403이었다. 프록시·도메인 회전으로 우회하지 않는다. TypeMoon은 2026-09-07 기록상 Oracle 직접 접속이며 PC 프록시가 필수라는 전제는 버린다.
 - Oracle RAM 956MiB, 조회 시 `MemAvailable` 373MiB·swap 사용 497MiB·루트 여유 약 56.2GiB는 순간값이다. TypeMoon schedule/control 피크를 먼저 측정한다. 텍스트 작업은 TypeMoon이 바쁠 때 새 요청을 보류하고 40GiB 아래서 양보한다. TypeMoon의 40GiB 경고/20GiB 수집 중단선은 바꾸지 않는다.
-- 새 텍스트 R2는 **열람 사본**이다. PC 발신 원본·출처 ID·본문 해시는 Newtomi에 남긴다. Oracle 직접 수집 원본은 독립 백업 경로가 생길 때까지 canary 범위만 보존하고 대량 확장하지 않는다. 초기 자동 삭제는 없다.
+- 새 텍스트 R2는 **열람 사본**이다. PC 발신 원본·출처 ID·본문 해시는 Newtomi에 남긴다. Oracle 직접 수집 원본은 독립 백업 경로가 생길 때까지 canary 범위만 보존하고 대량 확장하지 않는다. 본문·원본의 자동 삭제는 없다. 게시 파생물(오래된 release manifest·catalog/상세 index)만 `docs/18` 게시 보존 규칙으로 정리한다.
 - 기존 R2는 11.9GB/607,629객체이고 TypeMoon publisher 중단선은 20GB/80만 객체다. 새 버킷도 같은 Cloudflare 계정 비용에 합산된다. 1,000화의 압축 크기/Class A·B 수와 7일 성공률을 보기 전까지 텍스트 예산·용량 상한과 수백만 화 백필을 승인하지 않는다. `docs/00`의 연 $20 전제와 `docs/04_implementation_plan.md`의 초과 승인 경계를 별도로 다룬다.
 - TypeMoon `crawler/collections.py`는 미리보기 전용이다. 텍스트 작품 연결에 재사용하지 않는다. 새 뷰어는 우선 Markdown **텍스트만** 표시하며 원격 이미지 태그를 만들지 않는다. 새 사용자 기록 key는 TypeMoon의 `board_id:external_post_id`와 분리한다.
 - `scripts.release status` Oracle JSON은 닫힌 스키마다. 텍스트 수집 상태를 그 payload에 넣거나 기존 D1 명령 목록을 확장하지 않는다.

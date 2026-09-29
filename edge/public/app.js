@@ -7,6 +7,7 @@ import {
   postIdentity,
   sanitizeBookmarkMetadata,
   samePost,
+  serializeUserState,
 } from "/user-state.js";
 import {
   boardDisplayName,
@@ -18,6 +19,10 @@ import {
   formatSourceDate,
   postReadingLabel,
   postReadingState,
+  readingMinutes,
+  readingTimeLabel,
+  remainingTimeLabel,
+  weightedPicks,
 } from "/reading-model.js";
 import { createBoardNavigator } from "/board-navigator.js";
 import {
@@ -38,18 +43,18 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20, proseFont: "serif",
-  aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
+  theme: "system", readerSurface: "default", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
   [
-    "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-status", "result-list", "result-more",
+    "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "scope-tabs", "text-lanes", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
@@ -65,14 +70,17 @@ const elements = Object.fromEntries(
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
     "image-viewer", "image-viewer-image", "image-viewer-source",
     "collection-jump", "collection-jump-input",
-    "reader-topbar-progress", "more-position", "more-position-output",
+    "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
+    "more-link", "more-wake", "image-viewer-zoom", "install-app",
     "text-sort-chips",
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
-    "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator",
+    "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
-    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
+    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
+    "discover", "discover-shuffle", "discover-picks-group", "discover-picks", "discover-hot-group", "discover-hot",
+    "discover-day-group", "discover-day-title", "discover-day",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
     "reader-bottom-previous-label", "reader-bottom-next-label",
     "reader-more", "reader-more-context", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
@@ -86,15 +94,21 @@ elements["result-list"].classList.add("loading");
 const RESULT_PAGE_SIZE = 100;
 
 let userState = loadUserState();
+// What this tab last wrote to localStorage, to tell another tab's save from our own echo.
+let lastStoredState = null;
 let settings;
 let historyEntries;
 let bookmarks;
 applyUserState(userState);
 let renderedResults = [];
+let resultCountText = "";
+// About 1MB of saved state; far above any e2e or real reading pattern that needs older marks.
+const HISTORY_LIMIT = 10_000;
 let currentSummary = null;
 let currentPayload = null;
 let currentMode = "prose";
 let currentCollection = null;
+let collectionPending = false;
 let activeCollectionId = null;
 let collectionIndexPromise;
 const collectionDetailPromises = new Map();
@@ -128,6 +142,12 @@ let publishedAt = null;
 let archiveReady = false;
 let pendingCatalogRestore = userState.lastCatalogState;
 let searchSupportsAa = true;
+// Whether the release carries view/comment counts for posts (search index) and works.
+let searchStats = false;
+let collectionStats = false;
+let pendingSort = null;
+// Settles once saved history/bookmarks are resolved against the current index.
+let savedEntriesReady = Promise.resolve();
 let boardById = new Map();
 let collectionBoardIds = null;
 let recentQueries = Array.isArray(userState.lastCatalogState?.recentQueries)
@@ -139,6 +159,12 @@ let continueTargetPost = null;
 // A text chapter Home can resume ({ route, listRoute, … } from the text library) or null.
 let continueText = null;
 const prefetched = new Set();
+let readerMinutes = 0;
+// 다른 추천 presses today; each one draws a new set of picks.
+let discoverShuffle = 0;
+// Screen wake lock sentinel and whether the reader asked to keep the screen on.
+let wakeLock = null;
+let wakeWanted = false;
 const READER_LIST_PAGE = 10;
 // The list shown under a Reader body: { onOpen(key), onPage(delta) } from the owning source.
 let readerListModel = null;
@@ -242,6 +268,11 @@ function applyUserState(state) {
   bookmarks = entriesFromState(state.bookmarks, "savedAt");
 }
 
+// The idle archive label; a failing local save stays visible over later "loaded" updates.
+function readyLabel() {
+  return elements["archive-state"].dataset.storageFailed ? "로컬 저장 실패" : "보존본";
+}
+
 function persistUserState() {
   const { viewModes, ...savedSettings } = settings;
   userState = {
@@ -264,13 +295,51 @@ function persistUserState() {
     lastCatalogState: userState.lastCatalogState,
   };
   try {
-    localStorage.setItem(STATE_KEY, exportUserState(userState));
+    const serialized = serializeUserState(userState);
+    localStorage.setItem(STATE_KEY, serialized);
+    lastStoredState = serialized;
     for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
+    // A save that works again clears an earlier failure notice.
+    delete elements["archive-state"].dataset.storageFailed;
+    if (elements["archive-state"].textContent === "로컬 저장 실패" && archiveReady) {
+      elements["archive-state"].textContent = readyLabel();
+    }
   } catch (error) {
+    elements["archive-state"].dataset.storageFailed = "true";
     elements["archive-state"].textContent = "로컬 저장 실패";
     console.warn("Reader state could not be saved", error);
   }
 }
+
+// Another tab saved reading state. Every save writes the whole state, so a tab that kept its old
+// copy would erase the other tab's new bookmarks and history on its next scroll save. Adopt the
+// newer copy instead (settings included), then re-resolve records against the index.
+function adoptStoredState(serialized) {
+  if (!serialized || serialized === lastStoredState) return;
+  let incoming;
+  try {
+    incoming = planImport(serialized, defaultSettings).state;
+  } catch {
+    return;
+  }
+  lastStoredState = serialized;
+  applyUserState(incoming);
+  applySettings();
+  if (currentSummary && !historyEntries.some((entry) => samePost(entry.summary, currentSummary))) {
+    rememberHistory(currentSummary);
+  }
+  if (!archiveReady) return;
+  savedEntriesReady = hydrateSavedEntries();
+  void savedEntriesReady.then(() => {
+    updateBookmarkButton();
+    if (currentDestination === "library" && !readerSource) renderCover();
+    else refreshCatalogRows();
+  }).catch(() => {});
+}
+
+window.addEventListener("storage", (event) => {
+  if (event.key === STATE_KEY) adoptStoredState(event.newValue);
+});
 
 function saveSettings() {
   persistUserState();
@@ -311,6 +380,16 @@ function rememberQuery(query) {
   const extendsLatest = latest && sameSearch(latest) && latest.length > trimmed.length;
   recentQueries = extendsLatest ? recentQueries
     : [trimmed, ...recentQueries.filter((item) => item !== trimmed && !(item === latest && sameSearch(item)))].slice(0, 5);
+}
+
+function svgIcon(path) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  shape.setAttribute("d", path);
+  svg.append(shape);
+  return svg;
 }
 
 function appendHighlightedText(target, text, query) {
@@ -377,6 +456,8 @@ function applySettings() {
   const dark = settings.theme === "dark" ||
     (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   root.dataset.theme = dark ? "dark" : "light";
+  root.dataset.surface = settings.readerSurface;
+  root.style.setProperty("--prose-align", settings.proseAlign === "justify" ? "justify" : "start");
   root.style.setProperty("--prose-size", `${settings.proseSize}px`);
   root.style.setProperty("--prose-line", settings.lineHeight);
   root.style.setProperty("--prose-width", `${settings.proseWidth}px`);
@@ -388,10 +469,17 @@ function applySettings() {
   root.style.setProperty("--aa-ink", readableAaInk(settings.aaBackground));
   elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
   elements["theme-toggle"].title = elements["theme-toggle"].ariaLabel;
-  for (const choice of elements["theme-choices"].querySelectorAll("[data-theme-choice]")) {
-    choice.setAttribute("aria-checked", String(choice.dataset.themeChoice === settings.theme));
+  for (const [selector, key, value] of [
+    ["[data-theme-choice]", "themeChoice", settings.theme],
+    ["[data-reader-surface]", "readerSurface", settings.readerSurface],
+    ["[data-prose-align]", "proseAlign", settings.proseAlign],
+    ["[data-tap-paging]", "tapPaging", settings.tapPaging],
+  ]) {
+    for (const choice of elements["settings-dialog"].querySelectorAll(selector)) {
+      choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
+    }
   }
-  document.querySelector('meta[name="theme-color"]').content = dark ? "#0b0d12" : "#ffffff";
+  syncThemeColor();
   for (const [id, value, suffix] of [
     ["prose-size", settings.proseSize, "px"],
     ["line-height", settings.lineHeight, ""],
@@ -426,6 +514,17 @@ function applySettings() {
   }
   elements["aa-background"].closest(".aa-color-picker").classList.toggle("active", !backgroundPresetSelected);
   requestAnimationFrame(() => updateAaOverflowCue());
+}
+
+// Browser bar colour. Under 시스템 each media-scoped meta keeps its own scheme's colour and the
+// browser picks; an explicit 밝게/어둡게 overrides both, whatever the OS says. While a
+// paper-surface body is open the bar matches the Reader instead of the page.
+function syncThemeColor() {
+  const paper = Boolean(readerSource) && settings.readerSurface === "paper";
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+    const dark = settings.theme === "system" ? meta.media.includes("dark") : settings.theme === "dark";
+    meta.content = paper ? (dark ? "#1c1914" : "#f6f0e4") : dark ? "#0b0d12" : "#ffffff";
+  }
 }
 
 function relativeLuminance(hex) {
@@ -480,6 +579,30 @@ function setAaZoom(value, debounce = false) {
   else persistUserState();
 }
 
+// 맞춤: the zoom at which the widest AA line fits the stage without horizontal scrolling. The
+// picture's width scales with the zoom, so one measurement at the current zoom is enough. It
+// only shrinks; a picture that already fits returns to 100%.
+function fitAaZoom() {
+  const body = elements["archive-body"];
+  const canvas = body.querySelector(".aa-canvas");
+  if (currentMode !== "aa" || !canvas) return;
+  // A fixed preset width (680/800px) does not scale with the zoom, so it could never fit a
+  // narrower stage and each press would only shrink further; fitting uses the picture's width.
+  if (settings.aaCanvasWidth !== null) {
+    settings.aaCanvasWidth = null;
+    applySettings();
+  }
+  // The canvas is at least as wide as the stage; lift that floor to read the picture's own width.
+  canvas.style.minWidth = "0";
+  const content = canvas.getBoundingClientRect().width;
+  canvas.style.removeProperty("min-width");
+  const style = getComputedStyle(body);
+  const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+  if (!(content > 0) || !(available > 0)) return;
+  setAaZoom(Math.min(1, Math.floor(settings.aaZoom * (available / content) * 100) / 100));
+  body.scrollLeft = 0;
+}
+
 function renderHomeList(element, posts, emptyText, limit = 6, listHint = "") {
   element.replaceChildren();
   if (!posts.length) {
@@ -490,19 +613,31 @@ function renderHomeList(element, posts, emptyText, limit = 6, listHint = "") {
     return;
   }
   for (const post of posts.slice(0, limit)) {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    const title = document.createElement("strong");
-    const meta = document.createElement("span");
-    button.type = "button";
-    button.className = "home-item";
-    title.textContent = post.title || "제목 없음";
-    meta.textContent = [boardLabel(post.board_id), post.author, formatSourceDate(post.created_at_raw)].filter(Boolean).join(" · ");
-    button.append(title, meta);
-    button.addEventListener("click", () => loadPost(post, "push", { listHint }));
-    item.append(button);
-    element.append(item);
+    const meta = [boardLabel(post.board_id), post.author, formatSourceDate(post.created_at_raw)];
+    element.append(homeRow(post.title || "제목 없음", meta, () => loadPost(post, "push", { listHint })));
   }
+}
+
+// A Home list row: title (two lines) over one quiet meta line.
+function homeRow(title, metaParts, open, { badge = "" } = {}) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "home-item";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  const meta = document.createElement("span");
+  if (badge) {
+    const mark = document.createElement("b");
+    mark.className = "home-badge";
+    mark.textContent = badge;
+    meta.append(mark);
+  }
+  meta.append(metaParts.filter(Boolean).join(" · "));
+  button.append(heading, meta);
+  button.addEventListener("click", open);
+  item.append(button);
+  return item;
 }
 
 function renderCover(
@@ -535,8 +670,88 @@ function renderCover(
   else elements["continue-block"].hidden = true;
   renderHomeList(elements["latest-list"], latestPosts, "최근 게시된 글이 없습니다.", 6);
   renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.", 4, "recent");
+  renderHomeBoards();
   void renderReadingWorks();
+  void renderDiscovery();
   updateShellMode();
+}
+
+// 오늘의 발견 on Home: today's picks among unread series (stable all day, weighted toward
+// popular works when the release has counts), the most discussed recent posts, and posts
+// written on this day in earlier years. Each group hides when it has nothing to show.
+async function renderDiscovery() {
+  if (currentDestination !== "library" || !archiveReady) return;
+  const now = new Date();
+  const [year, month, day] = [now.getFullYear(), now.getMonth() + 1, now.getDate()];
+  const dayKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const [found, picks] = await Promise.all([
+    workerRequest({ type: "discover", year, month, day, limit: 4 }).catch(() => null),
+    discoveryPicks(dayKey).catch(() => []),
+  ]);
+  if (currentDestination !== "library" || currentSummary) return;
+  const fill = (group, list, rows) => {
+    list.replaceChildren(...rows);
+    group.hidden = !rows.length;
+  };
+  fill(elements["discover-picks-group"], elements["discover-picks"], picks.map((collection) => homeRow(
+    collection.title,
+    [boardLabel(collection.board_id), `${collection.entry_count.toLocaleString("ko-KR")}편`,
+      popularityLabel(collection.views, collection.comments)],
+    () => void openCollectionDetail(collection.id),
+  )));
+  fill(elements["discover-hot-group"], elements["discover-hot"], (found?.hot ?? []).map((post) => homeRow(
+    post.title || "제목 없음",
+    [`댓글 ${post.comment_count.toLocaleString("ko-KR")}`, boardLabel(post.board_id), formatSourceDate(post.created_at_raw)],
+    () => loadPost(post, "push", { listHint: "board" }),
+  )));
+  elements["discover-day-title"].textContent = `이날의 기록 · ${month}월 ${day}일`;
+  // A post already shown as 요즘 화제 is not repeated under 이날의 기록.
+  const shownHot = new Set((found?.hot ?? []).map(postIdentity));
+  const dayPosts = (found?.onThisDay ?? []).filter((post) => !shownHot.has(postIdentity(post))).slice(0, 3);
+  fill(elements["discover-day-group"], elements["discover-day"], dayPosts.map((post) => {
+    const written = Number(/^\d{4}/.exec(String(post.created_at_raw))?.[0]);
+    return homeRow(
+      post.title || "제목 없음",
+      [written ? `${year - written}년 전` : "", boardLabel(post.board_id), post.author],
+      () => loadPost(post, "push", { listHint: "board" }),
+    );
+  }));
+  elements["discover-shuffle"].hidden = !picks.length;
+  elements.discover.hidden = [elements["discover-picks-group"], elements["discover-hot-group"], elements["discover-day-group"]]
+    .every((group) => group.hidden);
+}
+
+async function discoveryPicks(dayKey) {
+  const index = await collectionIndex();
+  const { progress, failedBoards } = await collectionReadingProgress(index);
+  const candidates = index.summaries.filter((collection) => collection.kind !== "oneshot" &&
+    collectionAvailableCount(collection) >= 3 && !failedBoards.has(collection.board_id) &&
+    collectionOccupancy({
+      availableCount: collectionAvailableCount(collection),
+      finishedCount: progress.get(collection.id)?.finished ?? 0,
+      readingCount: progress.get(collection.id)?.reading ?? 0,
+    }) === "unread");
+  return weightedPicks(candidates, {
+    seed: `${dayKey}#${discoverShuffle}`,
+    count: 3,
+    // Popular works are likelier, but every unread series can come up.
+    weight: (collection) => index.hasStats ? 1 + Math.log10(1 + collection.views + 5 * collection.comments) : 1,
+  });
+}
+
+// Starred and recently opened boards (board picker preferences) as one-tap entries on Home.
+function renderHomeBoards() {
+  const ids = boardNavigator.shortcuts().filter((id) => boardById.has(id)).slice(0, 8);
+  elements["home-boards"].hidden = !ids.length;
+  elements["home-board-list"].replaceChildren(...ids.map((id) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.board = id;
+    button.textContent = boardLabel(id);
+    item.append(button);
+    return item;
+  }));
 }
 
 function renderTextContinue(text) {
@@ -553,6 +768,13 @@ function renderTextContinue(text) {
     finished ? (text.identity.startsWith("novel:") ? "다 읽음 · 다음 화로 이어서" : "다 읽음") : postReadingLabel(text.progress, { seen: true }),
   ].filter(Boolean).join(" · ");
   elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
+  setContinueProgress(finished ? 0 : text.progress);
+}
+
+// The red progress piece along the bottom of the 이어서 읽기 card (DESIGN §3).
+function setContinueProgress(progress) {
+  const ratio = Math.min(1, Math.max(0, Number(progress) || 0));
+  elements["continue-reading"].style.setProperty("--continue-progress", `${Math.round(ratio * 100)}%`);
 }
 
 async function renderContinueCard() {
@@ -620,6 +842,7 @@ async function renderContinueCard() {
     summary.author,
     postReadingLabel(progress, { seen: true }) || "다음 편",
   ].filter(Boolean).join(" · ");
+  setContinueProgress(progress);
   if (membership) {
     const index = membership.collection.entries.findIndex((entry) => postIdentity(entry) === postIdentity(summary));
     elements["continue-work"].hidden = false;
@@ -662,8 +885,9 @@ async function renderReadingWorks() {
       });
       items.push({
         title: collection.title,
-        meta: [boardLabel(collection.board_id), copy.progress, copy.action].filter(Boolean).join(" · "),
+        meta: [boardLabel(collection.board_id), copy.progress, copy.action],
         readAt: state?.lastReadAt ?? "",
+        fresh: hasNewEpisodes(collection, state),
         open: () => void openCollectionDetail(collection.id),
       });
     }
@@ -674,12 +898,15 @@ async function renderReadingWorks() {
   for (const work of textLibrary.readingWorks()) {
     items.push({
       title: work.title,
-      meta: ["소설", work.meta].filter(Boolean).join(" · "),
+      meta: ["소설", work.meta],
       readAt: work.readAt,
+      fresh: false,
       open: () => openTextFromHome({ identity: "novel:", listRoute: work.listRoute, progress: 0 }, { listOnly: true }),
     });
   }
-  items.sort((left, right) => (Date.parse(right.readAt) || 0) - (Date.parse(left.readAt) || 0));
+  // Works with episodes added since they were last read come first.
+  items.sort((left, right) => Number(right.fresh) - Number(left.fresh) ||
+    (Date.parse(right.readAt) || 0) - (Date.parse(left.readAt) || 0));
   const shown = items.slice(0, 3);
   section.hidden = shown.length === 0 && failedBoards.size === 0;
   list.replaceChildren();
@@ -690,26 +917,22 @@ async function renderReadingWorks() {
     empty.textContent = "읽기 상태를 확인하지 못했습니다.";
     list.append(empty);
   }
-  for (const item of shown) {
-    const row = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "home-item";
-    const title = document.createElement("strong");
-    title.textContent = item.title;
-    const meta = document.createElement("span");
-    meta.textContent = item.meta;
-    button.append(title, meta);
-    button.addEventListener("click", item.open);
-    row.append(button);
-    list.append(row);
-  }
+  for (const item of shown) list.append(homeRow(item.title, item.meta, item.open, { badge: item.fresh ? "새 편" : "" }));
   if (failedBoards.size && shown.length) {
     const note = document.createElement("li");
     note.className = "home-empty";
     note.textContent = "일부 읽기 상태 미확인";
     list.append(note);
   }
+}
+
+// A work has new episodes for this reader when it continues past the furthest episode they have
+// opened and its newest episode was posted after their last visit.
+function hasNewEpisodes(collection, state) {
+  if (!state?.positions?.size || !state.lastReadAt) return false;
+  const furthest = Math.max(...state.positions);
+  const latest = Date.parse(collection.latest_created_at ?? "");
+  return collection.entry_count > furthest && Number.isFinite(latest) && latest > Date.parse(state.lastReadAt);
 }
 
 function requireArchiveResponse(response, message) {
@@ -750,6 +973,14 @@ function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없�
   elements["archive-state"].textContent = offline ? "오프라인" : expired ? "로그인 필요" : "연결 오류";
   elements["result-status"].textContent = message;
   elements["result-more"].hidden = true;
+  // The error cover replaces the Reader: keep the open post's place while it is still measured,
+  // then let the post go so later saves (cover scroll, pagehide) cannot overwrite its progress.
+  if (currentSummary) {
+    if (readerSource === "typemoon") persistReadingPosition();
+    currentSummary = null;
+    currentPayload = null;
+    currentCollection = null;
+  }
   renderCover(title, message, false, expired ? "다시 로그인" : "다시 시도");
 }
 
@@ -776,9 +1007,11 @@ function setReaderSource(source) {
   elements.reader.hidden = !source;
   elements.reader.dataset.source = source ?? "";
   document.body.classList.toggle("reader-active", Boolean(source));
+  syncThemeColor();
   if (!source) {
     readerNavigation = null;
     listContext = null;
+    if (wakeWanted) setScreenAwake(false);
     renderReaderList(null);
     elements["reader-more"].open && elements["reader-more"].close();
     return;
@@ -817,6 +1050,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   body.classList.add("plain-text");
   body.ariaLabel = "텍스트 본문";
   renderPlainTextWithMedia(body, text, { sourceUrl });
+  updateReaderLength();
   const renderId = String(++textRenderId);
   body.dataset.renderId = renderId;
   void archiveTextMedia(body, renderId);
@@ -907,6 +1141,17 @@ function bodyProgress() {
   if (span > 0) return Math.min(1, Math.max(0, pane.scrollTop / span));
   const maximum = pane.scrollHeight - pane.clientHeight;
   return maximum > 0 ? Math.min(1, pane.scrollTop / maximum) : 0;
+}
+
+// Estimated reading time of the open prose body (AA pictures are looked at, not read).
+function updateReaderLength() {
+  readerMinutes = currentMode === "aa" ? 0 : readingMinutes(elements["archive-body"].textContent);
+  elements["reader-length"].textContent = readingTimeLabel(readerMinutes);
+  elements["reader-length"].hidden = !readerMinutes;
+}
+
+function renderRemainingTime(progress) {
+  elements["more-remaining"].textContent = remainingTimeLabel(readerMinutes, progress);
 }
 
 function subjectParticle(word) {
@@ -1017,9 +1262,12 @@ function openReaderMore() {
   elements["more-mode-reset"].hidden = !typeMoon || elements["mode-reset"].hidden;
   elements["more-mode-label"].textContent = elements["mode-toggle"].textContent;
   elements["more-immersive-label"].textContent = document.body.classList.contains("immersive") ? "집중 종료" : "집중 모드";
-  const percent = Math.round(bodyProgress() * 100);
+  const progress = bodyProgress();
+  const percent = Math.round(progress * 100);
   elements["more-position"].value = String(percent);
   elements["more-position-output"].value = `${percent}%`;
+  renderRemainingTime(progress);
+  renderWakeState();
   if (!elements["reader-more"].open) {
     moreOpener = document.activeElement;
     elements["reader-more"].showModal();
@@ -1028,6 +1276,56 @@ function openReaderMore() {
 
 function closeReaderMore() {
   if (elements["reader-more"].open) elements["reader-more"].close();
+}
+
+// 화면 켜 두기: a screen wake lock the reader asks for, held only while a body is open. The
+// browser drops it whenever the page is hidden, so it is requested again on return.
+async function acquireWakeLock() {
+  if (!wakeWanted || wakeLock || document.visibilityState !== "visible") return;
+  try {
+    const sentinel = await navigator.wakeLock.request("screen");
+    // Turned off (or the body closed) while the request was pending.
+    if (!wakeWanted || wakeLock) {
+      void sentinel.release().catch(() => {});
+      return;
+    }
+    wakeLock = sentinel;
+    sentinel.addEventListener("release", () => {
+      if (wakeLock === sentinel) wakeLock = null;
+      renderWakeState();
+    });
+  } catch {
+    wakeWanted = false;
+    showReaderFeedback("화면 켜 두기를 쓸 수 없습니다", 2200);
+  }
+  renderWakeState();
+}
+
+function setScreenAwake(wanted) {
+  wakeWanted = wanted;
+  if (wanted) {
+    void acquireWakeLock();
+    return;
+  }
+  void wakeLock?.release().catch(() => {});
+  wakeLock = null;
+  renderWakeState();
+}
+
+function renderWakeState() {
+  elements["more-wake"].hidden = !("wakeLock" in navigator);
+  elements["more-wake"].setAttribute("aria-pressed", String(wakeWanted));
+}
+
+async function copyReaderLink() {
+  const url = location.href;
+  try {
+    await navigator.clipboard.writeText(url);
+    showReaderFeedback("링크를 복사했습니다", 1600);
+  } catch {
+    if (navigator.share) await navigator.share({ title: document.title, url }).catch(() => {});
+    else showReaderFeedback("링크를 복사하지 못했습니다", 2200);
+  }
 }
 
 function updateDestinationButtons() {
@@ -1047,18 +1345,48 @@ function setScope(scope) {
     button.setAttribute("aria-pressed", active);
   }
   const collectionScope = currentScope === "collections";
-  const previousSort = elements["sort-filter"].value;
-  const options = collectionScope
-    ? [["최근 글순", "updated"], ["가나다순", "title"], ["편수 많은순", "longest"]]
-    : [["최신순", "latest"], ["오래된순", "oldest"]];
-  elements["sort-filter"].replaceChildren(...options.map(([label, value]) => new Option(label, value)));
-  elements["sort-filter"].value = collectionScope
-    ? (["title", "updated", "longest"].includes(previousSort) ? previousSort : "updated")
-    : (["latest", "oldest"].includes(previousSort) ? previousSort : "latest");
+  renderSortOptions();
   document.querySelector(".search-target-field").hidden = collectionScope;
   document.querySelector(".search-match-field").hidden = collectionScope;
   document.querySelector(".collection-read-field").hidden = !collectionScope;
   elements["search-input"].placeholder = collectionScope ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
+}
+
+// Sort choices the current release supports; popularity needs the counts newer exports carry.
+function sortChoices(scope) {
+  if (scope === "collections") {
+    return [["최근 글순", "updated"], ["가나다순", "title"], ["편수 많은순", "longest"],
+      ...(collectionStats ? [["조회 많은순", "views"], ["댓글 많은순", "comments"]] : [])];
+  }
+  return [["최신순", "latest"], ["오래된순", "oldest"],
+    ...(searchStats ? [["조회 많은순", "views"], ["댓글 많은순", "comments"]] : [])];
+}
+
+function allowedSort(scope, requested) {
+  const choices = sortChoices(scope);
+  return choices.some(([, value]) => value === requested) ? requested : choices[0][1];
+}
+
+// Options for the current scope, keeping the chosen sort when it is still offered.
+function renderSortOptions() {
+  const previousSort = elements["sort-filter"].value;
+  const options = sortChoices(currentScope);
+  elements["sort-filter"].replaceChildren(...options.map(([label, value]) => new Option(label, value)));
+  elements["sort-filter"].value = options.some(([, value]) => value === previousSort)
+    ? previousSort : options[0][1];
+}
+
+// Rebuilds the sort options once an index reports its counts. Returns true when the sort changed.
+function refreshSortChoices() {
+  // The text library owns the select while it is open (applyTextSortOptions).
+  if (currentDestination === "text") return false;
+  const wanted = pendingSort ?? elements["sort-filter"].value;
+  renderSortOptions();
+  const value = allowedSort(currentScope, wanted);
+  if (value === wanted) pendingSort = null;
+  if (elements["sort-filter"].value === value) return false;
+  elements["sort-filter"].value = value;
+  return true;
 }
 
 function currentSearchState() {
@@ -1110,10 +1438,10 @@ function applyCatalogRoute(destination) {
   elements["mode-filter"].value = searchSupportsAa && (mode === "aa" || mode === "prose") ? mode : "all";
   elements["search-target"].value = ["title", "author"].includes(params.get("target")) ? params.get("target") : "all";
   elements["search-match"].value = params.get("match") === "or" ? "or" : "and";
-  const sort = params.get("sort");
-  elements["sort-filter"].value = currentScope === "collections"
-    ? (["title", "longest"].includes(sort) ? sort : "updated")
-    : (sort === "oldest" ? "oldest" : "latest");
+  const requestedSort = params.get("sort");
+  elements["sort-filter"].value = allowedSort(currentScope, requestedSort);
+  // A popularity sort from a link waits for the index that says whether counts exist.
+  pendingSort = requestedSort && elements["sort-filter"].value !== requestedSort ? requestedSort : null;
   elements["collection-kind-filter"].value = ["series", "oneshot"].includes(params.get("kind")) ? params.get("kind") : "all";
   elements["collection-read-filter"].value = ["unread", "reading", "finished"].includes(params.get("read")) ? params.get("read") : "all";
   if (destination === "bookmarks") {
@@ -1297,7 +1625,8 @@ function renderActiveFilters() {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.clear = item.key;
-    button.textContent = `${item.label} ×`;
+    button.ariaLabel = `${item.label} 조건 해제`;
+    button.append(item.label, svgIcon("m6 6 12 12M18 6 6 18"));
     elements["active-filters"].append(button);
   }
 }
@@ -1325,11 +1654,12 @@ function resetFilters() {
 function restoreCatalogControls() {
   const host = document.querySelector(".catalog-inner") || document.querySelector(".catalog");
   if (elements["catalog-controls"].parentElement !== host) {
-    elements["result-status"].before(elements["catalog-controls"]);
+    elements["result-bar"].before(elements["catalog-controls"]);
   }
 }
 
-const sheetFilterIds = ["mode-filter", "search-target", "search-match", "collection-kind-filter", "collection-read-filter", "sort-filter"];
+// Filters edited as a draft in the phone sheet. Sort sits in the result bar and applies at once.
+const sheetFilterIds = ["mode-filter", "search-target", "search-match", "collection-kind-filter", "collection-read-filter"];
 
 function resetSheetFilterValues() {
   elements["mode-filter"].value = "all";
@@ -1337,7 +1667,6 @@ function resetSheetFilterValues() {
   elements["search-match"].value = "and";
   elements["collection-kind-filter"].value = "all";
   elements["collection-read-filter"].value = "all";
-  elements["sort-filter"].value = currentScope === "collections" ? "updated" : "latest";
 }
 
 function openFilterSheet() {
@@ -1443,7 +1772,7 @@ function cancelReaderSelection() {
   postController?.abort();
 }
 
-function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all") {
+function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true } = {}) {
   if (destination === "settings") {
     openSettings();
     document.title = "읽기 설정 — ReDSTM";
@@ -1488,7 +1817,7 @@ function showDestination(destination, navigate = true, view = destination === "b
     document.body.classList.remove("collection-detail-open");
   }
   // Only an explicit trip to Search raises the keyboard; Back into search results must not.
-  closeMobileReader(destination === "search" && navigate);
+  closeMobileReader(destination === "search" && navigate && focusSearch);
   if (destination === "text") {
     const params = navigate && !wasText ? new URLSearchParams() : new URLSearchParams(location.search);
     void textLibrary.open(params);
@@ -1530,14 +1859,19 @@ function setImmersive(active, restoreFocus = true) {
   }
 }
 
-function resolvePosts(summaries) {
-  const identities = summaries.map(postIdentity).filter(Boolean);
-  if (!identities.length) return Promise.resolve([]);
+// One request/response round trip to the search worker (answered in handleWorkerMessage).
+function workerRequest(message) {
   const id = ++messageId;
   return new Promise((resolve, reject) => {
     workerRequests.set(id, { resolve, reject });
-    searchWorker.postMessage({ type: "resolve", id, identities });
+    searchWorker.postMessage({ ...message, id });
   });
+}
+
+function resolvePosts(summaries) {
+  const identities = summaries.map(postIdentity).filter(Boolean);
+  if (!identities.length) return Promise.resolve([]);
+  return workerRequest({ type: "resolve", identities });
 }
 
 async function hydrateSavedEntries() {
@@ -1638,6 +1972,14 @@ async function handleRoute() {
       } else {
         showDestination(destination, false, currentView);
         if (destination !== "library") syncSearchRoute();
+        // The installed app's 이어서 읽기 shortcut (manifest) resumes straight away.
+        if (destination === "library" && new URLSearchParams(location.search).has("continue")) {
+          history.replaceState(null, "", "/");
+          // Reading records only point at archive objects once they are resolved against the index.
+          await savedEntriesReady.catch(() => {});
+          await renderContinueCard();
+          if (!elements["continue-block"].hidden) elements["continue-reading"].click();
+        }
       }
     }
     if (settingsRoute) {
@@ -1661,7 +2003,7 @@ function handleWorkerMessage({ data }) {
       error.code = data.code;
       pending.reject(error);
     }
-    else pending.resolve(data.type === "page" ? data : data.summaries);
+    else pending.resolve(data.type === "page" || data.type === "discover" ? data : data.summaries);
     return;
   }
   if (data.type === "error") {
@@ -1678,10 +2020,12 @@ function handleWorkerMessage({ data }) {
     archiveReady = true;
     elements["archive-count"].textContent = `${data.count.toLocaleString("ko-KR")}건`;
     elements["empty-count"].textContent = `${data.count.toLocaleString("ko-KR")}건`;
-    elements["archive-state"].textContent = "보존본";
+    elements["archive-state"].textContent = readyLabel();
     latestPosts = data.recentPosts;
     publishedAt = data.publishedAt;
     searchSupportsAa = data.hasIsAa;
+    searchStats = Boolean(data.hasStats);
+    refreshSortChoices();
     elements["mode-filter"].disabled = !searchSupportsAa;
     if (!searchSupportsAa) elements["mode-filter"].value = "all";
     boardById = new Map((data.boardMetadata ?? []).map((board) => [board.board_id, board]));
@@ -1691,7 +2035,8 @@ function handleWorkerMessage({ data }) {
     const textAlreadyOpen = routeHandled && currentDestination === "text";
     if (!textAlreadyOpen) renderCover();
     if (routeSummary()) requestSearch();
-    void hydrateSavedEntries().then(() => {
+    savedEntriesReady = hydrateSavedEntries();
+    void savedEntriesReady.then(() => {
       if (!currentSummary && currentDestination === "library") renderCover();
       if (currentView !== "all") renderCurrentView();
     }).catch((error) => { elements["result-status"].textContent = error.message; });
@@ -1815,17 +2160,19 @@ function localResults(entries) {
   const mode = saved ? "all" : elements["mode-filter"].value;
   const target = saved ? "all" : elements["search-target"].value;
   const match = saved ? "and" : elements["search-match"].value;
+  const bookmarkByIdentity = tokens.length ? stateLookup().bookmarks : null;
   return entries
     .map((entry) => entry.summary)
     .filter((post) => !board || post.board_id === board)
     .filter((post) => mode === "all" || (mode === "aa") === Boolean(post.is_aa))
     .filter((post) => {
-      const bookmark = bookmarks.find((entry) => postIdentity(entry.summary) === postIdentity(post));
+      if (!tokens.length) return true;
+      const bookmark = bookmarkByIdentity.get(postIdentity(post));
       const searchText = target === "title" ? normalized(post.title) : target === "author" ? normalized(post.author) :
         normalized([post.title, post.author, post.category, boardLabel(post.board_id), bookmark?.note, ...(bookmark?.tags ?? [])].join(" "));
-      return !tokens.length || (match === "or"
+      return match === "or"
         ? tokens.some((token) => searchText.includes(token))
-        : tokens.every((token) => searchText.includes(token)));
+        : tokens.every((token) => searchText.includes(token));
     });
 }
 
@@ -1867,9 +2214,9 @@ async function renderReadingView() {
   elements["search-empty"].hidden = true;
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
-  const { read, saved } = stateIdentities();
+  const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
-  inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, read, saved)));
+  inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
   for (const collection of collections) fragment.append(collectionItemElement(collection));
   elements["result-list"].append(fragment);
   const failedNote = collectionProgressFailedBoards.size ? " · 일부 읽기 상태 미확인" : "";
@@ -1879,7 +2226,7 @@ async function renderReadingView() {
   updateLoadMore();
 }
 
-function resultItemElement(post, index, readIdentities, savedIdentities) {
+function resultItemElement(post, index, lookup) {
   const item = document.createElement("li");
   const button = document.createElement("button");
   button.type = "button";
@@ -1896,11 +2243,11 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
   const badges = document.createElement("span");
   badges.className = "result-badges";
   const identity = postIdentity(post);
-  const bookmark = bookmarks.find((entry) => postIdentity(entry.summary) === identity);
-  const history = historyEntries.find((entry) => postIdentity(entry.summary) === identity);
+  const bookmark = lookup.bookmarks.get(identity);
+  const history = lookup.history.get(identity);
   const readLabel = postReadingLabel(history?.progress, { seen: Boolean(history) });
   for (const [visible, label] of [
-    [post.is_aa === true, "AA"], [savedIdentities.has(identity), "저장"], [Boolean(readLabel), readLabel],
+    [post.is_aa === true, "AA"], [Boolean(bookmark), "저장"], [Boolean(readLabel), readLabel],
   ]) {
     if (!visible) continue;
     const badge = document.createElement("span");
@@ -1931,7 +2278,8 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
     [boardLabel(post.board_id) || post.board_id, "result-board"],
     [author, ""],
     [formatSourceDate(post.created_at_raw) || "날짜 없음", ""],
-  ]) {
+    [popularityLabel(post.views, post.comment_count), "result-stats"],
+  ].filter(([node]) => node)) {
     if (typeof node === "string") {
       const part = document.createElement("span");
       part.className = className;
@@ -1963,10 +2311,11 @@ function resultItemElement(post, index, readIdentities, savedIdentities) {
   return item;
 }
 
-function stateIdentities() {
+// Reading and bookmark records by post identity, built once per list render.
+function stateLookup() {
   return {
-    read: new Set(historyEntries.map((entry) => postIdentity(entry.summary)).filter(Boolean)),
-    saved: new Set(bookmarks.map((entry) => postIdentity(entry.summary)).filter(Boolean)),
+    history: historyByIdentityMap(),
+    bookmarks: new Map(bookmarks.map((entry) => [postIdentity(entry.summary), entry])),
   };
 }
 
@@ -2020,15 +2369,17 @@ function catalogStatus(countText) {
   return note ? `${note} · ${status}` : status;
 }
 
+// status is the bare count text; catalogStatus() adds the active filter labels on top.
 function renderResults(posts, status) {
   renderedResults = posts;
+  resultCountText = status;
   elements["search-empty"].hidden = true;
   elements["result-status"].textContent = catalogStatus(status);
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
-  const { read, saved } = stateIdentities();
+  const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
-  posts.forEach((post, index) => fragment.append(resultItemElement(post, index, read, saved)));
+  posts.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
   elements["result-list"].append(fragment);
   renderWidenActions(!posts.length);
   updateLoadMore();
@@ -2038,13 +2389,14 @@ function renderResults(posts, status) {
 // Append the next page in place so paging deeper keeps the already-loaded rows, the reader's
 // prev/next-post adjacency, and the current scroll position instead of resetting the list.
 function appendResults(posts) {
-  const { read, saved } = stateIdentities();
+  const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
   const base = renderedResults.length;
-  posts.forEach((post, index) => fragment.append(resultItemElement(post, base + index, read, saved)));
+  posts.forEach((post, index) => fragment.append(resultItemElement(post, base + index, lookup)));
   elements["result-list"].append(fragment);
   renderedResults = renderedResults.concat(posts);
-  elements["result-status"].textContent = catalogStatus(`${resultTotal.toLocaleString("ko-KR")}건`);
+  resultCountText = `${resultTotal.toLocaleString("ko-KR")}건`;
+  elements["result-status"].textContent = catalogStatus(resultCountText);
   updateLoadMore();
   restoreCatalogPosition();
 }
@@ -2060,6 +2412,8 @@ async function renderCollectionCatalog(offset = 0) {
     const index = await collectionIndex();
     collectionBoardIds = new Set(index.summaries.map((collection) => collection.board_id));
     applyBoardFilterOptions();
+    collectionStats = Boolean(index.hasStats);
+    if (refreshSortChoices()) syncSearchRoute();
     const { progress, failedBoards } = await collectionReadingProgress(index);
     if (requestId !== collectionSearchId || currentScope !== "collections") return;
     collectionProgressFailedBoards = failedBoards;
@@ -2092,12 +2446,7 @@ async function renderCollectionCatalog(offset = 0) {
         return true;
       })
       .filter((collection) => !query || normalized(collection.title).includes(query))
-      .sort(elements["sort-filter"].value === "longest"
-        ? (left, right) => right.entry_count - left.entry_count || titleCollator.compare(left.title, right.title)
-        : elements["sort-filter"].value === "updated"
-        ? (left, right) => (Date.parse(right.latest_created_at) || 0) - (Date.parse(left.latest_created_at) || 0) ||
-          titleCollator.compare(left.title, right.title)
-        : (left, right) => titleCollator.compare(left.title, right.title) || left.id - right.id);
+      .sort(collectionComparator(elements["sort-filter"].value));
     collectionProgressById = progress;
     resultTotal = matches.length;
     renderedCollections = matches.slice(0, offset + RESULT_PAGE_SIZE);
@@ -2105,6 +2454,26 @@ async function renderCollectionCatalog(offset = 0) {
   } catch (error) {
     if (requestId === collectionSearchId) renderArchiveError(error, "작품 목록을 열 수 없음");
   }
+}
+
+function collectionComparator(sort) {
+  const byTitle = (left, right) => titleCollator.compare(left.title, right.title) || left.id - right.id;
+  const byCount = (key) => (left, right) => (right[key] ?? 0) - (left[key] ?? 0) || byTitle(left, right);
+  if (sort === "longest") return byCount("entry_count");
+  if (sort === "views") return byCount("views");
+  if (sort === "comments") return byCount("comments");
+  if (sort === "updated") {
+    return (left, right) => (Date.parse(right.latest_created_at) || 0) - (Date.parse(left.latest_created_at) || 0) ||
+      byTitle(left, right);
+  }
+  return byTitle;
+}
+
+// "조회 1.2만 · 댓글 340" when the release carries counts.
+const compactNumber = new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 });
+function popularityLabel(views, comments) {
+  if (!Number.isInteger(views) || !Number.isInteger(comments)) return "";
+  return `조회 ${compactNumber.format(views)} · 댓글 ${compactNumber.format(comments)}`;
 }
 
 function collectionItemElement(collection) {
@@ -2138,6 +2507,7 @@ function collectionItemElement(collection) {
     [copy.action, "result-action"],
     [copy.gap, ""],
     [updated, ""],
+    [popularityLabel(collection.views, collection.comments), "result-stats"],
   ].filter(([text]) => text)) {
     const part = document.createElement("span");
     part.className = className;
@@ -2419,7 +2789,9 @@ async function loadCollectionIndex() {
           !Number.isInteger(summary.unavailable_count) || summary.unavailable_count < 0 ||
           summary.unavailable_count > summary.entry_count)) ||
         (summary.latest_created_at !== null && summary.latest_created_at !== undefined &&
-          (typeof summary.latest_created_at !== "string" || !Number.isFinite(Date.parse(summary.latest_created_at))))) {
+          (typeof summary.latest_created_at !== "string" || !Number.isFinite(Date.parse(summary.latest_created_at)))) ||
+        ["views", "comments"].some((key) => summary[key] !== undefined &&
+          (!Number.isInteger(summary[key]) || summary[key] < 0))) {
       throw new Error("잘못된 컬렉션 요약");
     }
     summaries.set(summary.id, summary);
@@ -2439,6 +2811,9 @@ async function loadCollectionIndex() {
   return {
     schemaVersion: 2,
     shardCount: payload.shard_count,
+    // Collection export revision 3 adds view/comment totals to every summary.
+    hasStats: summaries.size > 0 && [...summaries.values()].every((summary) =>
+      Number.isInteger(summary.views) && Number.isInteger(summary.comments)),
     summaries: [...summaries.values()],
     summaryById: summaries,
     details,
@@ -2552,11 +2927,14 @@ async function updateCollection() {
   const summary = currentSummary;
   currentCollection = null;
   elements["collection-context"].hidden = true;
-  // Hold the step buttons until membership decides whether they mean "episode" or "list row".
+  // Hold the step buttons until membership decides whether they mean "episode" or "list row";
+  // a list refresh that lands first must not release them (typeMoonNavigation reads this).
+  collectionPending = true;
   renderReaderNavigation({ ...typeMoonNavigation(), pending: true });
   try {
     const membership = await findCollection(summary);
     if (!samePost(summary, currentSummary)) return;
+    collectionPending = false;
     currentCollection = membership;
     if (membership) {
       activeCollectionId = membership.collection.id;
@@ -2569,7 +2947,9 @@ async function updateCollection() {
     }
     updateNavigation();
   } catch {
-    if (samePost(summary, currentSummary)) updateNavigation();
+    if (!samePost(summary, currentSummary)) return;
+    collectionPending = false;
+    updateNavigation();
   }
 }
 
@@ -2593,7 +2973,7 @@ async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
     const payload = await responseJsonWithProgress(response, "본문");
     if (viewId !== readerViewId) return;
     if (payload.schema_version !== 1 || !payload.post?.body_html) throw new Error("지원하지 않는 본문 형식");
-    elements["archive-state"].textContent = "보존본";
+    elements["archive-state"].textContent = readyLabel();
     showPost(payload, resolved, navigation, listHint);
   } catch (error) {
     if (viewId !== readerViewId || error.name === "AbortError") return;
@@ -2627,15 +3007,14 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   elements["reader-kicker"].textContent = [boardLabel(post.board_id) || post.board_id, post.category].filter(Boolean).join(" · ");
   elements["reader-title"].textContent = post.title || "제목 없음";
   document.title = `${post.title || "제목 없음"} — ReDSTM`;
-  elements["reader-meta"].textContent = [post.author || "작성자 없음", formatSourceDate(post.created_at_raw) || post.created_at_raw, `조회 ${post.views ?? 0}`].filter(Boolean).join(" · ");
+  renderPostMeta(post, payload.comments.length);
   setSourceLink(post.canonical_url);
   renderPostBody();
   renderComments(payload.comments);
   rememberHistory(currentSummary);
   updateBookmarkButton();
   void updateCollection();
-  if (currentScope === "collections") renderCollectionResults();
-  else renderResults(renderedResults, elements["result-status"].textContent);
+  refreshCatalogRows();
   const nextUrl = `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`;
   // Only entering the Reader adds a history entry. Episode moves replace it, so one Back
   // (system or the 목록 button) always returns to the list the session started from.
@@ -2652,6 +3031,38 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
     elements["reader-title"].focus({ preventScroll: true });
     restoreReadingPosition(currentSummary);
   });
+}
+
+// Author · date · views · comments; a named author is a link to their other posts.
+function renderPostMeta(post, commentCount) {
+  const meta = elements["reader-meta"];
+  meta.replaceChildren();
+  if (post.author) {
+    const author = document.createElement("button");
+    author.type = "button";
+    author.className = "reader-author";
+    author.textContent = post.author;
+    author.title = `${post.author}의 다른 글`;
+    author.addEventListener("click", () => searchAuthor(post.author));
+    meta.append(author);
+  } else meta.append("작성자 없음");
+  const rest = [
+    formatSourceDate(post.created_at_raw) || post.created_at_raw,
+    `조회 ${compactNumber.format(post.views ?? 0)}`,
+    commentCount ? `댓글 ${commentCount.toLocaleString("ko-KR")}` : "",
+  ].filter(Boolean);
+  if (rest.length) meta.append(` · ${rest.join(" · ")}`);
+}
+
+function searchAuthor(author) {
+  setScope("posts");
+  resetSheetFilterValues();
+  elements["board-filter"].value = "";
+  elements["sort-filter"].value = "latest";
+  elements["search-input"].value = author;
+  elements["search-target"].value = "author";
+  // Results, not typing: keep the phone keyboard down.
+  showDestination("search", true, "all", { focusSearch: false });
 }
 
 function renderPostBody() {
@@ -2679,6 +3090,7 @@ function renderPostBody() {
   applySettings();
   decorateImages(elements["archive-body"]);
   if (!isAa) enhanceHtmlMedia(elements["archive-body"]);
+  updateReaderLength();
   requestAnimationFrame(() => updateAaOverflowCue(true));
 }
 
@@ -2691,9 +3103,30 @@ function normalizeReaderTypography(container) {
 }
 
 function openImageViewer(href) {
+  setImageZoom(false);
+  elements["image-viewer-zoom"].hidden = true;
   elements["image-viewer-image"].src = href;
   elements["image-viewer-source"].href = href;
   if (!elements["image-viewer"].open) elements["image-viewer"].showModal();
+}
+
+// Fitted by default; 실제 크기 shows the image at its own pixels, centred on the tapped point
+// (or the middle) and panned by scrolling.
+function setImageZoom(zoomed, focus = { x: 0.5, y: 0.5 }) {
+  const viewer = elements["image-viewer"];
+  viewer.classList.toggle("zoomed", zoomed);
+  elements["image-viewer-zoom"].setAttribute("aria-pressed", String(zoomed));
+  elements["image-viewer-zoom"].textContent = zoomed ? "화면에 맞춤" : "실제 크기";
+  const scroller = viewer.querySelector("form");
+  if (!zoomed) {
+    scroller.scrollTo(0, 0);
+    return;
+  }
+  const image = elements["image-viewer-image"];
+  scroller.scrollTo(
+    Math.max(0, image.offsetLeft + image.offsetWidth * focus.x - scroller.clientWidth / 2),
+    Math.max(0, image.offsetTop + image.offsetHeight * focus.y - scroller.clientHeight / 2),
+  );
 }
 
 function renderComments(comments) {
@@ -2708,7 +3141,7 @@ function renderComments(comments) {
     const author = document.createElement("strong");
     author.textContent = comment.author || "작성자 없음";
     const date = document.createElement("span");
-    date.textContent = comment.created_at_raw || "";
+    date.textContent = formatSourceDate(comment.created_at_raw) || comment.created_at_raw || "";
     const body = document.createElement("div");
     body.className = "comment-body";
     body.innerHTML = comment.content_html;
@@ -2729,6 +3162,9 @@ function rememberHistory(summary) {
   const previous = historyEntries.find((entry) => samePost(entry.summary, summary));
   historyEntries = historyEntries.filter((entry) => !samePost(entry.summary, summary));
   historyEntries.unshift({ summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0, progress: previous?.progress ?? 0 });
+  // Newest first: the oldest records go once the cap is passed, so the saved state (rewritten
+  // on every scroll pause) cannot grow until localStorage runs out.
+  if (historyEntries.length > HISTORY_LIMIT) historyEntries.length = HISTORY_LIMIT;
   persistUserState();
 }
 
@@ -2835,9 +3271,15 @@ function closeBookmarkEditor() {
 
 function renderAfterBookmarkChange() {
   updateBookmarkButton();
-  if (currentView === "bookmarks") renderCurrentView();
+  refreshCatalogRows();
+}
+
+// Re-draws the visible catalog rows (active row, read/saved badges) without a new search.
+function refreshCatalogRows() {
+  if (currentDestination === "text") return;
+  if (currentView === "bookmarks" || currentView === "reading") renderCurrentView();
   else if (currentScope === "collections") renderCollectionResults();
-  else renderResults(renderedResults, elements["result-status"].textContent);
+  else renderResults(renderedResults, resultCountText);
 }
 
 function updateNavigation() {
@@ -2882,7 +3324,7 @@ function typeMoonNavigation() {
     qualifier: listContext?.descriptor.qualifier ?? "",
     previous: located ? entryStep(located.previous) : null,
     next,
-    pending: !located && Boolean(listContext?.loading),
+    pending: collectionPending || (!located && Boolean(listContext?.loading)),
     note: located && located.found >= 0 && !next ? "목록의 마지막 글입니다." : "",
     hasToc: false,
     context: boardLabel(currentSummary?.board_id) || "",
@@ -2919,6 +3361,8 @@ function listDescriptor() {
       qualifier: "현재 목록",
     };
   }
+  // Posts found through 오늘의 발견 read on in their own board.
+  if (url.pathname === "/" && state.redstmList === "board") return boardOnly(currentSummary.board_id);
   if (url.pathname === "/" && state.redstmList === "recent") {
     return { kind: "items", items: historyEntries.map((entry) => entry.summary), kicker: "홈", title: "최근 읽은 글", qualifier: "현재 목록" };
   }
@@ -2928,14 +3372,16 @@ function listDescriptor() {
       query: query.get("q") ?? "",
       boardId: query.get("board") ?? "",
       mode: searchSupportsAa && ["aa", "prose"].includes(query.get("mode")) ? query.get("mode") : "all",
-      sort: query.get("sort") === "oldest" ? "oldest" : "latest",
+      sort: allowedSort("posts", query.get("sort")),
       target: ["title", "author"].includes(query.get("target")) ? query.get("target") : "all",
       match: query.get("match") === "or" ? "or" : "and",
     };
+    const sortLabel = params.sort === "latest" ? ""
+      : sortChoices("posts").find(([, value]) => value === params.sort)?.[0] ?? "";
     const conditions = [
       params.query && params.boardId ? boardLabel(params.boardId) : "",
       params.mode === "aa" ? "AA" : params.mode === "prose" ? "소설·일반" : "",
-      params.sort === "oldest" ? "오래된순" : "",
+      sortLabel,
     ].filter(Boolean);
     return {
       kind: "search",
@@ -2950,11 +3396,7 @@ function listDescriptor() {
 }
 
 function workerPage(params) {
-  const id = ++messageId;
-  return new Promise((resolve, reject) => {
-    workerRequests.set(id, { resolve, reject });
-    searchWorker.postMessage({ type: "page", id, pageSize: READER_LIST_PAGE, ...params });
-  });
+  return workerRequest({ type: "page", pageSize: READER_LIST_PAGE, ...params });
 }
 
 function localPage(items, identity, page) {
@@ -3179,6 +3621,24 @@ elements["continue-toc"].addEventListener("click", () => {
   if (continueCollectionId) void openCollectionDetail(continueCollectionId);
 });
 elements["browse-all"].addEventListener("click", () => showDestination("browse"));
+elements["discover-shuffle"].addEventListener("click", () => {
+  discoverShuffle += 1;
+  void renderDiscovery();
+});
+// A board shortcut opens that whole board with default filters, like picking it in the sheet.
+elements["home-board-list"].addEventListener("click", (event) => {
+  const boardId = event.target.closest("[data-board]")?.dataset.board;
+  if (!boardId) return;
+  boardNavigator.remember(boardId);
+  setScope("posts");
+  elements["search-input"].value = "";
+  resetSheetFilterValues();
+  elements["sort-filter"].value = "latest";
+  // The board options were narrowed by the previous format filter; rebuild them first.
+  populateBoardFilter();
+  elements["board-filter"].value = boardId;
+  showDestination("browse");
+});
 elements["reading-works-all"].addEventListener("click", () => showDestination("bookmarks", true, "reading"));
 elements["recent-all"].addEventListener("click", () => showDestination("bookmarks", true, "history"));
 elements["home-action"].addEventListener("click", () => location.reload());
@@ -3209,6 +3669,12 @@ elements["more-note"].addEventListener("click", () => {
   else if (currentSummary) openBookmarkEditor(currentSummary);
 });
 elements["more-source"].addEventListener("click", closeReaderMore);
+elements["more-link"].addEventListener("click", () => {
+  closeReaderMore();
+  void copyReaderLink();
+});
+// Stays in the sheet so the toggle's new state is visible.
+elements["more-wake"].addEventListener("click", () => setScreenAwake(!wakeWanted));
 elements["reader-list-items"].addEventListener("click", (event) => {
   const button = event.target.closest(".reader-list-row");
   const row = button && readerListModel?.rows[Number(button.dataset.index)];
@@ -3231,6 +3697,7 @@ elements["more-position"].addEventListener("input", () => {
     : ratio * (span > 0 ? span : pane.scrollHeight - pane.clientHeight);
   syncScrollBaseline();
   elements["more-position-output"].value = `${Math.round(ratio * 100)}%`;
+  renderRemainingTime(ratio);
 });
 elements["more-mode"].addEventListener("click", () => {
   closeReaderMore();
@@ -3494,6 +3961,22 @@ elements["image-viewer"].addEventListener("close", () => elements["image-viewer-
 elements["image-viewer"].addEventListener("click", (event) => {
   if (event.target === elements["image-viewer"]) elements["image-viewer"].close();
 });
+// 실제 크기 only matters when the image is larger than the screen.
+elements["image-viewer-image"].addEventListener("load", () => {
+  const image = elements["image-viewer-image"];
+  const scroller = elements["image-viewer"].querySelector("form");
+  elements["image-viewer-zoom"].hidden =
+    image.naturalWidth <= scroller.clientWidth && image.naturalHeight <= scroller.clientHeight;
+});
+elements["image-viewer-image"].addEventListener("click", (event) => {
+  if (elements["image-viewer-zoom"].hidden) return;
+  const image = elements["image-viewer-image"];
+  const zoomed = !elements["image-viewer"].classList.contains("zoomed");
+  setImageZoom(zoomed, { x: event.offsetX / image.offsetWidth, y: event.offsetY / image.offsetHeight });
+});
+elements["image-viewer-zoom"].addEventListener("click", () => {
+  setImageZoom(!elements["image-viewer"].classList.contains("zoomed"));
+});
 // Reading chrome (docs/19 §4.3): reading downward folds the top and bottom bars away on every
 // screen width; a still tap toggles them, a deliberate scroll back up or reaching the end of
 // the body brings them back. Reduced motion only drops the slide animation (CSS).
@@ -3511,15 +3994,60 @@ function readerAtEnd() {
   return end.getBoundingClientRect().top < elements["reader-pane"].getBoundingClientRect().bottom - 48;
 }
 
+// 화면 탭으로 넘기기 (setting): a still tap in the lower part of the screen scrolls one screen
+// down, in the upper part one screen up, keeping two lines of the previous screen for context.
+// The middle band still toggles the bars. Returns true when the tap turned a page.
+const PAGE_BACK_ZONE = 0.25;
+const PAGE_FORWARD_ZONE = 0.6;
+let pagingScroll = false;
+let pagingTimer;
+
+function pageByTap(event) {
+  const pane = elements["reader-pane"];
+  const rect = pane.getBoundingClientRect();
+  const ratio = (event.clientY - rect.top) / rect.height;
+  const direction = ratio < PAGE_BACK_ZONE ? -1 : ratio > PAGE_FORWARD_ZONE ? 1 : 0;
+  if (!direction) return false;
+  if (direction > 0) setReaderChromeHidden(true);
+  const line = settings.proseSize * settings.lineHeight;
+  const bottomBar = document.body.classList.contains("reader-controls-hidden") ? 0
+    : document.querySelector(".reader-bottom")?.getBoundingClientRect().height ?? 0;
+  const distance = Math.max(line, pane.clientHeight - readerTopInset() - bottomBar - 2 * line);
+  // The page turn is not a reading scroll: it must not bring the bars back or hide them.
+  pagingScroll = true;
+  clearTimeout(pagingTimer);
+  pagingTimer = setTimeout(() => { pagingScroll = false; }, 800);
+  pane.scrollBy({
+    top: direction * distance,
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+  });
+  return true;
+}
+
+elements["reader-pane"].addEventListener("scrollend", () => { pagingScroll = false; });
+// Progress reads layout; once per frame is enough however many scroll events a fling sends.
+let progressFrame = 0;
+function scheduleReadingProgress() {
+  if (progressFrame) return;
+  progressFrame = requestAnimationFrame(() => {
+    progressFrame = 0;
+    updateReadingProgress();
+  });
+}
+
 elements["reader-pane"].addEventListener("scroll", () => {
   queueScrollSave();
-  updateReadingProgress();
+  scheduleReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   const delta = current - lastReaderScroll;
   lastReaderScroll = current;
   if (!document.body.classList.contains("reader-open")) return;
   if (current < 80 || readerAtEnd()) {
     setReaderChromeHidden(false);
+    return;
+  }
+  if (pagingScroll) {
+    readerScrollDelta = 0;
     return;
   }
   if (!delta) return;
@@ -3545,6 +4073,7 @@ elements["reader-pane"].addEventListener("pointerup", (event) => {
     event.timeStamp - start.time <= 500 &&
     Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
   if (!still || String(getSelection() ?? "")) return;
+  if (settings.tapPaging === "on" && pageByTap(event)) return;
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
 });
 elements["reader-pane"].addEventListener("pointermove", (event) => {
@@ -3562,6 +4091,36 @@ for (const choice of elements["theme-choices"].querySelectorAll("[data-theme-cho
     saveSettings();
   });
 }
+for (const choice of document.querySelectorAll("button[data-reader-surface]")) {
+  choice.addEventListener("click", () => {
+    settings.readerSurface = choice.dataset.readerSurface;
+    saveSettings();
+  });
+}
+for (const choice of document.querySelectorAll("button[data-tap-paging]")) {
+  choice.addEventListener("click", () => {
+    settings.tapPaging = choice.dataset.tapPaging;
+    saveSettings();
+  });
+}
+// 앱으로 설치: offered only when the browser says this page can be installed.
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event;
+  elements["install-app"].hidden = false;
+});
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  elements["install-app"].hidden = true;
+});
+elements["install-app"].addEventListener("click", async () => {
+  if (!installPrompt) return;
+  const prompt = installPrompt;
+  installPrompt = null;
+  elements["install-app"].hidden = true;
+  await prompt.prompt().catch(() => {});
+});
 elements["immersive-exit"].addEventListener("click", () => setImmersive(false));
 elements["immersive-toggle"].addEventListener("click", () => setImmersive(!document.body.classList.contains("immersive")));
 elements["mode-toggle"].addEventListener("click", () => {
@@ -3579,11 +4138,18 @@ elements["mode-reset"].addEventListener("click", () => {
 });
 // Typography changes keep the sentence at the top of the screen in place instead of the pixel
 // offset, which would land somewhere else once lines reflow.
+let typographyPersistTimer = null;
 function changeTypography(mutate) {
   const keepAnchor = readerSource && currentMode === "prose";
   const anchor = keepAnchor ? captureTextAnchor(elements["archive-body"], elements["reader-pane"], readerTopInset()) : null;
   mutate();
-  saveSettings();
+  // Sliders fire on every step: apply at once, write the whole state once they settle.
+  applySettings();
+  clearTimeout(typographyPersistTimer);
+  typographyPersistTimer = setTimeout(() => {
+    typographyPersistTimer = null;
+    persistUserState();
+  }, 250);
   if (anchor) {
     restoreTextAnchor(elements["archive-body"], elements["reader-pane"], anchor, readerTopInset());
     syncScrollBaseline();
@@ -3604,6 +4170,11 @@ for (const button of document.querySelectorAll("[data-prose-size-delta]")) {
 elements["prose-font"].addEventListener("change", () => changeTypography(() => {
   settings.proseFont = elements["prose-font"].value;
 }));
+for (const choice of document.querySelectorAll("button[data-prose-align]")) {
+  choice.addEventListener("click", () => changeTypography(() => {
+    settings.proseAlign = choice.dataset.proseAlign;
+  }));
+}
 for (const button of document.querySelectorAll("[data-aa-size-delta]")) {
   button.addEventListener("click", () => {
     settings.aaSize = Math.max(9, Math.min(24, settings.aaSize + Number(button.dataset.aaSizeDelta)));
@@ -3622,6 +4193,7 @@ for (const button of document.querySelectorAll("[data-aa-zoom-delta]")) {
   button.addEventListener("click", () => setAaZoom(settings.aaZoom + Number(button.dataset.aaZoomDelta)));
 }
 elements["aa-zoom-reset"].addEventListener("click", () => setAaZoom(1));
+elements["aa-fit"].addEventListener("click", fitAaZoom);
 elements["aa-source-styles"].addEventListener("click", () => {
   settings.aaPreserveStyles = !settings.aaPreserveStyles;
   saveSettings();
@@ -3636,17 +4208,35 @@ elements["aa-background"].addEventListener("input", () => {
   settings.aaBackground = elements["aa-background"].value;
   saveSettings();
 });
+// Two fingers: AA zooms the picture; prose changes the font size (whole steps, same sentence kept
+// on screen), like an e-reader. Prose bodies opt out of browser pinch zoom in CSS for this.
+let pinchFont = null;
 elements["archive-body"].addEventListener("touchstart", (event) => {
-  if (currentMode === "aa" && event.touches.length === 2) pinchDistance = touchDistance(event);
+  if (event.touches.length !== 2) return;
+  if (currentMode === "aa") pinchDistance = touchDistance(event);
+  else if (readerSource) pinchFont = { distance: touchDistance(event), size: settings.proseSize };
 }, { passive: true });
 elements["archive-body"].addEventListener("touchmove", (event) => {
-  if (currentMode !== "aa" || event.touches.length !== 2 || !pinchDistance) return;
+  if (event.touches.length !== 2) return;
+  if (pinchFont) {
+    const min = Number(elements["prose-size"].min);
+    const max = Number(elements["prose-size"].max);
+    const size = Math.max(min, Math.min(max, Math.round(pinchFont.size * touchDistance(event) / pinchFont.distance)));
+    if (size === settings.proseSize) return;
+    changeTypography(() => { settings.proseSize = size; });
+    showReaderFeedback(`글자 ${size}px`);
+    return;
+  }
+  if (currentMode !== "aa" || !pinchDistance) return;
   const distance = touchDistance(event);
   const next = settings.aaZoom + (distance - pinchDistance) * 0.003;
   if (Math.abs(next - settings.aaZoom) > 0.002) setAaZoom(next, true);
   pinchDistance = distance;
 }, { passive: true });
-elements["archive-body"].addEventListener("touchend", () => { pinchDistance = 0; }, { passive: true });
+elements["archive-body"].addEventListener("touchend", () => {
+  pinchDistance = 0;
+  pinchFont = null;
+}, { passive: true });
 elements["archive-body"].addEventListener("dblclick", () => {
   if (currentMode !== "aa") return;
   setAaZoom(settings.aaZoom < 1.25 ? 1.5 : settings.aaZoom < 1.75 ? 2 : 1);
@@ -3672,7 +4262,8 @@ elements["export-state"].addEventListener("click", () => {
   link.href = url;
   link.download = `redstm-state-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
-  URL.revokeObjectURL(url);
+  // Some browsers start the download after click() returns; revoking at once can cancel it.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 });
 function resetImportReview() {
   pendingImportPlan = null;
@@ -3692,7 +4283,8 @@ elements["import-state-file"].addEventListener("change", async () => {
   const [file] = elements["import-state-file"].files;
   if (!file) return;
   try {
-    if (file.size > 1_048_576) throw new Error("상태 파일은 1MB 이하여야 합니다");
+    // Exports are indented, so a full localStorage state (~5MB) can take several MB on disk.
+    if (file.size > 16 * 1_048_576) throw new Error("상태 파일은 16MB 이하여야 합니다");
     pendingImportPlan = planImport(await file.text(), defaultSettings);
     const summary = pendingImportPlan.summary;
     const defaulted = summary.defaultedSettings.length
@@ -3748,18 +4340,25 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.target.closest("input, select, textarea, button, [contenteditable]")) return;
+  // Browser and OS shortcuts (Ctrl+F find, Ctrl+B, Cmd+[ …) are not Reader commands.
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === "/") {
     event.preventDefault();
     showDestination("search");
     elements["search-input"].focus();
-  } else if (event.key === "[" || (event.key === "ArrowLeft" && readerSource && currentMode !== "aa" && !event.altKey)) {
+  } else if (event.key === "[" || (event.key === "ArrowLeft" && readerSource && currentMode !== "aa")) {
     readerCommand("previous");
-  } else if (event.key === "]" || (event.key === "ArrowRight" && readerSource && currentMode !== "aa" && !event.altKey)) {
+  } else if (event.key === "]" || (event.key === "ArrowRight" && readerSource && currentMode !== "aa")) {
     readerCommand("next");
   } else if (event.key.toLowerCase() === "b") {
     readerCommand("bookmark");
   } else if (event.key.toLowerCase() === "f" && readerSource) {
     setImmersive(!document.body.classList.contains("immersive"));
+  } else if (event.key === "?" && !isNarrowScreen()) {
+    openSettings();
+    const keys = document.getElementById("settings-keys");
+    keys.open = true;
+    requestAnimationFrame(() => keys.scrollIntoView({ block: "nearest" }));
   }
 });
 document.addEventListener("focusin", () => document.body.classList.remove("reader-controls-hidden"));
@@ -3770,15 +4369,21 @@ window.addEventListener("offline", () => {
   if (!archiveReady) renderArchiveError({ code: "offline" });
 });
 window.addEventListener("online", () => {
-  if (archiveReady) elements["archive-state"].textContent = "보존본";
+  if (archiveReady) elements["archive-state"].textContent = readyLabel();
 });
 function flushLifecycleState() {
+  if (typographyPersistTimer) {
+    clearTimeout(typographyPersistTimer);
+    typographyPersistTimer = null;
+    persistUserState();
+  }
   if (currentSummary) persistReadingPosition();
   else if (readerSource === "text" || currentDestination === "text") textLibrary.flush();
   else persistCatalogState();
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushLifecycleState();
+  else void acquireWakeLock();
 });
 window.addEventListener("pagehide", flushLifecycleState);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

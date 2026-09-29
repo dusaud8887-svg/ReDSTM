@@ -68,6 +68,11 @@ reconciliation이 이 marker와 predecessor를 복구해 smoke를 다시 실행�
 성공 상태를 local에 확정하지 못하면 성공으로 보고하지 않고 marker를 보존해 다음 주기에서 재조정한다.
 미확정 release A가 active인 동안 새 export B가 생겨도 publisher는 pointer/marker를 덮지 않는다. runner가
 A를 먼저 smoke·확정한 뒤 같은 작업 안에서 bounded 1회 재실행으로 B를 게시한다.
+smoke 실패로 rollback된 release는 local export state가 그대로라 다음 주기 증분 publish가 같은 release를
+다시 게시한다(엣지 전파 지연처럼 일시적인 smoke 실패는 이렇게 복구된다). rollback 횟수는
+`.publish-smoke-rollbacks.json`에 release별로 남으며, 같은 release가 3회 rollback되면 자동
+`--verified-incremental` publish는 `incremental_publish_release_smoke_rejected`(partial)로 멈추고 pointer를
+active release에 둔다. 새 export로 release key가 바뀌거나 운영자가 명시적으로 publish하면 다시 진행된다.
 pending/smoke marker는 pointer write 전에 file과 parent directory까지 sync한다. 같은 Oracle host의
 publish/activate/smoke confirmation은 `.publish.lock`으로 직렬화한다. R2 remote의 supported writer는 이
 Oracle control runner 하나이며 cross-host 동시 writer는 허용하지 않는다. 수동 bootstrap/incident

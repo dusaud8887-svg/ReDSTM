@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readdirSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+
 import { controlApiResponse } from "../src/control-api.js";
+import { runControlMaintenance } from "../src/control-read.js";
 
 const requestId = "018f47a8-7a2d-7c11-8f44-89d95775c6ea";
 const workerVersionId = "12345678-1234-1234-1234-123456789abc";
@@ -699,6 +703,58 @@ test("keeps a long manual run active while the runner heartbeats it", async () =
   assert.equal(data.active_run.failed_posts, 2);
   assert.equal(data.active_run.boards_ok, 4);
   assert.equal(data.active_run.boards_failed, 1);
+});
+
+test("a finish that loses the race to the stale-run reaper is not reported as stored", async () => {
+  let reads = 0;
+  const env = {
+    CONTROL_DB: database((method, sql) => {
+      if (method === "batch") return [{ meta: { changes: 0 } }, { meta: { changes: 0 } }];
+      if (sql.includes("SELECT * FROM runs WHERE run_id")) {
+        reads += 1;
+        return reads === 1
+          ? { run_id: "run-1", state: "running", kind: "scheduled", source: "systemd", started_at: new Date().toISOString() }
+          : { run_id: "run-1", state: "failed", kind: "scheduled", source: "systemd", started_at: new Date().toISOString(), safe_summary_json: JSON.stringify({ code: "run_stale" }) };
+      }
+      return null;
+    }),
+  };
+  const response = await controlApiResponse(
+    request("/api/v1/runner/runs/run-1/finish", {
+      method: "POST",
+      headers: { "Idempotency-Key": "finish-run-1-aaaaaaaa" },
+      body: { state: "succeeded", counters: {} },
+    }),
+    env,
+    { role: "runner", subject: "runner" },
+  );
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error.code, "run_terminal");
+});
+
+test("overview settles a command claimed by a runner that never started it", async () => {
+  const batches = [];
+  const env = {
+    CONTROL_DB: database((method, sql, parameters) => {
+      if (method === "batch") {
+        batches.push(parameters);
+        return [];
+      }
+      if (sql.includes("SELECT 1 AS overdue")) return { overdue: 1 };
+      if (sql.includes("runner_status WHERE")) return { state: "idle", heartbeat_at: new Date().toISOString() };
+      if (sql.includes("COUNT(*)")) return { count: 0 };
+      return null;
+    }),
+  };
+  const overview = await controlApiResponse(request("/api/v1/ops/overview"), env, { role: "user", subject: "reader" });
+  assert.equal(overview.status, 200);
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 3);
+  assert.match(batches[0][1].sql, /WHERE state = 'claimed' AND claim_expires_at <= \?/);
+  assert.doesNotMatch(batches[0][1].sql, /pause-after-current/);
+  // A runner that still heartbeats replays its own claim; only a gone runner's claim is settled.
+  assert.match(batches[0][1].sql, /NOT EXISTS \(\s*SELECT 1 FROM runner_status WHERE id = 1 AND heartbeat_at >= \?\)/);
+  assert.match(batches[0][2].sql, /NOT EXISTS/);
 });
 
 test("stale reconciliation exempts only the actively heartbeated run", async () => {
@@ -1565,7 +1621,7 @@ test("finishes marker commands idempotently for the claiming runner", async () =
     CONTROL_DB: database((method, sql, values) => {
       assert.equal(method, "first");
       if (sql.startsWith("SELECT")) return updated ? { ...claimed, state: "succeeded" } : claimed;
-      assert.match(sql, /runner_id = \? RETURNING/);
+      assert.match(sql, /runner_id = \?\s+RETURNING/);
       assert.equal(values.at(-1), "oracle-primary");
       updated = true;
       return { ...claimed, state: "succeeded", safe_message: "schedule_paused" };
@@ -1606,7 +1662,7 @@ test("batches idempotent run events and terminal command state", async () => {
         batches.push(values);
         return [];
       }
-      if (sql.includes("SELECT state FROM runs")) return { state: runState };
+      if (sql.includes("SELECT state, safe_summary_json FROM runs")) return { state: runState };
       if (sql.includes("SELECT * FROM runs")) return { ...run, state: runState };
       return null;
     }),
@@ -1693,4 +1749,310 @@ test("rejects oversized event batches before D1", async () => {
     { role: "runner", subject: "runner-token" },
   );
   assert.equal(result.status, 400);
+});
+
+// A D1 stand-in backed by real SQLite and the real migrations, for SQL whose behaviour (upsert
+// conditions, json_each, index use) a string-matching mock cannot check.
+function sqliteD1() {
+  const db = new DatabaseSync(":memory:");
+  const directory = new URL("../migrations/", import.meta.url);
+  for (const name of readdirSync(directory).sort()) {
+    db.exec(readFileSync(new URL(name, directory), "utf8"));
+  }
+  const execute = (sql, parameters, mode) => {
+    const statement = db.prepare(sql);
+    if (mode === "first") {
+      const row = statement.get(...parameters);
+      return row ? { ...row } : null;
+    }
+    if (mode === "all" || /\bRETURNING\b/i.test(sql)) {
+      const rows = statement.all(...parameters).map((row) => ({ ...row }));
+      return { results: rows, meta: { changes: rows.length } };
+    }
+    return { results: [], meta: { changes: Number(statement.run(...parameters).changes) } };
+  };
+  const CONTROL_DB = {
+    prepare(sql) {
+      const statement = {
+        sql,
+        parameters: [],
+        bind(...values) {
+          statement.parameters = values;
+          return statement;
+        },
+        first: async () => execute(sql, statement.parameters, "first"),
+        all: async () => execute(sql, statement.parameters, "all"),
+        run: async () => execute(sql, statement.parameters, "run"),
+      };
+      return statement;
+    },
+    async batch(statements) {
+      db.exec("BEGIN");
+      try {
+        const results = statements.map((statement) =>
+          execute(statement.sql, statement.parameters, "run"));
+        db.exec("COMMIT");
+        return results;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  return { db, env: { CONTROL_DB } };
+}
+
+async function reportFailures(env, boardId, generation, items, complete, index = 0) {
+  const response = await controlApiResponse(
+    request("/api/v1/runner/frontier-failures", {
+      method: "POST",
+      body: { board_id: boardId, generation, complete, items },
+      headers: { "Idempotency-Key": `failures-${generation}-${index}` },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(response.status, 202);
+}
+
+// Mirrors control_runner._frontier_failures: ascending ids in chunks of 100, last one complete.
+async function reportGeneration(env, boardId, generation, items) {
+  const sorted = [...items].sort((left, right) => left.external_post_id - right.external_post_id);
+  const batches = [];
+  for (let index = 0; index < sorted.length; index += 100) {
+    batches.push(sorted.slice(index, index + 100));
+  }
+  if (!batches.length) batches.push([]);
+  for (const [index, batch] of batches.entries()) {
+    await reportFailures(env, boardId, generation, batch, index === batches.length - 1, index);
+  }
+}
+
+function failureItem(id, attempts = 3, lastAttemptAt = "2026-07-12T00:00:00.000Z") {
+  return {
+    external_post_id: id,
+    attempts,
+    error_code: "http_404",
+    last_attempt_at: lastAttemptAt,
+  };
+}
+
+function storedFailures(db, boardId) {
+  return db.prepare(
+    `SELECT external_post_id, attempts, error_code, last_attempt_at FROM frontier_failures
+     WHERE board_id = ? ORDER BY external_post_id`,
+  ).all(boardId).map((row) => ({ ...row }));
+}
+
+test("frontier failure reports rewrite only changed rows and sweep unreported ones", async () => {
+  const { db, env } = sqliteD1();
+  const changes = () => Number(db.prepare("SELECT total_changes() AS n").get().n);
+  const first = Array.from({ length: 250 }, (_, index) => failureItem(index * 2 + 1));
+  await reportGeneration(env, "board_a", "g-1", first);
+  await reportGeneration(env, "board_b", "g-1", [failureItem(7)]);
+  assert.deepEqual(storedFailures(db, "board_a"), first);
+
+  // An unchanged report costs one boundary stamp per batch, not one write per row.
+  const before = changes();
+  await reportGeneration(env, "board_a", "g-2", first);
+  assert.equal(changes() - before, 3);
+  assert.deepEqual(storedFailures(db, "board_a"), first);
+
+  // Rows vanish inside a batch, between batches, below the first and above the last batch; one
+  // row changes and one is new. The stored set must equal the reported set exactly.
+  const removed = new Set([1, 99, 199, 201, 203, 401, 499]);
+  const second = first
+    .filter((item) => !removed.has(item.external_post_id))
+    .map((item) => item.external_post_id === 301 ? failureItem(301, 4) : item)
+    .concat([failureItem(302)]);
+  // Batch boundaries fall at different ids than in g-2, so the sweep must follow this report.
+  await reportGeneration(env, "board_a", "g-3", second);
+  const sorted = [...second].sort((left, right) => left.external_post_id - right.external_post_id);
+  assert.deepEqual(storedFailures(db, "board_a"), sorted);
+  assert.deepEqual(storedFailures(db, "board_b"), [failureItem(7)]);
+
+  // A replayed batch of the finished generation leaves the result unchanged.
+  await reportFailures(env, "board_a", "g-3", sorted.slice(100, 200), false, 1);
+  assert.deepEqual(storedFailures(db, "board_a"), sorted);
+
+  // A board with no dead rows sends one empty complete batch and is cleared.
+  await reportGeneration(env, "board_a", "g-4", []);
+  assert.deepEqual(storedFailures(db, "board_a"), []);
+  assert.deepEqual(storedFailures(db, "board_b"), [failureItem(7)]);
+});
+
+test("frontier failure pages use the recency index and page NULL attempts last", async () => {
+  const { db, env } = sqliteD1();
+  await reportGeneration(env, "board_a", "g-1", [
+    failureItem(1, 1, "2026-07-12T00:00:01.000Z"),
+    failureItem(2, 1, null),
+    failureItem(3, 1, "2026-07-12T00:00:03.000Z"),
+    failureItem(4, 1, "2026-07-12T00:00:03.000Z"),
+    failureItem(5, 1, null),
+  ]);
+  await reportGeneration(env, "board_b", "g-1", [
+    failureItem(1, 1, "2026-07-12T00:00:03.000Z"),
+    failureItem(9, 1, null),
+  ]);
+  const pages = async (query) => {
+    const seen = [];
+    let cursor = null;
+    do {
+      const response = await controlApiResponse(
+        request(`/api/v1/ops/failures?limit=2${query}${cursor ? `&cursor=${cursor}` : ""}`),
+        env,
+        { role: "user", subject: "reader" },
+      );
+      assert.equal(response.status, 200);
+      const data = (await response.json()).data;
+      assert.ok(data.items.length <= 2);
+      seen.push(...data.items.map((item) => `${item.board_id}/${item.external_post_id}`));
+      cursor = data.next_cursor;
+    } while (cursor);
+    return seen;
+  };
+  assert.deepEqual(await pages(""), [
+    "board_a/3", "board_a/4", "board_b/1", "board_a/1",
+    "board_a/2", "board_a/5", "board_b/9",
+  ]);
+  assert.deepEqual(await pages("&board_id=board_a"), [
+    "board_a/3", "board_a/4", "board_a/1", "board_a/2", "board_a/5",
+  ]);
+  const plan = (sql) => db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all()
+    .map((row) => row.detail).join("; ");
+  assert.match(
+    plan(`SELECT * FROM frontier_failures WHERE last_attempt_at IS NOT NULL
+      AND last_attempt_at <= '9' AND (last_attempt_at < '9' OR board_id > 'a')
+      ORDER BY last_attempt_at DESC, board_id, external_post_id LIMIT 21`),
+    /frontier_failures_recent_idx/,
+  );
+  assert.doesNotMatch(
+    plan(`SELECT * FROM frontier_failures WHERE last_attempt_at IS NOT NULL
+      ORDER BY last_attempt_at DESC, board_id, external_post_id LIMIT 21`),
+    /TEMP B-TREE/,
+  );
+});
+
+async function reapedRun(options = {}) {
+  const { db, env } = sqliteD1();
+  const now = new Date();
+  const longAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const outage = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+  const commandId = "00000000-0000-4000-8000-000000000001";
+  db.exec(`
+    INSERT INTO runner_status (id, schema_version, runner_version, state, heartbeat_at, active_run_id)
+    VALUES (1, 1, 'fixture', 'running', '${outage}', 'long-run');
+    INSERT INTO runs (run_id, kind, source, state, started_at, safe_summary_json)
+    VALUES ('long-run', 'manual-sync', 'command', 'running', '${longAgo}', '{}');
+    INSERT INTO commands (
+      command_id, idempotency_key, action, args_json, requested_by_hash, requested_at,
+      expires_at, state, claimed_at, runner_id, run_id, operation
+    ) VALUES ('${commandId}', 'fixture-command', 'sync-now', '{}', 'fixture', '${longAgo}',
+      '${longAgo}', 'claimed', '${longAgo}', 'runner-1', 'long-run', 'full-content');
+  `);
+  if (options.otherFailure) {
+    db.exec(`UPDATE runs SET state = 'failed', safe_summary_json = '{"code":"crawl_failed"}';
+             UPDATE commands SET state = 'failed', safe_message = 'crawl_failed';`);
+  } else {
+    await runControlMaintenance(env, now);
+  }
+  return { db, env, commandId };
+}
+
+const runRow = (db) => ({ ...db.prepare("SELECT state, safe_summary_json FROM runs").get() });
+const commandRow = (db) => ({ ...db.prepare("SELECT state, safe_message FROM commands").get() });
+
+test("a runner's real result replaces a run_stale verdict from an outage", async () => {
+  const { db, env } = await reapedRun();
+  assert.deepEqual(runRow(db), { state: "failed", safe_summary_json: '{"code":"run_stale"}' });
+  assert.deepEqual(commandRow(db), { state: "failed", safe_message: "run_stale" });
+
+  const events = await controlApiResponse(
+    request("/api/v1/runner/runs/long-run/events:batch", {
+      method: "POST",
+      headers: { "Idempotency-Key": "events-long-run-1" },
+      body: { events: [{ sequence: 0, step: "crawling", state: "running", counters: {} }] },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(events.status, 200);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM run_events").get().n), 1);
+
+  const finish = await controlApiResponse(
+    request("/api/v1/runner/runs/long-run/finish", {
+      method: "POST",
+      headers: { "Idempotency-Key": "finish-long-run-1" },
+      body: { state: "succeeded", counters: { changed_posts: 5 } },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(finish.status, 200);
+  assert.equal((await finish.json()).data.state, "succeeded");
+  assert.deepEqual(runRow(db), { state: "succeeded", safe_summary_json: '{"code":null}' });
+  assert.deepEqual(commandRow(db), { state: "succeeded", safe_message: null });
+
+  // Once the real result is stored it is immutable again.
+  const overwrite = await controlApiResponse(
+    request("/api/v1/runner/runs/long-run/finish", {
+      method: "POST",
+      headers: { "Idempotency-Key": "finish-long-run-2" },
+      body: { state: "failed", counters: {} },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(overwrite.status, 409);
+});
+
+test("a reaped command accepts the runner's own command finish", async () => {
+  const { db, env, commandId } = await reapedRun();
+  const finish = await controlApiResponse(
+    request(`/api/v1/runner/commands/${commandId}/finish`, {
+      method: "POST",
+      headers: { "Idempotency-Key": "finish-command-long-1" },
+      body: { runner_id: "runner-1", state: "partial", safe_summary_code: "boards_failed" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(finish.status, 200);
+  assert.deepEqual(commandRow(db), { state: "partial", safe_message: "boards_failed" });
+});
+
+test("other terminal failures stay immutable", async () => {
+  const { db, env, commandId } = await reapedRun({ otherFailure: true });
+  const events = await controlApiResponse(
+    request("/api/v1/runner/runs/long-run/events:batch", {
+      method: "POST",
+      headers: { "Idempotency-Key": "events-long-run-1" },
+      body: { events: [{ sequence: 0, step: "crawling", state: "running", counters: {} }] },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(events.status, 409);
+  const finish = await controlApiResponse(
+    request("/api/v1/runner/runs/long-run/finish", {
+      method: "POST",
+      headers: { "Idempotency-Key": "finish-long-run-1" },
+      body: { state: "succeeded", counters: {} },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(finish.status, 409);
+  const commandFinish = await controlApiResponse(
+    request(`/api/v1/runner/commands/${commandId}/finish`, {
+      method: "POST",
+      headers: { "Idempotency-Key": "finish-command-long-1" },
+      body: { runner_id: "runner-1", state: "succeeded" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(commandFinish.status, 409);
+  assert.deepEqual(runRow(db), { state: "failed", safe_summary_json: '{"code":"crawl_failed"}' });
+  assert.deepEqual(commandRow(db), { state: "failed", safe_message: "crawl_failed" });
 });

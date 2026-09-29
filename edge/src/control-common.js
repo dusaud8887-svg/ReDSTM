@@ -25,6 +25,57 @@ const counterNames = new Set([
 export const CLIENT_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 export const NEXT_SCHEDULE_MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
 
+export const COMMAND_MAX_CLAIM_ATTEMPTS = 2;
+
+// The stale-run reaper stores runs as failed with safe_summary_json {"code":"run_stale"} and
+// their claimed commands as failed with safe_message "run_stale". That verdict is a guess made
+// while the runner was unreachable, so the runner's own later result may replace it (docs/08
+// §7.5); every other terminal state is immutable.
+export const STALE_RUN_CODE = "run_stale";
+export const STALE_RUN_SQL =
+  `(state = 'failed' AND json_extract(safe_summary_json, '$.code') = '${STALE_RUN_CODE}')`;
+export const STALE_COMMAND_SQL = `(state = 'failed' AND safe_message = '${STALE_RUN_CODE}')`;
+
+export function reapedAsStale(run) {
+  if (run?.state !== "failed") return false;
+  try {
+    return JSON.parse(run.safe_summary_json || "{}")?.code === STALE_RUN_CODE;
+  } catch {
+    return false;
+  }
+}
+
+// Overdue queued commands expire; claims whose lease lapsed before a run started go back to the
+// queue (or fail after the last attempt). claimCommand runs these before claiming; overview and
+// the daily maintenance run them too, so a runner that died after claiming cannot leave a
+// command "active" (blocking new commands and cancel) until it comes back. markerFilter limits
+// the claim statements to marker actions for a marker-only claim.
+// Outside the runner's own claim (docs/08 §7.4), a lapsed claim is only settled once the runner
+// itself looks gone (no heartbeat since runnerGoneBefore): during a short outage its queued
+// run_start is still on the way, and requeueing under it would reject that start.
+export function commandLeaseStatements(env, nowText, markerFilter = "", runnerGoneBefore = null) {
+  const runnerGone = runnerGoneBefore === null ? "" : `AND NOT EXISTS (
+         SELECT 1 FROM runner_status WHERE id = 1 AND heartbeat_at >= ?)`;
+  const goneBinding = runnerGoneBefore === null ? [] : [runnerGoneBefore];
+  return [
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = 'expired', finished_at = ?, safe_message = 'expired'
+       WHERE state = 'queued' AND expires_at <= ?`,
+    ).bind(nowText, nowText),
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = 'queued', claimed_at = NULL, claim_expires_at = NULL,
+         runner_id = NULL, claim_idempotency_key = NULL
+       WHERE state = 'claimed' AND claim_expires_at <= ?
+         AND claim_attempts < ? AND run_id IS NULL ${markerFilter} ${runnerGone}`,
+    ).bind(nowText, COMMAND_MAX_CLAIM_ATTEMPTS, ...goneBinding),
+    env.CONTROL_DB.prepare(
+      `UPDATE commands SET state = 'failed', finished_at = ?, safe_message = 'claim_lost'
+       WHERE state = 'claimed' AND claim_expires_at <= ?
+         AND claim_attempts >= ? AND run_id IS NULL ${markerFilter} ${runnerGone}`,
+    ).bind(nowText, nowText, COMMAND_MAX_CLAIM_ATTEMPTS, ...goneBinding),
+  ];
+}
+
 export function envelope(requestId, data, status = 200) {
   return Response.json(
     { api_version: 1, request_id: requestId, server_time: new Date().toISOString(), data },

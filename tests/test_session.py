@@ -270,6 +270,20 @@ def test_refresh_over_impersonation_logs_in_and_extracts_cookies(
     assert load_session_export(path, now=now).cookies[0].name == "PHPSESSID"
 
 
+def test_impersonated_origin_errors_are_network_failures_not_logouts() -> None:
+    # curl_cffi returns error pages instead of raising; a 5xx or WAF page must not read as
+    # "logged out", which would spend the auto-login throttle during an outage.
+    from types import SimpleNamespace
+
+    from crawler.session import SessionNetworkError, _impersonate_text
+
+    with pytest.raises(SessionNetworkError, match="HTTP 503"):
+        _impersonate_text(SimpleNamespace(status_code=503, text="<html>maintenance</html>"))
+    assert (
+        _impersonate_text(SimpleNamespace(status_code=200, text="<a>logout</a>")) == "<a>logout</a>"
+    )
+
+
 def test_validate_over_impersonation_detects_the_logout_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
