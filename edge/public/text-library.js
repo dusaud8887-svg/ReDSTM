@@ -12,7 +12,12 @@ const FINISHED = 0.95;
 const HISTORY_LIMIT = 10_000;
 const ROW_SELECTOR = ".result-item[data-key]";
 const LIST_PAGE = 10;
-const SORT_LABELS = { oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최신 화순" };
+const SORT_LABELS = {
+  oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최신 화순", recent: "최근 읽은순",
+};
+// Novel work list filter by this browser's reading records.
+const READ_FILTERS = [["all", "전체"], ["reading", "읽는 중"], ["new", "새 회차"], ["unread", "안 읽음"], ["finished", "다 읽음"]];
+const READ_FILTER_VALUES = new Set(READ_FILTERS.map(([value]) => value));
 
 function readState() {
   try {
@@ -46,6 +51,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let work = null;
   let chapterSource = [];
   let sortMode = "title";
+  let readFilter = "all";
   let folderBoard = null;
   let folderCategory = null;
   // current: the open body. sequence: its reading order, frozen when the body opened.
@@ -117,16 +123,28 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (lane === "arcalive" && arcaliveView === "files" && folderBoard) params.set("board", folderBoard);
     if (lane === "arcalive" && arcaliveView === "files" && folderCategory) params.set("category", folderCategory);
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
+    if (readFiltering() && readFilter !== "all") params.set("read", readFilter);
     return params;
   }
 
   function defaultSort() {
-    return work ? "oldest" : "title";
+    if (work) return "oldest";
+    // Posts in an Arcalive category read like a board: newest first.
+    return postsView() ? "latest" : "title";
+  }
+
+  function postsView() {
+    return lane === "arcalive" && arcaliveView === "files" && Boolean(folderCategory);
   }
 
   function readSort(params) {
     const requested = params.get("sort");
     sortMode = SORT_LABELS[requested] ? requested : defaultSort();
+    readFilter = READ_FILTER_VALUES.has(params.get("read")) ? params.get("read") : "all";
+  }
+
+  function readFiltering() {
+    return lane === "novel" && !work;
   }
 
   function listRoute() {
@@ -164,8 +182,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     for (const [key, record] of Object.entries(history.history)) {
       const workId = record ? novelRecordWorkId(key, record, knownWorkIds) : null;
       if (!workId) continue;
-      const item = progress.get(workId) ?? { finished: 0, reading: 0, lastReadAt: "", record: null };
+      const item = progress.get(workId) ?? { finished: 0, reading: 0, lastReadAt: "", record: null, seenTotal: 0 };
       const value = record.progress ?? 0;
+      // chapter_count when a chapter of the work was last opened: later chapters are new.
+      if (Number.isInteger(record.total) && record.total > item.seenTotal) item.seenTotal = record.total;
       if (value >= FINISHED) item.finished += 1;
       else if (value > 0) item.reading += 1;
       if (String(record.readAt || "") > item.lastReadAt) {
@@ -175,6 +195,42 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       progress.set(workId, item);
     }
     return progress;
+  }
+
+  // Reading state of one novel work: new chapters since it was last read, and where it stands.
+  function workState(entry, progress) {
+    const total = entry.chapter_count ?? 0;
+    const newCount = progress?.seenTotal ? Math.max(0, total - progress.seenTotal) : 0;
+    const state = !progress ? "unread" : total && progress.finished >= total ? "finished" : "reading";
+    return { newCount, state };
+  }
+
+  function matchesReadFilter(state) {
+    if (readFilter === "all") return true;
+    if (readFilter === "new") return state.newCount > 0;
+    return state.state === readFilter;
+  }
+
+  function renderReadChips(progress) {
+    const chips = document.querySelector("#text-read-chips");
+    if (!chips) return;
+    chips.hidden = !active || !progress;
+    if (chips.hidden) return;
+    const counts = { all: catalog.length, reading: 0, new: 0, unread: 0, finished: 0 };
+    for (const item of catalog) {
+      const state = workState(item, progress.get(item.work_id));
+      counts[state.state] += 1;
+      if (state.newCount) counts.new += 1;
+    }
+    chips.replaceChildren(...READ_FILTERS.map(([value, label]) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.dataset.textRead = value;
+      chip.textContent = value === "all" ? label : `${label} ${counts[value].toLocaleString("ko-KR")}`;
+      chip.setAttribute("aria-pressed", String(value === readFilter));
+      chip.disabled = value !== "all" && value !== readFilter && counts[value] === 0;
+      return chip;
+    }));
   }
 
   function lastReadChapter() {
@@ -275,7 +331,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
-      empty.textContent = catalog.length ? "검색 결과가 없습니다." : "아직 게시된 자료가 없습니다.";
+      empty.textContent = !catalog.length ? "아직 게시된 자료가 없습니다."
+        : readFiltering() && readFilter !== "all" && !search.value.trim() ? "이 읽기 상태의 작품이 없습니다."
+          : "검색 결과가 없습니다.";
       list.append(empty);
     }
   }
@@ -296,7 +354,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function workRowMeta(entry, progress) {
     const total = entry.chapter_count ?? 0;
-    const parts = [entry.author || "작가 미상", `${total}화`];
+    const { newCount } = workState(entry, progress);
+    const parts = [...(newCount ? [`새 ${newCount}화`] : []), entry.author || "작가 미상", `${total}화`];
     if (progress) {
       parts.push(`읽음 ${progress.finished}/${total}`);
       if (progress.record?.title) parts.push(`최근 ${progress.record.title}`);
@@ -320,12 +379,18 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return orderChapters(rows, "oldest");
   }
 
-  function orderedWorks(rows) {
+  function orderedWorks(rows, progress = null) {
     const title = (left, right) => String(left.title || left.work_id || "")
       .localeCompare(String(right.title || right.work_id || ""), "ko-KR", { numeric: true })
       || String(left.work_id || "").localeCompare(String(right.work_id || ""));
     const copy = [...rows];
-    if (sortMode === "longest") {
+    if (postsView() && (sortMode === "latest" || sortMode === "oldest")) {
+      const direction = sortMode === "latest" ? -1 : 1;
+      copy.sort((left, right) => direction * ((Number(left.post_id) || 0) - (Number(right.post_id) || 0)) || title(left, right));
+    } else if (sortMode === "recent" && progress) {
+      const readAt = (item) => progress.get(item.work_id)?.lastReadAt ?? "";
+      copy.sort((left, right) => readAt(right).localeCompare(readAt(left)) || title(left, right));
+    } else if (sortMode === "longest") {
       copy.sort((left, right) => (right.chapter_count || 0) - (left.chapter_count || 0) || title(left, right));
     } else if (sortMode === "updated") {
       copy.sort((left, right) => String(right.last_imported_at || "").localeCompare(String(left.last_imported_at || ""))
@@ -336,6 +401,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function renderCatalog() {
     const query = normalize(search.value.trim());
+    const progress = readFiltering() ? workProgress() : null;
+    renderReadChips(progress);
     if (work) {
       const displayed = orderChapters(chapterSource, sortMode);
       renderRows(displayed.filter((chapter) => normalize(`${chapter.label || ""} ${chapterKind(chapter.kind)}`).includes(query)),
@@ -347,7 +414,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         normalize(`${item.title} ${item.author} ${item.board} ${item.category}`).includes(query))));
     }
     const matching = orderedWorks(catalog.filter((item) =>
-      normalize(`${item.title || item.category || ""} ${item.author || ""} ${item.board || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query)));
+      normalize(`${item.title || item.category || ""} ${item.author || ""} ${item.board || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query)
+      && (!progress || matchesReadFilter(workState(item, progress.get(item.work_id))))), progress);
     if (lane === "arcalive") {
       const group = (items, key) => {
         const grouped = new Map();
@@ -365,7 +433,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         ? boardItems.filter((item) => normalize(`${item.title || ""} ${item.author || ""} ${item.category || ""}`).includes(query))
         : boardItems;
       if (!folderCategory) return renderRows(group(visibleBoard, "category"), { folderMode: "category" });
-      return renderRows(visibleBoard.filter((item) => String(item.category || "미분류") === folderCategory));
+      return renderRows(orderedWorks(visibleBoard.filter((item) => String(item.category || "미분류") === folderCategory)));
     }
     renderRows(matching);
   }
@@ -668,7 +736,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return { unit: "화", entries, index: entries.findIndex((chapter) => sameChapter(chapter, entry)), toc: true };
     }
     if (lane === "arcalive" && folderCategory) {
-      return { unit: "글", entries: visible.slice(), index: visible.findIndex((item) => sameChapter(item, entry)), toc: false };
+      // The posts shown, in posting order: the list sort never changes 이전/다음 글.
+      const entries = visible.slice().sort((left, right) => (Number(left.post_id) || 0) - (Number(right.post_id) || 0));
+      return { unit: "글", entries, index: entries.findIndex((item) => sameChapter(item, entry)), toc: false };
     }
     return null;
   }
@@ -939,7 +1009,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     }
     if (lane === "arcalive" && arcaliveView === "files" && !folderCategory) {
       folderCategory = selected.folder_label;
+      sortMode = defaultSort();
       syncBackButton();
+      onChange();
       renderCatalog();
       pushRoute();
       list.scrollTop = 0;
@@ -1018,6 +1090,38 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       .finally(() => { moving = false; });
   }
 
+  // 더보기 → 이전 회차 모두 읽음: for chapters read elsewhere before this archive, so the work's
+  // progress and 이어 읽기 start from here. Returns how many chapters changed.
+  function previousUnreadCount() {
+    if (current?.lane !== "novel" || !sequence || sequence.index <= 0) return 0;
+    return sequence.entries.slice(0, sequence.index)
+      .filter((chapter) => (history.history[identity(chapter, "novel", current.work)]?.progress ?? 0) < FINISHED).length;
+  }
+
+  function markPreviousRead() {
+    const count = previousUnreadCount();
+    if (!count) return 0;
+    flushPosition();
+    // Older than the open chapter, so it stays the one 이어 읽기 resumes.
+    const readAt = new Date(Date.parse(history.history[current.identity]?.readAt || "") - 1000 || Date.now() - 1000).toISOString();
+    for (const chapter of sequence.entries.slice(0, sequence.index)) {
+      const key = identity(chapter, "novel", current.work);
+      const record = history.history[key];
+      if ((record?.progress ?? 0) >= FINISHED) continue;
+      history.history[key] = {
+        ...(record ?? {
+          readAt, title: chapter.label || "", work: current.work?.title || "",
+          ...(current.work?.work_id ? { workId: current.work.work_id } : {}), total: current.work?.chapter_count ?? 0,
+        }),
+        progress: 1,
+      };
+    }
+    pruneHistory();
+    persist();
+    publishList();
+    return count;
+  }
+
   function bookmarkDetails() {
     if (!current) return null;
     const saved = history.bookmarks[current.identity];
@@ -1084,6 +1188,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     void open(next);
     window.history.pushState({ redstmText: true }, "", `/text?${next}`);
   });
+  document.querySelector("#text-read-chips")?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-text-read]");
+    if (chip) setReadFilter(chip.dataset.textRead);
+  });
   document.querySelector("#text-work-back").addEventListener("click", () => {
     if (!current && (work || folderBoard)) up();
   });
@@ -1095,13 +1203,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function sortContext() {
     if (work) return "chapters";
+    if (postsView()) return "posts";
     if (lane === "novel" || lane === "arcalive" && arcaliveView === "works") return "works";
     return "titles";
   }
 
   function setSort(value) {
-    const allowed = new Set(["oldest", "latest", "title", "longest", "updated"]);
-    const next = allowed.has(value) ? value : (sortContext() === "chapters" ? "oldest" : "title");
+    const allowed = new Set(sortOptions().map(([, option]) => option));
+    const next = allowed.has(value) ? value : defaultSort();
     if (next === sortMode) return;
     sortMode = next;
     renderCatalog();
@@ -1109,6 +1218,15 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function currentSort() { return sortMode; }
+
+  function setReadFilter(value) {
+    const next = READ_FILTER_VALUES.has(value) ? value : "all";
+    if (next === readFilter || !readFiltering()) return;
+    readFilter = next;
+    renderCatalog();
+    list.scrollTop = 0;
+    if (!current) window.history.replaceState(window.history.state, "", listRoute());
+  }
 
   // The list a deep-linked body belongs to, used to build a Back target under it.
   function parentRoute(params) {
@@ -1139,28 +1257,74 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function sortOptions() {
     const context = sortContext();
+    if (context === "posts") return [["최신순", "latest"], ["오래된순", "oldest"], ["제목순", "title"]];
     return context === "chapters"
       ? [["오래된순", "oldest"], ["최신순", "latest"], ["이름순", "title"]]
       : context === "works"
-        ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"]]
+        ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"],
+          ...(lane === "novel" ? [["최근 읽은순", "recent"]] : [])]
         : [];
   }
 
-  // Works being read (some chapter read, not all finished), newest first, for Home.
-  function readingWorks() {
+  // Works being read (some chapter read, not all finished), newest first, for Home. The novel
+  // catalog is fetched when it is not loaded yet, so chapters published since the last visit
+  // show as new; without it the reading records alone are used.
+  async function readingWorks() {
+    const progressByWork = workProgress();
+    if (progressByWork.size && !catalogs.has("novel")) await loadCatalog("novel").catch(() => null);
     const works = catalogs.get("novel")?.items ?? [];
     const byId = new Map(works.map((item) => [item.work_id, item]));
-    return [...workProgress()].map(([workId, progress]) => {
+    return [...progressByWork].map(([workId, progress]) => {
       const item = byId.get(workId);
       const total = item?.chapter_count ?? progress.record?.total ?? 0;
       if (!progress.record?.listRoute || (total && progress.finished >= total)) return null;
+      const { newCount } = item ? workState(item, progress) : { newCount: 0 };
       return {
         title: item?.title || progress.record.work || "소설",
         meta: [total ? `읽음 ${progress.finished}/${total}` : "", progress.record.title ? `최근 ${progress.record.title}` : ""].filter(Boolean).join(" · "),
         listRoute: progress.record.listRoute,
         readAt: progress.lastReadAt,
+        newCount,
       };
     }).filter(Boolean).sort((left, right) => right.readAt.localeCompare(left.readAt));
+  }
+
+  // Saved novel chapters and Arcalive posts for the TypeMoon 보관함's 저장한 글, newest first.
+  function savedItems(query = "") {
+    const wanted = normalize(query.trim());
+    return savedEntries().map((saved) => ({
+      identity: saved.identity,
+      title: saved.lane === "novel" ? `${saved.work?.title || saved.title || "소설"} · ${saved.entry?.label || "회차"}`
+        : (saved.entry?.title || saved.title || "아카라이브 글"),
+      meta: [saved.lane === "novel" ? "소설" : ["아카라이브", saved.entry?.board].filter(Boolean).join(" · "),
+        ...(saved.tags ?? []).map((tag) => `#${tag}`)].join(" · "),
+      note: saved.note || "",
+      savedAt: saved.savedAt || "",
+      listRoute: "/text?lane=saved",
+      route: `/text?${new URLSearchParams({ lane: "saved", item: saved.identity })}`,
+    })).filter((item) => !wanted || normalize(`${item.title} ${item.meta} ${item.note}`).includes(wanted))
+      .sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+  }
+
+  // Backup (settings → 기록 내보내기/가져오기). Import replaces this browser's text records.
+  function exportState() {
+    flushPosition();
+    return { schema_version: 1, history: history.history, bookmarks: history.bookmarks };
+  }
+
+  function importState(state) {
+    history.history = { ...state.history };
+    history.bookmarks = { ...state.bookmarks };
+    pruneHistory();
+    persist();
+    if (!active) return;
+    if (current) {
+      updateBookmark();
+      publishList();
+    } else {
+      if (lane === "saved") catalog = savedEntries();
+      renderCatalog();
+    }
   }
 
   function isReading() { return Boolean(current); }
@@ -1177,6 +1341,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     folderBoard = null;
     folderCategory = null;
     syncBackButton();
+    renderReadChips(null);
     shell.close();
   }
 
@@ -1184,5 +1349,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
+    exportState, importState, previousUnreadCount, markPreviousRead, savedItems,
   };
 }

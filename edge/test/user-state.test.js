@@ -10,6 +10,7 @@ import {
   postIdentity,
   sanitizeBookmarkMetadata,
   samePost,
+  serializeUserState,
 } from "../public/user-state.js";
 
 const defaults = {
@@ -115,8 +116,49 @@ test("plans v2 import with counts without applying it", () => {
   const plan = planImport(exportUserState(state), defaults);
   assert.deepEqual(plan.state, state);
   assert.deepEqual(plan.summary, {
-    history: 1, bookmarks: 1, scroll: 1, viewModes: 1, defaultedSettings: [],
+    history: 1, bookmarks: 1, scroll: 1, viewModes: 1, textHistory: null, textBookmarks: null, defaultedSettings: [],
   });
+  assert.equal(plan.text, null);
+});
+
+test("backs up the text library's reading records and saved items", () => {
+  const hash = "a".repeat(64);
+  const text = {
+    schema_version: 1,
+    history: {
+      "novel:novel:1:12": {
+        readAt: "2026-09-01T00:00:00Z", progress: 0.5, scroll: 900, offset: 120, anchor: "문장", anchorTop: 12,
+        total: 40, title: "12화", work: "소설", workId: "novel:1", chapterId: "12", revision: hash,
+        route: "/text?lane=novel&work=novel%3A1&chapter=12", listRoute: "https://evil.example/", extra: "drop",
+      },
+      "novel:novel:1:13": { readAt: "not a date" },
+      "write_free21:1": { readAt: "2026-09-01T00:00:00Z" },
+    },
+    bookmarks: {
+      "arcalive:novel:108:text": {
+        savedAt: "2026-09-02T00:00:00Z", lane: "arcalive", title: "글",
+        entry: { identity: "arcalive:novel:108:text", sha256: hash, object_key: "x" }, note: " 메모 ", tags: ["a", "a"],
+      },
+      "arcalive:novel:109:text": { savedAt: "2026-09-02T00:00:00Z", lane: "arcalive", entry: { sha256: "bad" } },
+    },
+  };
+  const state = defaultUserState(defaults);
+  const payload = JSON.parse(exportUserState(state, text));
+  assert.deepEqual(Object.keys(payload.text.history), ["novel:novel:1:12"]);
+  assert.equal(payload.text.history["novel:novel:1:12"].listRoute, undefined);
+  assert.equal(payload.text.history["novel:novel:1:12"].extra, undefined);
+  assert.equal(payload.text.history["novel:novel:1:12"].route, "/text?lane=novel&work=novel%3A1&chapter=12");
+  assert.deepEqual(payload.text.bookmarks, { "arcalive:novel:108:text": {
+    savedAt: "2026-09-02T00:00:00Z", lane: "arcalive", title: "글",
+    entry: { identity: "arcalive:novel:108:text", sha256: hash }, note: "메모", tags: ["a"],
+  } });
+  // The localStorage copy of the TypeMoon state never carries the text section.
+  assert.equal(JSON.parse(serializeUserState({ ...state, text })).text, undefined);
+
+  const plan = planImport(JSON.stringify(payload), defaults);
+  assert.deepEqual(plan.text, payload.text);
+  assert.equal(plan.summary.textHistory, 1);
+  assert.equal(plan.summary.textBookmarks, 1);
 });
 
 test("keeps setting ranges and rejects unknown schemas", () => {

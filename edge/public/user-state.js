@@ -184,9 +184,59 @@ function normalizeV2State(value, defaultSettings = {}) {
   };
 }
 
-// The backup file people download: normalized and indented for reading.
-export function exportUserState(state) {
+const textIdentityPattern = /^(?:novel|arcalive):[^\s]{1,300}$/;
+const textHashPattern = /^[a-f0-9]{64}$/;
+const textLanes = new Set(["novel", "arcalive"]);
+
+function validTimestamp(value) {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+// The text library's reading records and saved items (redstm.textState.v1). They live in their
+// own localStorage key, so backups carry them as an optional `text` section.
+export function sanitizeTextState(value) {
+  const source = isRecord(value) ? value : {};
+  const history = {};
+  for (const [identity, record] of Object.entries(isRecord(source.history) ? source.history : {})) {
+    if (!textIdentityPattern.test(identity) || !isRecord(record) || !validTimestamp(record.readAt)) continue;
+    const kept = { readAt: record.readAt };
+    if (Number.isFinite(record.progress) && record.progress >= 0 && record.progress <= 1) kept.progress = record.progress;
+    if (Number.isFinite(record.scroll) && record.scroll >= 0) kept.scroll = record.scroll;
+    if (Number.isInteger(record.offset) && record.offset >= 0) kept.offset = record.offset;
+    if (Number.isFinite(record.anchorTop)) kept.anchorTop = record.anchorTop;
+    if (Number.isInteger(record.total) && record.total >= 0) kept.total = record.total;
+    for (const key of ["title", "work", "workId", "chapterId"]) {
+      if (typeof record[key] === "string") kept[key] = record[key].slice(0, 300);
+    }
+    if (typeof record.anchor === "string") kept.anchor = record.anchor.slice(0, 500);
+    if (typeof record.revision === "string" && textHashPattern.test(record.revision)) kept.revision = record.revision;
+    for (const key of ["route", "listRoute"]) {
+      if (typeof record[key] === "string" && record[key].startsWith("/text?")) kept[key] = record[key].slice(0, 2000);
+    }
+    history[identity] = kept;
+  }
+  const bookmarks = {};
+  for (const [identity, saved] of Object.entries(isRecord(source.bookmarks) ? source.bookmarks : {})) {
+    if (
+      !textIdentityPattern.test(identity) || !isRecord(saved) || !validTimestamp(saved.savedAt) ||
+      !textLanes.has(saved.lane) || !isRecord(saved.entry) || !textHashPattern.test(saved.entry.sha256 ?? "")
+    ) continue;
+    const kept = { savedAt: saved.savedAt, lane: saved.lane, entry: safeCatalogState(saved.entry) };
+    if (isRecord(saved.work)) kept.work = safeCatalogState(saved.work);
+    if (typeof saved.title === "string") kept.title = saved.title.slice(0, 300);
+    const metadata = sanitizeBookmarkMetadata(saved.note, saved.tags);
+    if (metadata.note) kept.note = metadata.note;
+    if (metadata.tags.length) kept.tags = metadata.tags;
+    bookmarks[identity] = kept;
+  }
+  return { schema_version: 1, history, bookmarks };
+}
+
+// The backup file people download: normalized and indented for reading. The text library's
+// state rides along when given.
+export function exportUserState(state, textState = null) {
   const normalized = normalizeV2State(state, state?.settings);
+  if (textState) normalized.text = sanitizeTextState(textState);
   return `${JSON.stringify(normalized, null, 2)}\n`;
 }
 
@@ -209,13 +259,19 @@ export function planImport(text, defaultSettings = {}) {
   } else {
     throw new Error("지원하지 않는 상태 파일 형식");
   }
+  // Files exported before the text library existed have no `text`; importing them keeps the
+  // text reading records already in this browser.
+  const textState = payload?.schema_version === 2 && isRecord(payload.text) ? sanitizeTextState(payload.text) : null;
   return {
     state,
+    text: textState,
     summary: {
       history: Object.keys(state.history).length,
       bookmarks: Object.keys(state.bookmarks).length,
       scroll: Object.keys(state.scroll).length,
       viewModes: Object.keys(state.viewModes).length,
+      textHistory: textState ? Object.keys(textState.history).length : null,
+      textBookmarks: textState ? Object.keys(textState.bookmarks).length : null,
       defaultedSettings,
     },
   };

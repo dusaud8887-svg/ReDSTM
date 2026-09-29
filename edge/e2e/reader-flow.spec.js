@@ -905,3 +905,144 @@ test("The image viewer shows a large picture at its own size and fits it again",
   await zoom.click();
   await expect.poll(width).toBeLessThanOrEqual(page.viewportSize().width);
 });
+
+test("Text: novels read before show new chapters in the list, the read-state chips and Home", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const workId = await useLongNovel(page, 5);
+  await page.addInitScript((id) => {
+    if (localStorage.getItem("redstm.textState.v1")) return;
+    localStorage.setItem("redstm.textState.v1", JSON.stringify({ schema_version: 1, bookmarks: {}, history: {
+      [`novel:${id}:1`]: {
+        readAt: "2026-09-01T00:00:00Z", progress: 1, total: 3, title: "1화", work: "긴 소설", workId: id,
+        route: `/text?lane=novel&work=${encodeURIComponent(id)}&chapter=1`,
+        listRoute: `/text?lane=novel&work=${encodeURIComponent(id)}`,
+      },
+    } }));
+  }, workId);
+  await page.goto("/text?lane=novel");
+  await expect(page.locator("#result-list .result-item").first()).toContainText("새 2화");
+  const chips = page.locator("#text-read-chips");
+  await expect(chips).toBeVisible();
+  await expect(chips.locator('[data-text-read="new"]')).toHaveText("새 회차 1");
+  await expect(chips.locator('[data-text-read="unread"]')).toBeDisabled();
+  await chips.locator('[data-text-read="reading"]').click();
+  await expect(page).toHaveURL(/read=reading/);
+  await expect(page.locator("#result-list .result-item")).toHaveCount(1);
+  await expect(page.locator("#text-sort-chips [data-text-sort=\"recent\"]")).toHaveText("최근 읽은순");
+  // Opening the work hides the chips; the chapter list is not filtered by them.
+  await page.locator("#result-list .result-item").first().click();
+  await expect(chips).toBeHidden();
+  await page.locator('[data-destination="library"]').filter({ visible: true }).first().click();
+  await expect(page.locator("#reading-works-list .home-badge")).toHaveText("새 2화");
+});
+
+test("Text: 이전 회차 모두 읽음 marks the chapters before the open one as read", async ({ page }) => {
+  const workId = await useLongNovel(page, 6);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=4`);
+  await expect(page.locator("#reader-title")).toHaveText("4화");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await expect(page.locator("#more-mark-read")).toContainText("이전 회차 모두 읽음 (3화)");
+  await page.locator("#more-mark-read").click();
+  await expect(page.locator("#reader-more")).not.toBeVisible();
+  const saved = await page.evaluate((id) => {
+    const history = JSON.parse(localStorage.getItem("redstm.textState.v1")).history;
+    return [1, 2, 3, 4].map((chapter) => history[`novel:${id}:${chapter}`]?.progress ?? null);
+  }, workId);
+  expect(saved.slice(0, 3)).toEqual([1, 1, 1]);
+  expect(saved[3]).toBeLessThan(1);
+  await page.goBack();
+  await expect(page.locator("#result-list .continue-row")).toContainText("이어 읽기 · 4화");
+  await expect(page.locator('#result-list [data-key="chapter:3"]')).toContainText("다 읽음");
+  // Nothing is left to mark from the first chapter.
+  await page.locator('#result-list [data-key="chapter:1"]').click();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await expect(page.locator("#more-mark-read")).toBeHidden();
+});
+
+test("Arcalive posts in a category list newest first but read in posting order", async ({ page }) => {
+  const releaseHash = "a".repeat(64);
+  const indexHash = "b".repeat(64);
+  const body = (id) => id.toString(16).padStart(64, "c");
+  // Imported out of posting order.
+  const posts = [30, 10, 20].map((id) => ({
+    identity: `arcalive:novel:${id}:text`, title: `${id}번 글`, author: "작성자", category: "소설", board: "novel",
+    post_id: id, sha256: body(id),
+  }));
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let payload;
+    if (path.endsWith("/release/arcalive")) payload = { schema: 1, lane: "arcalive", sha256: releaseHash };
+    else if (path.endsWith(`/release-manifest/arcalive/${releaseHash}.json`)) payload = {
+      schema: 1, lane: "arcalive", catalog_pages: [{ key: `published/indexes/arcalive/${indexHash}.json`, sha256: indexHash }],
+    };
+    else if (path.endsWith(`/index/arcalive/${indexHash}.json`)) payload = { schema: 1, lane: "arcalive", items: posts };
+    else {
+      const post = posts.find((item) => path.endsWith(`/object/${item.sha256}`));
+      if (post) return route.fulfill({ contentType: "text/markdown", body: `# ${post.title}\n\n---\n\n${post.title} 본문` });
+      return route.fulfill({ status: 404, body: "" });
+    }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/text?lane=arcalive&board=novel&category=%EC%86%8C%EC%84%A4");
+  const titles = page.locator("#result-list .result-item[data-key] .result-title");
+  await expect(titles).toHaveText(["30번 글", "20번 글", "10번 글"]);
+  await expect(page.locator('#text-sort-chips [data-text-sort="latest"]')).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#text-sort-chips [data-text-sort=\"oldest\"]").click();
+  await expect(titles).toHaveText(["10번 글", "20번 글", "30번 글"]);
+  await expect(page).toHaveURL(/sort=oldest/);
+  await page.locator("#text-sort-chips [data-text-sort=\"latest\"]").click();
+  await page.locator("#result-list .result-item", { hasText: "20번 글" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("20번 글");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-next" : "#next-post").click();
+  await expect(page.locator("#reader-title")).toHaveText("30번 글");
+});
+
+test("Search with no TypeMoon result offers the same words in the text library", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const workId = await useLongNovel(page, 2);
+  await page.goto("/search?q=%EA%B8%B4%20%EC%86%8C%EC%84%A4");
+  await expect(page.locator("#search-widen")).toBeVisible();
+  await page.locator("#search-widen button", { hasText: "소설에서 찾기" }).click();
+  await expect(page).toHaveURL(/\/text\?lane=novel&q=/);
+  await expect(page.locator("#search-input")).toHaveValue("긴 소설");
+  await expect(page.locator(`#result-list [data-key="work:${workId}"]`)).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/search\?/);
+});
+
+test("보관함 lists novels being read and saved text items next to TypeMoon ones", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const workId = await useLongNovel(page, 4);
+  const hash = (2).toString(16).padStart(64, "a");
+  await page.addInitScript(([id, sha]) => {
+    if (localStorage.getItem("redstm.textState.v1")) return;
+    localStorage.setItem("redstm.textState.v1", JSON.stringify({ schema_version: 1,
+      history: { [`novel:${id}:1`]: {
+        readAt: "2026-09-01T00:00:00Z", progress: 1, total: 4, title: "1화", work: "긴 소설", workId: id,
+        listRoute: `/text?lane=novel&work=${encodeURIComponent(id)}`,
+      } },
+      bookmarks: { [`novel:${id}:2`]: {
+        savedAt: "2026-09-02T00:00:00Z", lane: "novel", title: "긴 소설", note: "다시 볼 장면",
+        entry: { chapter_id: "2", label: "2화", sha256: sha }, work: { work_id: id, title: "긴 소설", chapter_count: 4 },
+      } },
+    }));
+  }, [workId, hash]);
+  await page.goto("/saved?view=reading");
+  const reading = page.locator("#result-list .text-result");
+  await expect(reading).toContainText("긴 소설");
+  await expect(reading).toContainText("읽음 1/4");
+  await reading.click();
+  await expect(page).toHaveURL(/\/text\?lane=novel&work=/);
+  await expect(page.locator('#result-list [data-key="chapter:2"]')).toBeVisible();
+
+  await page.goto("/saved");
+  const saved = page.locator("#result-list .text-result");
+  await expect(saved).toContainText("긴 소설 · 2화");
+  await expect(saved).toContainText("다시 볼 장면");
+  await expect(page.locator("#result-status")).toContainText("텍스트 1");
+  await saved.click();
+  await expect(page.locator("#reader-title")).toHaveText("2화");
+  await page.goBack();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/saved$/);
+});

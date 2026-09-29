@@ -227,6 +227,7 @@ body.reading-context .catalog { width: 380px; background: var(--surface); border
   background: var(--page); color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .text-sort-chips { padding: 4px 12px 0; }
+.filter-chips button:disabled { opacity: .45; cursor: default; }
 body.text-library-open .text-work-back { margin-bottom: 0; }
 .filter-chips button[aria-pressed="true"], .active-filters button {
   border-color: var(--accent); background: var(--accent-soft); color: var(--accent);

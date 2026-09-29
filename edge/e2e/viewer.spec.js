@@ -477,8 +477,9 @@ test("arcalive follows board/category/files even when titles look like a series"
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#result-list .result-title").first()).toHaveText("agr");
   await page.locator("#result-list .result-item").first().click();
+  // Posts in a category list newest first, like a board.
   await expect(page.locator("#result-list .result-title")).toHaveText([
-    "해리포터와 뛰어노는 조랑말들 1화", "해리포터와 뛰어노는 조랑말들 2화",
+    "해리포터와 뛰어노는 조랑말들 2화", "해리포터와 뛰어노는 조랑말들 1화",
   ]);
   await page.locator('[data-arcalive-view="works"]').click();
   await expect(page).toHaveURL(/view=works/);

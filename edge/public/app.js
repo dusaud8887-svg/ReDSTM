@@ -83,7 +83,7 @@ const elements = Object.fromEntries(
     "discover-day-group", "discover-day-title", "discover-day",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
     "reader-bottom-previous-label", "reader-bottom-next-label",
-    "reader-more", "reader-more-context", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
+    "reader-more", "reader-more-context", "more-mark-read", "more-mark-read-label", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
     "more-mode", "more-mode-label", "more-mode-reset", "more-immersive", "more-immersive-label",
     "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
     "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove",
@@ -895,12 +895,15 @@ async function renderReadingWorks() {
     typeMoonFailed = true;
   }
   if (currentDestination !== "library") return;
-  for (const work of textLibrary.readingWorks()) {
+  const textWorks = await textLibrary.readingWorks();
+  if (currentDestination !== "library") return;
+  for (const work of textWorks) {
     items.push({
       title: work.title,
       meta: ["소설", work.meta],
       readAt: work.readAt,
-      fresh: false,
+      fresh: work.newCount > 0,
+      badge: work.newCount > 0 ? `새 ${work.newCount}화` : "",
       open: () => openTextFromHome({ identity: "novel:", listRoute: work.listRoute, progress: 0 }, { listOnly: true }),
     });
   }
@@ -917,7 +920,9 @@ async function renderReadingWorks() {
     empty.textContent = "읽기 상태를 확인하지 못했습니다.";
     list.append(empty);
   }
-  for (const item of shown) list.append(homeRow(item.title, item.meta, item.open, { badge: item.fresh ? "새 편" : "" }));
+  for (const item of shown) {
+    list.append(homeRow(item.title, item.meta, item.open, { badge: item.badge || (item.fresh ? "새 편" : "") }));
+  }
   if (failedBoards.size && shown.length) {
     const note = document.createElement("li");
     note.className = "home-empty";
@@ -1280,6 +1285,9 @@ function openReaderMore() {
   elements["more-position-output"].value = `${percent}%`;
   renderRemainingTime(progress);
   renderWakeState();
+  const unreadBefore = readerSource === "text" ? textLibrary.previousUnreadCount() : 0;
+  elements["more-mark-read"].hidden = unreadBefore === 0;
+  elements["more-mark-read-label"].textContent = `이전 회차 모두 읽음 (${unreadBefore.toLocaleString("ko-KR")}화)`;
   if (!elements["reader-more"].open) {
     moreOpener = document.activeElement;
     elements["reader-more"].showModal();
@@ -2196,7 +2204,52 @@ function renderCurrentView() {
   const entries = currentView === "history" ? historyEntries : bookmarks;
   const posts = localResults(entries);
   const label = currentView === "history" ? "최근 읽음" : "저장한 글";
-  renderResults(posts, posts.length ? `${label} ${posts.length}건 · 이 브라우저` : `${label}이 없습니다`);
+  // Saved novel chapters and Arcalive posts live in the text library; list them here too.
+  const textSaved = currentView === "bookmarks" ? textLibrary.savedItems(elements["search-input"].value) : [];
+  const total = posts.length + textSaved.length;
+  renderResults(posts, total
+    ? `${label} ${total}건${textSaved.length ? ` (텍스트 ${textSaved.length})` : ""} · 이 브라우저` : `${label}이 없습니다`);
+  if (textSaved.length) {
+    elements["search-widen"].hidden = true;
+    elements["result-list"].append(...textSaved.map((item) => textResultElement(item)));
+  }
+}
+
+// A text library row in 보관함; it opens through the text library's own routes.
+function textResultElement({ title, meta, note = "", badge = "", listRoute, route = "" }) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "result-item text-result";
+  button.dataset.textListRoute = listRoute;
+  if (route) button.dataset.textRoute = route;
+  button.dataset.key = `text:${route || listRoute}`;
+  const titleLine = document.createElement("span");
+  titleLine.className = "result-title-line";
+  const heading = document.createElement("strong");
+  heading.className = "result-title";
+  heading.textContent = title;
+  titleLine.append(heading);
+  if (badge) {
+    const badges = document.createElement("span");
+    badges.className = "result-badges";
+    const part = document.createElement("span");
+    part.textContent = badge;
+    badges.append(part);
+    titleLine.append(badges);
+  }
+  const metaLine = document.createElement("span");
+  metaLine.className = "result-meta";
+  metaLine.textContent = meta;
+  button.append(titleLine, metaLine);
+  if (note) {
+    const noteLine = document.createElement("span");
+    noteLine.className = "bookmark-note";
+    noteLine.textContent = note;
+    button.append(noteLine);
+  }
+  item.append(button);
+  return item;
 }
 
 async function renderReadingView() {
@@ -2220,9 +2273,11 @@ async function renderReadingView() {
     collections = [];
   }
   if (currentView !== "reading") return;
+  const novels = await textLibrary.readingWorks().catch(() => []);
+  if (currentView !== "reading") return;
   renderedResults = inProgress;
   renderedCollections = collections;
-  resultTotal = inProgress.length + collections.length;
+  resultTotal = inProgress.length + collections.length + novels.length;
   elements["search-empty"].hidden = true;
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
@@ -2230,6 +2285,12 @@ async function renderReadingView() {
   const fragment = document.createDocumentFragment();
   inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
   for (const collection of collections) fragment.append(collectionItemElement(collection));
+  for (const work of novels) {
+    fragment.append(textResultElement({
+      title: work.title, meta: ["소설", work.meta].filter(Boolean).join(" · "),
+      badge: work.newCount ? `새 ${work.newCount}화` : "", listRoute: work.listRoute,
+    }));
+  }
   elements["result-list"].append(fragment);
   const failedNote = collectionProgressFailedBoards.size ? " · 일부 읽기 상태 미확인" : "";
   elements["result-status"].textContent = resultTotal
@@ -2352,20 +2413,22 @@ function renderWidenActions(empty) {
   if (!actions.length && activeFilterItems().length) {
     actions.push(["reset", "필터 초기화"]);
   }
-  if (!actions.length) {
-    host.hidden = true;
-    return;
-  }
+  const widening = actions.length > 0;
+  // The same words may name a novel or an Arcalive work in the text library.
+  actions.push(["text:novel", "소설에서 찾기"], ["text:arcalive", "아카라이브 작품에서 찾기"]);
   host.hidden = false;
   const lead = document.createElement("p");
-  lead.textContent = "결과가 없습니다. 조건을 한 단계 넓혀 보세요.";
+  lead.textContent = widening ? "결과가 없습니다. 조건을 한 단계 넓혀 보거나 텍스트 장서에서 찾아보세요."
+    : "결과가 없습니다. 텍스트 장서에서 찾아볼 수 있습니다.";
   host.append(lead);
   for (const [key, label] of actions) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
+    button.dataset.widen = key;
     button.addEventListener("click", () => {
-      if (key === "reset") resetFilters();
+      if (key.startsWith("text:")) searchTextLibrary(key.slice(5));
+      else if (key === "reset") resetFilters();
       else clearFilter(key);
     });
     host.append(button);
@@ -3595,10 +3658,21 @@ elements["result-list"].addEventListener("click", (event) => {
     const withinSession = Boolean(history.state?.redstmReader || history.state?.redstmCollection);
     const navigation = withinSession ? "replace" : "push";
     if (!withinSession) persistCatalogState();
-    if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId), navigation);
+    if (button.dataset.textListRoute) {
+      const route = button.dataset.textRoute;
+      openTextFromHome({ identity: "", listRoute: button.dataset.textListRoute, route, progress: 0 }, { listOnly: !route });
+    } else if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId), navigation);
     else loadPost(renderedResults[Number(button.dataset.index)], navigation);
   }
 });
+// 검색 → 텍스트 장서: the same words in the novel works or Arcalive works list.
+function searchTextLibrary(lane) {
+  const query = elements["search-input"].value.trim();
+  const params = new URLSearchParams({ lane, ...(lane === "arcalive" ? { view: "works" } : {}), ...(query ? { q: query } : {}) });
+  history.pushState({ redstmText: true, redstmParent: currentRoute() }, "", `/text?${params}`);
+  void handleRoute();
+}
+
 // Continue from Home places the work's table of contents under the Reader, so Back walks
 // Reader → 목차 → 홈 without flashing the table of contents first.
 // Text: the chapter list goes under the chapter so Back walks 본문 → 회차 목록 → 홈.
@@ -3687,6 +3761,11 @@ elements["more-link"].addEventListener("click", () => {
 });
 // Stays in the sheet so the toggle's new state is visible.
 elements["more-wake"].addEventListener("click", () => setScreenAwake(!wakeWanted));
+elements["more-mark-read"].addEventListener("click", () => {
+  const count = textLibrary.markPreviousRead();
+  closeReaderMore();
+  if (count) showReaderFeedback(`이전 ${count.toLocaleString("ko-KR")}화를 읽음으로 표시했습니다`, 2200);
+});
 elements["reader-list-items"].addEventListener("click", (event) => {
   const button = event.target.closest(".reader-list-row");
   const row = button && readerListModel?.rows[Number(button.dataset.index)];
@@ -4266,7 +4345,7 @@ elements["reset-settings"].addEventListener("click", () => {
 });
 elements["export-state"].addEventListener("click", () => {
   persistUserState();
-  const blob = new Blob([exportUserState(userState)], {
+  const blob = new Blob([exportUserState(userState, textLibrary.exportState())], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
@@ -4302,7 +4381,9 @@ elements["import-state-file"].addEventListener("change", async () => {
     const defaulted = summary.defaultedSettings.length
       ? ` · 기본값 보정 ${summary.defaultedSettings.map((key) => settingLabels[key] ?? key).join(", ")}` : "";
     elements["import-review-summary"].textContent =
-      `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}${defaulted}`;
+      `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}` +
+      (summary.textHistory === null ? " · 텍스트 기록 없음(현재 기록 유지)"
+        : ` · 텍스트 읽기 ${summary.textHistory} · 텍스트 저장 ${summary.textBookmarks}`) + defaulted;
     elements["import-review"].dataset.state = "ready";
     elements["import-review"].hidden = false;
     elements["import-apply"].focus();
@@ -4323,6 +4404,7 @@ elements["import-apply"].addEventListener("click", async () => {
   try {
     applyUserState(pendingImportPlan.state);
     persistUserState();
+    if (pendingImportPlan.text) textLibrary.importState(pendingImportPlan.text);
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
