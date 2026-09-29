@@ -392,3 +392,16 @@ Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-
 - 소설 `canonical_chapter_id`는 importer가 `novel:<site>:<work>:<chapter>`, Oracle collector가 `novel_chapter:…`(identity)로 쓴다. Reader alias(`legacy_chapter_ids`)가 둘 다 덮으므로 기존 읽기 기록을 옮기지 않으려고 두었다.
 - 게시 뒤 수정된 아카라이브 글은 양쪽 모두 첫 본문을 유지한다. 개정본 게시가 필요하면 revision 계약(새 identity 또는 importer 교체 규칙)을 따로 정해야 한다. 그때까지 이미지 수집은 현재 로컬 파일 기준이라 수정으로 사라진 옛 이미지는 `path_missing`일 수 있다.
 - `importer.mark_cross_source_covered`는 이름과 달리 연결된 작품의 `covered` 회차를 다시 대기로 돌린다(2026-09-25 결정). 호출부 호환 때문에 이름을 유지했다.
+
+## 2026-09-29 텍스트 장서 운영 상태
+
+§5.2의 "운영 상태 표시는 후속 범위"를 구현했다. 텍스트 서비스는 Access 자격이 없어 D1에 보고할 수 없으므로,
+게시기(`scripts.text_archive.publisher`)가 실행을 마칠 때마다 `scripts/text_archive/status.py`가 만든 작은
+JSON을 텍스트 버킷의 고정 키 `published/status/text.json`에 올리고 다시 읽어 확인한다(버전 없는 가변 객체).
+Worker는 `/api/v1/text/status`(사람 Access만, `no-store`)로 제공하고 `/ops`의 별도 섹션 "06 텍스트 장서"가 보여 준다.
+TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 않는다.
+
+담는 것: 레인별 수입/게시 확인 수와 마지막 시각, PC 배치 수·마지막 수신·게시 확인 배치, 수신함(drop)에서 기다리는
+텍스트·이미지 배치와 거절 배치, PC/Oracle 충돌 보류 수, 보관 이미지 수·용량, Oracle 수집 큐 상태별 수, 소설 회차
+상태별 수, 출처 host, 요청 그룹 냉각(마지막 상태·오류 160자). 본문·제목·경로·자격은 넣지 않는다. 상태 게시 실패는
+게시 자체를 실패시키지 않는다. 게시기 timer(15분) 간격이 상태의 신선도다.

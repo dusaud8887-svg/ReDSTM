@@ -153,9 +153,29 @@
         <button id="failures-more" class="more-button" type="button" hidden>재검토 항목 더 보기</button>
       </section>
 
+      <section id="text-archive" class="release-section" aria-labelledby="text-archive-title">
+        <header class="section-heading">
+          <div><span>06</span><h2 id="text-archive-title">텍스트 장서</h2></div>
+          <p id="text-archive-source">TypeMoon과 별도인 소설·아카라이브 장서입니다. Oracle 텍스트 게시기가 실행마다 기록한 상태입니다.</p>
+        </header>
+        <dl class="collection-kpis">
+          <div><dt>아카라이브 글</dt><dd id="text-arcalive">—</dd><small id="text-arcalive-detail">게시 확인 / 수입</small></div>
+          <div><dt>소설 회차</dt><dd id="text-novel">—</dd><small id="text-novel-detail">게시 확인 / 수입</small></div>
+          <div><dt>PC 마지막 수신</dt><dd id="text-pc-last">—</dd><small id="text-pc-detail">뉴토미가 보낸 배치</small></div>
+          <div><dt>보관 이미지</dt><dd id="text-media">—</dd><small id="text-media-detail">아카라이브 이미지 보관본</small></div>
+        </dl>
+        <dl class="queue-progress">
+          <div><dt>수신함 대기</dt><dd id="text-drop">—</dd><small>SFTP 수신함에서 수입을 기다리는 배치</small></div>
+          <div><dt>충돌 보류</dt><dd id="text-conflicts">—</dd><small>같은 출처 ID의 다른 본문 (기존 본문 유지)</small></div>
+          <div><dt>Oracle 수집 큐</dt><dd id="text-queue">—</dd><small id="text-queue-detail">블랙툰·마루마루 본문 대기</small></div>
+          <div><dt>출처 냉각</dt><dd id="text-cooldown">—</dd><small id="text-cooldown-detail">403·429·5xx 뒤 쉬는 출처</small></div>
+        </dl>
+        <p id="text-archive-as-of" class="source-note">텍스트 장서 상태가 아직 게시되지 않았습니다.</p>
+      </section>
+
       <section id="controls" class="control-section" aria-labelledby="controls-title">
         <header class="section-heading">
-          <div><span>06</span><h2 id="controls-title">수동 작업</h2></div>
+          <div><span>07</span><h2 id="controls-title">수동 작업</h2></div>
           <p id="control-summary">자동 수집으로 해결되지 않는 경우에만 요청합니다.</p>
         </header>
         <div class="control-groups">

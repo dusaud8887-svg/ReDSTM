@@ -10,10 +10,11 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from scripts.text_archive import importer, runtime
+from scripts.text_archive import importer, runtime, status
 
 _ROOT = Path(__file__).parent
 _FIXTURE = _ROOT / "fixtures" / "text_archive_contract.json"
@@ -900,3 +901,53 @@ def test_main_drains_every_ready_batch_in_one_run(
     assert [line["batch_id"] for line in lines] == list(_BATCHES[:2])
     assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
     assert not (inbox / "receipts" / f"{_BATCHES[2]}.json").exists()
+
+
+def _imported_for_status(tmp_path: Path) -> tuple[Path, Path]:
+    inbox = tmp_path / "inbox"
+    _batch(inbox, _BATCHES[0])
+    db_path = tmp_path / "text.sqlite"
+    importer.import_batch(inbox, _BATCHES[0], db_path, tmp_path / "objects", inbox / "receipts")
+    _batch(inbox, _BATCHES[1], body=b"waiting body")
+    return inbox, db_path
+
+
+def test_status_reports_deliveries_drop_backlog_and_collector_state(tmp_path: Path) -> None:
+    inbox, db_path = _imported_for_status(tmp_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """INSERT INTO text_collector_groups(group_id,last_request_at,cooldown_until,
+               last_status,last_error,last_source) VALUES('g',1,2000000000,429,?,'blacktoon')""",
+            ("x" * 400,),
+        )
+    document = status.build_status(db_path, inbox, now=1_800_000_000)
+    assert document["generated_at"] == "2027-01-15T08:00:00Z"
+    assert document["lanes"]["arcalive"]["items"] == 1
+    assert document["lanes"]["arcalive"]["published"] == 0
+    assert document["pc"]["batches"] == 1
+    assert document["drop"]["text_waiting"] == 1
+    group = document["collector"]["groups"][0]
+    assert group["cooldown_until"] == "2033-05-18T03:33:20Z"
+    assert group["last_status"] == 429 and len(group["last_error"]) == 160
+    body = json.dumps(document, ensure_ascii=False)
+    assert "fixture body" not in body and str(tmp_path) not in body
+
+
+def test_status_upload_is_read_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inbox, db_path = _imported_for_status(tmp_path)
+    stored: dict[str, bytes] = {}
+
+    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] == "copyto":
+            stored[argv[5]] = Path(argv[4]).read_bytes()
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        return subprocess.CompletedProcess(argv, 0, stored[argv[4]], b"")
+
+    monkeypatch.setattr(status, "operation_window", lambda **_: nullcontext())
+    result: dict[str, Any] = status.publish_status(
+        db_path, inbox, tmp_path / "build", runner=rclone
+    )
+    key = "r2text:redstm-text-archive/published/status/text.json"
+    assert result["status"] == "published"
+    assert json.loads(stored[key])["schema"] == 1
+    assert hashlib.sha256(stored[key]).hexdigest()

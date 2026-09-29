@@ -31,6 +31,7 @@ from scripts.text_archive.importer import (
 )
 from scripts.text_archive.recovery_metadata import metadata_fingerprint
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
+from scripts.text_archive.status import publish_status
 
 _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
@@ -1157,6 +1158,19 @@ def main() -> None:
             )
         except RuntimeWindowError as exc:
             parser.exit(75, f"text publish deferred: {exc}\n")
+    # Operational status (docs/18 §5.2 "운영 상태"). It never fails the publish.
+    try:
+        results.append(
+            {
+                "status_document": publish_status(
+                    Path("/srv/redstm-text/text-archive.sqlite"),
+                    Path("/srv/redstm-text-inbox"),
+                    Path("/srv/redstm-text/build"),
+                )
+            }
+        )
+    except (OSError, RuntimeWindowError, sqlite3.Error, subprocess.SubprocessError) as exc:
+        results.append({"status_document": f"failed: {type(exc).__name__}: {exc}"[:300]})
     print(json.dumps(results, sort_keys=True))
 
 

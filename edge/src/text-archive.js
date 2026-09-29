@@ -34,6 +34,10 @@ export function textArchiveResponse(request, env) {
   const path = new URL(request.url).pathname;
   if (path.startsWith("/api/v1/text/media/")) return textMediaResponse(request, env);
   if (request.method !== "GET" && request.method !== "HEAD") return jsonError(405);
+  // Operational status the Oracle publisher rewrites after each run (scripts/text_archive/status.py).
+  if (path === "/api/v1/text/status") {
+    return readObject(request, env, "published/status/text.json", "application/json; charset=utf-8", false);
+  }
   let match = path.match(/^\/api\/v1\/text\/release\/(novel|arcalive)$/);
   if (match) return readObject(request, env, `published/${match[1]}/release.json`, "application/json; charset=utf-8", false);
   match = path.match(/^\/api\/v1\/text\/release-manifest\/(novel|arcalive)\/([a-f0-9]{64})\.json$/);
