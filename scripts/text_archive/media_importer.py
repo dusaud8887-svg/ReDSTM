@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime
@@ -416,37 +417,56 @@ def next_ready_batch(inbox_root: Path) -> str | None:
     return None
 
 
+# One run drains ready batches in order, well inside the unit's 20 min timeout.
+_DRAIN_SECONDS = 600
+_DRAIN_BATCHES = 10
+_INBOX_ROOT = Path("/srv/redstm-text-inbox")
+_DB_PATH = Path("/srv/redstm-text/text-archive.sqlite")
+_BUILD_ROOT = Path("/srv/redstm-text/build")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Store one committed Newtomi media batch")
-    parser.add_argument("--batch-id", help="import one batch; default is the oldest ready batch")
+    parser = argparse.ArgumentParser(description="Store committed Newtomi media batches")
+    parser.add_argument("--batch-id", help="import one batch; default drains the ready batches")
     args = parser.parse_args()
-    inbox_root = Path("/srv/redstm-text-inbox")
+    inbox_root = _INBOX_ROOT
     receipts_root = inbox_root / "receipts"
-    batch_id = args.batch_id or next_ready_batch(inbox_root)
-    if batch_id is None:
-        print(json.dumps({"status": "idle", "reason": "no_ready_media_batch"}))
-        return
-    try:
-        with operation_window(lock_wait_seconds=30):
-            receipt = import_media_batch(
-                inbox_root,
-                batch_id,
-                Path("/srv/redstm-text/text-archive.sqlite"),
-                Path("/srv/redstm-text/build"),
-                receipts_root,
-            )
-    except RuntimeWindowError as exc:
-        parser.exit(75, f"media import deferred: {exc}\n")
-    except MediaBatchRejectedError as exc:
-        record_rejection(receipts_root, batch_id, str(exc))
-        print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
-        return
-    if receipt is None:
-        parser.exit(0, "media batch not ready; no receipt written\n")
-    counts: dict[str, int] = {}
-    for item in receipt["items"]:
-        counts[item["status"]] = counts.get(item["status"], 0) + 1
-    print(json.dumps({"batch_id": batch_id, **counts}, sort_keys=True))
+    deadline = time.monotonic() + _DRAIN_SECONDS
+    seen: set[str] = set()
+    done = 0
+    while True:
+        batch_id = args.batch_id or next_ready_batch(inbox_root)
+        if batch_id is None or batch_id in seen:
+            if not done:
+                print(json.dumps({"status": "idle", "reason": "no_ready_media_batch"}))
+            return
+        seen.add(batch_id)
+        try:
+            with operation_window(lock_wait_seconds=30):
+                receipt = import_media_batch(
+                    inbox_root,
+                    batch_id,
+                    _DB_PATH,
+                    _BUILD_ROOT,
+                    receipts_root,
+                )
+        except RuntimeWindowError as exc:
+            parser.exit(75, f"media import deferred: {exc}\n")
+        except MediaBatchRejectedError as exc:
+            record_rejection(receipts_root, batch_id, str(exc))
+            print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
+        else:
+            if receipt is None:
+                parser.exit(0, "media batch not ready; no receipt written\n")
+            counts: dict[str, int] = {}
+            for item in receipt["items"]:
+                counts[item["status"]] = counts.get(item["status"], 0) + 1
+            print(json.dumps({"batch_id": batch_id, **counts}, sort_keys=True))
+        done += 1
+        # Newtomi deletes a batch from the 2 GiB drop only after its receipt, so a
+        # waiting batch also holds back the next upload.
+        if args.batch_id or done >= _DRAIN_BATCHES or time.monotonic() >= deadline:
+            return
 
 
 if __name__ == "__main__":

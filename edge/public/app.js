@@ -1061,21 +1061,33 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
 
 // Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
 // as rendered (live signed links load; expired ones point at the source post).
+// Archived copies never change (R2 keys are CDN path keys), so a path found once is not asked
+// about again in this session; paths still missing are asked again on the next open.
+const archivedMediaUrls = new Map();
+
 async function archiveTextMedia(body, renderId) {
   const paths = arcaPaths(body);
+  const known = Object.fromEntries(
+    paths.filter((path) => archivedMediaUrls.has(path)).map((path) => [path, { url: archivedMediaUrls.get(path) }]),
+  );
+  if (Object.keys(known).length) applyArchivedMedia(body, known);
+  const unknown = paths.filter((path) => !archivedMediaUrls.has(path));
   // The Worker checks each path with one R2 call, so a request carries at most 40.
-  for (let start = 0; start < paths.length; start += 40) {
+  for (let start = 0; start < unknown.length; start += 40) {
     let media;
     try {
       const response = await fetch("/api/v1/text/media/resolve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paths: paths.slice(start, start + 40) }),
+        body: JSON.stringify({ paths: unknown.slice(start, start + 40) }),
       });
       if (!response.ok) return;
       media = (await response.json()).media ?? {};
     } catch {
       return;
+    }
+    for (const [path, entry] of Object.entries(media)) {
+      if (typeof entry?.url === "string") archivedMediaUrls.set(path, entry.url);
     }
     if (body.dataset.renderId !== renderId) return;
     applyArchivedMedia(body, media);

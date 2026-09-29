@@ -1565,41 +1565,58 @@ def _next_ready_batch(inbox_root: Path) -> str | None:
     return None
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Import one committed Newtomi text batch")
-    parser.add_argument("--batch-id", help="import one batch; default is the oldest ready batch")
-    args = parser.parse_args()
-    inbox_root = Path("/srv/redstm-text-inbox")
-    batch_id = args.batch_id or _next_ready_batch(inbox_root)
-    if batch_id is None:
-        print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
-        return
+# One run drains the ready batches in order but leaves room under the unit's 5 min timeout.
+_DRAIN_SECONDS = 180
+_DRAIN_BATCHES = 20
+_INBOX_ROOT = Path("/srv/redstm-text-inbox")
+_DB_PATH = Path("/srv/redstm-text/text-archive.sqlite")
+_OBJECT_ROOT = Path("/srv/redstm-text/objects")
+
+
+def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
     try:
         with operation_window(lock_wait_seconds=30):
             result = import_batch(
                 inbox_root,
                 batch_id,
-                Path("/srv/redstm-text/text-archive.sqlite"),
-                Path("/srv/redstm-text/objects"),
+                _DB_PATH,
+                _OBJECT_ROOT,
                 inbox_root / "receipts",
             )
-    except RuntimeWindowError as exc:
-        parser.exit(75, f"text import deferred: {exc}\n")
     except BatchRejectedError as exc:
         _record_batch_rejection(inbox_root, batch_id, str(exc))
-        print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
-        return
+        return {"status": "rejected", "batch_id": batch_id, "reason": str(exc)}
     if result is None:
-        parser.exit(0, "batch not ready; no receipt written\n")
-    print(
-        json.dumps(
-            {
-                "batch_id": batch_id,
-                "revision": result["revision"],
-                "items": len(result["items"]),
-            }
-        )
-    )
+        return None
+    return {"batch_id": batch_id, "revision": result["revision"], "items": len(result["items"])}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Import committed Newtomi text batches")
+    parser.add_argument("--batch-id", help="import one batch; default drains the ready batches")
+    args = parser.parse_args()
+    inbox_root = _INBOX_ROOT
+    deadline = time.monotonic() + _DRAIN_SECONDS
+    seen: set[str] = set()
+    imported = 0
+    while True:
+        batch_id = args.batch_id or _next_ready_batch(inbox_root)
+        if batch_id is None or batch_id in seen:
+            if not imported:
+                print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
+            return
+        seen.add(batch_id)
+        try:
+            outcome = _import_one(inbox_root, batch_id)
+        except RuntimeWindowError as exc:
+            parser.exit(75, f"text import deferred: {exc}\n")
+        if outcome is None:
+            parser.exit(0, "batch not ready; no receipt written\n")
+        print(json.dumps(outcome))
+        imported += 1
+        # Newtomi keeps up to eight batches in flight; one per timer tick left them waiting.
+        if args.batch_id or imported >= _DRAIN_BATCHES or time.monotonic() >= deadline:
+            return
 
 
 if __name__ == "__main__":

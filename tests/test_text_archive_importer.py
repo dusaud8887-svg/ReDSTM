@@ -5,7 +5,9 @@ import json
 import re
 import sqlite3
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -879,3 +881,22 @@ def test_operation_window_defers_only_for_typemoon_publish(
                 run=inactive,
             ):
                 pytest.fail("a held TypeMoon publish lock must defer the text operation")
+
+
+def test_main_drains_every_ready_batch_in_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox = tmp_path / "inbox"
+    _batch(inbox, _BATCHES[0])
+    _batch(inbox, _BATCHES[1], body=b"second body")
+    _batch(inbox, _BATCHES[2], ready=False)
+    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
+    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["importer"])
+    importer.main()
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["batch_id"] for line in lines] == list(_BATCHES[:2])
+    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
+    assert not (inbox / "receipts" / f"{_BATCHES[2]}.json").exists()
