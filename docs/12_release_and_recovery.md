@@ -1,6 +1,6 @@
 # ReDSTM 릴리스·복구 운영 기준
 
-- 기준일: 2026-07-12
+- 갱신: 2026-09-29 (운영 절차와 별도로 날짜별 실측은 당시 기록)
 - 범위: Cloudflare Worker/D1, R2 Reader data, Oracle application
 - 설정 source: [`11_configuration_and_policy.md`](11_configuration_and_policy.md)
 - Oracle 운영: [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md)
@@ -57,8 +57,10 @@ exporter, verified publisher, authenticated smoke를 항상 실행한다. `/srv/
 matching active `.publish-ledger.json`이 있으면 delta 또는 검증된 no-op으로 reconcile하며, state/ledger는
 R2 copy/check에서 제외한다. 없거나 불일치하면 full verify로 강등하지 않고 `partial`로 fail-closed하고
 기존 marker가 있으면 유지한다. `publish.pending`은 미게시 변경의 age evidence이지 correctness trigger가
-아니다. 현재 live baseline에는 새 state/ledger bootstrap 증거가 없으므로 최초 1회는 명시적 full
-export와 full publish로 이를 생성하고 authenticated readback/rollback canary를 통과해야 한다.
+아니다. 2026-09-29에는 명시적 full export/publish로 state/ledger를 맞춘 뒤 일반
+`publish-if-changed`가 verified delta 44개 객체를 게시했고, 인증 smoke와 pointer·ledger·state
+일치를 확인했다. 이번 delta의 production rollback rehearsal과 인증된 crawl canary는 아직
+완료되지 않았다. 그 전까지 schedule은 disabled로 유지한다.
 
 R2 pointer 전환은 두 단계 local transaction으로 기록한다. `.publish-ledger.pending.json`은 pointer
 readback 뒤 active budget/predecessor ledger로 승격하고, 별도 `.publish-smoke.pending.json`은 authenticated
@@ -123,8 +125,8 @@ installer/test target이며 별도 production 실행을 뜻하지 않는다.
 installer snapshot을 임시 업로드해 read-only status를 얻고 즉시 제거하므로 첫 전환도 같은 도구로 한다.
 
 release 설치는 `redstm-control.timer` baseline만 enable한다. `redstm-schedule.timer`는 기존 상태를
-보존하며 이 배포 도구가 새로 enable하지 않는다. 현재는 명시적 full export/publish baseline
-bootstrap과 authenticated delta readback/rollback canary가 끝날 때까지 disabled로 유지한다.
+보존하며 이 배포 도구가 새로 enable하지 않는다. 2026-09-29 기준 baseline과 authenticated delta
+readback은 통과했지만 rollback rehearsal·crawl canary가 남아 있어 schedule을 disabled로 유지한다.
 
 ## 4. CI와 production 배포 분리
 

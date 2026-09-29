@@ -3,7 +3,10 @@
 - 상태: Accepted architecture; Reader/Operations deployed, automation gates in progress
 - 기준일: 2026-07-12
 - 대상: 개인용 TypeMoon 아카이버 및 뷰어
-- 입력 자료: 기존 [DSOTM](../../Dark-Side-of-Type-Moon/README.md) 문서와 코드
+- 입력 자료: 별도 DSOTM 저장소의 문서와 코드 (이 저장소에는 포함되지 않음)
+
+이 문서의 2026-07 실측 수치와 단계별 상태는 작성 당시 기록이다. 최신 배포·데이터 수량과
+남은 운영 gate는 [`문서 인덱스`](README.md)와 [`04`](04_implementation_plan.md)를 따른다.
 
 > **2026-07-11 결정:** [`02_static_edge_feasibility.md`](done/2026-07-11/02_static_edge_feasibility.md)의
 > production sample, full metadata search, Worker/R2, desktop/mobile reader와 rollback gate가
@@ -127,14 +130,15 @@ canonical DB는 기존 Oracle VM에서 실행하고 검증된 local source/snaps
 
 ### 2.1 기존 문서
 
-현재 기준선은 다음과 같다.
+당시 조사한 별도 `Dark-Side-of-Type-Moon` 저장소의 기준선은 다음과 같다. 아래 경로는
+ReDSTM checkout에 포함되지 않는 역사 자료의 위치다.
 
-- [시스템 기준선](../../Dark-Side-of-Type-Moon/docs/02_system_baseline.md): TypeMoon active, BookToki retired, `discover -> collect`, SQLite direct read
-- [불변조건](../../Dark-Side-of-Type-Moon/docs/04_non_negotiables.md): TypeMoon 데이터 보존, DB/session 분리, Oracle + PM2 + SQLite
-- [Viewer README](../../Dark-Side-of-Type-Moon/src/viewer/README.md): 게시물/댓글/컬렉션, AA/소설 reader, 검색, history/bookmark, offline, crawler UI
-- [Viewer 설계 기록](../../Dark-Side-of-Type-Moon/docs/archive/development_docs_closed_2026-03-27/03_viewer_spec.md): archive/library/operations/shared utility 레인
-- [과거 목표 아키텍처](../../Dark-Side-of-Type-Moon/docs/archive/development_docs_closed_2026-03-27/06_target_architecture.md): common runtime, source plugin, state/event/checkpoint 분리
-- [VACUUM 사고 기록](../../Dark-Side-of-Type-Moon/docs/archive/VACUUM_INCIDENT_REPORT.md): 장시간 lock, WAL, 제한된 I/O, timeout 부재가 운영 문제로 나타남
+- 시스템 기준선 (`docs/02_system_baseline.md`): TypeMoon active, BookToki retired, `discover -> collect`, SQLite direct read
+- 불변조건 (`docs/04_non_negotiables.md`): TypeMoon 데이터 보존, DB/session 분리, Oracle + PM2 + SQLite
+- Viewer README (`src/viewer/README.md`): 게시물/댓글/컬렉션, AA/소설 reader, 검색, history/bookmark, offline, crawler UI
+- Viewer 설계 기록 (`docs/archive/development_docs_closed_2026-03-27/03_viewer_spec.md`): archive/library/operations/shared utility 레인
+- 과거 목표 아키텍처 (`docs/archive/development_docs_closed_2026-03-27/06_target_architecture.md`): common runtime, source plugin, state/event/checkpoint 분리
+- VACUUM 사고 기록 (`docs/archive/VACUUM_INCIDENT_REPORT.md`): 장시간 lock, WAL, 제한된 I/O, timeout 부재가 운영 문제로 나타남
 
 기존 문서는 source 확장과 hostile source 대응에 상당한 비중을 둔다. ReDSTM의 목표는 반대다. 미래 source 확장 가능성보다 현재 TypeMoon 보존 성공률을 우선한다.
 
@@ -1536,14 +1540,14 @@ allow/TOTP MFA와 인증된 shell smoke는 완료했다. matching bucket-scoped 
 차이 0과 pointer 검증, remote rollback/복귀와 authenticated data smoke가 통과했다. Operations의
 field별 source/as-of·eligibility와 실제 Android gate가 남아 있다.
 
-현재 live shell은 [`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose,
+2026-07 당시 live shell은 [`DESIGN.md`](../DESIGN.md)의 Signal Archive token, SUIT UI, MaruBuri prose,
 Saitamaar AA와 stable identity/mobile flow로 교체됐다. 실기기 acceptance 전까지
 최종 시각 gate는 열려 있다.
 
-Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링한다. 원문 version이
+당시 Static release는 version이 있는 282,239 posts와 그 댓글 3,707,484개를 렌더링했다. 원문 version이
 없는 unavailable placeholder 1,831개와 그 댓글 22,222개는 canonical에 보존하고 release manifest의
 `unavailable_post_count`/`unavailable_comment_count`로 명시한다. Synthetic 본문을 만들어 정상
-게시물처럼 노출하지 않는다.
+게시물처럼 노출하지 않는다. 2026-09-29 운영 수량은 [`문서 인덱스`](README.md)의 날짜별 체크포인트를 따른다.
 
 - Worker Static Assets shell과 reader JS/CSS 구현
 - compact metadata search Web Worker

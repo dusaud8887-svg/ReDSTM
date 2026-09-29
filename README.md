@@ -1,10 +1,10 @@
 # ReDSTM
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
-schema v4 Oracle canonical runner가 배포돼 있다. v4는 댓글 기대값과 증분 기준 게시글을 함께 보존한다. 남은 제품 작업은 production delta/failure canary,
-그 전에 필요한 명시적 full export/publish baseline bootstrap, 실제 Android acceptance와 최대 20~30분
-집중 운영 관찰이다. 완료된 초기
-migration·타당성 증거는 `docs/done/`에 둔다.
+schema v4 Oracle canonical runner가 배포돼 있다. 2026-09-29에는 full export/publish baseline과
+verified delta publish·인증 smoke를 통과했다. 자동 수집 schedule은 crawl/rollback canary와 실제
+Android acceptance가 남아 있어 disabled다. 최신 날짜별 판정은 [`docs/README.md`](docs/README.md),
+릴리스 절차는 [`docs/12_release_and_recovery.md`](docs/12_release_and_recovery.md)를 따른다.
 
 ## 먼저 읽기
 

@@ -1,7 +1,7 @@
-# Newtomi 텍스트 장서 — ReDSTM 사전 배포 구현·운영 명세
+# Newtomi 텍스트 장서 — ReDSTM 구현·운영 명세
 
-- 기준일: 2026-09-24
-- 상태: **Newtomi PC·전용 R2·Oracle SFTP/수집/게시 연결 완료; 통합 Reader·호환 redirect 배포 및 로그인 열람 확인; 소설 본문 canary 전**
+- 갱신: 2026-09-29 (아래 날짜별 배포·수집 기록은 각 시점의 증거)
+- 상태: 통합 Reader·분리된 수집/게시 경계의 구현 계약. 텍스트 장서의 현재 live 수량·canary 완료 여부는 새 운영 report로 확인한다.
 - Newtomi 교환 정본: `E:\newtomi\docs\REDSTM_TEXT_ARCHIVE_INTEGRATION_SPEC.md`
 - Newtomi PC 소설 정본: `E:\newtomi\docs\NOVEL_ARCHIVE_PLAN.md`
 - TypeMoon 운영·복구 정본: [`10_oracle_runner_runbook.md`](10_oracle_runner_runbook.md), [`12_release_and_recovery.md`](12_release_and_recovery.md)

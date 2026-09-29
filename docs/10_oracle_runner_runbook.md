@@ -1,10 +1,16 @@
 # Oracle crawler runner 재구축 계약
 
-- 상태: schema v4 application/canonical/static와 Access/control canary live; 누락 본문 완료 뒤 automatic schedule 활성화 pending
-- 기준일: 2026-08-17
+- 상태: schema v4 application/canonical/static와 Access/control live; automatic schedule의 crawl/rollback canary pending
+- 갱신: 2026-09-29 (이하 날짜별 조사 수치는 당시 스냅샷)
 - 범위: 기존 Oracle VM을 ReDSTM의 private crawler/canonical host로 재사용하는 배치·운영 계약
 - control plane: [08 Operations](08_operations_control_plane.md)
 - 제외: 실제 DB 삭제, 원격 서비스 중지, credential 원문
+
+2026-09-29 운영 확인: Oracle `current`는 `ccf9b7c3fd481170becdfb1f8220635f2ffe6301`이고
+control timer는 enabled/active, schedule timer는 disabled/inactive다. full baseline과 이후
+verified delta publish·인증 readback은 통과했다. `aa_19` crawl canary는 2026-09-28
+`listing_boundary_incomplete`로 partial이었고 이번 delta의 rollback rehearsal도 남아 있다.
+schedule 활성화 판단은 [`12`](12_release_and_recovery.md)의 gate를 따른다.
 
 ## 1. 결정
 
@@ -255,9 +261,12 @@ schedule 활성화 뒤 실제 느린 서버에서 systemd hard-timeout 상호작
 
 ### G3. delta release/publish
 
-상태(2026-07-12): capture high-water와 per-post source projection signature를 사용하는 bounded
+현재 상태(2026-09-29): full bootstrap과 verified delta 게시·인증 readback 완료. crawl canary와
+이번 delta의 rollback rehearsal은 남았으며 schedule은 disabled다. 아래는 구현 당시의 상태다.
+
+당시 상태(2026-07-12): capture high-water와 per-post source projection signature를 사용하는 bounded
 incremental exporter, local delta upload/readback, pointer-last와 rollback ledger recovery core를
-구현했다. 현재 live baseline에는 새 exporter state와 matching publish ledger의 bootstrap 증거가 없다.
+구현했다. 당시 live baseline에는 새 exporter state와 matching publish ledger의 bootstrap 증거가 없었다.
 명시적 full export/publish bootstrap, authenticated Worker smoke/rollback과 Oracle delta canary 전이며,
 GC는 7일 window 뒤 A5다.
 첫 baseline publish 이후에는 이전 verified release와 새 release의 참조 차이를 계산해 새 post

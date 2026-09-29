@@ -1,11 +1,14 @@
 # 모바일 읽기 경험 개편 — 구현 계약
 
-- 상태: Repository target (브랜치 `frontend-mobile-reader-redesign`, 미배포)
-- 기준일: 2026-09-27
-- 입력 명세: [`개선/ReDSTM_Mobile_UX_Frontend_Redesign_Spec.md`](개선/ReDSTM_Mobile_UX_Frontend_Redesign_Spec.md)
+- 상태: `main` 배포 및 local E2E 검증 완료; 실제 Android acceptance 대기
+- 갱신: 2026-09-29
+- 입력 명세: 로컬 `docs/개선/ReDSTM_Mobile_UX_Frontend_Redesign_Spec.md` (Git 미포함 참고자료)
 - 대체하는 계약: `15`의 Reader 이동·뒤로가기·설정 배치 중 아래 §7에 적은 항목
 
 이 문서는 명세 중 **실제로 구현하고 테스트로 고정한 것**만 적는다. 명세의 나머지 항목은 §8 후속으로 남긴다.
+2026-09-29 `ccf9b7c` 배포에서 본문 진입 시 경로 기록을 제목 표시 전에 확정하도록 고쳤다.
+브라우저 E2E 458건 통과(14건 skip)와 Worker/Oracle release smoke를 확인했다. 실기기 Back 동작은
+별도 acceptance가 필요하다.
 
 ## 1. 한 번의 독서 세션 = history entry 하나
 

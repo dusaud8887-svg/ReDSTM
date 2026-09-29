@@ -1,13 +1,13 @@
 # ReDSTM 최종 구현·출시 계획
 
 - 상태: Active source of execution truth
-- 기준일: 2026-08-17
+- 갱신: 2026-09-29 (아래 단계별 실측 서술은 표시된 날짜의 기록)
 - 범위: 현재 검증된 데이터/코드에서 완전 자동 private archive로 가는 남은 작업
 - 제품 계약: [`00`](00_initial_product_architecture.md)
 - 완료 증거: [`done/2026-07-11`](done/2026-07-11/README.md)
 
-이 문서는 완료된 작업의 일지를 반복하지 않는다. 완료 증거는 `done/`과 report에 고정하고,
-여기에는 **현재 판정, 앞으로 할 일, 순서, gate, 사용자 입력**만 둔다.
+현재 판정과 남은 gate는 §1을 우선한다. 아래 A0–A5의 날짜별 상태는 당시 실행 기록이며,
+완료 증거의 원본은 `done/`과 report에 둔다.
 
 ## 1. 현재 판정
 
@@ -15,27 +15,29 @@
 |---|---|---|
 | legacy 원본 | E 드라이브에 28,811,358,208-byte verified source 보존 | DONE |
 | canonical | Oracle live/repository schema v4, migration·doctor 통과 | DONE |
-| static release | live baseline은 zstd level 15 full release, 282,239 readable posts, `.partial` 0; repository target은 post level 15/aggregate `-v2` level 6 bounded delta | DONE / LOCAL TARGET |
+| static release | full baseline bootstrap 뒤 verified delta publish·인증 smoke 완료. 2026-09-29 release는 게시글 330,760건, 댓글 4,233,436건 | DONE |
 | Cloudflare shell | Worker Static Assets, private R2, Access email/MFA 배포 | DONE |
-| R2 data | 5,148,165,450 bytes/282,289 objects, check 차이 0, pointer verified | DONE |
-| live data | remote pointer rollback/복귀와 authenticated Reader/일반·AA 본문 smoke 완료 | DONE |
-| current UI | Porcelain shell/Reader continuity live, provenance·command eligibility local 완료; production/Android 재검증 전 | IN PROGRESS |
+| R2 data | `6215652ff2c4af34163b6a4bbf6c2f5a17dda5911e9c87dd788af44b0177245a` pointer, export state·ledger 일치, pending marker 없음 | DONE |
+| live data | authenticated release smoke에서 Worker SHA·D1 schema·R2 release 일치 | DONE |
+| current UI | 모바일 Reader 경로 수정 배포, E2E 통과; 실제 Android acceptance 전 | IN PROGRESS |
 | crawler core | schema v4 cursor·댓글 기대치·증분 anchor, 내구 retry와 누락 본문 수집 완료 | DONE |
-| unattended crawl | local core/systemd, Oracle 1건·small batch·bounded stop report; schedule 활성화·관찰 전 | IN PROGRESS |
+| unattended crawl | control timer active. 2026-09-28 `aa_19` crawl canary partial(`listing_boundary_incomplete`); schedule disabled | IN PROGRESS |
 | Oracle | schema v4 baseline, runtime fail-closed, guarded migration·doctor 완료 | DONE |
 | remote operations | role/marker/outbox replay/expired 통과; duplicate/full outage 전 | IN PROGRESS |
 | external backup | local restore 통과, B2/restic은 사용자 결정으로 제외 | DEFERRED |
-| GitHub | CLI login, repo scope와 remote read 확인; origin HTTPS | READY |
+| GitHub | `ccf9b7c` main push와 CI 성공 | DONE |
 
-현재 결론은 **데이터 기반 authenticated Reader와 schema v4 runner가 배포됐고, 전체 누락 본문
-수집 완료 뒤 schedule 활성화·failure canary·실기기 acceptance가 남았다**이다.
+현재 결론은 **Reader·schema v4 runner·R2 delta 게시 경로가 배포 및 인증 검증됐고, 자동 수집
+schedule의 crawl/publish/rollback canary와 실제 Android acceptance가 남았다**이다. 릴리스 절차는
+[`12`](12_release_and_recovery.md)를 따른다. 2026-09-29 배포 커밋은
+`ccf9b7c3fd481170becdfb1f8220635f2ffe6301`이며 당시 원격 D1 migration 대기는 없었다.
 
 현재 local gate는 전체 Python suite, Ruff lint/format, mypy와 Edge unit/check/E2E/D1 fixture를 통과해야 한다.
 Playwright self-contained fixture는 1440/768/390/320px Reader/Operations gate를 통과한다. fixture는
 실제 R2 seed가 없어도 AA/prose와 읽기 위치 복원을 검증하고, 환경변수를 주면 대표 live object로
-교체할 수 있다. authenticated production에서는 현재 bundle의 282,239건 index, 일반 본문
-8,738자/댓글 4개와 AA 본문/canvas/댓글 11개를 열어 실데이터 경로를 확인했다. canonical schema
-v4 migration과 doctor, Operations bundle live smoke는 완료됐고 automatic bootstrap canary가 남았다.
+교체할 수 있다. 2026-09-29 preflight는 Python suite, Ruff/mypy, Edge 98개, Playwright 458개
+(14개 skip), D1 fixture와 Wrangler dry-run을 통과했다. production release smoke는 게시글 330,760건
+release를 확인했다. 이전 282,239건 본문 smoke의 세부 수치는 당시 기록으로만 사용한다.
 
 R2 upload 중에는 DB 재처리, full export, full doctor, inventory 같은 같은 disk의 대량 I/O를
 겹치지 않는다. 문서·frontend source 작업은 병렬 가능하다.
@@ -349,7 +351,13 @@ non-HTML detail과 invalid URL은 `parse_failed` capture로, normalize/store exc
    추가한다. 이미 게시된 release는 재작성하지 않고, release 본문에 생성 시각을 넣어 결정론을
    깨지 않는다([09 Freshness](09_frontend_strategy_and_roadmap.md)).
 
-상태(2026-07-12): capture high-water와 per-post source projection signature를 사용하는 bounded
+현재 상태(2026-09-29): Oracle에서 명시적 full export/publish baseline을 만든 뒤 일반
+`publish-if-changed`가 44개 변경 객체의 verified delta를 게시했다. R2 readback, 인증 smoke,
+export state·active ledger·pointer 일치와 pending marker 부재를 확인했다. 다만 이전 pointer로
+되돌렸다가 복귀시키는 이번 delta의 production rollback rehearsal과 인증된 crawl canary는 아직
+통과하지 않았다. 따라서 schedule은 disabled다. 아래는 구현 당시의 배경 기록이다.
+
+당시 상태(2026-07-12): capture high-water와 per-post source projection signature를 사용하는 bounded
 incremental exporter, 참조 차이 기반 uploader/readback, pointer-last와 rollback ledger recovery core는
 local 완료다. exporter state는 `/srv/redstm/static/.export-state.json`, publish ledger는 같은 static
 root의 `.publish-ledger*.json`에 두며 모두 R2 copy/check에서 제외한다. 현재 live baseline에는 이 새

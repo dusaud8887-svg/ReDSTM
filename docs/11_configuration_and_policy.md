@@ -173,8 +173,9 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 automatic/manual publish action은 marker 유무와 무관하게 bounded incremental exporter와 verified
 publisher를 항상 실행한다. verified state/ledger가 없거나 불일치하면 `partial`로 fail-closed하고 full
 scan으로 강등하지 않으며, 기존 `publish.pending`이 있으면 유지한다. marker 부재는 실행 생략 근거가
-아니다. 현재 live baseline은 명시적 full export/publish로 `/srv/redstm/static`의 state/ledger를 최초
-생성하고 authenticated readback/rollback canary를 통과하기 전까지 schedule을 disabled로 유지한다.
+아니다. 2026-09-29에는 명시적 full export/publish로 `/srv/redstm/static`의 state/ledger를
+생성하고 이후 verified delta·인증 readback을 확인했다. crawl canary와 이번 delta의 rollback
+rehearsal이 남아 있어 schedule은 disabled로 유지한다.
 
 aggregate level 6은 tuning용 임의 값이 아니라 700MiB service hard limit 안에서 결정론적 full/증분
 산출물을 일치시키는 repository compatibility contract다. 2026-07-12 실제 282,239-post projection의
