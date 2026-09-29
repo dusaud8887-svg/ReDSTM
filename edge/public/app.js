@@ -3000,6 +3000,14 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
     comment_count: payload.comments.length,
     views: post.views,
   };
+  const nextUrl = `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`;
+  // Only entering the Reader adds a history entry. Episode moves replace it, so one Back
+  // returns to the list. Commit before the title becomes visible so reload reopens this post.
+  if (navigation === "push") {
+    history.pushState({ redstmReader: true, redstmParent: currentRoute(), ...(listHint ? { redstmList: listHint } : {}) }, "", nextUrl);
+  } else {
+    history.replaceState({ ...(history.state ?? {}), redstmReader: true, redstmCollection: false }, "", nextUrl);
+  }
   const continuing = readerSource === "typemoon";
   setReaderSource("typemoon");
   resetReaderChrome();
@@ -3015,14 +3023,6 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   updateBookmarkButton();
   void updateCollection();
   refreshCatalogRows();
-  const nextUrl = `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`;
-  // Only entering the Reader adds a history entry. Episode moves replace it, so one Back
-  // (system or the 목록 button) always returns to the list the session started from.
-  if (navigation === "push") {
-    history.pushState({ redstmReader: true, redstmParent: currentRoute(), ...(listHint ? { redstmList: listHint } : {}) }, "", nextUrl);
-  } else {
-    history.replaceState({ ...(history.state ?? {}), redstmReader: true, redstmCollection: false }, "", nextUrl);
-  }
   // Reads the parent route from history.state, so it runs after the entry above is written.
   void refreshTypeMoonList();
   openMobileReader();
