@@ -160,6 +160,25 @@ def _text_key(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+_SIDE_LABEL = re.compile(r"외전|특별편|후기")
+_SIDE_KIND_WORDS = ("side", "extra", "special", "bonus", "외전", "특별")
+
+
+def normalize_chapter_kind(kind: object, label: str = "") -> str:
+    """ "main" or "side"; same rule as Newtomi core/novel_identity.chapter_kind.
+
+    An explicit main/side wins, other API kinds that name a side story count as side, and
+    anything else falls back to the label (외전·특별편·후기). Shared fixture:
+    tests/fixtures/novel_body_contract.json.
+    """
+    raw = unicodedata.normalize("NFKC", str(kind or "")).casefold().strip()
+    if raw in {"main", "side"}:
+        return raw
+    if any(word in raw for word in _SIDE_KIND_WORDS):
+        return "side"
+    return "side" if _SIDE_LABEL.search(_text_key(label)) else "main"
+
+
 def _title_key(value: str) -> str:
     return re.sub(r"[^\w]+", "", unicodedata.normalize("NFKC", value).casefold())
 
@@ -1359,7 +1378,11 @@ def import_batch(
                             title,
                             author,
                             data.get("chapter_label", ""),
-                            data.get("chapter_kind", ""),
+                            normalize_chapter_kind(
+                                data.get("chapter_kind"), str(data.get("chapter_label") or "")
+                            )
+                            if candidate["lane"] == "novel"
+                            else "",
                             data.get("access", "unknown"),
                             digest,
                             len(body),
@@ -1421,7 +1444,9 @@ def import_batch(
                                 candidate["source_work_id"],
                                 candidate["source_chapter_id"],
                                 data.get("chapter_label", ""),
-                                data.get("chapter_kind", "main"),
+                                normalize_chapter_kind(
+                                    data.get("chapter_kind"), str(data.get("chapter_label") or "")
+                                ),
                                 data.get("access", "unknown"),
                                 digest,
                                 "complete",

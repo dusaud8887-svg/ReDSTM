@@ -74,3 +74,31 @@ export function migrateNovelChapterState(state, work, chapters) {
   }
   return changed;
 }
+
+// Newtomi novel chapters start with "# <title>", "# <source url>", then a blank line (Newtomi
+// core/novel_text.py); an older export put the URL on its own line after a bare "#". Only these
+// wrappers are lifted out of the body; any other "#" or URL stays part of the text. Oracle bodies
+// have no wrapper, so their source link comes from the chapter entry instead.
+export function novelBody(text) {
+  const lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (!lines[0]?.startsWith("# ")) return { text: String(text), sourceUrl: "" };
+  const inline = /^#\s+(https?:\/\/\S+)\s*$/.exec(lines[1] ?? "")?.[1];
+  const separate = lines[1]?.trim() === "#" && /^https?:\/\/\S+$/.test(lines[2]?.trim() ?? "")
+    ? lines[2].trim() : "";
+  const url = inline || separate;
+  if (!url) return { text: String(text), sourceUrl: "" };
+  let start = inline ? 2 : 3;
+  while (start < lines.length && !lines[start].trim()) start += 1;
+  return { text: lines.slice(start).join("\n"), sourceUrl: url };
+}
+
+// Arcalive exports carry a "# title … ---" front-matter block; keep the body and its source URL.
+export function arcaliveBody(text) {
+  const raw = String(text);
+  const lines = raw.replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (!lines[0]?.startsWith("# ")) return { text: raw, sourceUrl: "" };
+  const separator = lines.findIndex((line, index) => index > 0 && index < 16 && line === "---");
+  if (separator < 0) return { text: raw, sourceUrl: "" };
+  const url = lines.slice(1, separator).map((line) => /^-\s*url:\s*(https?:\/\/\S+)\s*$/i.exec(line)?.[1]).find(Boolean) ?? "";
+  return { text: lines.slice(separator + 1).join("\n").replace(/^\n+/, ""), sourceUrl: url };
+}

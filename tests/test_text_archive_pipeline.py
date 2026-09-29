@@ -812,6 +812,61 @@ def test_novel_availability_streaming_keeps_snapshot_hash_across_pages(
     assert pointer["snapshot_id"] == hashlib.sha256(publisher._json_bytes(items)).hexdigest()
 
 
+def test_novel_availability_keeps_newtomi_item_contract(tmp_path: Path) -> None:
+    """Newtomi rejects a whole snapshot on one item outside main/side or free access."""
+    inbox = tmp_path / "inbox"
+    batch_id = "20260923T140000Z-pc-00000009"
+    _incoming_novel_batch(inbox, batch_id)
+    db_path = tmp_path / "state" / "text.sqlite"
+    receipts = inbox / "receipts"
+    importer.import_batch(inbox, batch_id, db_path, tmp_path / "objects", receipts)
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        columns = [row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")]
+        original = dict(
+            db.execute("SELECT * FROM text_archive_items WHERE lane='novel'").fetchone()
+        )
+        rows = []
+        for chapter_id, label, kind, access in (
+            ("8794078", "번외편", "SIDE_STORY", "free"),
+            ("8794079", "후기", "legacy", "free"),
+            ("8794080", "5화", "main", "point"),
+        ):
+            row = dict(original)
+            row.update(
+                identity=f"novel_chapter:toki:63670:{chapter_id}",
+                source_chapter_id=chapter_id,
+                source_url=f"https://toki31.com/novel/63670/{chapter_id}",
+                chapter_label=label,
+                chapter_kind=kind,
+                access=access,
+            )
+            rows.append(row)
+        db.executemany(
+            f"INSERT INTO text_archive_items({','.join(columns)}) "
+            f"VALUES({','.join('?' for _ in columns)})",
+            [[row[column] for column in columns] for row in rows],
+        )
+        db.executemany(
+            "INSERT INTO text_archive_publications(key,sha256,verified_at) VALUES(?,?,?)",
+            [
+                (f"item:{row['identity']}", original["content_sha256"], "2026-09-25T00:00:00Z")
+                for row in (original, *rows)
+            ],
+        )
+    publisher.build_availability_snapshot(db_path, receipts)
+    pointer = json.loads((receipts / "availability/novel/current.json").read_text(encoding="utf-8"))
+    manifest = json.loads((inbox / pointer["manifest_key"]).read_text(encoding="utf-8"))
+    items = [
+        item
+        for page in manifest["pages"]
+        for item in json.loads((inbox / page["key"]).read_text(encoding="utf-8"))["items"]
+    ]
+    kinds = {item["source_chapter_id"]: item["chapter_kind"] for item in items}
+    assert kinds == {original["source_chapter_id"]: "main", "8794078": "side", "8794079": "side"}
+    assert {item["access"] for item in items} == {"free"}
+
+
 def test_publisher_does_not_claim_an_item_imported_after_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

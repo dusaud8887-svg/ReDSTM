@@ -117,9 +117,16 @@ def test_contract_fixture_hash_and_copies_match() -> None:
     assert fixture["schema"] == 1
     assert len(body) == fixture["body"]["bytes"]
     assert hashlib.sha256(body).hexdigest() == fixture["body"]["sha256"]
-    newtomi_copy = Path(r"E:\newtomi\tests\fixtures\text_archive_contract.json")
-    if newtomi_copy.is_file():
-        assert fixture == json.loads(newtomi_copy.read_text(encoding="utf-8"))
+    for newtomi_copy in (
+        Path(r"E:\newtomi\tests\fixtures\text_archive_contract.json"),
+        Path(__file__).resolve().parents[2]
+        / "newtomi"
+        / "tests"
+        / "fixtures"
+        / "text_archive_contract.json",
+    ):
+        if newtomi_copy.is_file():
+            assert fixture == json.loads(newtomi_copy.read_text(encoding="utf-8"))
 
 
 def test_importer_accepts_more_than_twenty_items_but_caps_total_bytes(

@@ -26,6 +26,7 @@ from scripts.text_archive.importer import (
     _connect,
     _write_receipt,
     arcalive_header,
+    normalize_chapter_kind,
     novel_text_sha256,
 )
 from scripts.text_archive.recovery_metadata import metadata_fingerprint
@@ -405,6 +406,7 @@ def build_publish_tree(
                                 "source_published_at": row["source_published_at"],
                                 "source_site": row["source_site"],
                                 "source_chapter_id": row["source_chapter_id"],
+                                "source_url": row["source_url"],
                                 "sha256": row["content_sha256"],
                                 "source_variants": row.get("source_variants", []),
                             }
@@ -856,8 +858,10 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
                 """SELECT i.*,p.verified_at FROM text_archive_items i
                    JOIN text_archive_publications p
                      ON p.key='item:'||i.identity AND p.sha256=i.content_sha256
-                   WHERE i.lane='novel' ORDER BY i.identity"""
+                   WHERE i.lane='novel' AND i.access='free' ORDER BY i.identity"""
             ):
+                # Newtomi rejects a whole snapshot on an item outside its contract
+                # (access "free", kind "main"/"side"), so older rows are normalized here.
                 yield {
                     "identity": row["identity"],
                     "source_site": row["source_site"],
@@ -869,7 +873,9 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
                     "title": row["title"],
                     "author": row["author"],
                     "chapter_label": row["chapter_label"],
-                    "chapter_kind": row["chapter_kind"],
+                    "chapter_kind": normalize_chapter_kind(
+                        row["chapter_kind"], str(row["chapter_label"] or "")
+                    ),
                     "access": row["access"],
                     "sha256": row["content_sha256"],
                     "bytes": row["bytes"],

@@ -25,6 +25,7 @@ from scripts.text_archive.importer import (
     _store_object,
     _title_key,
     mark_cross_source_covered,
+    normalize_chapter_kind,
     novel_text_sha256,
 )
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
@@ -228,7 +229,7 @@ def parse_work_detail(value: Any) -> WorkDetail:
             episode_number = int(episode_number)
         chapter_title = str(row.get("title") or "").strip()
         label = (chapter_title or (str(episode_number) if episode_number is not None else ""))[:300]
-        kind = str(row.get("chapterKind") or row.get("kind") or "main")[:40]
+        kind = normalize_chapter_kind(row.get("chapterKind") or row.get("kind"), label)
         normalized.append(
             {
                 "id": chapter_id,
@@ -244,7 +245,13 @@ def parse_work_detail(value: Any) -> WorkDetail:
     return WorkDetail(work_id, work_title, author, normalized)
 
 
+def _block_kind(block: dict[str, Any]) -> Any:
+    # "kind" first, like the paid-block check below and Newtomi extractors/novel_json.py.
+    return block.get("kind", block.get("type"))
+
+
 def _plain_text(body_json: Any) -> str:
+    """Stored body text, byte for byte the same as Newtomi (fixtures/novel_body_contract.json)."""
     text: str
     if isinstance(body_json, str):
         try:
@@ -256,7 +263,7 @@ def _plain_text(body_json: Any) -> str:
     elif isinstance(body_json, list):
         parts: list[str] = []
         for block in body_json:
-            if not isinstance(block, dict) or block.get("type", block.get("kind")) not in {
+            if not isinstance(block, dict) or _block_kind(block) not in {
                 "text",
                 "paragraph",
                 "narration",
@@ -267,7 +274,7 @@ def _plain_text(body_json: Any) -> str:
                 raise CollectorError("body_block_requires_review")
             parts.append(text_value)
         text = "\n\n".join(parts)
-    elif isinstance(body_json, dict) and body_json.get("type", body_json.get("kind")) in {
+    elif isinstance(body_json, dict) and _block_kind(body_json) in {
         "text",
         "paragraph",
         "narration",
@@ -750,7 +757,7 @@ def _apply_episode(
     except json.JSONDecodeError:
         blocks = body_json
     if any(
-        isinstance(block, dict) and block.get("kind", block.get("type")) == "paid"
+        isinstance(block, dict) and _block_kind(block) == "paid"
         for block in (blocks if isinstance(blocks, list) else [blocks])
     ):
         with db:

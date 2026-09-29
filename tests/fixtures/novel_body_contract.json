@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "description": "Blacktoon/Marumaru bodyJson → stored plain text (body + '\\n'), and chapter kind normalization. Newtomi extractors/novel_json.py and ReDSTM scripts/text_archive/collector.py must agree byte for byte.",
+  "body_cases": [
+    {
+      "name": "paragraph_whitespace_kept_between_blocks",
+      "body_json": [
+        {
+          "kind": "text",
+          "text": "　첫 문단입니다.\n"
+        },
+        {
+          "kind": "paragraph",
+          "text": "　둘째 문단입니다."
+        }
+      ],
+      "expected": {
+        "status": "text",
+        "text": "첫 문단입니다.\n\n\n　둘째 문단입니다.",
+        "sha256": "3346ecc22efcb4b0b2badfe1024cb57c01eabefa42b7fbd63329b50d079d7a51"
+      }
+    },
+    {
+      "name": "json_string_with_crlf",
+      "body_json": "[{\"type\": \"narration\", \"content\": \"하나\\r\\n둘\"}, {\"type\": \"text\", \"text\": \"셋\\r\"}]",
+      "expected": {
+        "status": "text",
+        "text": "하나\n둘\n\n셋",
+        "sha256": "6e7129b4e28d9b3727fb0fa5b40c915689b3586d9b75ea99ac648cf3b3225e39"
+      }
+    },
+    {
+      "name": "single_block_object",
+      "body_json": {
+        "kind": "text",
+        "text": "  단일 블록 본문  "
+      },
+      "expected": {
+        "status": "text",
+        "text": "단일 블록 본문",
+        "sha256": "77b70d12db8f8f004542d2a325f14be67a28baae65e3001b521580870d1fdcef"
+      }
+    },
+    {
+      "name": "kind_takes_precedence_over_type",
+      "body_json": [
+        {
+          "kind": "text",
+          "type": "image",
+          "text": "본문"
+        }
+      ],
+      "expected": {
+        "status": "text",
+        "text": "본문",
+        "sha256": "d0bb9a4b74de533001ce57dc13db6183b9ca93244d7e025413f6739f89265a2f"
+      }
+    },
+    {
+      "name": "paid_block_waits",
+      "body_json": [
+        {
+          "kind": "text",
+          "text": "미리보기"
+        },
+        {
+          "kind": "paid"
+        }
+      ],
+      "expected": {
+        "status": "waiting"
+      }
+    },
+    {
+      "name": "unknown_block_needs_review",
+      "body_json": [
+        {
+          "kind": "text",
+          "text": "본문"
+        },
+        {
+          "kind": "image",
+          "src": "x"
+        }
+      ],
+      "expected": {
+        "status": "review"
+      }
+    },
+    {
+      "name": "empty_body_invalid",
+      "body_json": [
+        {
+          "kind": "text",
+          "text": "  \n "
+        }
+      ],
+      "expected": {
+        "status": "invalid"
+      }
+    }
+  ],
+  "chapter_kind_cases": [
+    {
+      "api_kind": null,
+      "label": "12화",
+      "expected": "main"
+    },
+    {
+      "api_kind": null,
+      "label": "외전 3화",
+      "expected": "side"
+    },
+    {
+      "api_kind": "main",
+      "label": "후기",
+      "expected": "main"
+    },
+    {
+      "api_kind": "side",
+      "label": "1화",
+      "expected": "side"
+    },
+    {
+      "api_kind": "SIDE_STORY",
+      "label": "특별 이야기",
+      "expected": "side"
+    },
+    {
+      "api_kind": "extra",
+      "label": "번외",
+      "expected": "side"
+    },
+    {
+      "api_kind": "special",
+      "label": "1",
+      "expected": "side"
+    },
+    {
+      "api_kind": "prologue",
+      "label": "프롤로그",
+      "expected": "main"
+    },
+    {
+      "api_kind": "EPISODE",
+      "label": "특별편",
+      "expected": "side"
+    }
+  ]
+}

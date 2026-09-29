@@ -205,3 +205,9 @@ def test_unready_batch_returns_none(tmp_path: Path) -> None:
 def test_path_key_accepts_the_older_two_character_directory() -> None:
     assert media_importer._PATH_KEY.fullmatch("ba/" + "a" * 16 + ".jpg")
     assert not media_importer._PATH_KEY.fullmatch("b/" + "a" * 16 + ".jpg")
+
+
+def test_post_rule_accepts_published_lanes_only() -> None:
+    assert media_importer._POST.fullmatch("arcalive:monmusu:1:text")
+    assert media_importer._POST.fullmatch("arcalive:monmusu:1:both")
+    assert not media_importer._POST.fullmatch("arcalive:monmusu:1:media")

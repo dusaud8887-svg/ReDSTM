@@ -1,6 +1,8 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
-import { migrateNovelChapterState, migrateNovelState, novelRecordWorkId, orderChapters } from "/text-work.js";
+import {
+  arcaliveBody, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId, orderChapters,
+} from "/text-work.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
@@ -22,30 +24,6 @@ function readState() {
 
 function normalize(value) {
   return String(value ?? "").normalize("NFKC").toLocaleLowerCase("ko-KR");
-}
-
-// Imported novel chapters start with "# <title>", "#", "<source url>". Only that exact wrapper is
-// lifted out of the body; any other "#" or URL stays part of the text.
-export function novelBody(text) {
-  const lines = String(text).replace(/^﻿/, "").split(/\r?\n/);
-  const url = lines[2]?.trim() ?? "";
-  if (lines[0]?.startsWith("# ") && lines[1]?.trim() === "#" && /^https?:\/\/\S+$/.test(url)) {
-    let start = 3;
-    while (start < lines.length && !lines[start].trim()) start += 1;
-    return { text: lines.slice(start).join("\n"), sourceUrl: url };
-  }
-  return { text: String(text), sourceUrl: "" };
-}
-
-// Arcalive exports carry a "# title … ---" front-matter block; keep the body and its source URL.
-export function arcaliveBody(text) {
-  const raw = String(text);
-  const lines = raw.replace(/^﻿/, "").split(/\r?\n/);
-  if (!lines[0]?.startsWith("# ")) return { text: raw, sourceUrl: "" };
-  const separator = lines.findIndex((line, index) => index > 0 && index < 16 && line === "---");
-  if (separator < 0) return { text: raw, sourceUrl: "" };
-  const url = lines.slice(1, separator).map((line) => /^-\s*url:\s*(https?:\/\/\S+)\s*$/i.exec(line)?.[1]).find(Boolean) ?? "";
-  return { text: lines.slice(separator + 1).join("\n").replace(/^\n+/, ""), sourceUrl: url };
 }
 
 function chapterKind(kind) {
@@ -773,7 +751,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         ? [itemWork?.author || "작가 미상", chapterKind(entry.kind)].filter(Boolean).join(" · ")
         : [entry.author, entry.category || "미분류", entry.post_id ? `#${entry.post_id}` : ""].filter(Boolean).join(" · "),
       text: parsed.text,
-      sourceUrl: parsed.sourceUrl,
+      sourceUrl: parsed.sourceUrl || (isNovel ? entry.source_url : "") || "",
     });
     shell.setNavigation(navigation());
     listPage = null;

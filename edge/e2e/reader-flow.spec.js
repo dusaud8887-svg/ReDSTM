@@ -76,7 +76,7 @@ async function useLongNovel(page, count) {
       if (chapter) {
         return route.fulfill({
           contentType: "text/markdown",
-          body: `# 긴 소설-${chapter.label}\n#\nhttps://novel.example/${chapter.chapter_id}\n\n${chapter.label} 첫 줄\n${"본문 줄\n".repeat(80)}`,
+          body: `# 긴 소설-${chapter.label}\n# https://novel.example/${chapter.chapter_id}\n\n${chapter.label} 첫 줄\n${"본문 줄\n".repeat(80)}`,
         });
       }
       return route.fulfill({ status: 404, body: "not found" });

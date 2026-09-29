@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { migrateNovelChapterState, migrateNovelState, novelRecordWorkId, orderChapters } from "../public/text-work.js";
+import {
+  arcaliveBody, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId, orderChapters,
+} from "../public/text-work.js";
 
 test("finds the work of a novel reading record with production-shaped ids", () => {
   const workId = "novel:1b2c3d4e-0000-4000-8000-000000000001";
@@ -63,4 +65,24 @@ test("chapter aliases restore progress and bookmarks across PC and Oracle IDs", 
   assert.equal(state.history[current].progress, 0.8);
   assert.equal(state.bookmarks[current].work, work);
   assert.equal(migrateNovelChapterState(state, work, [chapter]), false);
+});
+
+test("lifts the Newtomi novel wrapper out of the body", () => {
+  const body = "# 1화\n# https://blacktoon452.com/novel/24753/914174\n\n　첫 문단\n\n둘째 문단\n";
+  assert.deepEqual(novelBody(body), {
+    text: "　첫 문단\n\n둘째 문단\n",
+    sourceUrl: "https://blacktoon452.com/novel/24753/914174",
+  });
+  assert.deepEqual(novelBody("# 제목\n#\nhttps://toki31.com/novel/1/2\n\n본문"), {
+    text: "본문",
+    sourceUrl: "https://toki31.com/novel/1/2",
+  });
+  // Oracle bodies and other "#" lines stay as they are.
+  assert.deepEqual(novelBody("본문만 있다\n"), { text: "본문만 있다\n", sourceUrl: "" });
+  assert.deepEqual(novelBody("# 장 제목\n본문"), { text: "# 장 제목\n본문", sourceUrl: "" });
+});
+
+test("keeps the Arcalive body after its front matter", () => {
+  const post = "# 제목\n\n- channel: novel\n- url: https://arca.live/b/novel/108\n\n---\n\n본문\n";
+  assert.deepEqual(arcaliveBody(post), { text: "본문\n", sourceUrl: "https://arca.live/b/novel/108" });
 });

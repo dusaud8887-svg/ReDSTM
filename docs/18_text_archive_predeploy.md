@@ -372,3 +372,23 @@ Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-
 작품 ID는 출처 ID를 재사용하지 않는다. ReDSTM DB가 작품마다 `novel:<UUIDv4>`를 발급하고 `(site, source_work_id)` 관계 및 이전 canonical ID alias를 보존한다. UUID migration은 과거 alias 참조를 새 그룹으로 이동한 뒤 기존 그룹을 제거한다. 정규화 제목·작가가 출처마다 유일한 후보에 대해 본문 SHA 두 회차 일치, 명시적 slug↔상대 ID와 본문 SHA 일치, 또는 10개 이상 회차 라벨의 80% 이상 일치가 확보되면 무인 자동 연결한다. 증거가 약하거나 모호하면 작품만 분리해 두며 수집은 계속한다.
 
 연결된 작품의 출처별 원본 회차 row와 availability는 모두 유지한다. Reader용 상세에서만 정규화 회차 라벨/종류와 본문 SHA-256이 모두 같은 교차 출처 사본을 한 회차로 표시하고 `source_variants`에 출처 ID·URL을 보존한다. 본문 SHA가 다르면 별도 회차다. 자동 이관·연결·표시 계약을 importer/publisher 테스트로 검증했다. 운영 규모 처리량·요금은 라이브 지표를 별도로 관찰하며, 미측정 상태를 완료 판정으로 부르지 않는다.
+
+## 2026-09-29 양쪽 교차 점검 보완
+
+두 저장소의 연결부를 함께 대조해 고친 계약이다. 배포 순서: **ReDSTM(Worker·Oracle text release) 먼저, 뉴토미 빌드 나중.** ReDSTM media importer가 `:both` 글을 받기 전에 뉴토미가 보내면 그 이미지는 `post_invalid`로 영구 실패한다.
+
+| 연결부 | 문제 | 고친 계약 |
+| --- | --- | --- |
+| 블랙툰·마루마루 `bodyJson` → 본문 | 뉴토미는 블록마다 앞뒤 공백을 지우고, Oracle은 블록을 그대로 이은 뒤 전체만 다듬었다. 들여쓴 문단은 같은 출처 ID라도 텍스트 SHA가 달라 `held_conflict`가 된다. `kind`/`type` 우선순위와 유료 블록 처리도 달랐다. | Oracle `_plain_text`가 기준: 블록을 `\n\n`으로 그대로 잇고 CRLF 정리 뒤 전체만 trim. `kind`가 `type`보다 우선. `paid` 블록은 양쪽 모두 포인트 대기. 공용 fixture `tests/fixtures/novel_body_contract.json`(양쪽 바이트 동일, 서로의 사본이 옆에 있으면 테스트가 대조). |
+| 회차 종류 | Oracle은 API `chapterKind`를 그대로 저장해 availability에 `main`/`side` 밖의 값이 나갈 수 있었고, 뉴토미는 그 snapshot 전체를 거부한다. 라벨 규칙도 달라 중복 제외 키가 어긋났다. | `normalize_chapter_kind`(ReDSTM)·`chapter_kind`(뉴토미) 같은 규칙: 명시 `main`/`side` 우선, side·extra·special·bonus·외전·특별이 든 API 값은 `side`, 그 밖은 라벨(외전·특별편·후기). collector·importer 저장과 publisher availability 출력에 적용. availability는 `access='free'` 항목만 싣는다. |
+| Reader 소설 본문 머리 | 뉴토미 본문은 `# 제목` / `# URL` / 빈 줄인데 Reader는 `#` 다음 줄 URL만 알아서 두 머리 줄이 본문에 보였고 원문 링크도 없었다. | `text-work.js` `novelBody`가 두 형식을 모두 떼어 낸다. publisher 소설 상세의 회차마다 `source_url`을 싣고 Oracle 본문(머리 없음)은 그것으로 원문 링크를 단다. |
+| 뉴토미 outbox 개정본 | 전송·수입·게시된 글의 로컬 파일이 바뀌면 상태가 `held_conflict`로 덮여 `published` 표시가 사라졌다. 미전송·거절 글도 새 본문을 보내지 못했다. | `pending`/`rejected`는 새 본문으로 교체해 다시 `pending`. 전송 이후 상태는 그대로 두고 `conflict_json.revision`에 개정본만 기록(ReDSTM도 같은 ID를 덮지 않는다). 화면에 "게시 후 원본 변경 N건". |
+| SBXH 제외 판정 | 뉴토미는 SBXH 회차를 `novel_chapter:sbxh:…`로 보내지만 새 회차 제외는 `toki` 키로만 availability를 찾았다. | `novel_identity.text_archive_site`로 보낼 때와 찾을 때 같은 사이트 이름을 쓰고, SBXH는 `toki`와 `sbxh`를 모두 본다. |
+| 아카라이브 이미지 범위 | 뉴토미는 `:text` 글의 `[image]` 줄만 보관했지만 ReDSTM은 `both` 레인 글도 게시하고 Reader는 이미지 URL만 있는 줄도 이미지로 바꾼다. | `:text`·`:both` 글, `[image]`/`[img]` 줄과 URL만 있는 줄을 보관한다. media importer `_POST`도 `text|both`를 받는다. `media` 레인은 계속 제외. |
+
+리팩터링: 뉴토미 `text_archive.run_sftp` 하나로 전송·영수증·availability·미디어 SFTP 호출을 모았다(중복 검증 함수 제거).
+
+남은 관찰(이번에 바꾸지 않음):
+- 소설 `canonical_chapter_id`는 importer가 `novel:<site>:<work>:<chapter>`, Oracle collector가 `novel_chapter:…`(identity)로 쓴다. Reader alias(`legacy_chapter_ids`)가 둘 다 덮으므로 기존 읽기 기록을 옮기지 않으려고 두었다.
+- 게시 뒤 수정된 아카라이브 글은 양쪽 모두 첫 본문을 유지한다. 개정본 게시가 필요하면 revision 계약(새 identity 또는 importer 교체 규칙)을 따로 정해야 한다. 그때까지 이미지 수집은 현재 로컬 파일 기준이라 수정으로 사라진 옛 이미지는 `path_missing`일 수 있다.
+- `importer.mark_cross_source_covered`는 이름과 달리 연결된 작품의 `covered` 회차를 다시 대기로 돌린다(2026-09-25 결정). 호출부 호환 때문에 이름을 유지했다.
