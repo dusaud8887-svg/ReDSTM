@@ -34,6 +34,9 @@
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></symbol>
       <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
     </svg>
     <aside class="rail" aria-label="주요 메뉴">
       <button class="wordmark" type="button" data-destination="library" aria-label="ReDSTM 홈">Re</button>
@@ -142,6 +145,7 @@
               <button class="search-clear" id="search-clear" type="button" hidden aria-label="검색어 지우기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
             </label>
           </div>
+          <section class="search-suggest" id="search-suggest" aria-label="검색 제안" hidden></section>
           <div class="catalog-toolbar" id="catalog-toolbar">
             <div class="filter-chips" id="mode-chips" hidden>
               <button type="button" data-mode="all" aria-pressed="true">전체</button>
@@ -273,9 +277,14 @@
             <button class="catalog-back" id="collection-back" type="button">
               <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg><span>작품 목록</span>
             </button>
-            <p>작품 모음</p>
-            <h1 id="collection-title" tabindex="-1"></h1>
-            <p id="collection-meta"></p>
+            <div class="work-head">
+              <span class="work-cover" id="collection-cover" aria-hidden="true"></span>
+              <div class="work-head-copy">
+                <p>작품 모음</p>
+                <h1 id="collection-title" tabindex="-1"></h1>
+                <p id="collection-meta"></p>
+              </div>
+            </div>
             <div class="collection-actions">
               <button class="collection-continue" id="collection-continue" type="button" hidden></button>
               <form class="toc-jump" id="collection-jump" role="search" aria-label="회차로 이동">
@@ -284,6 +293,7 @@
                 <button type="submit">찾기</button>
               </form>
             </div>
+            <div class="work-barcode" id="collection-barcode" hidden></div>
           </header>
           <ol class="collection-entry-list" id="collection-entry-list"></ol>
         </section>
@@ -293,6 +303,7 @@
           <div class="reader-topbar" id="reader-topbar">
             <button class="catalog-back" id="catalog-back" type="button" aria-label="목록으로 돌아가기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg><span>목록</span></button>
             <p class="reader-topbar-title"><span id="reader-topbar-title"></span> <span class="reader-topbar-progress" id="reader-topbar-progress"></span></p>
+            <button class="icon-button" id="reader-find" type="button" aria-label="본문 찾기" aria-keyshortcuts="g"><svg aria-hidden="true"><use href="#i-search"/></svg></button>
             <button class="icon-button bookmark" id="reader-top-bookmark" type="button" aria-label="저장" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg></button>
           </div>
           <header class="reader-header">
@@ -308,6 +319,7 @@
               <button class="step-button step-next" id="next-post" type="button" title="다음 글" aria-label="다음 글"><span id="next-post-label">다음 글</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
             </div>
             <span class="toolbar-spacer"></span>
+            <button class="icon-button" id="reader-toolbar-find" type="button" title="본문 찾기 (G)" aria-label="본문 찾기" aria-keyshortcuts="g"><svg aria-hidden="true"><use href="#i-search"/></svg></button>
             <button class="icon-button bookmark" id="bookmark-post" type="button" title="저장" aria-label="저장" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg></button>
             <a class="text-command" id="source-link" href="#" target="_blank" rel="noreferrer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg><span>원문</span></a>
             <button class="text-command" id="mode-toggle" type="button">AA로 보기</button>
@@ -382,6 +394,16 @@
       <button id="reader-bottom-settings" type="button" aria-label="읽기 설정"><span class="aa-label" aria-hidden="true">Aa</span><span>설정</span></button>
       <button id="reader-bottom-more" type="button" aria-label="더보기" aria-haspopup="dialog"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg><span>더보기</span></button>
     </nav>
+
+    <div class="find-bar" id="find-bar" role="search" aria-label="본문 찾기" hidden>
+      <div class="find-band" id="find-band" aria-hidden="true"></div>
+      <label class="find-field"><span class="sr-only">이 회차에서 찾을 말</span><svg aria-hidden="true"><use href="#i-search"/></svg><input id="find-input" type="text" enterkeyhint="search" autocomplete="off" placeholder="이 회차에서 찾기"></label>
+      <output class="find-count" id="find-count" aria-live="polite"></output>
+      <button class="icon-button" id="find-previous" type="button" aria-label="이전 결과"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+      <button class="icon-button" id="find-next" type="button" aria-label="다음 결과"><svg aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
+      <button class="icon-button" id="find-close" type="button" aria-label="찾기 닫기"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="action-toast" id="find-return" role="status" popover="manual" hidden><span>찾기 전 위치</span><button type="button" id="find-return-button">돌아가기</button></div>
 
     <button class="immersive-exit" id="immersive-exit" type="button" hidden>집중 종료</button>
 
@@ -532,6 +554,7 @@
         <label class="more-position">읽은 위치 <span class="more-position-values"><small id="more-remaining"></small><output id="more-position-output">0%</output></span><input id="more-position" type="range" min="0" max="100" step="1" value="0"></label>
         <div class="more-actions">
           <button id="more-toc" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>작품 목차</span></button>
+          <button id="more-find" type="button"><svg aria-hidden="true"><use href="#i-search"/></svg><span>본문 찾기</span></button>
           <button id="more-bookmark" type="button" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg><span id="more-bookmark-label">저장</span></button>
           <button id="more-note" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5V4Z"/><path d="M15 20v-4h4M8 9h8M8 13h5"/></svg><span>메모·태그</span></button>
           <a id="more-source" href="#" target="_blank" rel="noreferrer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg><span>원문 열기</span></a>

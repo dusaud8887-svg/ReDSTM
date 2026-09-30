@@ -12,11 +12,17 @@ export function createMiniBar({ element, homeCard }) {
   let cardVisible = false;
   const lastTops = new WeakMap();
 
+  // A folded bar is out of sight, so it also leaves the tab order and the accessibility tree.
+  function fold(folded) {
+    element.classList.toggle("folded", folded);
+    element.inert = folded;
+  }
+
   function update() {
     const show = Boolean(model) && !cardVisible;
     element.hidden = !show;
     document.body.classList.toggle("mini-bar-on", show);
-    if (!show) element.classList.remove("folded");
+    if (!show) fold(false);
   }
 
   if ("IntersectionObserver" in window) {
@@ -34,7 +40,7 @@ export function createMiniBar({ element, homeCard }) {
     const last = lastTops.get(scroller) ?? 0;
     if (Math.abs(top - last) < FOLD_DISTANCE) return;
     lastTops.set(scroller, top);
-    element.classList.toggle("folded", top > last);
+    fold(top > last);
   }, { capture: true, passive: true });
 
   element.addEventListener("click", () => model?.open());

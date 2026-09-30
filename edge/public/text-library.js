@@ -1,5 +1,7 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
+import { fillWorkCover, showWorkBarcode } from "/work-header.js";
+import { workKey } from "/type-cover.js";
 import {
   arcaliveBody, compactTextHistory, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId,
   orderChapters, trimTextState,
@@ -448,9 +450,19 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     ];
   }
 
+  const workBarcodeHost = document.createElement("div");
+  workBarcodeHost.className = "work-barcode";
+
   function workSummary(rows) {
     const item = document.createElement("div");
     item.className = "text-work-summary";
+    const head = document.createElement("div");
+    head.className = "work-head";
+    const cover = document.createElement("span");
+    cover.className = "work-cover";
+    cover.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("div");
+    copy.className = "work-head-copy";
     const heading = document.createElement("h2");
     heading.textContent = work.title || "작품";
     const total = chapterSource.length;
@@ -466,7 +478,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       shortDate(work.last_imported_at) ? `${shortDate(work.last_imported_at)} 갱신` : "",
       [`읽음 ${finished.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}`, finished ? "result-action" : ""],
     ]);
-    item.append(heading, meta);
+    copy.append(heading, meta);
+    head.append(cover, copy);
+    item.append(head);
+    fillWorkCover(cover, {
+      title: work.title || "작품", source: lane === "novel" ? sourceLabel(work.source_site) : "아카라이브",
+      hueKey: lane === "novel" ? workKey({ source: "novel", id: work.work_id }) : workKey({ source: "arcalive", board: work.board ?? "", id: work.work_id }),
+      progress: total ? finished / total : null, size: "s",
+    });
     // Shelf and 몇 화? share one row under the title.
     const actions = document.createElement("div");
     actions.className = "text-work-actions";
@@ -502,6 +521,19 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       actions.append(form);
     }
     if (actions.childElementCount) item.append(actions);
+    // The barcode host outlives redraws of the summary so its observer is made once.
+    const ordered = canonicalChapters(chapterSource);
+    const current = lastReadChapter();
+    showWorkBarcode(workBarcodeHost, ordered.map((chapter, index) => ({
+      position: index + 1, label: chapter.label || `${index + 1}화`, chapter,
+      current: chapter === current,
+      finished: (history.history[identity(chapter, lane, work)]?.progress ?? 0) >= FINISHED,
+    })), ({ chapter }) => {
+      const key = rowKey(chapter, { chaptersMode: true });
+      renderThroughKey(key);
+      list.querySelector(`${ROW_SELECTOR}[data-key="${CSS.escape(key)}"]`)?.click();
+    });
+    item.append(workBarcodeHost);
     return item;
   }
 

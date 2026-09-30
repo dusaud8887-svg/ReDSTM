@@ -1271,6 +1271,23 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-10: `barcode.js` — 순수 `barcodeModel(entries, width, {mode})`(bin 목표 3px, 순서 균등 기본·`분량 보기`는 글자 수 비례이되 bin마다 한 화 이상, 상태 우선순위 읽는 중>누락>안 읽음>읽음, 새 화 윗선), 요약 문장·bin 라벨, SVG 렌더(칸별 버튼 없음), 한 스크럽 영역(pointer capture, 말풍선, 놓으면 확대 띠에서 회차 선택 → `이 회차로`), 키보드 `role=slider` ←→/Home/End/Enter, 비대화형 `miniBarcode`. T27 모델: 10,000화 400 bin < 16ms(단위). 화면 연결은 P1-11.
 
+- P1-11a/b: `work-header.js`(표지 채우기·회차 상태→바코드 입력·host당 바코드 1개 재사용). 타입문넷 작품 상세와 텍스트 작품 요약에 표지(모바일 M/넓은 화면 L, 현재 작품이라 진행선 ribbon)·명조 제목·바코드. 바코드의 `읽는 중`은 이 화면의 한 자리(마지막으로 읽은 회차)만, 나머지 부분 읽음은 안 읽음. 회차 선택은 해당 행 클릭 경로를 그대로 사용(목록 복원·history 계약 유지). axe가 slider의 `aria-valuenow` 누락을 잡아 첫 bin 값으로 초기화. E2E: 3,000편 타입문넷 바코드(렌더 <16ms, 키보드 Home/→/Enter → 확대 띠 → `이 회차로`)·텍스트 40화 바코드. 새 화 윗선은 회차별 게시 시각이 없어 아직 표시하지 않는다.
+
+- P1-12(측정 우선, §11.2 게이트): 3,000/10,000편 목차에서 먼 회차 이동은 이미 예산 안(18–64ms, ≤300ms)이었으나 **목차에서 회차를 열면 3,000편 2.2초·10,000편 30.7초**. CPU 프로파일에서 `captureListAnchor`가 화면 위 모든 행에 `getBoundingClientRect`를 호출(선형 탐색)한 것이 원인 → 문서 순서의 단조 위치로 이진 탐색(숨은 행 대비 앞 한 칸부터 확인). 결과 열기 47/317ms·Back 160/454ms(3,000/10,000, 모바일 폭, in-page 측정). `content-visibility: auto`도 시도했으나 추정 높이 때문에 목차 복귀 위치가 39px 어긋나(기존 `200 → next → next → Back` 테스트) 적용하지 않음. 전체 DOM 방식으로 예산을 충족하므로 TanStack Virtual 조건부 설치·목표 구간 우선 렌더는 하지 않음. T18 E2E(`long-list.spec.js`, trace off): 3,000편 먼 이동 <300ms·초점·Back 후 행 복원. 10,000편은 Playwright locator가 1만 행 DOM에서 제시간에 응답하지 못해(앱은 idle, 행 존재 확인) 측정 스크립트 값으로 기록한다.
+
+- P1-11c(지원 에이전트 위험 검토 R03·R06·R07 재현 항목 반영): 접힌 미니바를 `inert`로 초점·접근성 트리에서 제외(T28 E2E에 inert 확인 추가), `분량 보기` bin의 x·폭을 누적 분량 비례로(한 bin 한 화여도 1:99가 3:297px), 포인터 bin 판정을 x 기준 이진 탐색으로, resize 뒤 같은 회차를 담은 bin으로 `aria-valuenow`·커서 재정렬(E2E: End → 폭 절반 → 값 ≤ max·같은 회차). 분량 모드 UI는 아직 연결 전이며 `char_count` 메타데이터가 없어 bytes로 대체하지 않는다(R 문서의 계약 표).
+
+- P1-13: `search-suggest.js`(라이브러리 주입으로 브라우저·Node 공용) — 정규화(NFKC·소문자·공백, `normalizeVersion` 1) 부분 일치(앞 일치 우선) → 초성(입력 그대로 비교: NFKC가 호환 자모를 첫가끝 자모로 바꿈) → 비슷한 제목(부록 C 설정, 자모 범위를 음절로 되돌려 `<mark>`), 그룹별 20 상한(화면 5), 결과 0 + 라틴 입력이면 `'세이버'(으)로 찾을까요?`. `createSuggester`는 증가 queryId로 늦은 응답을 버림(T19 단위). 검색 화면 입력 아래 제안 패널(타입문넷 작품·게시판, 작품 열기·게시판 선택). IME 조합 중에는 제안만 갱신하고 330k 글 검색은 `compositionend` 뒤. 기존 글 검색은 요청 id로 늦은 결과를 이미 버린다(동기 scan이라 CPU 중단은 아님 — 측정상 5만 행 12ms라 배치 없음). 위험 검토 R04: Worker `error`/`messageerror`에서 대기 요청을 거절·정리. 텍스트 작품 제안은 카탈로그를 미리 받지 않기 위해 이번 범위 밖(P6-4 명령 팔레트에서 같은 엔진). 편집 7파일(테스트·check 포함, 제안 패널 UI가 한 기능이라 분리하지 않음).
+
+- P1-14: U2 동작(기본값 아닌 조건만 칩 + ✕ 해제, 나머지는 필터 시트, `필터 N`)은 이미 있어 계약 유지. 칩을 DESIGN §7.1 규격으로(32px, 꺼짐 surface-2/ink-2, 켜짐 accent-soft/accent + ✓, 비활성 ink-3), 조건 줄을 한 줄 가로 스크롤(44px 터치 줄)로. 편집 1파일(library.css).
+
+- P1-13 전체 E2E(worktree): 558 pass/2 fail/16 skip. medium `side list`(두 번째 발생)·compact `list sort … Back` 모두 P1-11b의 텍스트 작품 머리(L/M 표지 + 바코드)가 목록 위 고정 영역을 키워 목록 칸이 좁아진 것이 원인(표지·바코드를 각각 빼면 통과로 확인). P1-11d: 텍스트 작품 머리는 목록 위에 고정되므로 S 표지, Reader 옆 좁은 목록(`reading-context`)에서는 표지·바코드 숨김. 두 테스트 4폭 통과.
+- P1-15: `find.js` — 텍스트 모델 검색 사본에서 찾고 원문 offset→Range(`findMatches` 순수 테스트: 공백 접힘·전각·대소문자·상한 1000), Custom Highlight `redstm-find`/`-current`(본문 DOM 불변 E2E), 첫 이동은 화면 위 첫 결과, 결과를 화면 위 1/3로, 위치 띠 tick, 첫 이동 전 위치를 어댑터에서 직접 잡아(키보드 중 저장 정지와 무관) 닫을 때 `돌아가기` 토스트 4초(action toast, top layer). 찾기 바는 도크 자리(열리면 도크 숨김), bar 층으로 overlay 관리자 등록(CloseWatcher는 여는 클릭 안에서) + 관리자에 `closeLayer(id)` 추가(자체 ✕도 스택 정리, 단위 테스트). 키보드 위 배치: VirtualKeyboard `overlaysContent` + `env(keyboard-inset-height)`, 없으면 visualViewport 차이 `--keyboard-offset`. 진입: 모바일 context bar·데스크톱 도구줄·더보기 `본문 찾기`·단축키 `g`. 입력은 `type=text`(search 타입은 Esc를 지우기로 먹어 닫기 요청이 안 감). 범위 칩 `작품 전체`는 KWIC(P6-3)와 함께. 미지원 브라우저는 개수·이동만. 실기기: 찾기 바 키보드 위(T34) 확인 대기.
+
+- P1-7c: 저장 기록은 색인이 요약을 채운 뒤에야 가리킬 곳을 알 수 있어, 목록으로 바로 들어오면 미니바가 비어 있었다(시안 비교 중 발견). `hydrateSavedEntries` 뒤 미니바 갱신 + 직접 진입 E2E.
+- **M1 마감**: 최종 커밋 전체 E2E(worktree, workers=2) 566 pass/0 fail/18 skip(새 폰 전용 테스트 2건이 넓은 폭에서 skip), axe 포함. unit 149, check·lint 0 error. Linux 시각 기준선은 M1 동안 비워 CI가 매번 생성하게 했고, M1 main CI artifact로 새 기준선을 커밋한다.
+- M1 시안(`prototype.html`, preview-1/2) 대비 차이: ① 서재 머리 — 시안은 로고+설정만, 구현은 기존 앱 바(운영 링크·보존본 상태 유지, E2E 운영 접근 계약). ② 이어읽기 카드 — 시안의 채운 `이어 읽기` 버튼 대신 카드 전체가 주행동, `목차`는 카드 아래 보조 버튼. ③ 오늘의 발췌·이번 주 독서(M3), 스마트 서재 칩(M6)은 데이터 없는 빈 모듈이라 없음. ④ 둘러보기 — 시안 제목 `둘러보기`, 구현은 `게시판 둘러보기` + `게시판 글/작품` 범위 탭이 한 줄 더 있음. ⑤ 목록 행의 S 표지·진행선(DESIGN §7.5)은 아직 행에 연결하지 않음(후속: M2 전 또는 M7 정리 시 목록 행 공통 렌더에서). ⑥ 기록 탭 `발췌·통계`는 M3. ⑦ Reader context bar/도크/퀵 설정은 M2. ⑧ 폭 경계 760/1200 유지(DESIGN 600/960과 차이, P1-5 기록). 실기기 확인 대기(M1): 미니바·탭 no-wrap, 찾기 바 키보드 위(T34), 초성·IME 입력 — S22+ Chrome·Samsung Internet.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

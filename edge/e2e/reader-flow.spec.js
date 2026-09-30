@@ -1416,8 +1416,11 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   const list = page.locator("#result-list");
   await list.evaluate((element) => { element.scrollTop = 600; });
   await expect(bar).toHaveClass(/folded/);
+  // Out of sight is out of the tab order too.
+  await expect(bar).toHaveJSProperty("inert", true);
   await list.evaluate((element) => { element.scrollTop = 200; });
   await expect(bar).not.toHaveClass(/folded/);
+  await expect(bar).toHaveJSProperty("inert", false);
   // The list keeps room for the bar and the tabs together.
   const listBottom = await page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom));
   expect(listBottom).toBeGreaterThanOrEqual(102);
@@ -1450,4 +1453,103 @@ test("Home greets a first visit with sources and later quotes the last sentence 
   await expect(page.locator("#continue-quote")).toHaveText("그리고 2편 본문 5의 끝. 다음 문장");
   await expect(page.locator("#continue-cover .type-cover")).toBeVisible();
   await expect(onboarding).toBeHidden();
+});
+
+// T27 (browser part): the work barcode summarises the run, draws within a frame, and picks an
+// episode by keyboard through the magnified strip.
+test("The work barcode summarises a long run and opens an episode picked on its strip", async ({ page }) => {
+  await useLongCollection(page, 3000);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.goto("/collections/1");
+  const barcode = page.locator("#collection-barcode");
+  await expect(barcode.locator(".barcode-summary")).toHaveText("3,000화 중 0화 읽음");
+  expect(Number(await barcode.getAttribute("data-render-ms"))).toBeLessThan(16);
+  await expect(page.locator("#collection-cover .type-cover")).toBeVisible();
+  const track = barcode.getByRole("slider");
+  await expect(track).toHaveAccessibleName(/회차 바코드: 3,000화 중 0화 읽음/);
+  await track.focus();
+  await track.press("ArrowRight");
+  await expect(track).toHaveAttribute("aria-valuetext", /편–\d+편 · (읽는 중|안 읽음 포함)/);
+  // A narrower bar regroups the bins but keeps the chosen episode and a valid value.
+  await track.press("End");
+  const size = page.viewportSize();
+  await page.setViewportSize({ width: Math.max(320, Math.round(size.width / 2)), height: size.height });
+  await expect(track).toHaveAttribute("aria-valuetext", /3000편 · /);
+  expect(Number(await track.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(Number(await track.getAttribute("aria-valuemax")));
+  await page.setViewportSize(size);
+  await track.press("Home");
+  await expect(track).toHaveAttribute("aria-valuetext", /^1편–\d+편 · 읽는 중/);
+  await track.press("Enter");
+  const options = barcode.locator(".barcode-option");
+  await options.nth(2).click();
+  await barcode.getByRole("button", { name: "이 회차로" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("3편 제목");
+});
+
+test("A text work shows its cover and barcode, and the barcode opens a chapter", async ({ page }) => {
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "바코드 소설", chapters: 40 })] });
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent("novel:toki:1")}`);
+  const summary = page.locator("#text-work-summary .text-work-summary");
+  await expect(summary.locator("h2")).toHaveText("바코드 소설");
+  await expect(summary.locator(".work-cover .type-cover")).toBeVisible();
+  const track = summary.getByRole("slider");
+  await expect(track).toHaveAccessibleName("회차 바코드: 40화 중 0화 읽음");
+  await track.focus();
+  await track.press("End");
+  await track.press("Enter");
+  await summary.locator(".barcode-option").last().click();
+  await summary.getByRole("button", { name: "이 회차로" }).click();
+  await expect(page.locator("#reader-title")).toContainText("40화");
+});
+
+
+// docs/24 §8.11 · T34: find paints hits without touching the body, moves to them, and closing
+// offers the place before the first move.
+test("Find in the chapter counts hits, moves to them, and offers the place it started from", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const bodyBefore = await page.locator("#archive-body").innerHTML();
+  const startTop = await page.locator("#reader-pane").evaluate((pane) => pane.scrollTop);
+  await page.locator(mobileWidth(page) ? "#reader-find" : "#reader-toolbar-find").click();
+  const input = page.locator("#find-input");
+  await expect(input).toBeFocused();
+  await input.fill("본문 3");
+  // "본문 3", "본문 30" … "본문 39": 11 hits in document order.
+  await expect(page.locator("#find-count")).toHaveText("1/11");
+  expect(await page.evaluate(() => CSS.highlights.get("redstm-find")?.size)).toBe(11);
+  await input.press("Enter");
+  await input.press("Enter");
+  await expect(page.locator("#find-count")).toHaveText("2/11");
+  const moved = await page.locator("#reader-pane").evaluate((pane) => pane.scrollTop);
+  expect(moved).toBeGreaterThan(startTop);
+  expect(await page.locator("#archive-body").innerHTML()).toBe(bodyBefore);
+  if (mobileWidth(page)) await expect(page.locator(".reader-bottom")).toBeHidden();
+  await page.locator("#find-close").click();
+  await expect(page.locator("#find-bar")).toBeHidden();
+  expect(await page.evaluate(() => CSS.highlights.has("redstm-find"))).toBe(false);
+  await page.locator("#find-return-button").click();
+  await expect.poll(() => page.locator("#reader-pane").evaluate((pane) => pane.scrollTop)).toBeLessThan(moved);
+  // g opens it again from the keyboard; Escape closes it as one layer.
+  if (!mobileWidth(page)) {
+    await page.locator("#archive-body").click();
+    await page.keyboard.press("g");
+    await expect(page.locator("#find-bar")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#find-bar")).toBeHidden();
+    await expect(page.locator("#reader")).toBeVisible();
+  }
+});
+
+test("The mini bar appears on a list opened directly once saved records resolve", async ({ page }) => {
+  test.skip(!mobileWidth(page), "phone tab bar only");
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    history: { "board_a:3": { readAt: "2026-09-30T02:57:00Z", progress: 0.38 } },
+  })));
+  await useLongCollection(page, 12);
+  await page.goto("/browse");
+  await expect(page.locator("#mini-bar")).toBeVisible();
+  await expect(page.locator("#mini-bar")).toHaveAccessibleName(/3편 제목/);
 });

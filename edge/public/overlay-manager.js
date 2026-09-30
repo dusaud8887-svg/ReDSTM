@@ -25,6 +25,14 @@ export function createOverlayManager({ CloseWatcher = globalThis.CloseWatcher, o
     layers,
     closeTop,
     closeAll(reason = "navigate") { while (closeTop(reason)) { /* one layer at a time */ } },
+    // A layer closed from inside (its own ✕) leaves the stack the same way Back would take it.
+    closeLayer(id, reason = "cancel") {
+      const layer = layers.find((item) => item.id === id);
+      if (!layer) return false;
+      finish(id, reason);
+      layer.close();
+      return true;
+    },
     watch(element, kind = "dialog") {
       const opened = () => add({ id: element.id, kind, close: () => {
         if (kind === "dialog") element.close();

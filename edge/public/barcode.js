@@ -11,10 +11,11 @@ export function barcodeModel(entries, width, { mode = "order", target = BIN_TARG
   if (!count || !(width > 0)) return { bins: [], width: Math.max(0, width || 0) };
   const binCount = Math.max(1, Math.min(count, Math.floor(width / target)));
   const edges = new Array(binCount + 1);
+  // 분량 보기: each bin's width follows the length it holds, so one long episode stays wide even
+  // when every bin holds a single episode.
+  const ends = [];
+  let total = 0;
   if (mode === "length") {
-    // Each bin ends where the running length passes its share; every bin keeps one episode.
-    const ends = [];
-    let total = 0;
     for (const entry of entries) {
       total += Math.max(1, Number(entry.weight) || 1);
       ends.push(total);
@@ -41,7 +42,9 @@ export function barcodeModel(entries, width, { mode = "order", target = BIN_TARG
       if (STATE_RANK[entry.state] > STATE_RANK[state]) state = entry.state;
       fresh ||= Boolean(entry.fresh);
     }
-    bins.push({ from, to, state, fresh, x: (width * bin) / binCount, w: width / binCount });
+    const x = mode === "length" ? (width * (from ? ends[from - 1] : 0)) / total : (width * bin) / binCount;
+    const right = mode === "length" ? (width * ends[to - 1]) / total : (width * (bin + 1)) / binCount;
+    bins.push({ from, to, state, fresh, x, w: right - x });
   }
   return { bins, width };
 }
@@ -143,10 +146,28 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
   function layout() {
     const width = Math.round(track.clientWidth) || 320;
     const started = performance.now();
+    const episode = model.bins[active]?.from ?? null;
     model = barcodeModel(entries, width, { mode });
     drawBins(svg, model, 24);
     host.dataset.renderMs = (performance.now() - started).toFixed(2);
     track.setAttribute("aria-valuemax", String(Math.max(1, model.bins.length)));
+    // A new width regroups the bins: keep pointing at the bin that holds the same episode.
+    if (episode !== null) {
+      const bubbleHidden = bubble.hidden;
+      point(binIndexOf(episode));
+      bubble.hidden = bubbleHidden;
+    }
+  }
+
+  function binIndexOf(episode) {
+    let low = 0;
+    let high = model.bins.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (model.bins[middle].from <= episode) low = middle;
+      else high = middle - 1;
+    }
+    return low;
   }
 
   function point(bin) {
@@ -166,7 +187,15 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
 
   function binAt(clientX) {
     const box = track.getBoundingClientRect();
-    return Math.floor(((clientX - box.left) / box.width) * model.bins.length);
+    const x = ((clientX - box.left) / box.width) * model.width;
+    let low = 0;
+    let high = model.bins.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (model.bins[middle].x <= x) low = middle;
+      else high = middle - 1;
+    }
+    return low;
   }
 
   function magnify() {
@@ -246,6 +275,9 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
       cursor.hidden = true;
       bubble.hidden = true;
       layout();
+      // A slider always names a value; before any scrub it is the first bin.
+      track.setAttribute("aria-valuenow", "1");
+      track.setAttribute("aria-valuetext", model.bins[0] ? binLabel(entries, model.bins[0]) : text);
     },
     destroy() { resize?.disconnect(); },
   };

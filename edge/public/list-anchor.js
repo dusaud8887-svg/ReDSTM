@@ -12,10 +12,22 @@ function rowsOf(scroller, selector) {
   return scroller.querySelectorAll(selector);
 }
 
+// Rows run top to bottom, so the first one reaching into the viewport is found by bisection:
+// measuring every row above it forces layout of thousands of off-screen rows in a long list.
 export function captureListAnchor(scroller, selector = "[data-key]") {
   if (!scroller) return null;
   const top = scrollportTop(scroller);
-  for (const row of rowsOf(scroller, selector)) {
+  const rows = rowsOf(scroller, selector);
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (rows[middle].getBoundingClientRect().bottom > top + 1) high = middle;
+    else low = middle + 1;
+  }
+  // A hidden row measures zero and can end the search a little early; walk on from there.
+  for (let index = Math.max(0, low - 1); index < rows.length; index += 1) {
+    const row = rows[index];
     const rect = row.getBoundingClientRect();
     if (rect.height && rect.bottom > top + 1) {
       return { key: row.dataset.key ?? null, offset: rect.top - top, scrollTop: scroller.scrollTop };

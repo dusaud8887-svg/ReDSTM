@@ -41,6 +41,11 @@ import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme
 import { createMiniBar } from "/shell.js";
 import { fillContinueCard, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
+import { fillWorkCover, showWorkBarcode } from "/work-header.js";
+import { createSuggester, createSuggestIndex } from "/search-suggest.js";
+import { createFind } from "/find.js";
+import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
+import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -68,7 +73,7 @@ const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "source-switch", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
+    "scope-tabs", "source-switch", "search-suggest", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
@@ -232,6 +237,50 @@ const textLibrary = createTextLibrary({
   },
 });
 
+// Find in the chapter (docs/24 §8.11): the bar takes the dock's place and, after moving through
+// hits, closing it offers the place the reader was before.
+const find = createFind({
+  bar: document.querySelector("#find-bar"),
+  input: document.querySelector("#find-input"),
+  count: document.querySelector("#find-count"),
+  band: document.querySelector("#find-band"),
+  root: () => elements["archive-body"],
+  scroller: elements["reader-pane"],
+  topInset: () => readerTopInset(),
+  overlays,
+  session: {
+    get generation() { return readerSession.generation; },
+    markUserScroll: () => readerSession.markUserScroll(),
+    capturePosition: () => readerSession.adapter?.captureVisiblePosition() ?? null,
+  },
+});
+let findReturnTimer = null;
+let findReturnAnchor = null;
+function openFind() {
+  if (!readerSource) return;
+  find.open((anchor) => {
+    if (!anchor) return;
+    findReturnAnchor = anchor;
+    const toast = document.querySelector("#find-return");
+    overlays.showToast(toast);
+    clearTimeout(findReturnTimer);
+    findReturnTimer = setTimeout(() => overlays.hideToast(toast), 4000);
+  });
+}
+for (const id of ["reader-find", "reader-toolbar-find"]) document.querySelector(`#${id}`).addEventListener("click", openFind);
+document.querySelector("#more-find").addEventListener("click", () => {
+  elements["reader-more"].close();
+  openFind();
+});
+document.querySelector("#find-next").addEventListener("click", () => find.next());
+document.querySelector("#find-previous").addEventListener("click", () => find.previous());
+document.querySelector("#find-close").addEventListener("click", () => find.close());
+document.querySelector("#find-return-button").addEventListener("click", () => {
+  overlays.hideToast(document.querySelector("#find-return"));
+  if (findReturnAnchor && readerSession.restore(findReturnAnchor)) syncScrollBaseline();
+  findReturnAnchor = null;
+});
+
 const miniBar = createMiniBar({ element: document.querySelector("#mini-bar"), homeCard: elements["continue-block"] });
 
 const boardNavigator = createBoardNavigator({
@@ -245,6 +294,13 @@ const boardNavigator = createBoardNavigator({
 
 const searchWorker = new Worker("/search-worker.js", { type: "module" });
 searchWorker.addEventListener("message", handleWorkerMessage);
+// A Worker that fails to load or cannot read a message never answers; settle what waits on it.
+for (const type of ["error", "messageerror"]) {
+  searchWorker.addEventListener(type, () => {
+    for (const { reject } of workerRequests.values()) reject(Object.assign(new Error("검색 색인을 사용할 수 없습니다"), { code: "worker_failed" }));
+    workerRequests.clear();
+  });
+}
 searchWorker.postMessage({ type: "init", id: ++messageId });
 
 function readJson(key, fallback) {
@@ -1678,6 +1734,7 @@ function updateDestinationLayout() {
   updateShellMode();
   elements["scope-tabs"].hidden = !browsing && !searching;
   elements["source-switch"].hidden = !browsing && !text;
+  if (!searching) elements["search-suggest"].hidden = true;
   if (browsing) {
     for (const button of elements["source-switch"].querySelectorAll("[data-source]")) {
       button.setAttribute("aria-pressed", String(button.dataset.source === "typemoon"));
@@ -2069,6 +2126,8 @@ async function hydrateSavedEntries() {
       });
     }
   }
+  // Records only know where they point once the index resolves them; the mini bar can now show.
+  miniBar.render(miniBarModel());
 }
 
 function routeSummary() {
@@ -2925,6 +2984,15 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     }
     elements["collection-entry-list"].replaceChildren(fragment);
     elements["collection-entry-list"].dataset.collectionId = collection.id;
+    fillWorkCover(document.querySelector("#collection-cover"), {
+      title: collection.title, source: "타입문넷", hueKey: workKey({ source: "typemoon", id: collection.id }),
+      progress: available.length ? finishedEntries.length / available.length : null,
+    });
+    // The barcode picks an episode through its row, so the list's own navigation stays the one path.
+    showWorkBarcode(document.querySelector("#collection-barcode"), collection.entries.map((entry) => ({
+      position: entry.position, label: `${entry.position}편`, missing: !entry.object_key, current: entry === lastRead,
+      finished: postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) === "finished",
+    })), (entry) => elements["collection-entry-list"].querySelector(`.collection-entry[data-key="${entry.position}"]`)?.click());
     document.title = `${collection.title} — ReDSTM`;
     const route = `/collections/${collection.id}`;
     if (navigation === "push") {
@@ -4009,10 +4077,21 @@ elements["settings-dialog"].addEventListener("close", () => {
     showDestination("library", false);
   }
 });
-elements["search-input"].addEventListener("input", () => {
+// Title suggestions follow every keystroke, even mid-composition; the post search over the whole
+// archive waits until the Hangul syllable is composed (docs/24 §8.4).
+elements["search-input"].addEventListener("input", (event) => {
   elements["result-more"].hidden = true;
   elements["search-clear"].hidden = !elements["search-input"].value;
+  updateSuggestions();
   clearTimeout(searchTimer);
+  if (event.isComposing) return;
+  scheduleSearch();
+});
+elements["search-input"].addEventListener("compositionend", () => {
+  clearTimeout(searchTimer);
+  scheduleSearch();
+});
+function scheduleSearch() {
   searchTimer = setTimeout(() => {
     if (currentDestination === "text") {
       textLibrary.searchChanged(elements["search-input"].value);
@@ -4021,6 +4100,107 @@ elements["search-input"].addEventListener("input", () => {
     syncSearchRoute();
     renderCurrentView();
   }, 250);
+}
+
+// Suggestions: TypeMoon works and boards, rebuilt only when the archive's index changes.
+let suggestSource = null;
+let suggestIndex = null;
+const suggester = createSuggester(async () => {
+  const index = await collectionIndex().catch(() => null);
+  if (!index) return null;
+  if (suggestSource !== index) {
+    suggestSource = index;
+    suggestIndex = createSuggestIndex([
+      ...index.summaries.map((collection) => ({ key: `c:${collection.id}`, title: collection.title, kind: "work", id: collection.id,
+        meta: [boardLabel(collection.board_id), `${collection.entry_count ?? collection.entries?.length ?? 0}편`] })),
+      ...[...boardById.values()].map((board) => ({ key: `b:${board.board_id}`, title: boardDisplayName(board, board.board_id), kind: "board", id: board.board_id,
+        meta: ["게시판", boardGroupLabel(board.group_name)] })),
+    ], { hangul, UFuzzy });
+  }
+  return suggestIndex;
+});
+
+function updateSuggestions() {
+  const panel = elements["search-suggest"];
+  const query = elements["search-input"].value.trim();
+  if (currentDestination !== "search" || !query) {
+    suggester.cancel();
+    panel.hidden = true;
+    panel.replaceChildren();
+    return;
+  }
+  void suggester.request(query, renderSuggestions);
+}
+
+function suggestionRow(hit) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "suggest-row";
+  button.dataset.suggestKind = hit.item.kind;
+  button.dataset.suggestId = hit.item.id;
+  const title = document.createElement("strong");
+  const text = hit.item.title;
+  // Ranges are over the normalised title; mark them only when it kept the same characters.
+  if (hit.ranges.length && [...text].length === [...text.normalize("NFKC")].length) {
+    const characters = [...text];
+    let cursor = 0;
+    for (const [start, end] of hit.ranges) {
+      title.append(characters.slice(cursor, start).join(""));
+      const mark = document.createElement("mark");
+      mark.textContent = characters.slice(start, end).join("");
+      title.append(mark);
+      cursor = end;
+    }
+    title.append(characters.slice(cursor).join(""));
+  } else title.textContent = text;
+  const meta = document.createElement("span");
+  meta.textContent = hit.item.meta.filter(Boolean).join(" · ");
+  button.append(title, meta);
+  item.append(button);
+  return item;
+}
+
+function renderSuggestions(result) {
+  const panel = elements["search-suggest"];
+  const groups = [["작품·게시판", result.exact], ["초성", result.choseong], ["비슷한 제목", result.similar]];
+  const nodes = [];
+  for (const [label, hits] of groups) {
+    if (!hits.length) continue;
+    const heading = document.createElement("h3");
+    heading.textContent = label;
+    const list = document.createElement("ul");
+    list.append(...hits.slice(0, 5).map(suggestionRow));
+    nodes.push(heading, list);
+  }
+  if (result.qwerty) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggest-qwerty";
+    button.dataset.qwerty = result.qwerty;
+    button.textContent = `'${result.qwerty}'(으)로 찾을까요?`;
+    nodes.push(button);
+  }
+  panel.replaceChildren(...nodes);
+  panel.hidden = !nodes.length;
+}
+
+elements["search-suggest"].addEventListener("click", (event) => {
+  const qwerty = event.target.closest("[data-qwerty]")?.dataset.qwerty;
+  if (qwerty) {
+    elements["search-input"].value = qwerty;
+    elements["search-input"].dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  const row = event.target.closest("[data-suggest-kind]");
+  if (!row) return;
+  const id = row.dataset.suggestId;
+  if (row.dataset.suggestKind === "work") void openCollectionDetail(/^\d+$/.test(id) ? Number(id) : id);
+  else {
+    elements["search-input"].value = "";
+    updateSuggestions();
+    selectBoard(row.dataset.suggestId);
+  }
 });
 elements["search-input"].addEventListener("search", () => {
   clearTimeout(searchTimer);
@@ -4696,6 +4876,9 @@ document.addEventListener("keydown", (event) => {
     readerCommand("next");
   } else if (event.key.toLowerCase() === "b") {
     readerCommand("bookmark");
+  } else if (event.key.toLowerCase() === "g" && readerSource) {
+    event.preventDefault();
+    openFind();
   } else if (event.key.toLowerCase() === "f" && readerSource) {
     setImmersive(!document.body.classList.contains("immersive"));
   } else if (event.key === "?" && !isNarrowScreen()) {
@@ -4738,6 +4921,10 @@ function updateKeyboardState() {
   const editing = document.activeElement?.matches?.("input:not([type='range'], [type='color'], [type='file']), textarea, [contenteditable]");
   const shrunk = window.visualViewport ? window.visualViewport.height < innerHeight * 0.75 : false;
   document.body.classList.toggle("keyboard-open", Boolean(editing && shrunk));
+  // Without the VirtualKeyboard API the find bar rides above the keyboard by this offset.
+  const viewport = window.visualViewport;
+  const keyboard = viewport && !navigator.virtualKeyboard ? Math.max(0, innerHeight - viewport.height - viewport.offsetTop) : 0;
+  document.documentElement.style.setProperty("--keyboard-offset", `${Math.round(keyboard)}px`);
   readerSession.setKeyboardOpen(editing && shrunk);
 }
 window.visualViewport?.addEventListener("resize", updateKeyboardState);
