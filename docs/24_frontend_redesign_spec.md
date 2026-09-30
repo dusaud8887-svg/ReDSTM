@@ -1191,6 +1191,8 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - 실기기 확인 대기(M0): Back·시트·popover 중첩(T03/T04), 글꼴 도착 후 위치(T20), 키보드(T34), Playwright `_android` 연결 여부. F0 연결 뒤 확인.
 - P0-4 원인: `/`에서 TypeMoon worker 준비 전 텍스트 Reader를 연 경우 `routeHandled=false` 때문에 늦은 `ready` 응답이 텍스트 경로를 다시 열었다. trace에서 설정 시트 표시 직후 본문 중복 요청과 시트 닫힘 확인(수정 전 10회 중 1회 실패). 현재 목적지가 text면 독립 초기화를 존중하도록 수정. 응답을 설정 시트 표시 뒤로 고정한 회귀 테스트로 모바일 10/10 통과(15.8초), timeout 변경 없음.
 - P0-4 검증: unit 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(3.6분), axe 4폭 통과. 편집 3파일. P0-3 Linux CI 36700298564도 성공(시각 기준선 비교 포함).
+- P0-5: Python CI job에서 Node 24·`npm ci` 후 SHA 고정 원본과 fonttools 4.66.1/brotli 1.2.0으로 글꼴을 재생성하고 tracked diff·미추적 출력 파일을 검사. 별도 clean checkout `6c99fbe`에서 `npm ci → npm run fonts` 후 diff 0/미추적 출력 0(T14), 작업 checkout 재생성도 diff 0. 원본 유지. 편집 2파일.
+- P0-5 검증: unit 109/109, check·lint 0 error. 재생성과 검사를 겹친 첫 실행은 생성 중 파일 누락/nested Biome 설정/화면 준비 대기 실패가 있어 완료로 세지 않음. clean checkout을 저장소 밖으로 옮기고 생성 종료 후 check·lint 재검사, axe 해당 시나리오 4/4 및 전체 E2E 510 pass/14 기존 skip(3.8분) 통과. timeout 변경 없음. 이후 재생성·파일 검사·E2E는 순차 실행.
 
 | 날짜 | 내용 |
 |---|---|

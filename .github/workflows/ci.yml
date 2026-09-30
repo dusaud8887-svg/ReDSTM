@@ -18,11 +18,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.28"
           enable-cache: true
       - run: uv sync --frozen
+      - name: Reproduce pinned web font assets
+        run: |
+          npm ci --prefix edge
+          npm run fonts --prefix edge
+          git diff --exit-code -- edge/public/fonts
+          test -z "$(git ls-files --others --exclude-standard edge/public/fonts)"
       - run: uv run pytest -q
       - run: uv run ruff check .
       - run: uv run ruff format --check .
