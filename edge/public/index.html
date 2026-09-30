@@ -105,11 +105,6 @@
             </button>
             <button class="board-dock-clear" id="board-dock-clear" type="button" aria-label="전체 게시판 보기" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
           </div>
-          <nav class="view-tabs text-lanes" id="text-lanes" aria-label="텍스트 장서 종류" hidden>
-            <button type="button" class="active" data-text-lane="novel" aria-pressed="true">소설</button>
-            <button type="button" data-text-lane="arcalive" aria-pressed="false">아카라이브</button>
-            <button type="button" data-text-lane="saved" aria-pressed="false">저장함</button>
-          </nav>
           <nav class="view-tabs arcalive-views" id="arcalive-views" aria-label="아카라이브 목록 보기" hidden>
             <button type="button" data-arcalive-view="files" aria-pressed="true">파일별</button>
             <button type="button" data-arcalive-view="works" aria-pressed="false">작품별</button>
@@ -123,10 +118,10 @@
           <div class="text-work-summary-host" id="text-work-summary" hidden></div>
           <div class="filter-chips text-sort-chips" id="text-sort-chips" role="group" aria-label="목록 정렬" hidden></div>
           <div class="filter-chips text-sort-chips text-read-chips" id="text-read-chips" role="group" aria-label="읽기 상태" hidden></div>
-          <nav class="view-tabs saved-tabs" aria-label="보관함 보기" hidden>
+          <nav class="view-tabs saved-tabs" aria-label="기록 보기" hidden>
             <button type="button" data-view="reading" aria-pressed="false">읽는 중</button>
-            <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장한 글</button>
-            <button type="button" data-view="history" aria-pressed="false">최근 읽음</button>
+            <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장</button>
+            <button type="button" data-view="history" aria-pressed="false">최근</button>
           </nav>
           <div class="catalog-search-row" id="catalog-search-row" hidden>
             <label class="search-field">

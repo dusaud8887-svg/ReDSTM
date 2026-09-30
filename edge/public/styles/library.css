@@ -80,7 +80,6 @@ body.search-open:not(.filters-expanded):not(.reading-context) .catalog-controls 
 .view-tabs { display: grid; grid-template-columns: repeat(2, 1fr); padding: 0 12px; border-bottom: 1px solid var(--line); }
 .view-tabs button { min-height: 44px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 550; cursor: pointer; transition: color 160ms ease, border-color 160ms ease; }
 .view-tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
-.text-lanes { grid-template-columns: repeat(3, 1fr); }
 .arcalive-views { grid-template-columns: repeat(2, 1fr); }
 body:not(.text-library-open) .arcalive-views { display: none; }
 .text-work-back {

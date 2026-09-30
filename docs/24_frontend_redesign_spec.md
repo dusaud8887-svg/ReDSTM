@@ -1259,6 +1259,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P1-3/P1-4 전체 E2E(worktree, workers=2): 537 pass/1 fail/14 기존 skip — compact에서 새로고침 직후 밝기 overlay를 가상 요소 스타일 적용 전에 읽은 테스트 경합, poll로 수정(설정 지연 저장은 pagehide에서 이미 flush됨).
 - P1-5: 목적지를 `서재 · 둘러보기 · 검색 · 기록` 4개로(레일·상단 내비·하단 탭, `텍스트` 탭 제거). 텍스트 장서는 둘러보기 안 출처 전환 `타입문넷 · 소설 · 아카라이브`(segmented, `#source-switch`)로 들어가고, `/text` 화면에서도 둘러보기 탭이 켜진다. 둘러보기 탭은 마지막 출처를 기억(`localStorage redstm.browseSource`, 실패 무시), 텍스트 화면에서 둘러보기 탭은 텍스트 목록으로. URL·`/text?lane=` 계약 불변. 폭 경계는 기존 760/1200 유지(DESIGN §4.4의 600/960 경계로 옮기면 E2E 폭별 계약 전체가 바뀌므로 M7에서 판단 — 차이로 기록). E2E의 텍스트 버튼 흐름을 출처 전환으로 교체.
 
+- P1-6: 기록 탭 `읽는 중 · 저장 · 최근`(`/saved?view=reading|bookmarks|recent` 불변, `발췌`·`통계`는 M3에서 데이터와 함께 추가 — 빈 탭을 미리 보이지 않음). 저장은 이미 타입문넷+텍스트 병합 목록이므로 텍스트 장서의 `저장함` 레인 버튼을 없애 한 곳으로(옛 `/text?lane=saved` 주소는 그대로 열림). 제목 `내 보관함`→`기록`. `#text-lanes` 제거, 출처 전환이 소설·아카라이브 레인을 대신한다.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

@@ -64,7 +64,7 @@ const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "text-lanes", "source-switch", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
+    "scope-tabs", "source-switch", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
@@ -1613,7 +1613,6 @@ function updateDestinationLayout() {
   const collections = currentScope === "collections";
   updateShellMode();
   elements["scope-tabs"].hidden = !browsing && !searching;
-  elements["text-lanes"].hidden = !text;
   elements["source-switch"].hidden = !browsing && !text;
   if (browsing) {
     for (const button of elements["source-switch"].querySelectorAll("[data-source]")) {
@@ -1637,7 +1636,7 @@ function updateDestinationLayout() {
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
     : text ? textLibrary.searchPlaceholder()
     : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
-  elements["catalog-title"].textContent = saved ? "내 보관함"
+  elements["catalog-title"].textContent = saved ? "기록"
     : text ? "텍스트 장서"
     : collections ? (browsing ? "작품 둘러보기" : "작품 검색")
     : browsing ? "게시판 둘러보기" : "글 검색";
@@ -1923,7 +1922,7 @@ function showDestination(destination, navigate = true, view = destination === "b
   currentDestination = destination;
   currentView = view;
   const catalogLabel = currentScope === "collections" ? "작품" : "글";
-  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : destination === "text" ? "텍스트 장서" : "내 보관함"} — ReDSTM`;
+  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : destination === "text" ? "텍스트 장서" : "기록"} — ReDSTM`;
   currentSummary = null;
   currentPayload = null;
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");

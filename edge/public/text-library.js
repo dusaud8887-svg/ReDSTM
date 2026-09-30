@@ -926,11 +926,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function setLaneButtons() {
-    for (const button of document.querySelectorAll("[data-text-lane]")) {
-      const active = button.dataset.textLane === lane;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    }
     // Browse's source switch names the two text lanes next to TypeMoon.
     for (const button of document.querySelectorAll("#source-switch [data-source]")) {
       button.setAttribute("aria-pressed", String(button.dataset.source === lane));
@@ -1589,10 +1584,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return undefined;
   }
 
-  document.querySelector("#text-lanes").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-text-lane]");
-    if (button) changeLane(button.dataset.textLane);
-  });
   document.querySelector("#arcalive-views").addEventListener("click", (event) => {
     const button = event.target.closest("[data-arcalive-view]");
     if (!button || button.dataset.arcaliveView === arcaliveView) return;

@@ -308,7 +308,7 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   await page.locator('button[data-destination="browse"]:visible').first().click();
   await page.locator('#source-switch [data-source="novel"]').click();
   await expect(page).toHaveURL(/\/text(?:\?|$)/);
-  await expect(page.locator("#text-lanes")).toBeVisible();
+  await expect(page.locator("#source-switch")).toBeVisible();
   await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#text-work-back")).toBeVisible();
@@ -331,7 +331,8 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await page.locator("#end-list").click();
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.textState.v1")).history["novel:novel:fixture:1:1"]?.progress ?? 0)).toBeGreaterThan(0);
-  await page.locator('[data-text-lane="saved"]').click();
+  // Saved text items live under 기록; the old 저장함 address still opens them.
+  await page.goto("/text?lane=saved");
   await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#archive-body")).toContainText("첫 회차 본문");
@@ -411,17 +412,17 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   releaseNovel();
   await expect(page).toHaveURL(/\/browse$/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("비소속");
-  await expect(page.locator("#text-lanes")).toBeHidden();
+  await expect(page.locator('#source-switch [data-source="typemoon"]')).toHaveAttribute("aria-pressed", "true");
 
   await page.locator('#source-switch [data-source="arcalive"]').click();
   await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
-  await page.locator('[data-text-lane="novel"]').click();
+  await page.locator('#source-switch [data-source="novel"]').click();
   await expect(page).toHaveURL(/\/text\?lane=novel$/);
   await expect(page.locator("#result-status")).toContainText("소설은 아직 게시되지 않았습니다");
   await expect(page.locator("#result-list .empty-row")).toContainText("아직 게시된 자료가 없습니다");
   publishedRelease = nextReleaseHash;
-  await page.locator('[data-text-lane="arcalive"]').click();
+  await page.locator('#source-switch [data-source="arcalive"]').click();
   await expect(page.locator("#result-status")).toContainText("2개 게시판");
   await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
   await page.locator("#result-list .result-item").first().click();
