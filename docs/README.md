@@ -31,6 +31,7 @@
 | [`13`](13_crawler_comparison_and_adoption.md) | crawler 선택 근거 |
 | [`15`](15_reader_navigation_refresh.md), [`19`](19_mobile_reader_redesign.md) | Reader 탐색과 모바일 구현 계약. 이동·Back 동작은 `19`가 우선 |
 | [`18`](18_text_archive_predeploy.md), [`20`](20_arcalive_media_archive.md) | 별도 텍스트 장서와 이미지 보관 계약 |
+| [`21`](21_frontend_enhancement_research.md) | Reader 고도화 제안: 외부 라이브러리 판정, 본문 찾기·회차 바코드·작품 안 KWIC 설계(미구현) |
 
 `00`과 `04`의 오래된 수치·계획 문단은 작성 당시 기록이다. 현재 배포 판정에는 위 날짜별
 체크포인트와 최신 검증 report를 사용한다. 공개 동작, schema, API, 설정, 권한이 바뀌면 해당 계약을
