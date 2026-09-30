@@ -1175,3 +1175,44 @@ test("Novel shelves: sort works into personal shelves, hide a shelf, and browse 
   await page.reload();
   await expect(page.locator('.shelf-edit[data-work-id="novel:toki:2"]')).toHaveText("비엘");
 });
+
+test("Backup v3 carries TypeMoon and text records, and 합쳐서 가져오기 merges them", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "첫 소설", chapters: 3 })] });
+  await page.addInitScript(() => {
+    if (localStorage.getItem("redstm.textState.v1")) return;
+    localStorage.setItem("redstm.textState.v1", JSON.stringify({ schema_version: 1, bookmarks: {},
+      history: { "novel:novel:toki:1:1-1": { readAt: "2026-09-01T00:00:00Z", progress: 1, workId: "novel:toki:1" } },
+      shelves: [{ id: "sbl", name: "BL", hidden: true }], workShelves: { "novel:toki:1": "sbl" } }));
+  });
+  await page.goto("/settings");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
+  const backup = JSON.parse(await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks).toString("utf8")));
+  expect(backup).toMatchObject({ format: "redstm-backup", schema_version: 3 });
+  expect(backup.typemoon.settings).toBeTruthy();
+  expect(backup.text.history["novel:novel:toki:1:1-1"].progress).toBe(1);
+  expect(backup.text.shelves).toEqual([{ id: "sbl", name: "BL", hidden: true }]);
+
+  const incoming = {
+    format: "redstm-backup", schema_version: 3, exported_at: "2026-09-20T00:00:00.000Z",
+    typemoon: { ...backup.typemoon, settings: { ...backup.typemoon.settings, theme: "dark" },
+      history: { "board_a:2": { readAt: "2026-09-20T00:00:00Z", progress: 0.5 } } },
+    text: { history: { "novel:novel:toki:1:1-2": { readAt: "2026-09-20T00:00:00Z", progress: 0.4 } }, bookmarks: {},
+      shelves: [{ id: "sdone", name: "완결 후 정주행", hidden: false }], workShelves: {} },
+  };
+  await page.locator("#import-state-file").setInputFiles({
+    name: "redstm-state.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(incoming)),
+  });
+  await expect(page.locator("#import-review-summary")).toContainText("분류 1");
+  await expect(page.locator("#import-merge")).toBeFocused();
+  await page.locator("#import-merge").click();
+  await expect(page.locator("#import-review-summary")).toHaveText("기록을 합쳐서 가져왔습니다");
+  const text = await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.textState.v1")));
+  expect(Object.keys(text.history).sort()).toEqual(["novel:novel:toki:1:1-1", "novel:novel:toki:1:1-2"]);
+  expect(text.shelves.map((shelf) => shelf.name)).toEqual(["BL", "완결 후 정주행"]);
+  expect(text.workShelves).toEqual({ "novel:toki:1": "sbl" });
+  const typemoon = await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")));
+  expect(typemoon.history["board_a:2"].progress).toBe(0.5);
+  // Merging keeps this browser's settings.
+  expect(typemoon.settings.theme).not.toBe("dark");
+});

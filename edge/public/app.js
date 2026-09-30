@@ -2,6 +2,8 @@ import {
   STATE_KEY,
   defaultUserState,
   exportUserState,
+  mergeTextStates,
+  mergeUserStates,
   migrateLegacyState,
   planImport,
   postIdentity,
@@ -85,7 +87,7 @@ const elements = Object.fromEntries(
     "reader-bottom-previous-label", "reader-bottom-next-label",
     "reader-more", "reader-more-context", "more-mark-read", "more-mark-read-label", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
     "more-mode", "more-mode-label", "more-mode-reset", "more-immersive", "more-immersive-label",
-    "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
+    "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-merge", "import-cancel",
     "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove",
   ].map((id) => [id, document.getElementById(id)]),
 );
@@ -4418,8 +4420,10 @@ function resetImportReview() {
   pendingImportPlan = null;
   elements["import-review"].hidden = true;
   elements["import-review"].removeAttribute("data-state");
-  elements["import-apply"].disabled = false;
-  elements["import-apply"].hidden = false;
+  for (const id of ["import-apply", "import-merge"]) {
+    elements[id].disabled = false;
+    elements[id].hidden = false;
+  }
   elements["import-cancel"].textContent = "취소";
   elements["import-state-file"].value = "";
 }
@@ -4438,47 +4442,59 @@ elements["import-state-file"].addEventListener("change", async () => {
     const summary = pendingImportPlan.summary;
     const defaulted = summary.defaultedSettings.length
       ? ` · 기본값 보정 ${summary.defaultedSettings.map((key) => settingLabels[key] ?? key).join(", ")}` : "";
+    const exported = Date.parse(summary.exportedAt ?? "");
     elements["import-review-summary"].textContent =
+      (Number.isFinite(exported) ? `${new Date(exported).toLocaleString("ko-KR")} 백업 · ` : "") +
       `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}` +
       (summary.textHistory === null ? " · 텍스트 기록 없음(현재 기록 유지)"
-        : ` · 텍스트 읽기 ${summary.textHistory} · 텍스트 저장 ${summary.textBookmarks}`) + defaulted;
+        : ` · 텍스트 읽기 ${summary.textHistory} · 텍스트 저장 ${summary.textBookmarks}`) +
+      (summary.shelves ? ` · 분류 ${summary.shelves}` : "") + defaulted;
     elements["import-review"].dataset.state = "ready";
     elements["import-review"].hidden = false;
-    elements["import-apply"].focus();
+    elements["import-merge"].focus();
   } catch (error) {
     pendingImportPlan = null;
     elements["import-review-summary"].textContent = error.message;
     elements["import-review"].dataset.state = "error";
     elements["import-review"].hidden = false;
     elements["import-apply"].disabled = true;
+    elements["import-merge"].disabled = true;
   } finally {
     elements["import-state-file"].value = "";
   }
 });
 elements["import-cancel"].addEventListener("click", resetImportReview);
-elements["import-apply"].addEventListener("click", async () => {
+// 덮어쓰기 replaces this browser's records and settings; 합쳐서 가져오기 keeps the newer record of
+// each post, unites saved items and shelves, and leaves the settings as they are.
+async function applyImport(merge) {
   if (!pendingImportPlan) return;
   elements["import-apply"].disabled = true;
+  elements["import-merge"].disabled = true;
   try {
-    applyUserState(pendingImportPlan.state);
     persistUserState();
-    if (pendingImportPlan.text) textLibrary.importState(pendingImportPlan.text);
+    applyUserState(merge ? mergeUserStates(userState, pendingImportPlan.state) : pendingImportPlan.state);
+    persistUserState();
+    if (pendingImportPlan.text) {
+      textLibrary.importState(merge ? mergeTextStates(textLibrary.exportState(), pendingImportPlan.text) : pendingImportPlan.text);
+    }
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
     pendingImportPlan = null;
-    elements["import-review-summary"].textContent = "사용자 상태를 가져왔습니다";
+    elements["import-review-summary"].textContent = merge ? "기록을 합쳐서 가져왔습니다" : "사용자 상태를 가져왔습니다";
     elements["import-review"].dataset.state = "success";
     elements["import-apply"].hidden = true;
+    elements["import-merge"].hidden = true;
     elements["import-cancel"].textContent = "닫기";
     elements["import-cancel"].focus();
   } catch (error) {
     pendingImportPlan = null;
     elements["import-review-summary"].textContent = error.message;
     elements["import-review"].dataset.state = "error";
-    elements["import-apply"].disabled = true;
   }
-});
+}
+elements["import-apply"].addEventListener("click", () => void applyImport(false));
+elements["import-merge"].addEventListener("click", () => void applyImport(true));
 
 document.addEventListener("keydown", (event) => {
   const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");

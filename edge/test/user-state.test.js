@@ -9,6 +9,8 @@ import {
   planImport,
   postIdentity,
   sanitizeBookmarkMetadata,
+  mergeTextStates,
+  mergeUserStates,
   samePost,
   serializeUserState,
 } from "../public/user-state.js";
@@ -64,7 +66,7 @@ test("migrates validated v1 gz and zst entries and drops object keys", () => {
   assert.equal(JSON.stringify(state).includes("object_key"), false);
 });
 
-test("exports only normalized v2 state", () => {
+test("exports a v3 backup with only normalized TypeMoon state", () => {
   const state = defaultUserState(defaults);
   state.history["write_free21:62068"] = {
     readAt: "2026-07-11T00:00:00Z", progress: 0.42, object_key: summary().object_key,
@@ -76,9 +78,14 @@ test("exports only normalized v2 state", () => {
   state.viewModes["write_free21:62068"] = "prose";
   state.lastCatalogState = { query: "달빛", scrollTop: 120, nested: { object_key: "forbidden" } };
 
-  const exported = exportUserState(state);
-  const payload = JSON.parse(exported);
-  assert.equal(payload.schema_version, 2);
+  const exported = exportUserState(state, null, { exportedAt: "2026-09-30T00:00:00.000Z" });
+  const backup = JSON.parse(exported);
+  assert.equal(backup.format, "redstm-backup");
+  assert.equal(backup.schema_version, 3);
+  assert.equal(backup.exported_at, "2026-09-30T00:00:00.000Z");
+  assert.equal(backup.text, undefined);
+  const payload = backup.typemoon;
+  assert.equal(payload.schema_version, undefined);
   assert.deepEqual(payload.history["write_free21:62068"], { readAt: "2026-07-11T00:00:00Z", progress: 0.42 });
   assert.deepEqual(payload.bookmarks["write_free21:62068"], {
     savedAt: "2026-07-11T01:00:00Z", note: "다시 볼 장면", tags: ["마술", "AA"],
@@ -117,7 +124,8 @@ test("plans v2 import with counts without applying it", () => {
   const plan = planImport(exportUserState(state), defaults);
   assert.deepEqual(plan.state, state);
   assert.deepEqual(plan.summary, {
-    history: 1, bookmarks: 1, scroll: 1, viewModes: 1, textHistory: null, textBookmarks: null, defaultedSettings: [],
+    history: 1, bookmarks: 1, scroll: 1, viewModes: 1, textHistory: null, textBookmarks: null, shelves: null,
+    exportedAt: plan.summary.exportedAt, defaultedSettings: [],
   });
   assert.equal(plan.text, null);
 });
@@ -145,6 +153,7 @@ test("backs up the text library's reading records and saved items", () => {
   };
   const state = defaultUserState(defaults);
   const payload = JSON.parse(exportUserState(state, text));
+  assert.equal(payload.schema_version, 3);
   assert.deepEqual(Object.keys(payload.text.history), ["novel:novel:1:12"]);
   assert.equal(payload.text.history["novel:novel:1:12"].listRoute, undefined);
   assert.equal(payload.text.history["novel:novel:1:12"].extra, undefined);
@@ -209,4 +218,50 @@ test("keeps each AA picture's zoom and sideways position, newest 300", () => {
   assert.deepEqual(plan.state.aaViews["aa_19:1304"], { left: 304, at: 404 });
   const small = planImport(exportUserState({ ...defaultUserState(defaults), aaViews: state.aaViews && { "aa_19:12": { zoom: 0.75, left: 120.4, at: 5 } } }), defaults);
   assert.deepEqual(small.state.aaViews, { "aa_19:12": { zoom: 0.75, left: 120, at: 5 } });
+});
+
+test("imports v2 files and merges a backup into this browser's records", () => {
+  const legacy = planImport(JSON.stringify({ ...defaultUserState(defaults), text: { history: {}, bookmarks: {} } }), defaults);
+  assert.deepEqual(legacy.text, { schema_version: 1, history: {}, bookmarks: {} });
+  assert.throws(() => planImport(JSON.stringify({ schema_version: 3, typemoon: {} }), defaults), /지원하지 않는/);
+
+  const mine = defaultUserState(defaults);
+  mine.settings.theme = "dark";
+  mine.history["aa_19:1"] = { readAt: "2026-09-01T00:00:00Z", progress: 1 };
+  mine.history["aa_19:2"] = { readAt: "2026-09-05T00:00:00Z", progress: 0.2 };
+  mine.scroll["aa_19:2"] = 50;
+  mine.bookmarks["aa_19:1"] = { savedAt: "2026-09-01T00:00:00Z", note: "내 메모" };
+  mine.viewModes["aa_19:1"] = "prose";
+  const theirs = defaultUserState(defaults);
+  theirs.history["aa_19:1"] = { readAt: "2026-09-10T00:00:00Z", progress: 0.3 };
+  theirs.history["aa_19:2"] = { readAt: "2026-09-02T00:00:00Z", progress: 0.9 };
+  theirs.history["aa_19:3"] = { readAt: "2026-09-03T00:00:00Z" };
+  theirs.scroll["aa_19:1"] = 700;
+  theirs.bookmarks["aa_19:3"] = { savedAt: "2026-09-03T00:00:00Z" };
+  theirs.viewModes["aa_19:1"] = "aa";
+  theirs.viewModes["aa_19:3"] = "aa";
+  const merged = mergeUserStates(mine, theirs);
+  assert.equal(merged.settings.theme, "dark");
+  // Newer record wins, furthest progress is kept.
+  assert.deepEqual(merged.history["aa_19:1"], { readAt: "2026-09-10T00:00:00Z", progress: 1 });
+  assert.equal(merged.scroll["aa_19:1"], 700);
+  assert.deepEqual(merged.history["aa_19:2"], { readAt: "2026-09-05T00:00:00Z", progress: 0.9 });
+  assert.equal(merged.scroll["aa_19:2"], 50);
+  assert.ok(merged.history["aa_19:3"]);
+  assert.deepEqual(Object.keys(merged.bookmarks).sort(), ["aa_19:1", "aa_19:3"]);
+  assert.equal(merged.bookmarks["aa_19:1"].note, "내 메모");
+  assert.deepEqual(merged.viewModes, { "aa_19:1": "prose", "aa_19:3": "aa" });
+
+  const hash = "c".repeat(64);
+  const text = mergeTextStates(
+    { history: { "novel:a:1": { readAt: "2026-09-01T00:00:00Z", progress: 0.5 } }, bookmarks: {},
+      shelves: [{ id: "sbl", name: "BL", hidden: true }], workShelves: { "novel:a": "sbl" } },
+    { history: { "novel:a:1": { readAt: "2026-08-01T00:00:00Z", progress: 1 }, "novel:a:2": { readAt: "2026-08-02T00:00:00Z" } },
+      bookmarks: { "novel:a:2": { savedAt: "2026-08-02T00:00:00Z", lane: "novel", entry: { sha256: hash } } },
+      shelves: [{ id: "sx", name: "bl" }, { id: "sy", name: "완결" }], workShelves: { "novel:b": "sx", "novel:c": "sy" } },
+  );
+  assert.deepEqual(text.history["novel:a:1"], { readAt: "2026-09-01T00:00:00Z", progress: 1 });
+  assert.ok(text.history["novel:a:2"] && text.bookmarks["novel:a:2"]);
+  assert.deepEqual(text.shelves.map((shelf) => shelf.name), ["BL", "완결"]);
+  assert.deepEqual(text.workShelves, { "novel:a": "sbl", "novel:b": "sbl", "novel:c": "sy" });
 });

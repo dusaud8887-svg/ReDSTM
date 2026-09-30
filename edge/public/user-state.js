@@ -1,4 +1,4 @@
-import { sanitizeShelfState } from "./text-shelves.js";
+import { mergeShelfState, sanitizeShelfState } from "./text-shelves.js";
 
 export const STATE_KEY = "redstm.userState.v2";
 
@@ -256,12 +256,71 @@ export function sanitizeTextState(value) {
   return { schema_version: 1, history, bookmarks, ...(Array.isArray(source.shelves) ? sanitizeShelfState(source) : {}) };
 }
 
-// The backup file people download: normalized and indented for reading. The text library's
-// state rides along when given.
-export function exportUserState(state, textState = null) {
-  const normalized = normalizeV2State(state, state?.settings);
-  if (textState) normalized.text = sanitizeTextState(textState);
-  return `${JSON.stringify(normalized, null, 2)}\n`;
+export const BACKUP_FORMAT = "redstm-backup";
+
+// The backup file people download (schema 3): the TypeMoon reading state and the text library's
+// state (history, bookmarks, shelves) as separate sections, normalized and indented for reading.
+export function exportUserState(state, textState = null, { exportedAt = new Date().toISOString() } = {}) {
+  const { schema_version: _version, ...typemoon } = normalizeV2State(state, state?.settings);
+  return `${JSON.stringify({
+    format: BACKUP_FORMAT,
+    schema_version: 3,
+    exported_at: exportedAt,
+    typemoon,
+    ...(textState ? { text: sanitizeTextState(textState) } : {}),
+  }, null, 2)}\n`;
+}
+
+function newer(left, right, key) {
+  return String(right?.[key] ?? "") > String(left?.[key] ?? "");
+}
+
+// 합쳐서 가져오기: each post keeps its most recent reading record (and the furthest progress),
+// saved posts and view choices are united, and this browser's settings stay.
+export function mergeUserStates(current, incoming) {
+  const merged = normalizeV2State(current, current?.settings);
+  const other = normalizeV2State(incoming, current?.settings);
+  for (const [identity, record] of Object.entries(other.history)) {
+    const mine = merged.history[identity];
+    const progress = Math.max(mine?.progress ?? 0, record.progress ?? 0);
+    if (!mine || newer(mine, record, "readAt")) {
+      merged.history[identity] = { ...record };
+      if (other.scroll[identity] !== undefined) merged.scroll[identity] = other.scroll[identity];
+    }
+    if (progress > 0) merged.history[identity].progress = progress;
+  }
+  for (const [identity, saved] of Object.entries(other.bookmarks)) {
+    if (!merged.bookmarks[identity] || newer(merged.bookmarks[identity], saved, "savedAt")) merged.bookmarks[identity] = saved;
+  }
+  merged.viewModes = { ...other.viewModes, ...merged.viewModes };
+  for (const [identity, view] of Object.entries(other.aaViews)) {
+    if (!merged.aaViews[identity] || (view.at ?? 0) > (merged.aaViews[identity].at ?? 0)) merged.aaViews[identity] = view;
+  }
+  return normalizeV2State(merged, current?.settings);
+}
+
+// The same for the text library; shelves with the same name become one.
+export function mergeTextStates(current, incoming) {
+  const merged = sanitizeTextState(current);
+  const other = sanitizeTextState(incoming);
+  for (const [identity, record] of Object.entries(other.history)) {
+    const mine = merged.history[identity];
+    const progress = Math.max(mine?.progress ?? 0, record.progress ?? 0);
+    if (!mine || newer(mine, record, "readAt")) merged.history[identity] = { ...record };
+    if (progress > 0) merged.history[identity].progress = progress;
+  }
+  for (const [identity, saved] of Object.entries(other.bookmarks)) {
+    if (!merged.bookmarks[identity] || newer(merged.bookmarks[identity], saved, "savedAt")) merged.bookmarks[identity] = saved;
+  }
+  if (Array.isArray(other.shelves)) {
+    const shelves = mergeShelfState(
+      { shelves: merged.shelves ?? [], workShelves: merged.workShelves ?? {} },
+      { shelves: other.shelves, workShelves: other.workShelves },
+    );
+    merged.shelves = shelves.shelves;
+    merged.workShelves = shelves.workShelves;
+  }
+  return merged;
 }
 
 // The localStorage copy: the same normalized state without indentation. It is rewritten on
@@ -272,7 +331,7 @@ export function serializeUserState(state) {
 
 export function planImport(text, defaultSettings = {}) {
   const payload = JSON.parse(text);
-  const suppliedSettings = sanitizeSettings(payload?.settings);
+  const suppliedSettings = sanitizeSettings(payload?.schema_version === 3 ? payload?.typemoon?.settings : payload?.settings);
   const defaultedSettings = Object.keys(sanitizeSettings(defaultSettings))
     .filter((key) => !(key in suppliedSettings));
   let state;
@@ -280,12 +339,14 @@ export function planImport(text, defaultSettings = {}) {
     state = migrateLegacyState(payload, defaultSettings);
   } else if (payload?.schema_version === 2) {
     state = normalizeV2State(payload, defaultSettings);
+  } else if (payload?.schema_version === 3 && payload.format === BACKUP_FORMAT && isRecord(payload.typemoon)) {
+    state = normalizeV2State({ ...payload.typemoon, schema_version: 2 }, defaultSettings);
   } else {
     throw new Error("지원하지 않는 상태 파일 형식");
   }
   // Files exported before the text library existed have no `text`; importing them keeps the
   // text reading records already in this browser.
-  const textState = payload?.schema_version === 2 && isRecord(payload.text) ? sanitizeTextState(payload.text) : null;
+  const textState = payload?.schema_version >= 2 && isRecord(payload.text) ? sanitizeTextState(payload.text) : null;
   return {
     state,
     text: textState,
@@ -296,6 +357,8 @@ export function planImport(text, defaultSettings = {}) {
       viewModes: Object.keys(state.viewModes).length,
       textHistory: textState ? Object.keys(textState.history).length : null,
       textBookmarks: textState ? Object.keys(textState.bookmarks).length : null,
+      shelves: textState?.shelves ? textState.shelves.length : null,
+      exportedAt: payload?.schema_version === 3 && typeof payload.exported_at === "string" ? payload.exported_at : null,
       defaultedSettings,
     },
   };
