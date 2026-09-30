@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="700" viewBox="0 0 390 700" font-family="SUIT, 'Malgun Gothic', sans-serif">
+<rect width="390" height="700" fill="#FBFAF8"/>
+<rect width="390" height="52" fill="#FBFAF8"/><line x1="0" y1="52" x2="390" y2="52" stroke="#E7E9EE"/>
+<text x="16" y="32" font-size="15" fill="#D12A3A">‹ 목록</text><text x="195" y="32" font-size="14" fill="#4B5565" text-anchor="middle">작품명 42/180 · 37%</text>
+<g font-family="MaruBuri, 'Nanum Myeongjo', serif" font-size="17" fill="#15171A">
+<text x="20" y="100">문을 열자 바람이 먼저 들어왔다.</text>
+<rect x="76" y="119" width="52" height="21" fill="#FFF1F2" fill-opacity=".55"/>
+<text x="20" y="134">그 뒤로 세이버가 조용히 걸어 들어왔다.</text>
+<line x1="76" y1="139" x2="128" y2="139" stroke="#D12A3A" stroke-width="2"/>
+<text x="20" y="168">"늦었네." 짧은 말이었다.</text>
+<text x="20" y="202">창밖으로 등불이 하나씩 꺼져 갔다.</text>
+<rect x="76" y="221" width="52" height="21" fill="#FFF1F2" fill-opacity=".55"/>
+<text x="20" y="236">누군가 세이버의 이름을 불렀다.</text>
+</g>
+<text x="20" y="286" font-size="12" fill="#7C8798">현재 적중 = 2px 밑줄 · 나머지 = 옅은 면 (Highlight API)</text>
+<rect x="0" y="540" width="390" height="160" fill="#FFFFFF" fill-opacity=".86"/>
+<line x1="0" y1="540" x2="390" y2="540" stroke="#E7E9EE"/>
+<rect x="16" y="552" width="230" height="36" rx="10" fill="#F7F8FA" stroke="#CDD2DA"/>
+<text x="28" y="575" font-size="14" fill="#15171A">세이버</text>
+<text x="210" y="575" font-size="12" fill="#4B5565" text-anchor="end">6/10</text>
+<text x="266" y="576" font-size="18" fill="#15171A">‹</text><text x="300" y="576" font-size="18" fill="#15171A">›</text><text x="340" y="576" font-size="16" fill="#4B5565">✕</text>
+<line x1="40" y1="606" x2="350" y2="606" stroke="#CDD2DA" stroke-width="2"/>
+<line x1="40" y1="606" x2="154.7" y2="606" stroke="#15171A" stroke-width="2"/>
+<rect x="63.8" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="73.1" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="76.2" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="132.0" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="135.1" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="200.2" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="1"/><rect x="203.3" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="206.4" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="259.1" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/><rect x="327.3" y="600" width="2" height="12" fill="#D12A3A" fill-opacity="0.45"/>
+<circle cx="154.7" cy="606" r="7" fill="#FFFFFF" stroke="#15171A" stroke-width="2"/>
+<text x="40" y="634" font-size="11" fill="#4B5565">읽은 위치 37% · 빨간 눈금 = 검색어 위치(MicroSearch)</text>
+<text x="16" y="672" font-size="11" fill="#7C8798">떠 있는 도구줄: 반투명 흰 면 + blur(미지원·투명도 감소 설정이면 불투명)</text>
+</svg>

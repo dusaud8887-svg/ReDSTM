@@ -2,6 +2,7 @@
 
 - 상태: 조사(미구현). 채택은 항목별 사용자 승인 뒤 해당 계약 문서와 `THIRD_PARTY_NOTICES`를 같은 변경에서 갱신한다.
 - 작성: 2026-09-30
+- 종합: 항목별 최종 판정·실측·디자인 목업은 [`23`](23_frontend_research_register.md)의 결정 레지스터가 우선한다.
 - 관계: [`21`](21_frontend_enhancement_research.md)이 사용자가 든 예시 라이브러리를 판정했다면, 이 문서는
   **프로젝트 성격에서 출발해** 후보를 넓게 찾는다. `21 §9`의 결론(외부 CDN 금지·접근성 규칙만 유지,
   framework 없이 vanilla 라이브러리는 vendoring으로 자유롭게)을 전제로 한다.
@@ -32,6 +33,16 @@
    `app.js`의 `subjectParticle()` 같은 수작업 조사 처리를 대체할 수 있다.
 5. **Kiwi**(한국어 형태소 분석기)는 Python(`kiwipiepy`)과 npm(`kiwi-nlp`, WASM) 둘 다 있다. Oracle의 Python
    publisher에서 쓰는 것이 자연스럽다.
+6. **실측(2026-09-30, fontTools)**: Saitamaar는 upm 1280에서 반각 공백 0.3125em·전각 공백 0.6875em·`あ` 0.9375em·`|`
+   0.25em로 MS PGothic 12pt(16px) AA 격자(5px/11px/15px/4px)를 재현한다. **googlefonts/gulim 저장소의 굴림·돋움은 OFL 1.1**
+   이며 한글 11,172자 모두 advance 1.0em(16px에서 16px)이다. 굴림 한글만 WOFF2로 뽑으면 **125,588 bytes**(전체 WOFF2는 1.9MB).
+   다만 이 container의 fallback(WenQuanYi)도 한글이 1.0em이라, 정렬 차이는 **1em이 아닌 한글 글꼴**(기기 기본 글꼴 일부)에서만
+   생긴다. 어느 기기가 해당하는지는 추측하지 말고 §10 RUM에서 `measureText("가")`로 수집한다.
+7. **실측**: Saitamaar TTF 2,015,748 bytes → 무손실 WOFF2 **407,204 bytes(−80%)**. gzip-9 전송(592,399 bytes)보다도 작다.
+8. **실측**: SUIT Variable은 한글 **2,668자**(KS X 1001 2,350자 + 일부)만 담는다. 드문 음절(예: `뜌`, `쉪`, `펲`)은 제목·UI에서
+   시스템 글꼴로 섞여 그려진다. MaruBuri는 한글 11,172자 전부지만 가나·한자는 0자라 본문의 일본어·한자는 시스템 글꼴로 fallback한다.
+9. **실측**: 현재 UI JS는 minify만 해도 `app.js` gzip 51,829 → 33,384 bytes, `text-library.js` 22,735 → 15,047 bytes(약 −35%).
+   후보 라이브러리의 min+gzip 크기는 [`23` 부록 A](23_frontend_research_register.md#부록-a-실측-크기)에 있다.
 
 ## 2. 한국어 처리
 
@@ -52,7 +63,7 @@
 |---|---|---|
 | **굴림(OFL) 한글 fallback** | `@font-face { font-family: "AA Hangul"; unicode-range: U+1100-11FF, U+3130-318F, U+AC00-D7A3; }`를 Saitamaar **뒤**에 둔다. 일본어·기호는 Saitamaar 그대로, 한글만 굴림 폭으로 | **adopt 후보 1순위, 검증 먼저**: 한글 대사가 있는 실제 AA 20건을 굴림/돋움/맑은 고딕/현행으로 렌더해 비교. 이 fallback은 한글만 담당하므로 "AA는 subset 금지" 규칙(원 글꼴 자르기)과 충돌하지 않는다. 크기 측정 필요 |
 | Textar (IPA 글꼴 라이선스), 모나 폰트 | MS PGothic 호환 일본어 AA 글꼴. AA 설정의 `서체` 선택지 | conditional: Saitamaar로 깨지는 AA가 보고될 때 |
-| Saitamaar WOFF2 재포장 | 1.97MB TTF 전송량 감소(무손실) | adopt (실측 후) |
+| Saitamaar WOFF2 재포장 | 2.0MB TTF → 407KB WOFF2(실측 −80%, 무손실) | **adopt P1**. AA screenshot/DOM 대조 재통과 조건 |
 | modern-screenshot / html-to-image (MIT) | **AA를 PNG로 저장·공유**(원 배경·색 그대로) | adopt P2. 없으면 `canvas` 직접 렌더도 가능 |
 | `canvas.measureText` | AA 실제 폭 측정 → `맞춤` 배율을 글꼴 로드 후 정확히 계산 | adopt (소형) |
 | string-width, ansi 계열 | — | reject(비례폭 AA와 무관, `21` 참고) |
@@ -95,7 +106,7 @@
 
 | 후보 | 용도 | 판정 |
 |---|---|---|
-| **idb / idb-keyval** (Jake Archibald, 1KB 안팎) | 읽기 기록·책장·메모를 IndexedDB로 이전. localStorage는 설정만 | adopt P1 |
+| **idb / idb-keyval** (Jake Archibald, idb-keyval min+gzip 748B 실측) | 읽기 기록·책장·메모를 IndexedDB로 이전. localStorage는 설정만 | adopt P1 |
 | `navigator.storage.persist()` | 브라우저가 저장소를 임의로 지우지 않게 요청 | adopt |
 | Service Worker(직접 작성 또는 Workbox) + Background Fetch | **작품 단위 오프라인 저장**(선택한 작품만) | conditional P2 (`09 §6` 조건과 동일) |
 | Worker + D1 **기기 간 동기화** | 이미 있는 v3 백업 병합 규칙을 서버 쪽 LWW(마지막 수정 우선) per-key로. 휴대폰↔PC 이어 읽기 자동화 | adopt P2. D1 쓰임새 확장이므로 `00`/`08` 계약 개정 필요 |
@@ -106,7 +117,7 @@
 | 후보 | 용도 | 판정 |
 |---|---|---|
 | 자체 SVG (수십 줄) | 회차 바코드, 분포 띠(`21 §4`), **독서 캘린더 heatmap**(내가 언제 얼마나 읽었나) | adopt |
-| **uPlot** (MIT, 약 50KB, 빠름) | `/ops`의 디스크·실행 시간·수집량 시계열 | adopt P2 |
+| **uPlot** (MIT, min+gzip 23KB 실측, 빠름) | `/ops`의 디스크·실행 시간·수집량 시계열 | adopt P2 |
 | Observable Plot | 탐색적 통계 화면(게시판별 연대기, 작가별 분포) | conditional P3 (d3 포함이라 무거움, 별도 페이지에서만) |
 | DuckDB-WASM + R2의 Parquet | 브라우저 SQL로 아카이브 통계 | conditional P3 (수 MB, 호기심용) |
 | **Datasette** (Python) | 소유자가 로컬에서 canonical SQLite를 즉시 탐색·질의 | adopt (로컬 도구, 배포 없음). 현재 Python 스택과 동일 |
@@ -151,7 +162,7 @@
 
 | 후보 | 용도 | 판정 |
 |---|---|---|
-| cronstrue (ko 로캘) | cron을 "6시간마다"처럼 한국어로 표시 | adopt (소형) |
+| cronstrue (ko 로캘) | cron을 "6시간마다"처럼 한국어로 표시 | **reject**: i18n 포함 min+gzip 34KB(실측). 현재 schedule 몇 개는 20줄 formatter로 충분 |
 | `Intl.RelativeTimeFormat`, `Intl.DurationFormat` | "3분 전", "1시간 12분" | adopt (native) |
 
 ## 14. 우선순위

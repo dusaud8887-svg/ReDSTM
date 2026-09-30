@@ -2,6 +2,7 @@
 
 - 상태: 제안(미구현). 채택은 phase별 사용자 승인 뒤 `DESIGN.md`·`09`·`19`를 같은 변경에서 갱신한다.
 - 작성: 2026-09-30
+- 종합: 항목별 최종 판정·실측·디자인 목업은 [`23`](23_frontend_research_register.md)의 결정 레지스터가 우선한다.
 - 범위: `edge/public`의 Reader(TypeMoon·텍스트 장서)와 일부 `/ops`
 - 근거: 코드(`app.js` 4,571줄, `text-library.js` 1,924줄 등), `DESIGN.md §12`, `09 §6`, `19`,
   로컬 E2E 324건 통과 후 1440/768/390/320px fixture screenshot 검토
@@ -307,7 +308,7 @@ edge/e2e/
 
 | 후보 | §3 판정 | 재판정 | 이유 |
 |---|---|---|---|
-| **Motion** (vanilla `animate`, `scroll`, `inView`) | native | **adopt** | spring·interrupt 가능한 전환, scroll 연동 진행선, 숫자 변화 등을 WAAPI 직접 작성보다 짧고 안정적으로. React 불필요. 번들된 ESM 한 파일 vendoring |
+| **Motion** (vanilla `animate`, `scroll`, `inView`) | native | **adopt (`motion/mini` 우선)** | spring·interrupt 가능한 전환, scroll 연동 진행선, 숫자 변화. 실측 min+gzip: `motion/mini`의 `animate` 3.9KB, `scroll` 3.6KB, `animate+scroll+inView` 22.8KB → 필요한 진입점만 vendoring |
 | **AutoAnimate** | native | **adopt** | `autoAnimate(list)` 한 줄로 책장·저장함·필터 chip·댓글 펼침에 add/remove/reorder 전환. 약 2KB. View Transition보다 적용 비용이 낮음. 1,000행 이상 목록에는 끔 |
 | **Floating UI** | conditional | **adopt** | 메모 popover 외에도 tooltip·바코드 hover·AA 도구 popover 위치를 일관되게 |
 | **MiniSearch** | conditional | **adopt (텍스트 장서)** | 작품·작가·저장 메모·태그 검색에 prefix·오타 허용·필드 가중치. 한국어는 bigram tokenizer를 넣는다. TypeMoon 330k 제목 검색은 현행 substring 유지 |
