@@ -1707,3 +1707,50 @@ def test_budget_preflight_enforces_byte_and_object_boundaries(
             preflight()
     else:
         preflight()
+
+
+def test_static_garbage_keeps_referenced_and_recent_objects(tmp_path: Path) -> None:
+    import os
+
+    from scripts.publish_static import collect_static_garbage
+
+    _old_key, _old_body, old_objects = _graph_release(tmp_path, "a")
+    new_key, _new_body, new_objects = _graph_release(tmp_path, "b")
+    stray = tmp_path / "search" / "title-author-v2-old.json.zst"
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(b"old search")
+    fresh = tmp_path / "search" / "title-author-v2-fresh.json.zst"
+    fresh.write_bytes(b"fresh search")
+    now = 1_900_000_000.0
+    for key in old_objects:
+        os.utime(tmp_path / key, (now - 30 * 86400, now - 30 * 86400))
+    for key in new_objects:
+        os.utime(tmp_path / key, (now - 20 * 86400, now - 20 * 86400))
+    os.utime(stray, (now - 30 * 86400, now - 30 * 86400))
+    os.utime(fresh, (now - 86400, now - 86400))
+    deleted: list[str] = []
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        assert command[1] == "delete"
+        deleted.extend(Path(command[command.index("--files-from") + 1]).read_text().split())
+        return SimpleNamespace(stdout=b"")
+
+    report = collect_static_garbage(
+        tmp_path, "r2:redstm-archive", runner=run, now=now, keep_releases=1
+    )
+
+    assert report["status"] == "collected"
+    assert sorted(deleted) == sorted([*old_objects, "search/title-author-v2-old.json.zst"])
+    assert all(not (tmp_path / key).exists() for key in old_objects)
+    assert all((tmp_path / key).exists() for key in new_objects)
+    assert fresh.exists() and (tmp_path / new_key).exists()
+
+    again = collect_static_garbage(
+        tmp_path, "r2:redstm-archive", runner=run, now=now, keep_releases=1
+    )
+    assert again["status"] == "clean"
+    (tmp_path / ".publish-smoke.pending.json").write_text("{}")
+    assert (
+        collect_static_garbage(tmp_path, "r2:redstm-archive", runner=run, now=now)["status"]
+        == "skipped"
+    )

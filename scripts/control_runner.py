@@ -38,6 +38,9 @@ from scripts.control_client import (
     DeliveryResult,
 )
 from scripts.control_store import ControlStore, OutboxFullError
+from scripts.publish_static import collect_static_garbage
+from scripts.retention import prune_reports, prune_warc
+from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, warc_budget_bytes
 
 _RUN_KINDS = {
     "sync-now": "manual-sync",
@@ -102,6 +105,10 @@ _LIVE_INVENTORY = "inventory.live"
 _FULL_CONTENT_STARTED = "full-content.started"
 _CURRENT_RUN_PAUSED = "current-run.paused"
 _KILLED_BATCH_RETRIES = 2
+_DEFAULT_WARC_KEEP_DAYS = 60
+_DEFAULT_REPORT_KEEP_DAYS = 90
+_MAINTENANCE_INTERVAL_SECONDS = 24 * 60 * 60
+_MAINTENANCE_MARKER = "maintenance.last"
 _KILLED_BATCH_BACKOFF_SECONDS = 60
 # The legacy import is the baseline catalog. Source boards added after that snapshot are
 # registered explicitly once a baseline-only board proves this is a TypeMoon archive.
@@ -260,6 +267,9 @@ class RunnerProfile:
     token_expires_at: datetime | None = None
     token_expiring_seconds: int = _DEFAULT_TOKEN_EXPIRING_SECONDS
     publish_stale_seconds: int = _DEFAULT_PUBLISH_STALE_SECONDS
+    warc_keep_days: int = _DEFAULT_WARC_KEEP_DAYS
+    warc_max_bytes: int | None = None
+    report_keep_days: int = _DEFAULT_REPORT_KEEP_DAYS
 
 
 class ControlRunner:
@@ -299,10 +309,68 @@ class ControlRunner:
         )
 
     def _disk_stop_reached(self) -> bool:
-        return bool(
-            self.profile.disk_stop_bytes
-            and shutil.disk_usage(self.profile.state_dir).free < self.profile.disk_stop_bytes
+        def below() -> bool:
+            return bool(
+                self.profile.disk_stop_bytes
+                and shutil.disk_usage(self.profile.state_dir).free < self.profile.disk_stop_bytes
+            )
+
+        if not below():
+            return False
+        # Old captures and reports are the first thing to give back before stopping a crawl.
+        self._prune_local_files()
+        return below()
+
+    def _prune_local_files(self) -> dict[str, int]:
+        total = shutil.disk_usage(self.profile.state_dir).total
+        warc = prune_warc(
+            self.profile.warc_dir,
+            keep_days=self.profile.warc_keep_days,
+            max_bytes=self.profile.warc_max_bytes or warc_budget_bytes(total),
         )
+        reports = prune_reports(self.profile.report_dir, keep_days=self.profile.report_keep_days)
+        return {
+            "warc_files": warc.files,
+            "warc_bytes": warc.bytes,
+            "report_files": reports.files,
+            "report_bytes": reports.bytes,
+        }
+
+    def _maintain_storage(self, *, force: bool = False) -> dict[str, Any] | None:
+        """Daily retention after a scheduled run: WARC/report pruning and static/R2 garbage.
+
+        Cleanup never fails the run; its last result is kept in reports/maintenance.json.
+        """
+        marker = self.profile.state_dir / _MAINTENANCE_MARKER
+        try:
+            if (
+                not force
+                and marker.is_file()
+                and time.time() - marker.stat().st_mtime < _MAINTENANCE_INTERVAL_SECONDS
+            ):
+                return None
+        except OSError:
+            pass
+        result: dict[str, Any] = {"at": _timestamp()}
+        try:
+            result["local"] = self._prune_local_files()
+        except OSError as error:
+            result["local"] = {"error": type(error).__name__}
+        try:
+            if (self.profile.static_root / "release.json").is_file():
+                result["static"] = collect_static_garbage(
+                    self.profile.static_root, self.profile.remote
+                )
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            result["static"] = {"status": "failed", "error": type(error).__name__}
+        try:
+            marker.write_text(f"{result['at']}\n", encoding="utf-8")
+            (self.profile.report_dir / "maintenance.json").write_text(
+                json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        except OSError:
+            pass
+        return result
 
     def run_once(self) -> dict[str, Any]:
         lock = FileLock(self.profile.state_dir / "control.lock", timeout=0)
@@ -422,6 +490,8 @@ class ControlRunner:
             )
             sequence += 1
         self._archive_snapshot_event(run_id, sequence)
+        if not paused:
+            self._maintain_storage()
         finish_code = (
             "schedule_paused" if intentional_pause else terminal_safe_code or f"scheduled_{state}"
         )
@@ -2614,12 +2684,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--disk-low-bytes",
         type=_nonnegative_integer,
-        default=os.environ.get("REDSTM_DISK_LOW_BYTES", str(_DEFAULT_DISK_LOW_BYTES)),
+        default=os.environ.get("REDSTM_DISK_LOW_BYTES"),
     )
     parser.add_argument(
         "--disk-stop-bytes",
         type=_nonnegative_integer,
-        default=os.environ.get("REDSTM_DISK_STOP_BYTES", str(_DEFAULT_DISK_STOP_BYTES)),
+        default=os.environ.get("REDSTM_DISK_STOP_BYTES"),
     )
     parser.add_argument(
         "--control-rejection-warning-seconds",
@@ -2651,6 +2721,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    state_dir = args.state_dir.expanduser().resolve()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    disk_total = shutil.disk_usage(state_dir).total
     profile = RunnerProfile(
         state_db=args.state_db.expanduser().resolve(),
         state_dir=args.state_dir.expanduser().resolve(),
@@ -2662,8 +2735,22 @@ def main() -> int:
         remote=args.remote,
         runner_id=args.runner_id,
         runner_version=args.runner_version,
-        disk_low_bytes=args.disk_low_bytes,
-        disk_stop_bytes=args.disk_stop_bytes,
+        # Unset thresholds scale with the volume (scripts/storage_policy.py).
+        disk_low_bytes=(
+            args.disk_low_bytes if args.disk_low_bytes is not None else disk_low_bytes(disk_total)
+        ),
+        disk_stop_bytes=(
+            args.disk_stop_bytes
+            if args.disk_stop_bytes is not None
+            else disk_stop_bytes(disk_total)
+        ),
+        warc_keep_days=int(os.environ.get("REDSTM_WARC_KEEP_DAYS", _DEFAULT_WARC_KEEP_DAYS)),
+        warc_max_bytes=(
+            int(os.environ["REDSTM_WARC_MAX_BYTES"])
+            if os.environ.get("REDSTM_WARC_MAX_BYTES")
+            else None
+        ),
+        report_keep_days=int(os.environ.get("REDSTM_REPORT_KEEP_DAYS", _DEFAULT_REPORT_KEEP_DAYS)),
         control_rejection_warning_seconds=args.control_rejection_warning_seconds,
         token_expires_at=args.token_expires_at,
         token_expiring_seconds=args.token_expiring_seconds,

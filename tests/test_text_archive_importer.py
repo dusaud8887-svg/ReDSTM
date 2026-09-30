@@ -776,7 +776,9 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     meminfo.write_text("MemAvailable: 300000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3000000 kB\n")
     status = _process_status(tmp_path)
     monkeypatch.setattr(
-        runtime.shutil, "disk_usage", lambda _path: SimpleNamespace(free=41 * 1024**3)
+        runtime.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=200 * 1024**3, free=41 * 1024**3),
     )
 
     def inactive(_command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -834,7 +836,11 @@ def test_operation_window_defers_below_resource_floors(
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(meminfo_text)
     status = _process_status(tmp_path)
-    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _path: SimpleNamespace(free=disk_free))
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=200 * 1024**3, free=disk_free),
+    )
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
@@ -866,7 +872,11 @@ def test_operation_window_leaves_typemoon_its_measured_headroom(
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 400000 kB\n")
     status = _process_status(tmp_path)
-    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
@@ -910,7 +920,11 @@ def test_heavy_text_operations_run_one_at_a_time(
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 800000 kB\n")
     status = _process_status(tmp_path)
-    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
@@ -943,7 +957,11 @@ def test_operation_window_defers_only_for_typemoon_publish(
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n")
     status = _process_status(tmp_path)
-    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)

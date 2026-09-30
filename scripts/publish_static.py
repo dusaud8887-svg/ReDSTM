@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from compression import zstd
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -1130,6 +1131,136 @@ def _publish_static_locked(
         "mode": mode,
         "previous_release_key": previous_release_key,
         "previous_release_verified": previous_release_key is not None,
+    }
+
+
+# Retention for the content-addressed tree: every publish writes new aggregate objects (search,
+# board manifests, collection shards, the release) and new post versions, and nothing removed the
+# superseded ones, so local disk and R2 grew toward the 20 GB / 800k object stop. Objects that no
+# kept release references and that are older than the grace period are removed from R2 first and
+# then locally; a later release needing one again uploads it again (the delta plan checks R2).
+_GC_KEEP_RELEASES = 5
+_GC_GRACE_SECONDS = 7 * 24 * 60 * 60
+_GC_PREFIXES = ("posts", "boards", "search", "collections", "releases")
+
+
+def collect_static_garbage(
+    root: Path,
+    remote: str,
+    *,
+    runner: Any = subprocess.run,
+    now: float | None = None,
+    keep_releases: int = _GC_KEEP_RELEASES,
+    grace_seconds: int = _GC_GRACE_SECONDS,
+) -> dict[str, Any]:
+    resolved = root.expanduser().resolve(strict=True)
+    try:
+        with FileLock(str(resolved / ".publish.lock"), timeout=_PUBLISH_LOCK_WAIT_SECONDS):
+            return _collect_static_garbage_locked(
+                resolved,
+                remote,
+                runner=runner,
+                now=time.time() if now is None else now,
+                keep_releases=keep_releases,
+                grace_seconds=grace_seconds,
+            )
+    except Timeout as error:
+        raise RuntimeError("another static publish or activation is active") from error
+
+
+def _collect_static_garbage_locked(
+    root: Path,
+    remote: str,
+    *,
+    runner: Any,
+    now: float,
+    keep_releases: int,
+    grace_seconds: int,
+) -> dict[str, Any]:
+    if _pending_smoke_path(root).exists() or _pending_ledger_path(root).exists():
+        return {"status": "skipped", "reason": "publish_pending"}
+    target = _remote_target(remote, runner)
+    cutoff = now - grace_seconds
+    kept_releases = {_current_release(root)}
+    ledger = _read_ledger_state(root, target)
+    if ledger is not None:
+        kept_releases.add(str(ledger["release_key"]))
+        if ledger.get("previous_release_key"):
+            kept_releases.add(str(ledger["previous_release_key"]))
+    releases = sorted(
+        (root / "releases").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True
+    )
+    for index, path in enumerate(releases):
+        if index < keep_releases or path.stat().st_mtime >= cutoff:
+            kept_releases.add(f"releases/{path.name}")
+    keep: set[str] = set()
+    for key in kept_releases:
+        path = root / key
+        if not path.is_file():
+            continue
+        try:
+            keep |= _release_objects(root, path.read_bytes())
+        except (OSError, ValueError) as error:
+            # Never delete on a partial view of what is referenced.
+            return {"status": "skipped", "reason": f"release_unreadable:{type(error).__name__}"}
+    garbage: list[tuple[str, int]] = []
+    for prefix in _GC_PREFIXES:
+        base = root / prefix
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.name.endswith(".partial"):
+                continue
+            key = path.relative_to(root).as_posix()
+            stat = path.stat()
+            if key not in keep and stat.st_mtime < cutoff:
+                garbage.append((key, stat.st_size))
+    if not garbage:
+        return {"status": "clean", "kept_releases": len(kept_releases), "deleted": 0, "bytes": 0}
+    with TemporaryDirectory(prefix="redstm-static-gc-") as temporary:
+        files = Path(temporary) / "files.txt"
+        files.write_text("\n".join(key for key, _ in garbage) + "\n", encoding="utf-8")
+        runner(
+            [
+                "rclone",
+                "delete",
+                target,
+                "--files-from",
+                str(files),
+                "--no-traverse",
+                "--retries",
+                "2",
+                "--stats",
+                "0",
+                "--log-level",
+                "ERROR",
+            ],
+            check=True,
+        )
+    for key, _ in garbage:
+        (root / key).unlink(missing_ok=True)
+    for prefix in _GC_PREFIXES:
+        base = root / prefix
+        if base.is_dir():
+            for directory in sorted(
+                base.rglob("*"), key=lambda item: len(item.parts), reverse=True
+            ):
+                if directory.is_dir() and not any(directory.iterdir()):
+                    directory.rmdir()
+    if ledger is not None:
+        remote_bytes, remote_objects = _remote_size(target, runner)
+        _write_ledger(
+            root,
+            target,
+            str(ledger["release_key"]),
+            {"projected_remote_bytes": remote_bytes, "projected_remote_objects": remote_objects},
+            previous_release_key=ledger.get("previous_release_key"),
+        )
+    return {
+        "status": "collected",
+        "kept_releases": len(kept_releases),
+        "deleted": len(garbage),
+        "bytes": sum(size for _, size in garbage),
     }
 
 

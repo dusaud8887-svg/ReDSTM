@@ -4,9 +4,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import closing
 from datetime import UTC, datetime
@@ -848,6 +850,55 @@ def _finalize_receipts(db_path: Path, receipts_root: Path) -> None:
         db.close()
 
 
+# Every publish with changed novels writes a new paged snapshot; the PC only needs the current
+# one (and may still be reading the previous one), so older snapshots go after a day.
+_SNAPSHOT_KEEP = 3
+_SNAPSHOT_MIN_AGE_SECONDS = 24 * 60 * 60
+# Receipts of batches the PC already removed from the drop are no longer read.
+_RECEIPT_KEEP_SECONDS = 60 * 24 * 60 * 60
+
+
+def prune_availability_snapshots(
+    receipts_root: Path, *, keep_id: str, now: float | None = None
+) -> int:
+    root = receipts_root / "availability" / "novel" / "snapshots"
+    if not root.is_dir():
+        return 0
+    current = time.time() if now is None else now
+    snapshots = sorted(
+        (path for path in root.iterdir() if path.is_dir() and not path.is_symlink()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    removed = 0
+    for index, path in enumerate(snapshots):
+        if path.name == keep_id or index < _SNAPSHOT_KEEP:
+            continue
+        if current - path.stat().st_mtime < _SNAPSHOT_MIN_AGE_SECONDS:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed += 1
+    return removed
+
+
+def prune_receipts(receipts_root: Path, drop_root: Path, *, now: float | None = None) -> int:
+    """Remove old batch receipts whose batch is gone from the drop."""
+    if not receipts_root.is_dir():
+        return 0
+    current = time.time() if now is None else now
+    removed = 0
+    for path in receipts_root.glob("*.json"):
+        batch = path.name.removesuffix(".status.json").removesuffix(".json")
+        try:
+            old = current - path.stat().st_mtime > _RECEIPT_KEEP_SECONDS
+        except OSError:
+            continue
+        if old and not (drop_root / batch).exists():
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
 def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str, Any]:
     """Write a content-addressed, paged snapshot of novel items verified in R2."""
     db = _connect(db_path)
@@ -964,7 +1015,13 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         _share_availability(
             receipts_root / "availability" / "novel" / "current.json", receipts_root
         )
-        return {"status": "published", "snapshot_id": snapshot_id, "item_count": count}
+        pruned = prune_availability_snapshots(receipts_root, keep_id=snapshot_id)
+        return {
+            "status": "published",
+            "snapshot_id": snapshot_id,
+            "item_count": count,
+            "pruned_snapshots": pruned,
+        }
     finally:
         db.close()
 
@@ -1179,6 +1236,16 @@ def main() -> None:
         )
     except (OSError, RuntimeWindowError, sqlite3.Error, subprocess.SubprocessError) as exc:
         results.append({"status_document": f"failed: {type(exc).__name__}: {exc}"[:300]})
+    try:
+        results.append(
+            {
+                "pruned_receipts": prune_receipts(
+                    Path("/srv/redstm-text-inbox/receipts"), Path("/srv/redstm-text-inbox/drop")
+                )
+            }
+        )
+    except OSError as exc:
+        results.append({"pruned_receipts": f"failed: {type(exc).__name__}"})
     print(json.dumps(results, sort_keys=True))
 
 

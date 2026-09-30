@@ -9,6 +9,8 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from scripts.storage_policy import disk_low_bytes
+
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
 
@@ -22,8 +24,6 @@ _TYPEMOON_UNITS = ("redstm-control.service", "redstm-schedule.service")
 _TYPEMOON_PEAK = 620 * _MIB
 _OS_MARGIN = 150 * _MIB
 _DEFAULT_NEED = 150 * _MIB
-# Text writes stay off the disk the TypeMoon archive needs (its own stop is 20 GiB).
-_DISK_FLOOR = 40 * _GIB
 # Heavy text steps (import, media, publish) run one at a time; the collector is light.
 _TEXT_OPERATION_LOCK = Path("/srv/redstm-text/.operation.lock")
 
@@ -130,9 +130,10 @@ def operation_window(
                 "typemoon_memory_reserved" if reserve else "memory_below_floor"
             )
         try:
-            free = shutil.disk_usage(root_path).free
+            usage = shutil.disk_usage(root_path)
         except OSError as exc:
             raise RuntimeWindowError("disk_metrics_unavailable") from exc
-        if free < _DISK_FLOOR:
+        # Text stops at TypeMoon's warning level, so the space below it stays TypeMoon's.
+        if usage.free < disk_low_bytes(usage.total):
             raise RuntimeWindowError("disk_below_floor")
         yield

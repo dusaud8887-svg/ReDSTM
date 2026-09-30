@@ -411,11 +411,19 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
 `본문 없는 글만 채우기` 같은 수동 TypeMoon 명령(`redstm-control.service`)이 실패로 끝나는 원인을
 점검하며 두 쪽이 같은 1 GB 호스트에서 서로 막는 지점을 정리했다.
 
-- **메모리**: 텍스트 작업은 예약 실행(`redstm-schedule.service`) 중에만 쉬고 수동 명령 중에는 계속
-  돌았다. TypeMoon 명령 한도 700 MiB와 텍스트 서비스 150 MiB×4가 겹치면 수집 자식 프로세스가
-  OOM으로 죽고, 보고서가 없어 명령은 `runner_failed`로 끝난다. 이제 수동 명령이 돌면 텍스트 작업은
-  MemAvailable+자기 RSS가 600 MiB 이상일 때만 시작한다(평소 350 MiB, `memory_below_command_floor`).
-  수동 명령 중에도 텍스트 수집은 멈추지 않는다.
+- **메모리(TypeMoon 우선)**: 텍스트 작업은 예약 실행 중에만 쉬고 수동 명령 중에는 계속 돌아, 수집
+  자식이 OOM으로 죽으면 명령이 `runner_failed`로 끝났다. 이제 텍스트의 모든 단계가 TypeMoon unit의 cgroup
+  (`/sys/fs/cgroup/system.slice/redstm-{control,schedule}.service/memory.current`)을 읽는다. 실행 중이면
+  예상 최대치 620 MiB에서 현재 사용량을 뺀 만큼을 TypeMoon 몫으로 남기고, 텍스트 단계는 자기 필요량(수집기
+  60, importer 100, media 120, publisher 150 MiB)과 OS 여유 150 MiB가 남을 때만 시작한다
+  (`typemoon_memory_reserved`). TypeMoon이 쉬면 예약 없이 같은 계산이다. 예약 실행 중에도 여유가 있으면 텍스트가
+  돈다. 무거운 단계(import·media·publish)는 `/srv/redstm-text/.operation.lock`으로 한 번에 하나만 돈다
+  (같은 drop 변경으로 importer와 media가 동시에 뜨던 것). 서비스 4개는 병렬 복제가 아니라 역할이 다른
+  단위다: 수집기(JSON 요청), text importer, media importer, publisher.
+- **수집기 프로세스**: 5초마다 Python을 새로 띄우던 것을 5분 timer에 한 프로세스가 약 4.5분 동안
+  같은 5초 간격·출처 냉각으로 단계를 이어 가도록 바꿨다(작은 VM에서 인터프리터 시작 비용이 요청보다 컸다).
+- **정리**: publisher가 하루 지난 availability snapshot을 최신 3개(현재 포함)만 남기고 지우며, drop에서
+  이미 사라진 배치의 60일 지난 receipt를 지운다. 디스크 기준은 TypeMoon 경고 기준(볼륨 20%, 5–40GiB)과 같다.
 - **수집 쪽 방어**: Scrapy `MEMUSAGE_LIMIT_MB=560`으로 한도 전에 배치를 부분 완료로 닫는다
   (`memory_limit`). 신호로 죽은 자식은 `runner_killed`로 따로 보고하고, 본문 채우기·재시도·전체 본문
   루프는 60초 뒤 두 번까지 다시 시도한다.

@@ -2874,3 +2874,50 @@ def test_outage_backoff_heartbeats_and_obeys_pause(
     assert len(heartbeats) == 1
     assert heartbeats[0]["active_run_id"] == "retry-test"
     assert heartbeats[0]["state"] == "degraded"
+
+
+def test_retention_prunes_old_and_over_budget_warc_but_never_fresh_files(tmp_path: Path) -> None:
+    import os
+
+    from scripts.retention import prune_files
+
+    now = 1_900_000_000.0
+    files = []
+    for name, age_days, size in (("a", 90, 10), ("b", 30, 40), ("c", 20, 40), ("d", 0.5, 40)):
+        path = tmp_path / f"{name}.warc.gz"
+        path.write_bytes(b"x" * size)
+        os.utime(path, (now - age_days * 86400, now - age_days * 86400))
+        files.append(path)
+
+    removed = prune_files(files, keep_seconds=60 * 86400, max_bytes=90, now=now)
+
+    # a is past the window; b goes to get under 90 bytes; d is too fresh to touch.
+    assert (removed.files, removed.bytes) == (2, 50)
+    assert [path.name for path in files if path.exists()] == ["c.warc.gz", "d.warc.gz"]
+
+
+def test_storage_maintenance_runs_daily_and_never_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls: list[str] = []
+
+    def collect(*_a: object, **_k: object) -> dict[str, Any]:
+        calls.append("gc")
+        return {"status": "clean"}
+
+    monkeypatch.setattr("scripts.control_runner.collect_static_garbage", collect)
+    (runner.profile.static_root).mkdir(parents=True, exist_ok=True)
+    (runner.profile.static_root / "release.json").write_text("{}")
+
+    first = runner._maintain_storage()
+    assert first is not None and first["static"] == {"status": "clean"}
+    assert runner._maintain_storage() is None
+    assert calls == ["gc"]
+
+    def broken(*_a: object, **_k: object) -> dict[str, Any]:
+        raise RuntimeError("rclone failed")
+
+    monkeypatch.setattr("scripts.control_runner.collect_static_garbage", broken)
+    forced = runner._maintain_storage(force=True)
+    assert forced is not None and forced["static"]["status"] == "failed"

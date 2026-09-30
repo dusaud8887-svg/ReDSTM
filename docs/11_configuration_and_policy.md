@@ -157,8 +157,10 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | publish | rclone checkers/transfers | 16 / 16 | `scripts.publish_static` |
 | systemd | wall-clock policy | `TimeoutStartSec=infinity`; 수동 full command는 내부 양수 chunk/checkpoint로 지속 | service unit + runner |
 | systemd | service memory/tasks hard stop | 700MiB / 64 | service unit |
-| runner warning | disk/control/token/publish | 40GiB / rejection 24시간 / 만료 24시간 전 / pending 24시간 | `scripts.control_runner` CLI/env |
-| runner hard stop | 새 crawl/장기 chunk 시작 전 disk floor | 20GiB; checkpoint 보존 `disk_low` 종료 | `scripts.control_runner` CLI/env |
+| runner warning | disk/control/token/publish | 볼륨 20%(5–40GiB) / rejection 24시간 / 만료 24시간 전 / pending 24시간 | `scripts.storage_policy`, `scripts.control_runner` CLI/env |
+| runner hard stop | 새 crawl/장기 chunk 시작 전 disk floor | 볼륨 10%(3–20GiB), 먼저 WARC·보고서 정리; checkpoint 보존 `disk_low` 종료 | `scripts.storage_policy`, `scripts.control_runner` CLI/env |
+| retention | WARC / reports / static·R2 | 60일·볼륨 10%(2–20GiB) / 90일 / 미참조 7일, release 5개 유지 | `scripts.retention`, `scripts.publish_static` |
+| crawl memory | Scrapy graceful close | 560MiB(`MEMUSAGE_LIMIT_MB`), unit hard stop 700MiB | `crawler/settings.py` |
 | control client | response body max | 128KiB | `scripts.control_client` |
 | control client | retry delay / Retry-After cap | 2·5·15초 / 60초 | `scripts.control_client` named constants |
 | control client | unavailable cooldown / connect / total timeout | 60초 / 5초 / 15초 | `scripts.control_client` named constants |

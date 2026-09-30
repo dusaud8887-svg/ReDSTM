@@ -1970,3 +1970,31 @@ def test_collector_process_runs_paced_steps_until_a_cooldown(
     with pytest.raises(SystemExit) as stopped:
         collector.main()
     assert stopped.value.code == 75
+
+
+def test_old_availability_snapshots_and_receipts_are_pruned(tmp_path: Path) -> None:
+    import os
+
+    receipts = tmp_path / "receipts"
+    snapshots = receipts / "availability" / "novel" / "snapshots"
+    now = 1_900_000_000.0
+    for index, name in enumerate(["a", "b", "c", "d", "e"]):
+        path = snapshots / name
+        path.mkdir(parents=True)
+        (path / "manifest.json").write_text("{}")
+        age = (10 - index) * 86400
+        os.utime(path, (now - age, now - age))
+    # "a" is the oldest but current; b is old; c-e are the three newest.
+    assert publisher.prune_availability_snapshots(receipts, keep_id="a", now=now) == 1
+    assert sorted(path.name for path in snapshots.iterdir()) == ["a", "c", "d", "e"]
+
+    drop = tmp_path / "drop"
+    (drop / "20260101T000000Z-pc-aaaaaaaa").mkdir(parents=True)
+    old_gone = receipts / "20250101T000000Z-pc-bbbbbbbb.json"
+    old_pending = receipts / "20260101T000000Z-pc-aaaaaaaa.json"
+    recent = receipts / "20260901T000000Z-pc-cccccccc.status.json"
+    for path, age in ((old_gone, 90), (old_pending, 90), (recent, 5)):
+        path.write_text("{}")
+        os.utime(path, (now - age * 86400, now - age * 86400))
+    assert publisher.prune_receipts(receipts, drop, now=now) == 1
+    assert not old_gone.exists() and old_pending.exists() and recent.exists()
