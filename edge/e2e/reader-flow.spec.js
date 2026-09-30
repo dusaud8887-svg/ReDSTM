@@ -54,6 +54,75 @@ function rowOffset(scrollerSelector, rowSelector) {
 
 const mobileWidth = (page) => page.viewportSize().width < 760;
 
+for (const closeWatcher of [true, false]) {
+  test(`T03/T04: nested native overlays close one layer at a time (CloseWatcher ${closeWatcher})`, async ({ page }) => {
+    if (!closeWatcher) await page.addInitScript(() => { window.CloseWatcher = undefined; });
+    await useLongCollection(page, 3);
+    await page.goto("/read/board_a/2");
+    await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+    const historyLength = await page.evaluate(() => history.length);
+    await page.evaluate(async () => {
+      const { createOverlayManager } = await import("/overlay-manager.js");
+      const manager = createOverlayManager();
+      const bar = document.createElement("aside");
+      bar.id = "fixture-find";
+      bar.hidden = true;
+      bar.textContent = "찾기 ";
+      const close = document.createElement("button");
+      close.textContent = "찾기 닫기";
+      close.addEventListener("click", () => manager.closeTop("cancel"));
+      bar.append(close);
+      const open = document.createElement("button");
+      open.id = "fixture-open-find";
+      open.textContent = "찾기 열기";
+      Object.assign(open.style, { position: "fixed", left: "4px", top: "4px", zIndex: "100" });
+      open.addEventListener("click", () => {
+        manager.openBar("find", () => { bar.hidden = true; });
+        bar.hidden = false;
+      });
+      document.getElementById("reader").append(open, bar);
+      document.addEventListener("keydown", (event) => manager.handleEscape(event));
+      const sheet = document.getElementById("settings-dialog");
+      manager.watch(sheet);
+      const menu = document.createElement("div");
+      menu.id = "fixture-menu";
+      menu.setAttribute("popover", "auto");
+      const menuClose = document.createElement("button");
+      menuClose.textContent = "메뉴 닫기";
+      menuClose.addEventListener("click", () => manager.closeTop("cancel"));
+      menu.append(menuClose);
+      manager.watch(menu, "popover");
+      const menuOpen = document.createElement("button");
+      menuOpen.id = "fixture-open-menu";
+      menuOpen.type = "button";
+      menuOpen.textContent = "메뉴 열기";
+      menuOpen.addEventListener("click", () => menu.showPopover());
+      sheet.querySelector("form").prepend(menuOpen, menu);
+    });
+    await page.locator("#fixture-open-find").click();
+    await expect(page.locator("#fixture-find")).toBeVisible();
+    await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+    await page.locator("#fixture-open-menu").click();
+    await expect(page.locator("#fixture-menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#fixture-menu")).toBeHidden();
+    await expect(page.locator("#settings-dialog")).toBeVisible();
+    await expect(page.locator("#fixture-find")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#settings-dialog")).toBeHidden();
+    await expect(page.locator("#fixture-find")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#fixture-find")).toBeHidden();
+    await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
+    if (!closeWatcher) {
+      await page.locator("#fixture-open-find").click();
+      await page.getByRole("button", { name: "찾기 닫기", exact: true }).click();
+      await expect(page.locator("#fixture-find")).toBeHidden();
+    }
+  });
+}
+
 test("T20: a script scroll survives late fonts and images and saves its progress", async ({ page }) => {
   const workId = await useLongNovel(page, 3);
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);

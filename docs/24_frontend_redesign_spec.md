@@ -1203,6 +1203,10 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - F0-2c: 파일 제한 때문에 위치 필드 round-trip/백업 테스트·기존 압축 정책 반영·T20/T34 브라우저 fixture와 이 기록을 후속 5파일 커밋으로 분리한다. T20은 저장 debounce 전에 script scroll → loadingdone/image load를 강제한다. T34는 축소 visualViewport + 메모 입력 중 pagehide 저장/도구 접기 정지와 키보드 종료 뒤 저장 재개를 검증한다.
 - F0-2c 검증: T20/T34 4폭 8/8 pass(13.2초), unit 117/117, check·lint 0 error, 전체 E2E 518 pass/14 기존 skip(5.0분), axe 4폭 통과. 오래된 완료 회차에서만 기존 압축 규칙대로 loc/documentId도 제거하며 미완료·최근·작품별 최신 기록은 유지한다. 저장 형식 이전·원본 삭제 없음. 편집 5파일.
 - 남은 위험(F0-2): cancelPendingWork의 AbortController 종료와 canSave가 연결돼 있다. 이번 실패 원인은 아니며 범위를 늘리지 않고 현재 저장 후 취소 순서를 유지한다. 향후 세션 수명과 작업 취소 분리 시 전환·pagehide 회귀를 함께 검증할 것. 실기기 T20은 열기 직후 강한 플릭과 글꼴 조각/이미지 도착 시 되돌아가지 않는지 특히 확인한다.
+- F0-3a: 기존 dialog 전체를 native beforetoggle/toggle/cancel/close로 스택에 연결. 바만 클릭 중 CloseWatcher를 소유하고 미지원 때 닫기/Esc를 사용한다. 부모 닫힘·회차/화면 이동은 상위 층부터 정리하며 history를 추가하지 않는다. 피드백 토스트는 manual popover로 최상단에 재표시하고 전체화면 host 안으로 이동한다. 기존 토스트 위치 값은 유지. 순수 테스트 3개, 편집 5파일. unit 120/120, check·lint 0 error, 관련 화면 14 pass/2 기존 skip, 전체 E2E 518 pass/14 기존 skip(4.6분), axe 4폭 통과. 커밋 `a1046bf`.
+- F0-3b: T03/T04의 실제 native dialog/popover + 클릭으로 열린 바 조합을 CloseWatcher 지원/미지원 × 4폭에서 검증한다. 자동화 Esc가 한 층씩 닫고 Reader/history를 유지하며 미지원 때 보이는 닫기 버튼도 동작해야 한다. 시스템 Back은 실기기 확인 대기.
+- F0-3b 검증: T03/T04 8/8 pass(8.3초), unit 120/120, check·lint 0 error, 전체 E2E 526 pass/14 기존 skip(4.6분), axe 4폭 통과. 편집 2파일. 앞선 branch CI는 새 커밋 push에 따른 concurrency 취소이며 실패로 기록하지 않는다. M0 최종 head와 main의 CI 완료를 기다려 확인한다.
+- 실기기 연결 확인(M0): 설치된 Playwright 1.62.1의 `_android.devices()`는 `127.0.0.1:5037 ECONNREFUSED`(ADB 서버 없음). S22+에 연결되지 않아 실제 플릭·시스템 Back·키보드 확인은 실행하지 못했다. 결과를 기다리지 않고 계속 진행한다.
 
 | 날짜 | 내용 |
 |---|---|
