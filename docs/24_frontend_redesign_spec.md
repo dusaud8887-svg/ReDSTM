@@ -1279,6 +1279,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-13: `search-suggest.js`(라이브러리 주입으로 브라우저·Node 공용) — 정규화(NFKC·소문자·공백, `normalizeVersion` 1) 부분 일치(앞 일치 우선) → 초성(입력 그대로 비교: NFKC가 호환 자모를 첫가끝 자모로 바꿈) → 비슷한 제목(부록 C 설정, 자모 범위를 음절로 되돌려 `<mark>`), 그룹별 20 상한(화면 5), 결과 0 + 라틴 입력이면 `'세이버'(으)로 찾을까요?`. `createSuggester`는 증가 queryId로 늦은 응답을 버림(T19 단위). 검색 화면 입력 아래 제안 패널(타입문넷 작품·게시판, 작품 열기·게시판 선택). IME 조합 중에는 제안만 갱신하고 330k 글 검색은 `compositionend` 뒤. 기존 글 검색은 요청 id로 늦은 결과를 이미 버린다(동기 scan이라 CPU 중단은 아님 — 측정상 5만 행 12ms라 배치 없음). 위험 검토 R04: Worker `error`/`messageerror`에서 대기 요청을 거절·정리. 텍스트 작품 제안은 카탈로그를 미리 받지 않기 위해 이번 범위 밖(P6-4 명령 팔레트에서 같은 엔진). 편집 7파일(테스트·check 포함, 제안 패널 UI가 한 기능이라 분리하지 않음).
 
+- P1-14: U2 동작(기본값 아닌 조건만 칩 + ✕ 해제, 나머지는 필터 시트, `필터 N`)은 이미 있어 계약 유지. 칩을 DESIGN §7.1 규격으로(32px, 꺼짐 surface-2/ink-2, 켜짐 accent-soft/accent + ✓, 비활성 ink-3), 조건 줄을 한 줄 가로 스크롤(44px 터치 줄)로. 편집 1파일(library.css).
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

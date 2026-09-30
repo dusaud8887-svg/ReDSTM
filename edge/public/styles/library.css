@@ -419,3 +419,21 @@ body.reading .home { display: none; }
 .suggest-row mark { padding: 0 1px; border-radius: 2px; background: var(--hl-find); color: inherit; }
 .suggest-row span { color: var(--ink-2); font-size: 13px; }
 .suggest-qwerty { justify-self: start; min-height: 44px; padding: 0 8px; border: 0; background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; }
+
+/* Filter chips (DESIGN §7.1, U2): one row that scrolls sideways; off chips sit on surface-2,
+   on chips are accent-soft with a check; 필터 carries the count of conditions it hides. */
+.catalog-toolbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.catalog-toolbar::-webkit-scrollbar { display: none; }
+.catalog-toolbar > * { flex: 0 0 auto; }
+.filter-chips { flex-wrap: nowrap; }
+.filter-chips button, .active-filters button, .filter-toggle {
+  min-height: 32px; height: 32px; padding: 0 12px; border: 0; border-radius: 999px;
+  background: var(--surface-2); color: var(--ink-2); font-size: 14px; font-weight: 550; white-space: nowrap;
+}
+.filter-chips button[aria-pressed="true"], .active-filters button, .filter-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.filter-chips button[aria-pressed="true"]::before { content: "✓"; margin-right: 4px; font-weight: 700; }
+.filter-chips button:disabled { opacity: 1; color: var(--ink-3); background: var(--surface-2); }
+.filter-toggle { margin-left: auto; }
+.active-filters { flex-wrap: nowrap; width: auto; }
+/* Chips stay 32px tall; the row gives each a 44px touch height. */
+.catalog-toolbar, .text-sort-chips { min-height: 44px; align-items: center; }
