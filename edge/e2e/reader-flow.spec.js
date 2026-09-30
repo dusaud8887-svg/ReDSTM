@@ -1104,3 +1104,74 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
   await expect.poll(() => page.locator("#archive-body").evaluate((body) => body.scrollWidth - body.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews?.["board_a:2"]?.zoom)).toBeUndefined();
 });
+
+test("Novel shelves: sort works into personal shelves, hide a shelf, and browse by shelf", async ({ page }) => {
+  await useTextArchive(page, {
+    novels: [
+      novelWork({ id: 1, title: "가 소설", chapters: 3, updated: "2026-09-03T00:00:00Z" }),
+      novelWork({ id: 2, title: "나 소설", chapters: 3, updated: "2026-09-02T00:00:00Z" }),
+      novelWork({ id: 3, title: "다 소설", chapters: 3, updated: "2026-09-01T00:00:00Z" }),
+    ],
+  });
+  await page.goto("/text?lane=novel");
+  const titles = page.locator("#result-list .result-item[data-key] .result-title");
+  await expect(titles).toHaveText(["가 소설", "나 소설", "다 소설"]);
+  const dialog = page.locator("#shelf-dialog");
+
+  // 안 볼 작품 is a hidden starter shelf: the work leaves the 전체 list.
+  await page.locator('.shelf-edit[data-work-id="novel:toki:1"]').click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("#shelf-dialog-work")).toHaveText("가 소설");
+  await dialog.locator('[data-shelf-choice="sskip"]').click();
+  await expect(dialog.locator('[data-shelf-choice="sskip"]')).toHaveAttribute("aria-checked", "true");
+  await dialog.locator("button[aria-label='닫기']").click();
+  await expect(titles).toHaveText(["나 소설", "다 소설"]);
+  await expect(page.locator("#result-status")).toContainText("숨긴 분류 1개 제외");
+
+  // A new shelf made while sorting a work takes that work.
+  await page.locator('.shelf-edit[data-work-id="novel:toki:2"]').click();
+  await dialog.locator("#shelf-new-name").fill("BL");
+  await dialog.locator("#shelf-add").click();
+  await expect(dialog.locator('[aria-checked="true"]')).toHaveText("BL");
+  await dialog.locator("button[aria-label='닫기']").click();
+  await expect(page.locator('.shelf-edit[data-work-id="novel:toki:2"]')).toHaveText("BL");
+
+  await page.locator('[data-novel-view="shelves"]').click();
+  await expect(page).toHaveURL(/view=shelves/);
+  const folders = page.locator("#result-list .result-item[data-key]");
+  await expect(folders.locator(".result-title")).toHaveText(["미분류", "찜 · 나중에 볼 작품", "다 본 작품", "안 볼 작품", "BL"]);
+  await expect(folders.nth(3)).toContainText("전체 목록에서 숨김");
+  await folders.filter({ hasText: "BL" }).click();
+  await expect(titles).toHaveText(["나 소설"]);
+  await expect(page.locator("#text-work-back")).toHaveText("← 분류 목록");
+
+  // The chapter view shows and changes the shelf too.
+  await page.locator("#text-work-back").click();
+  await folders.filter({ hasText: "미분류" }).click();
+  await page.locator("#result-list .result-item[data-key]").first().click();
+  await expect(page.locator(".shelf-summary")).toHaveText("분류: 미분류");
+  await page.locator(".shelf-summary").click();
+  await dialog.locator('[data-shelf-choice="slater"]').click();
+  await dialog.locator("button[aria-label='닫기']").click();
+  await expect(page.locator(".shelf-summary")).toHaveText("분류: 찜 · 나중에 볼 작품");
+
+  // 분류 관리: rename, move, and remove (its works return to 미분류).
+  await page.goto("/text?lane=novel");
+  await page.locator("#novel-shelf-manage").click();
+  await expect(dialog.locator("#shelf-choice")).toBeHidden();
+  const bl = dialog.locator("#shelf-manage-list li").last();
+  await expect(bl.locator("input[type='text']")).toHaveValue("BL");
+  await bl.locator("input[type='text']").fill("비엘");
+  await bl.locator("input[type='text']").press("Tab");
+  await expect(dialog.locator("#shelf-manage-list input[type='text']").last()).toHaveValue("비엘");
+  await dialog.locator('[data-shelf-id] [data-shelf-action="up"]').last().click();
+  await expect(dialog.locator("#shelf-manage-list input[type='text']").nth(2)).toHaveValue("비엘");
+  const skip = dialog.locator('[data-shelf-id="sskip"]');
+  await skip.locator('[data-shelf-action="remove"]').click();
+  await skip.locator('[data-shelf-action="remove"]').click();
+  await expect(dialog.locator('[data-shelf-id="sskip"]')).toHaveCount(0);
+  await dialog.locator("button[aria-label='닫기']").click();
+  await expect(titles).toHaveText(["가 소설", "나 소설", "다 소설"]);
+  await page.reload();
+  await expect(page.locator('.shelf-edit[data-work-id="novel:toki:2"]')).toHaveText("비엘");
+});

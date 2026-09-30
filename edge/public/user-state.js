@@ -1,3 +1,5 @@
+import { sanitizeShelfState } from "./text-shelves.js";
+
 export const STATE_KEY = "redstm.userState.v2";
 
 const boardPattern = /^[a-z0-9_]+$/;
@@ -250,7 +252,8 @@ export function sanitizeTextState(value) {
     if (metadata.tags.length) kept.tags = metadata.tags;
     bookmarks[identity] = kept;
   }
-  return { schema_version: 1, history, bookmarks };
+  // Personal shelves ride along only when the source has them (older backups do not).
+  return { schema_version: 1, history, bookmarks, ...(Array.isArray(source.shelves) ? sanitizeShelfState(source) : {}) };
 }
 
 // The backup file people download: normalized and indented for reading. The text library's

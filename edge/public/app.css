@@ -659,6 +659,32 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .result-list li.bookmark-row .result-item { padding-right: 54px; }
 .bookmark-edit { position: absolute; top: 14px; right: 10px; min-width: 36px; min-height: 36px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 11px; cursor: pointer; }
 .bookmark-edit:hover { border-color: var(--accent); color: var(--accent); }
+/* Novel shelves: the 분류 button on work rows, the view tabs, and the shelf dialog. */
+.shelf-edit { position: absolute; top: 14px; right: 10px; min-width: 44px; min-height: 36px; max-width: 7.5rem; overflow: hidden; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.shelf-edit[data-assigned="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
+.shelf-edit:hover { border-color: var(--accent); color: var(--accent); }
+.result-list li.shelf-row { position: relative; }
+.result-list li.shelf-row .result-item { padding-right: 8.5rem; }
+.view-tabs.novel-views { grid-template-columns: 1fr 1fr auto; }
+.novel-views .novel-shelf-manage { padding: 0 10px; color: var(--muted); font-size: 13px; }
+.text-work-summary .shelf-summary { justify-self: start; min-height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
+.shelf-choice { margin: 0; padding: 0; border: 0; }
+.shelf-choice legend { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.shelf-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.shelf-options button { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--page); color: var(--ink); font-size: 14px; cursor: pointer; }
+.shelf-options button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.shelf-manage { display: grid; gap: 12px; }
+.shelf-manage h3 { margin: 0; font-size: 15px; }
+.shelf-manage-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.shelf-manage-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.shelf-manage-list input[type="text"] { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+.shelf-manage-list .shelf-row-actions { display: flex; gap: 4px; }
+.shelf-manage-list button, .shelf-add > button { min-width: 40px; min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.shelf-manage-list .shelf-remove { color: var(--accent); }
+.shelf-manage-list label, .shelf-hidden-choice { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.shelf-manage-list label input, .shelf-hidden-choice input { width: auto; }
+.shelf-add { display: grid; gap: 8px; }
+.shelf-add > label:first-child input { min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
 .settings-group { min-width: 0; display: grid; gap: 14px; margin: 0; padding: 0; border: 0; }
 .settings-group legend { margin-bottom: 12px; padding: 0; color: var(--ink); font-size: 14px; font-weight: 700; }
 .aa-settings .aa-control-group { flex-wrap: wrap; }

@@ -3,6 +3,10 @@ import { adjacentInSequence, labelGap } from "/sequence.js";
 import {
   arcaliveBody, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId, orderChapters,
 } from "/text-work.js";
+import {
+  UNSORTED, addShelf, ensureShelves, hiddenShelfIds, migrateShelfAliases, moveShelf, removeShelf, renameShelf,
+  setShelfHidden, setWorkShelf, shelfCounts, shelfName, shelfOf,
+} from "/text-shelves.js";
 
 const STATE_KEY = "redstm.textState.v1";
 const LANES = new Set(["novel", "arcalive"]);
@@ -62,6 +66,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   const status = document.querySelector("#result-status");
   const search = document.querySelector("#search-input");
   const history = readState();
+  const shelvesAdded = ensureShelves(history);
   const catalogs = new Map();
   const details = new Map();
   let lane = "novel";
@@ -73,8 +78,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let chapterSource = [];
   let sortMode = "title";
   let readFilter = "all";
+  // Novel list: every work ("all") or personal shelves as folders ("shelves", text-shelves.js).
+  let novelView = "all";
+  let shelfFilter = "";
   let sourceFilter = "";
   let listKind = "works";
+  let hiddenWorks = 0;
   // Incremental rendering of the shared result list (renderMore).
   let rowWindow = null;
   let rendered = 0;
@@ -127,6 +136,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const incoming = readState();
     history.history = incoming.history;
     history.bookmarks = incoming.bookmarks;
+    ensureShelves(incoming);
+    history.shelves = incoming.shelves;
+    history.workShelves = incoming.workShelves;
     // The result list is shared with TypeMoon screens; redraw only while the library owns it.
     if (!active) return;
     if (current) {
@@ -152,6 +164,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (lane === "arcalive" && arcaliveView === "works") params.set("view", "works");
     if (lane === "arcalive" && arcaliveView === "files" && folderBoard) params.set("board", folderBoard);
     if (lane === "arcalive" && arcaliveView === "files" && folderCategory) params.set("category", folderCategory);
+    if (lane === "novel" && novelView === "shelves") params.set("view", "shelves");
+    if (lane === "novel" && shelfFilter) params.set("shelf", shelfFilter);
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
     if (worksView() && readFilter !== "all") params.set("read", readFilter);
     if (worksView() && lane === "novel" && sourceFilter) params.set("source", sourceFilter);
@@ -256,7 +270,28 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   // Work lists (novel works, Arcalive 작품별) share read-state chips, sorts, and row copy.
   function worksView() {
-    return !work && (lane === "novel" || lane === "arcalive" && arcaliveView === "works");
+    if (work) return false;
+    if (lane === "novel") return !shelfFolders();
+    return lane === "arcalive" && arcaliveView === "works";
+  }
+
+  // 분류별 above any shelf: the shelves themselves are listed.
+  function shelfFolders() {
+    return lane === "novel" && novelView === "shelves" && !shelfFilter && !work;
+  }
+
+  function readNovelView(params) {
+    novelView = lane === "novel" && params.get("view") === "shelves" ? "shelves" : "all";
+    const requested = params.get("shelf") || "";
+    shelfFilter = lane === "novel" && novelView === "shelves"
+      && (requested === UNSORTED || history.shelves.some((shelf) => shelf.id === requested)) ? requested : "";
+  }
+
+  // Which works a novel list shows: one shelf, or everything outside hidden shelves.
+  function shelfVisible(item, hidden) {
+    if (lane !== "novel") return true;
+    const shelf = shelfOf(history, item.work_id);
+    return shelfFilter ? shelf === shelfFilter : !hidden.has(shelf);
   }
 
   function currentWorks() {
@@ -426,6 +461,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       [`읽음 ${finished.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}`, finished ? "result-action" : ""],
     ]);
     item.append(heading, meta);
+    if (lane === "novel") {
+      const shelf = document.createElement("button");
+      shelf.type = "button";
+      shelf.className = "shelf-summary";
+      shelf.dataset.workId = work.work_id;
+      shelf.textContent = `분류: ${shelfName(history, shelfOf(history, work.work_id))}`;
+      item.append(shelf);
+    }
     if (total > LIST_PAGE) {
       const form = document.createElement("form");
       form.className = "toc-jump text-toc-jump";
@@ -542,10 +585,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       button.type = "button";
       button.className = "result-item";
       button.dataset.index = String(index);
-      button.dataset.key = rowKey(entry, { chaptersMode, folderMode: kind === "boards" || kind === "categories" });
+      const folder = kind === "boards" || kind === "categories" || kind === "shelves";
+      button.dataset.key = rowKey(entry, { chaptersMode, folderMode: folder });
       const line = document.createElement("span");
       line.className = "result-title-line";
-      const titleText = kind === "boards" || kind === "categories" ? entry.folder_label
+      const titleText = folder ? entry.folder_label
         : chaptersMode ? (entry.label || "회차")
         : entry.work_id ? (entry.title || entry.work_id)
           : kind === "saved" ? (entry.title || entry.entry?.label || entry.identity)
@@ -567,6 +611,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           button.classList.add("current");
           button.setAttribute("aria-current", "true");
         }
+      } else if (kind === "shelves") {
+        parts = [`${entry.folder_count.toLocaleString("ko-KR")}개 작품`, entry.hidden ? "전체 목록에서 숨김" : ""];
       } else if (kind === "boards" || kind === "categories") {
         parts = [kind === "boards" ? "게시판" : entry.board, `${entry.folder_count.toLocaleString("ko-KR")}개 글`];
       } else if (kind === "works") {
@@ -595,6 +641,19 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       else button.append(line);
       const row = document.createElement("li");
       row.append(button);
+      if (kind === "works" && lane === "novel") {
+        // 분류: move the work to a shelf without opening it.
+        const shelf = shelfOf(history, entry.work_id);
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "shelf-edit";
+        edit.dataset.workId = entry.work_id;
+        edit.dataset.assigned = String(shelf !== UNSORTED);
+        edit.textContent = shelf === UNSORTED ? "분류" : shelfName(history, shelf);
+        edit.ariaLabel = `${entry.title || "작품"} 분류: ${shelfName(history, shelf)}`;
+        row.classList.add("shelf-row");
+        row.append(edit);
+      }
       return row;
     };
     rowWindow = { build: buildRow, key: (entry) => rowKey(entry, { chaptersMode, folderMode: kind === "boards" || kind === "categories" }) };
@@ -603,8 +662,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     renderMore(RENDER_CHUNK);
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
-    const noun = { works: "작품", boards: "게시판", categories: "분류", posts: "글", saved: "자료" }[kind] ?? "자료";
+    const noun = { works: "작품", boards: "게시판", categories: "분류", posts: "글", saved: "자료", shelves: "분류" }[kind] ?? "자료";
     status.textContent = chaptersMode ? chapterStatus(rows.length) : `${rows.length.toLocaleString("ko-KR")}개 ${noun}`;
+    if (kind === "works" && lane === "novel") {
+      if (shelfFilter) status.textContent = `${shelfName(history, shelfFilter)} · ${status.textContent}`;
+      else if (hiddenWorks) status.textContent += ` · 숨긴 분류 ${hiddenWorks.toLocaleString("ko-KR")}개 제외`;
+    }
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
@@ -667,10 +730,29 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         { kind: "chapters" });
       return;
     }
+    if (shelfFolders()) {
+      const counts = shelfCounts(history, catalog);
+      const folders = [
+        { folder_label: "미분류", shelf_id: UNSORTED, folder_count: counts.get(UNSORTED) ?? 0, hidden: false },
+        ...history.shelves.map((shelf) => ({
+          folder_label: shelf.name, shelf_id: shelf.id, folder_count: counts.get(shelf.id) ?? 0, hidden: shelf.hidden,
+        })),
+      ].filter((folder) => normalize(folder.folder_label).includes(query));
+      renderRows(folders, { kind: "shelves" });
+      return;
+    }
     if (progress) {
-      const matchesWork = (item) => normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query)
-        && (!sourceFilter || lane !== "novel" || item.source_site === sourceFilter)
-        && matchesReadFilter(workState(item, progress.get(item.work_id)));
+      const hidden = hiddenShelfIds(history);
+      hiddenWorks = 0;
+      const matchesWork = (item) => {
+        if (!shelfVisible(item, hidden)) {
+          hiddenWorks += 1;
+          return false;
+        }
+        return normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query)
+          && (!sourceFilter || lane !== "novel" || item.source_site === sourceFilter)
+          && matchesReadFilter(workState(item, progress.get(item.work_id)));
+      };
       renderRows(orderedWorks(currentWorks().filter(matchesWork), progress), { kind: "works" });
       return;
     }
@@ -718,10 +800,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function syncBackButton() {
     const button = document.querySelector("#text-work-back");
-    const shown = Boolean(work || folderBoard);
+    const shown = Boolean(work || folderBoard || (lane === "novel" && shelfFilter));
     button.hidden = !shown;
     button.textContent = work ? "← 작품 목록"
-      : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
+      : lane === "novel" ? "← 분류 목록"
+        : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
   }
 
   async function json(path) {
@@ -820,6 +903,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     }
+    const novelViews = document.querySelector("#novel-views");
+    novelViews.hidden = lane !== "novel";
+    for (const button of novelViews.querySelectorAll("[data-novel-view]")) {
+      const pressed = button.dataset.novelView === novelView;
+      button.classList.toggle("active", pressed);
+      button.setAttribute("aria-pressed", String(pressed));
+    }
     const views = document.querySelector("#arcalive-views");
     views.hidden = lane !== "arcalive";
     for (const button of views.querySelectorAll("[data-arcalive-view]")) {
@@ -837,6 +927,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const requestedLane = params.get("lane");
     lane = VIEWS.has(requestedLane) ? requestedLane : "novel";
     arcaliveView = params.get("view") === "works" ? "works" : "files";
+    readNovelView(params);
     setLaneButtons();
     search.value = params.get("q") || "";
     work = null;
@@ -861,7 +952,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         });
       if (activeRequest !== requestId) return;
       catalog = loaded;
-      if (lane === "novel" && migrateNovelState(history, catalog)) persist();
+      if (lane === "novel" && (migrateNovelState(history, catalog) | migrateShelfAliases(history, catalog))) persist();
       renderCatalog();
       onChange();
       const opened = await openFromParams(params, activeRequest);
@@ -951,6 +1042,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     closeReader();
     search.value = params.get("q") || "";
     arcaliveView = params.get("view") === "works" ? "works" : "files";
+    readNovelView(params);
     setLaneButtons();
     folderBoard = lane === "arcalive" && arcaliveView === "files" ? params.get("board") : null;
     folderCategory = lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
@@ -1198,6 +1290,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function parentLevelParams() {
     const params = listParams();
     if (work) params.delete("work");
+    else if (lane === "novel" && shelfFilter) params.delete("shelf");
     else if (folderCategory) params.delete("category");
     else if (folderBoard) params.delete("board");
     return params;
@@ -1214,7 +1307,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (work) {
       work = null;
       chapterSource = [];
-    } else if (folderCategory) folderCategory = null;
+    } else if (lane === "novel" && shelfFilter) shelfFilter = "";
+    else if (folderCategory) folderCategory = null;
     else if (folderBoard) folderBoard = null;
     sortMode = defaultSort();
     syncBackButton();
@@ -1264,6 +1358,16 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!Number.isInteger(index) || index < 0 || index >= visible.length) return;
     const selected = visible[index];
     rememberListPosition();
+    if (listKind === "shelves") {
+      shelfFilter = selected.shelf_id;
+      sortMode = defaultSort();
+      syncBackButton();
+      onChange();
+      renderCatalog();
+      pushRoute();
+      list.scrollTop = 0;
+      return;
+    }
     if (listKind === "boards") {
       folderBoard = selected.folder_label;
       syncBackButton();
@@ -1466,8 +1570,158 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (chip) setReadFilter(chip.dataset.textRead);
   });
   document.querySelector("#text-work-back").addEventListener("click", () => {
-    if (!current && (work || folderBoard)) up();
+    if (!current && (work || folderBoard || (lane === "novel" && shelfFilter))) up();
   });
+  // 작품 분류 dialog: pick this work's shelf, and add/rename/hide/reorder/remove shelves.
+  const shelfDialog = document.querySelector("#shelf-dialog");
+  let shelfWorkId = "";
+  const SHELF_ERRORS = {
+    name_empty: "분류 이름을 입력하세요.", name_taken: "같은 이름의 분류가 이미 있습니다.", too_many: "분류는 50개까지 만들 수 있습니다.",
+  };
+
+  function shelvesChanged(message = "") {
+    persist();
+    if (message) document.querySelector("#shelf-message").textContent = message;
+    renderShelfDialog();
+    if (!active) return;
+    if (current) publishList();
+    else renderCatalog();
+  }
+
+  function renderShelfDialog() {
+    const work = (catalogs.get("novel")?.items ?? []).find((item) => item.work_id === shelfWorkId);
+    document.querySelector("#shelf-dialog-work").textContent = shelfWorkId ? (work?.title || "작품") : "이 브라우저에 저장됩니다";
+    document.querySelector("#shelf-dialog-title").textContent = shelfWorkId ? "작품 분류" : "분류 관리";
+    const choice = document.querySelector("#shelf-choice");
+    choice.hidden = !shelfWorkId;
+    if (shelfWorkId) {
+      const assigned = shelfOf(history, shelfWorkId);
+      document.querySelector("#shelf-options").replaceChildren(...[
+        { id: UNSORTED, name: "미분류", hidden: false }, ...history.shelves,
+      ].map((shelf) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.setAttribute("role", "radio");
+        option.dataset.shelfChoice = shelf.id;
+        option.setAttribute("aria-checked", String(shelf.id === assigned));
+        option.textContent = shelf.hidden ? `${shelf.name} (숨김)` : shelf.name;
+        return option;
+      }));
+    }
+    const counts = shelfCounts(history, catalogs.get("novel")?.items ?? []);
+    document.querySelector("#shelf-manage-list").replaceChildren(...history.shelves.map((shelf, index) => {
+      const row = document.createElement("li");
+      row.dataset.shelfId = shelf.id;
+      const name = document.createElement("input");
+      name.type = "text";
+      name.maxLength = 30;
+      name.value = shelf.name;
+      name.ariaLabel = `${shelf.name} 이름 (${counts.get(shelf.id) ?? 0}개 작품)`;
+      name.dataset.shelfRename = "true";
+      const actions = document.createElement("span");
+      actions.className = "shelf-row-actions";
+      for (const [label, action, disabled] of [
+        ["↑", "up", index === 0], ["↓", "down", index === history.shelves.length - 1], ["삭제", "remove", false],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.shelfAction = action;
+        button.textContent = label;
+        button.disabled = disabled;
+        button.ariaLabel = action === "remove" ? `${shelf.name} 삭제` : `${shelf.name} ${action === "up" ? "위로" : "아래로"}`;
+        if (action === "remove") button.className = "shelf-remove";
+        actions.append(button);
+      }
+      const hidden = document.createElement("label");
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.checked = shelf.hidden;
+      toggle.dataset.shelfHidden = "true";
+      hidden.append(toggle, `전체 목록에서 숨기기 · ${(counts.get(shelf.id) ?? 0).toLocaleString("ko-KR")}개 작품`);
+      row.append(name, actions, hidden);
+      return row;
+    }));
+  }
+
+  function openShelfDialog(workId = "") {
+    shelfWorkId = workId;
+    document.querySelector("#shelf-message").textContent = "숨긴 분류의 작품은 전체 목록에 나오지 않고 분류별 보기에서만 보입니다.";
+    document.querySelector("#shelf-new-name").value = "";
+    document.querySelector("#shelf-new-hidden").checked = false;
+    renderShelfDialog();
+    if (!shelfDialog.open) shelfDialog.showModal();
+  }
+
+  shelfDialog.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-shelf-choice]");
+    if (option && shelfWorkId) {
+      if (setWorkShelf(history, shelfWorkId, option.dataset.shelfChoice)) {
+        shelvesChanged(`${shelfName(history, option.dataset.shelfChoice)}(으)로 옮겼습니다.`);
+      }
+      return;
+    }
+    const button = event.target.closest("[data-shelf-action]");
+    const shelfId = button?.closest("[data-shelf-id]")?.dataset.shelfId;
+    if (!button || !shelfId) return;
+    if (button.dataset.shelfAction === "remove") {
+      // Two presses: the first asks, the second removes (its works go back to 미분류).
+      if (button.dataset.confirm !== "true") {
+        button.dataset.confirm = "true";
+        button.textContent = "정말 삭제";
+        return;
+      }
+      const removedName = shelfName(history, shelfId);
+      removeShelf(history, shelfId);
+      if (shelfFilter === shelfId) shelfFilter = "";
+      shelvesChanged(`${removedName} 분류를 지웠습니다. 그 작품은 미분류로 돌아갑니다.`);
+      return;
+    }
+    if (moveShelf(history, shelfId, button.dataset.shelfAction === "up" ? -1 : 1)) shelvesChanged();
+  });
+  shelfDialog.addEventListener("change", (event) => {
+    const shelfId = event.target.closest("[data-shelf-id]")?.dataset.shelfId;
+    if (!shelfId) return;
+    if (event.target.dataset.shelfHidden) {
+      setShelfHidden(history, shelfId, event.target.checked);
+      shelvesChanged();
+    } else if (event.target.dataset.shelfRename) {
+      const result = renameShelf(history, shelfId, event.target.value);
+      shelvesChanged(result.error ? SHELF_ERRORS[result.error] : "");
+    }
+  });
+  function addShelfFromDialog() {
+    const input = document.querySelector("#shelf-new-name");
+    const result = addShelf(history, input.value, { hidden: document.querySelector("#shelf-new-hidden").checked });
+    if (result.error) {
+      document.querySelector("#shelf-message").textContent = SHELF_ERRORS[result.error];
+      return;
+    }
+    input.value = "";
+    document.querySelector("#shelf-new-hidden").checked = false;
+    // Made while sorting a work: the work goes there too.
+    if (shelfWorkId) setWorkShelf(history, shelfWorkId, result.id);
+    shelvesChanged(`${shelfName(history, result.id)} 분류를 만들었습니다.`);
+  }
+  document.querySelector("#shelf-add").addEventListener("click", addShelfFromDialog);
+  document.querySelector("#shelf-new-name").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    addShelfFromDialog();
+  });
+  list.addEventListener("click", (event) => {
+    const button = event.target.closest(".shelf-edit, .shelf-summary");
+    if (button && active) openShelfDialog(button.dataset.workId);
+  });
+  document.querySelector("#novel-shelf-manage").addEventListener("click", () => openShelfDialog(""));
+  document.querySelector("#novel-views").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-novel-view]");
+    if (!button || (button.dataset.novelView === novelView && !shelfFilter && !work)) return;
+    const next = new URLSearchParams({ lane: "novel", ...(button.dataset.novelView === "shelves" ? { view: "shelves" } : {}) });
+    void open(next);
+    window.history.pushState({ redstmText: true }, "", `/text?${next}`);
+  });
+  if (shelvesAdded) persist();
+
   readerPane.addEventListener("scroll", () => {
     if (!current) return;
     clearTimeout(saveTimer);
@@ -1477,6 +1731,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function sortContext() {
     if (work) return "chapters";
     if (postsView()) return "posts";
+    if (shelfFolders()) return "titles";
     if (lane === "novel" || lane === "arcalive" && arcaliveView === "works") return "works";
     return "titles";
   }
@@ -1522,6 +1777,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function searchPlaceholder() {
     if (work) return "회차 찾기 (예: 120화, 외전)";
+    if (shelfFolders()) return "분류 이름 검색";
     if (lane === "novel" || lane === "arcalive" && arcaliveView === "works") return "작품 제목·작가 검색";
     if (lane === "saved") return "저장한 자료·메모·태그 검색";
     if (folderCategory) return "글 제목 검색";
@@ -1581,12 +1837,20 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   // Backup (settings → 기록 내보내기/가져오기). Import replaces this browser's text records.
   function exportState() {
     flushPosition();
-    return { schema_version: 1, history: history.history, bookmarks: history.bookmarks };
+    return {
+      schema_version: 1, history: history.history, bookmarks: history.bookmarks,
+      shelves: history.shelves, workShelves: history.workShelves,
+    };
   }
 
   function importState(state) {
     history.history = { ...state.history };
     history.bookmarks = { ...state.bookmarks };
+    if (Array.isArray(state.shelves)) {
+      history.shelves = state.shelves.map((shelf) => ({ ...shelf }));
+      history.workShelves = { ...(state.workShelves ?? {}) };
+      ensureShelves(history);
+    }
     pruneHistory();
     persist();
     if (!active) return;
@@ -1614,6 +1878,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     folderCategory = null;
     syncBackButton();
     renderReadChips(null);
+    document.querySelector("#novel-views").hidden = true;
     rowObserver?.unobserve(rowSentinel);
     rowSentinel.remove();
     rowWindow = null;

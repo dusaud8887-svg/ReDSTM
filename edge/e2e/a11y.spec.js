@@ -74,6 +74,14 @@ test("the text library lists, a work, and a chapter", async ({ page }) => {
   await page.locator('#result-list [data-key="chapter:1-2"]').click();
   await expect(page.locator("#reader-title")).toHaveText("2화");
   await expectAccessible(page, "novel chapter");
+  await page.goto("/text?lane=novel");
+  await page.locator(".shelf-edit").first().click();
+  await expect(page.locator("#shelf-dialog")).toBeVisible();
+  await expectAccessible(page, "shelf dialog");
+  await page.locator("#shelf-dialog button[aria-label='닫기']").click();
+  await page.locator('[data-novel-view="shelves"]').click();
+  await expect(page.locator("#result-status")).toContainText("분류");
+  await expectAccessible(page, "shelf folders");
   await page.goto("/text?lane=arcalive&view=works");
   await expect(page.locator("#result-list .result-item[data-key]").first()).toBeVisible();
   await expectAccessible(page, "arcalive works");
