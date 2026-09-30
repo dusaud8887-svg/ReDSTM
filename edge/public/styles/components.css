@@ -93,3 +93,22 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
   body.reader-active #settings-dialog form { max-height: 56dvh; }
   body.reader-active #settings-dialog::backdrop { background: color-mix(in srgb, var(--overlay) 25%, transparent); }
 }
+
+/* Typographic cover (DESIGN §7.2): work hue, a spine in the hue's mark, the title in the display
+   serif. The letters are always --ink; the mark is non-text. */
+.type-cover { position: relative; flex: 0 0 auto; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; border-radius: 3px; background: var(--c-bg); color: var(--ink); box-shadow: var(--e1); }
+.type-cover::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: linear-gradient(90deg, var(--c-mark), color-mix(in oklab, var(--c-mark) 70%, transparent)); }
+.type-cover.size-s { width: 32px; height: 44px; align-items: center; justify-content: center; }
+.type-cover.size-s::before { width: 3px; }
+.type-cover.size-m { width: 104px; height: 148px; padding: 12px 10px 10px 16px; }
+.type-cover.size-l { width: 128px; height: 182px; padding: 14px 12px 12px 18px; }
+.type-cover-title { display: -webkit-box; overflow: hidden; font: 700 15px/1.35 var(--font-display); word-break: keep-all; overflow-wrap: anywhere; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+.type-cover.size-s .type-cover-title { display: block; padding-left: 3px; font-size: 16px; line-height: 1; }
+.type-cover.size-l .type-cover-title { font-size: 17px; }
+.type-cover-source { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.type-cover-new { position: absolute; top: 0; right: 0; border-style: solid; border-width: 0 14px 14px 0; border-color: transparent var(--accent) transparent transparent; }
+.type-cover.size-s .type-cover-new { border-width: 0 8px 8px 0; }
+.type-cover-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: linear-gradient(to right, var(--other-progress) var(--cover-progress, 0%), transparent 0); }
+.type-cover-progress.mine { background: linear-gradient(to right, var(--ribbon) var(--cover-progress, 0%), transparent 0); }
+.type-cover-offline { position: absolute; right: 6px; bottom: 6px; width: 12px; height: 12px; border: 2px solid var(--ink-2); border-top: 0; border-radius: 0 0 3px 3px; }
+.badge-new { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }

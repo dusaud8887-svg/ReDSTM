@@ -1265,6 +1265,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P1-7a: Lucide(ISC) path를 `index.html` 상단 `<symbol>` sprite로(목적지·설정·운영·테마 아이콘), 하단 탭 glass(반투명 끄기·미지원·`prefers-reduced-transparency`에서 불투명) + 선택 탭 accent-soft pill, 탭 라벨 12px(DESIGN caption 최소).
 - P1-7b: `shell.js` 이어읽기 미니바 — 하단 탭 위 46px 한 덩어리, 위 2px ribbon 진행, 가장 최근 미완료 기록(텍스트/타입문넷), 서재 이어읽기 카드가 보이면 숨김(IntersectionObserver), Reader 밖 모든 스크롤러에서 10px 이상 아래로 접힘/위로 복귀, Reader·키보드·집중·넓은 화면에서 숨김, 목록·서재 하단 여백 확보. T28 E2E(모바일·compact). 작품 점 색은 P1-8 표지 색 연결 후.
 
+- P1-8: `type-cover.js` — FNV-1a 32bit(UTF-16 코드 단위, 참조값 테스트) `% 10` 작품색, 사용자 지정 hue 우선, 안정 키(`typemoon:collection:<id>` · `novel:<work_id>` · `arcalive:<board>:<work>` · 컬렉션 밖 글 `typemoon:post:<board>:<id>`), S 표지 첫 글자(꺾쇠·괄호 태그와 앞 구두점 건너뜀, grapheme 단위 — 이모지·조합 음절 유지), S/M/L DOM(새 화 삼각·진행선(현재 작품만 ribbon)·오프라인 표시). CSS는 components.css. 화면 연결은 P1-9·P1-11.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
