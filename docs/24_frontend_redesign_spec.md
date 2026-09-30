@@ -1271,6 +1271,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-10: `barcode.js` — 순수 `barcodeModel(entries, width, {mode})`(bin 목표 3px, 순서 균등 기본·`분량 보기`는 글자 수 비례이되 bin마다 한 화 이상, 상태 우선순위 읽는 중>누락>안 읽음>읽음, 새 화 윗선), 요약 문장·bin 라벨, SVG 렌더(칸별 버튼 없음), 한 스크럽 영역(pointer capture, 말풍선, 놓으면 확대 띠에서 회차 선택 → `이 회차로`), 키보드 `role=slider` ←→/Home/End/Enter, 비대화형 `miniBarcode`. T27 모델: 10,000화 400 bin < 16ms(단위). 화면 연결은 P1-11.
 
+- P1-11a/b: `work-header.js`(표지 채우기·회차 상태→바코드 입력·host당 바코드 1개 재사용). 타입문넷 작품 상세와 텍스트 작품 요약에 표지(모바일 M/넓은 화면 L, 현재 작품이라 진행선 ribbon)·명조 제목·바코드. 바코드의 `읽는 중`은 이 화면의 한 자리(마지막으로 읽은 회차)만, 나머지 부분 읽음은 안 읽음. 회차 선택은 해당 행 클릭 경로를 그대로 사용(목록 복원·history 계약 유지). axe가 slider의 `aria-valuenow` 누락을 잡아 첫 bin 값으로 초기화. E2E: 3,000편 타입문넷 바코드(렌더 <16ms, 키보드 Home/→/Enter → 확대 띠 → `이 회차로`)·텍스트 40화 바코드. 새 화 윗선은 회차별 게시 시각이 없어 아직 표시하지 않는다.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

@@ -15,9 +15,7 @@ export function fillWorkCover(host, { title, source, hueKey, progress = null }) 
 // read last is "my place" on this screen; other half-read episodes count as unread.
 export function episodeStates(entries) {
   return entries.map((entry) => ({
-    position: entry.position,
-    label: entry.label,
-    weight: entry.weight,
+    ...entry,
     fresh: Boolean(entry.fresh),
     state: entry.missing ? "missing" : entry.current && !entry.finished ? "reading" : entry.finished ? "read" : "unread",
   }));

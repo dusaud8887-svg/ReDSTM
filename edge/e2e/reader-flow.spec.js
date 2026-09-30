@@ -1476,3 +1476,19 @@ test("The work barcode summarises a long run and opens an episode picked on its 
   await barcode.getByRole("button", { name: "이 회차로" }).click();
   await expect(page.locator("#reader-title")).toHaveText("3편 제목");
 });
+
+test("A text work shows its cover and barcode, and the barcode opens a chapter", async ({ page }) => {
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "바코드 소설", chapters: 40 })] });
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent("novel:toki:1")}`);
+  const summary = page.locator("#text-work-summary .text-work-summary");
+  await expect(summary.locator("h2")).toHaveText("바코드 소설");
+  await expect(summary.locator(".work-cover .type-cover")).toBeVisible();
+  const track = summary.getByRole("slider");
+  await expect(track).toHaveAccessibleName("회차 바코드: 40화 중 0화 읽음");
+  await track.focus();
+  await track.press("End");
+  await track.press("Enter");
+  await summary.locator(".barcode-option").last().click();
+  await summary.getByRole("button", { name: "이 회차로" }).click();
+  await expect(page.locator("#reader-title")).toContainText("40화");
+});
