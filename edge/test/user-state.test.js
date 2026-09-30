@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createLocator } from "../public/text-model.js";
 
 import {
   STATE_KEY,
@@ -23,6 +24,27 @@ const summary = (extension = "zst", hash = "a") => ({
   board_id: "write_free21",
   external_post_id: 62068,
   object_key: `posts/write_free21/62068-${hash.repeat(64)}.json.${extension}`,
+});
+
+test("optional locators survive v2 storage and v3 backups without replacing legacy positions", () => {
+  const revision = "a".repeat(64);
+  const loc = createLocator({ text: "앞 문장. 읽던 문장. 뒤 문장." }, 6, 12, revision);
+  const position = { offset: 5, anchor: "읽던 문장", anchorTop: -4, revision, loc, documentId: "typemoon:write_free21:62068", workId: "collection:7" };
+  const state = defaultUserState(defaults);
+  state.history["write_free21:62068"] = { readAt: "2026-09-30T00:00:00Z", progress: 0.6, ...position };
+  state.scroll["write_free21:62068"] = 300;
+  const stored = planImport(serializeUserState(state), defaults).state;
+  assert.deepEqual(stored.history["write_free21:62068"], state.history["write_free21:62068"]);
+  assert.equal(stored.schema_version, 2);
+  const text = { schema_version: 1, history: { "novel:novel:toki:1:1": { readAt: "2026-09-30T00:00:00Z", ...position, scroll: 200 } }, bookmarks: {} };
+  const backup = planImport(exportUserState(state, text), defaults);
+  assert.deepEqual(backup.text.history["novel:novel:toki:1:1"].loc, loc);
+  assert.equal(backup.text.history["novel:novel:toki:1:1"].offset, 5);
+  const malformed = JSON.parse(serializeUserState(state));
+  malformed.history["write_free21:62068"].loc.end = -1;
+  const recovered = planImport(JSON.stringify(malformed), defaults).state;
+  assert.equal(recovered.history["write_free21:62068"].loc, undefined);
+  assert.equal(recovered.history["write_free21:62068"].offset, 5);
 });
 
 test("default state follows the v2 stable identity schema", () => {

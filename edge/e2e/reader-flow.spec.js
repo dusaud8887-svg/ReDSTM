@@ -54,6 +54,66 @@ function rowOffset(scrollerSelector, rowSelector) {
 
 const mobileWidth = (page) => page.viewportSize().width < 760;
 
+test("T20: a script scroll survives late fonts and images and saves its progress", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const top = await page.locator("#reader-pane").evaluate((pane) => new Promise((resolve) => {
+    document.fonts.dispatchEvent(new Event("loading"));
+    pane.addEventListener("scroll", () => {
+      document.fonts.dispatchEvent(new Event("loadingdone"));
+      const image = document.createElement("img");
+      image.hidden = true;
+      document.getElementById("archive-body").append(image);
+      image.dispatchEvent(new Event("load"));
+      image.remove();
+      resolve(pane.scrollTop);
+    }, { once: true });
+    pane.scrollTop = 999;
+  }));
+  expect(top).toBe(999);
+  const record = () => page.evaluate((key) => JSON.parse(localStorage.getItem("redstm.textState.v1")).history[key], `novel:${workId}:1`);
+  await expect.poll(async () => (await record()).scroll).toBe(999);
+  expect((await record()).progress).toBeGreaterThan(0);
+  expect((await record()).loc.start).toBeGreaterThan(0);
+});
+
+test("T34: the keyboard pauses position saves and chrome folding, then saves resume", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#more-note").click();
+  await expect(page.locator("#bookmark-note")).toBeFocused();
+  const record = () => page.evaluate((key) => JSON.parse(localStorage.getItem("redstm.textState.v1")).history[key], `novel:${workId}:1`);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  const before = await record();
+  const folded = await page.locator("body").evaluate((body) => body.classList.contains("reader-controls-hidden"));
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport, "height", { configurable: true, get: () => innerHeight / 2 });
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+  await page.locator("#bookmark-note").fill("키보드 입력 중");
+  await page.locator("#reader-pane").evaluate((pane) => new Promise((resolve) => {
+    pane.addEventListener("scroll", () => { window.dispatchEvent(new Event("pagehide")); resolve(); }, { once: true });
+    pane.scrollTop = 999;
+  }));
+  expect(await record()).toEqual(before);
+  expect(await page.locator("body").evaluate((body) => body.classList.contains("reader-controls-hidden"))).toBe(folded);
+  await page.evaluate(() => {
+    delete window.visualViewport.height;
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect.poll(async () => (await record()).scroll).toBe(999);
+});
+
 test("TypeMoon: 200 → next → next → Back returns to the same table-of-contents viewport", async ({ page }) => {
   await useLongCollection(page, 300);
   await page.goto("/collections/1");

@@ -108,7 +108,7 @@ export function arcaliveBody(text) {
 // records keep when they were read and how far; an unfinished one also keeps its position. A full
 // record is ~800 characters, so 10,000 of them alone would pass the ~5 MB localStorage quota.
 const DETAIL_FIELDS = ["route", "listRoute", "title", "work", "total"];
-const POSITION_FIELDS = ["anchor", "offset", "anchorTop", "scroll", "revision", "chapterId"];
+const POSITION_FIELDS = ["anchor", "offset", "anchorTop", "scroll", "revision", "chapterId", "loc", "documentId"];
 
 export function compactTextHistory(history, { keepRecent = 50 } = {}) {
   const entries = Object.entries(history)

@@ -1198,6 +1198,11 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - F0-1 최종 검증: unit 112/112, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(5.2분, workers=2), axe 4폭 통과. P0-5 Linux CI 36702661741 성공(글꼴 재생성·시각 비교 포함).
 - F0-2a: 세션 기반을 먼저 분리(파일 제한). DocumentSession의 generation·AbortController·취소 작업/rAF 소유권, 사용자 스크롤·키보드 중 글꼴 보정/저장 정지, scroll/aa 어댑터 구현. 순수 세션 테스트 3개 추가. 실제 Reader·저장 연결과 T20/T34 브라우저 fixture는 F0-2b.
 - F0-2a 검증: unit 115/115, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(5.0분), axe 4폭 통과. 편집 4파일. text history의 기존 용량 압축 목록에도 새 위치 필드를 반영해야 하므로 연결(F0-2b, 5파일)과 추가 브라우저 회귀(F0-2c)를 분리한다.
+- F0-2b: Reader와 텍스트 장서에 세션 generation·취소 소유권·locator 선택 필드·documentId/workId 분리를 연결. 기존 pixel/offset/anchor 필드와 v2/v3 백업을 유지하며 새 저장 형식으로 옮기지 않는다. 취소 전에 기존 위치를 저장하고 새 문서의 늦은 콜백을 차단한다.
+- F0-2b 중단 원인: 입력 이벤트만 사용자 스크롤로 세어 script scroll·터치 관성·스크롤바 이동 뒤 늦은 글꼴/이미지 보정이 저장 위치 0으로 되돌렸다. 사용자 제공 진단을 적용해 앱이 복원한 expectedTop과 실제 scrollTop이 2px 넘게 다르면 사용자 이동으로 판정하고 보정을 중단한다. 수정 전 전체 505 pass/5 fail, 수정 후 해당 두 시나리오 4폭 8/8 pass(16.9초), unit 116/116, check·lint 0 error, 전체 510 pass/14 기존 skip(4.8분), axe 4폭 통과. 커밋 `343b3ca`, 편집 5파일. F0-2a Linux CI 36707044562 성공.
+- F0-2c: 파일 제한 때문에 위치 필드 round-trip/백업 테스트·기존 압축 정책 반영·T20/T34 브라우저 fixture와 이 기록을 후속 5파일 커밋으로 분리한다. T20은 저장 debounce 전에 script scroll → loadingdone/image load를 강제한다. T34는 축소 visualViewport + 메모 입력 중 pagehide 저장/도구 접기 정지와 키보드 종료 뒤 저장 재개를 검증한다.
+- F0-2c 검증: T20/T34 4폭 8/8 pass(13.2초), unit 117/117, check·lint 0 error, 전체 E2E 518 pass/14 기존 skip(5.0분), axe 4폭 통과. 오래된 완료 회차에서만 기존 압축 규칙대로 loc/documentId도 제거하며 미완료·최근·작품별 최신 기록은 유지한다. 저장 형식 이전·원본 삭제 없음. 편집 5파일.
+- 남은 위험(F0-2): cancelPendingWork의 AbortController 종료와 canSave가 연결돼 있다. 이번 실패 원인은 아니며 범위를 늘리지 않고 현재 저장 후 취소 순서를 유지한다. 향후 세션 수명과 작업 취소 분리 시 전환·pagehide 회귀를 함께 검증할 것. 실기기 T20은 열기 직후 강한 플릭과 글꼴 조각/이미지 도착 시 되돌아가지 않는지 특히 확인한다.
 
 | 날짜 | 내용 |
 |---|---|
