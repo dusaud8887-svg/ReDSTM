@@ -181,7 +181,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | D-20 | 페이지 모드 = CSS multi-column 배치 + **transform 이동**(탭·pointer 스와이프). `::column` snap은 지원 시 추가 기능 | column 박스는 snap 대상이 아니다(`::column`은 Chromium 전용) | 스크롤 고정 |
 | D-21 | Service Worker(Workbox): **실제 경로표**(§12.6) + 오프라인 snapshot + 자동 skipWaiting 금지 | 이동 중 읽기, 구/신 모듈 혼합 방지 | 앱 캐시 초기화 버튼 |
 | D-22 | 서버 동기화는 **보류**. 기기 간 이동은 QR(위치 링크) + 백업 v4 병합. §12.7 설계는 필요해질 때를 위해 남긴다 | 1인 개인 보존본에 D1 용도 확장·계약 개정 비용이 과함 | §12.7대로 M5 재개 |
-| D-23 | AA 핀치 = @use-gesture로 제스처 중 transform, 끝나면 허용 단계로 확정 | 60fps + 선명 | 버튼 배율 |
+| D-23 | AA 핀치 = @use-gesture로 제스처 중 transform, 끝나면 **기존과 같은 연속 배율**로 확정. AA 보존 CSS·JS 규칙은 값 그대로 옮김(§8.16 인벤토리) | 60fps + 선명 + 기존 AA parity | 기존 touchmove 방식 |
 | D-24 | 이미지 = PhotoSwipe 갤러리(긴 세로 이미지 제외) | 핀치·스와이프 | 기존 뷰어 |
 | D-25 | 공유 이미지(발췌·AA·기록) = **Canvas 2D 직접 렌더** → PNG 1080×1350. modern-screenshot 제거 | DOM 캡처는 `data:` 이미지 → 현재 CSP에 막힘. 직접 렌더는 CSP 완화·메모리 폭증 없음 | 텍스트 복사만 |
 | D-26 | Back = **overlay 관리자**(native 이벤트 반영 + 제스처 안에서 만든 CloseWatcher), LIFO 한 층 | watcher 그룹화·top layer 순서 문제 | 닫기 버튼 + Esc |
@@ -460,10 +460,37 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 
 ### 8.16 AA 뷰어 (M16)
 
-- DESIGN §8.4. AA root 명시 재지정 속성은 DESIGN §8.1 목록 그대로 CSS로 작성하고 T06으로 고정.
-- 핀치: @use-gesture `PinchGesture`(origin=두 손가락 중점, `memo`로 시작 배율) → 제스처 중 `transform: scale(s)`, 끝나면
-  `snapZoom(z) = 허용 단계 [10,25,50,75,…,300] 중 최근접`으로 확정 → transform 제거 → origin이 같은 화면 점에 오도록 scrollLeft/Top 보정.
-  기존 `setAaZoom` 경계를 재사용하고 `맞춤`(자동)과 수동을 구분 저장(`aaViews`).
+#### AA 보존 규칙 인벤토리 (현재 `edge/public/app.css`·`app.js` — **값 그대로 옮긴다**)
+
+CSS 분할(P1-1)·토큰 변경(P1-2)·`@scope` 정리(P2-4) 어디에서도 아래 값은 바꾸지 않는다. 옮긴 뒤 AA fixture의
+DOM·computed style·screenshot이 이전과 같아야 한다(T06).
+
+| 대상 | 현재 규칙 | 지키는 것 |
+|---|---|---|
+| `.archive-body.aa` | `font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace` · `font-size: var(--aa-effective-size)` · `line-height: var(--aa-effective-line)` · `white-space: pre-wrap` · `overflow-wrap: normal` · `text-align: start` · `overflow-x: auto; overflow-y: hidden` · `text-size-adjust: 100%` · `touch-action: pan-x pan-y` · `overscroll-behavior-x: contain` · `background: var(--aa-background)` · `color: var(--aa-ink)` · `max-width: none` | AA 글꼴 스택, 격자 행간, **Android 글자 자동 확대 차단**, 가로 스크롤 영역 |
+| `.archive-body.aa :is(pre, .AA_Text, div[style*="font-family"])` | `white-space: nowrap !important` · `font-family / font-size / line-height: inherit !important` · `background: transparent !important` · `width: fit-content` · `display: block; margin: 0; padding: 0` | 원문 인라인 글꼴·크기를 AA 값으로 덮어 격자 통일, 줄 안 접힘 금지 |
+| `.archive-body.aa p` | `margin: 0` | 문단 여백으로 행 간격이 벌어지지 않게 |
+| `.archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"])` | `color: inherit !important` | `단색` 모드에서만 원본색 해제(보존 모드는 원본색 그대로) |
+| `.aa-canvas` / `[data-width="680"]` / `[data-width="800"]` | `width: fit-content; min-width: 100%` / 고정 680·800px | 프리셋 캔버스 폭 |
+| `.archive-body.aa.aa-can-scroll` | 오른쪽 안쪽 그림자 | 가로로 더 있음 표시 |
+| `.comment-body.aa-comment` (+ 같은 자식 선택자) | 같은 글꼴 스택·`white-space: pre`·자식 `font: inherit !important; white-space: pre !important` · 원본색 해제 규칙 | AA 댓글 |
+| JS `applySettings` | `--aa-effective-size = aaSize × zoom`, `--aa-effective-line = aaSize × 1.125 × zoom` | 행간 정확히 1.125 |
+| JS `setAaZoom` | `clamp(0.1, 3.0)` · 소수 셋째 자리 반올림 · 글마다 `aaViews` 기억 | 배율 범위·정밀도 |
+| JS `fitAaZoom` | 캔버스 실제 폭 측정, `min(1, floor(현재 × 가용폭/내용폭 × 100)/100)`, 프리셋 폭 해제 | 맞춤은 줄이기만 |
+| JS 핀치 | 거리 변화 × 0.003, 변화 임계 0.002, 연속값 | 부드러운 배율 |
+| JS AA 댓글 감지 | `/AA_Text|saitamaar|Stmr|MS P(Gothic|ゴシック)|ＭＳ Ｐゴシック|IPAMona|font-family…Mona/i` | 댓글 AA 판정 |
+
+**새로 막아야 하는 것**(개편으로 새로 생기는 산문 설정이 AA로 새지 않게, `.archive-body.aa` 루트에 추가):
+`letter-spacing: 0` · `word-spacing: 0` · `text-indent: 0` · `text-align: start`(산문 `양쪽 맞춤` 차단) · `font-weight: 400` ·
+`font-style: normal` · `text-transform: none` · `font-feature-settings: normal` · `font-variant-numeric: normal` ·
+`hyphens: manual` · `text-autospace: no-autospace` · `text-wrap: wrap`(산문 `pretty` 차단). **`white-space`·`overflow-wrap`은 위 기존 값을
+유지**하고 바꾸지 않는다. `all: initial` 금지(원본 인라인 색·span 스타일을 지운다).
+
+- DESIGN §8.4. 위 인벤토리를 그대로 옮기고 "새로 막아야 하는 것"만 더한다. T06으로 고정.
+- 핀치: @use-gesture `PinchGesture`(origin=두 손가락 중점, `memo`로 시작 배율) → 제스처 중에는 `transform: scale(s)`만(글자 재배치 없음, 60fps),
+  손을 떼면 **연속값** `시작 배율 × s`를 기존 `setAaZoom`으로 확정(clamp 0.1–3.0, 소수 셋째 자리 — **25% 단위로 맞추지 않는다**) →
+  transform 제거 → origin이 같은 화면 점에 오도록 scrollLeft/Top 보정. 버튼은 기존대로 ±0.25, `맞춤`은 기존 `fitAaZoom` 그대로.
+  `맞춤`(자동)과 수동을 구분 저장(`aaViews`). 데스크톱 기존 `dblclick` 동작은 유지.
 - 탭: 즉시 도구 토글, 300ms 안 두 번째 탭이면 토글 취소 + `맞춤 ↔ 100%`.
 
 ### 8.17 AA 가로 전체화면 (M17)
@@ -920,7 +947,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | T03 | Reader + 찾기 + 설정 시트 + popover에서 시스템 Back 반복 | 층 하나씩 닫힘, Reader 유지, 조기 이탈 없음 |
 | T04 | CloseWatcher 없는 capability fixture | 닫기 불가 상태 없음, 명시된 저하만 |
 | T05 | AA 전체화면 중 오류·설정·닫기 | host 안에 도구·메시지, 일관된 exit |
-| T06 | 산문 자간·들여쓰기·서체·굵기·테마 변경 | AA DOM·격자·원본색 동일 |
+| T06 | 산문 자간·들여쓰기·정렬(양쪽)·서체·굵기·테마 변경 + CSS 분할 전후 | AA fixture의 DOM·computed style(§8.16 인벤토리 속성)·screenshot 동일, 원본색 유지 |
 | T07 | 세 출처 작품 저장 → 탭 종료 → 완전 단절 cold start → 목차·본문·이전/다음·글꼴 변경·새로고침 | 모두 열림 |
 | T08 | 저장 중 SW 종료·일부 실패·quota | `partial`, 재개·삭제 가능 |
 | T09 | Access redirect·로그인 HTML·401·403·단절 | 캐시 오염 없음, 상태 구분 |
@@ -944,7 +971,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | T27 | 바코드 10,000화 스크럽 → 확대 띠 → 회차 선택 | 16ms 렌더, 스크린리더 요약·키보드 대체 |
 | T28 | 미니바: 서재 카드 보임/안 보임, 목록 스크롤 아래/위, 키보드 열림 | 규칙대로 숨김·접힘·복귀 |
 | T29 | 댓글 `38` → 펼침 → `본문으로` / 브라우저 찾기로 접힌 댓글 검색 | 단일 DOM, id 중복 없음 |
-| T30 | AA 핀치 10%·300% 경계, 맞춤 후 수동 | 범위 밖 없음, 모드 구분 저장 |
+| T30 | AA 핀치 10%·300% 경계, 맞춤 후 수동, 핀치 결과가 연속값(예: 0.873) | 범위 밖 없음, 25% 단위로 튀지 않음, 모드 구분 저장 |
 | T31 | AA 한 번 탭 / 두 번 탭 | 토글 즉시, 두 번째 탭에 토글 취소 + 배율 |
 | T32 | 앱 밝게 + 본문 먹 | Reader 범위 `color-scheme: dark`로 도구층·시트가 dark 토큰, 대비 통과 |
 | T33 | 공유 시트 열기 → 5초 대기 → 공유 | 미리 생성 blob으로 성공(활성화 유지) |
@@ -994,7 +1021,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 
 | 티켓 | 내용 | 파일 |
 |---|---|---|
-| P1-1a/b | CSS 7파일 분할(값 불변 2커밋) | styles/*, app.css, index.html |
+| P1-1a/b | CSS 7파일 분할(값 불변 2커밋). AA 규칙은 §8.16 인벤토리대로 `aa.css`로 **그대로** 이동, T06 | styles/*, app.css, index.html |
 | P1-2 | 새 토큰 + 별칭 + accent 판정(§13) | tokens·components·library·reader.css |
 | P1-3 | 글꼴 연결(core/rest) + T25 | index.html, tokens.css, reader.css, aa.css |
 | P1-4 | 읽기 면 먹(앱 테마와 독립)·밝기·따뜻하게 + theme.js | theme.js, app.js, user-state.js, index.html, reader.css |
@@ -1017,8 +1044,8 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | P2-1 | reader-chrome.js: 도크·진행선·U1·U4·본문 끝 카드·도크 점유 표 | reader-chrome.js, app.js, index.html, reader.css |
 | P2-2 | 퀵 설정 + 스크러버(검색 전 위치로) + 세밀한 타이포 + 서체 카드 | reader-chrome.js, index.html, user-state.js, reader.css |
 | P2-3 | reader-modes.js: 페이지 모드(transform, S1 결과 반영)·탭 영역·당김 + ReadingModeAdapter paged | reader-modes.js, reader-session.js, reader.css, test/reader-modes.test.js |
-| P2-4 | 산문 `@scope` + AA root 명시 재지정(T06) + 댓글 단일 DOM 펼침(T29) | reader.css, aa.css, app.js, index.html |
-| P2-5 | aa-viewer.js: 핀치·snapZoom·탭 판별·도구줄·fade(T30·T31) | aa-viewer.js, app.js, aa.css, test/aa-viewer.test.js |
+| P2-4 | 산문 `@scope` + §8.16 "새로 막아야 하는 것"만 AA 루트에 추가(기존 값 불변, T06) + 댓글 단일 DOM 펼침(T29) | reader.css, aa.css, app.js, index.html |
+| P2-5 | aa-viewer.js: 핀치(transform → 연속 배율 확정)·탭 판별·도구줄·fade. `setAaZoom`·`fitAaZoom` 로직은 옮기되 값·수식 불변(T30·T31) | aa-viewer.js, app.js, aa.css, test/aa-viewer.test.js |
 | P2-6 | AA host 전체화면·미니맵(T05) | aa-viewer.js, aa.css, index.html |
 | P2-7 | gallery.js(PhotoSwipe) | gallery.js, media.js, app.js, reader.css |
 
@@ -1160,12 +1187,14 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - P0-1 검증: `npm test` 108/108, `npm run check` 통과, `npm run lint` 0 error(기존 warning 7/info 2), Playwright 전체 510 pass/14 skip, axe 4폭 통과. 공개 동작·저장 스키마 변화 없음.
 - P0-2a: 시각 fixture 48개(light/dark × 384/768/1440 × 8화면), Linux CI 초기 기준 생성·비교·artifact 업로드, CI lint gate 연결. `check`에 새 spec 포함. 로컬 공통 검증은 108 unit/510 E2E/14 기존 skip·axe·check·lint 통과. Linux 생성 기준선은 P0-2b에서 가져와 커밋 후 다시 비교한다(Windows 기준 생성 없음). 편집 5파일.
 - P0-2b: [Linux CI 36698362728](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36698362728) 성공. 생성 48개(46.2초), 전체 558 pass/14 기존 skip(8.2분), axe·unit·check·lint 및 python/text-edge job 통과. 해당 artifact의 PNG 48개를 그대로 커밋. M0 시각 변화 없음 기준선으로 사용하며, 이후 시각 개편 티켓은 Linux에서 새 기준 생성·시안 대조 후 비교한다.
+- P0-3 구현: 버전 글꼴·vendor의 성공 응답에 public 1년 immutable(HTML fallback/실패 응답 제외). Access JWT 검증을 통과한 email로만 `GET /api/v1/me`의 SHA-256 앞 16자리 ownerHash를 계산하며 응답은 private/no-store. Basic·서비스 토큰·미인증 거절, 다른 계정 hash 분리 테스트 추가. 문서 3개 포함 편집 5파일. 검증 결과는 완료 후 아래에 기록한다.
 - 실기기 확인 대기(M0): Back·시트·popover 중첩(T03/T04), 글꼴 도착 후 위치(T20), 키보드(T34), Playwright `_android` 연결 여부. F0 연결 뒤 확인.
 
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
 | 2026-09-30 | v2: 상용 수준 범위, 레퍼런스, 기능 카탈로그, 플랫폼·라이브러리 매트릭스, Phase 0–14, 의존성·자산 설치 |
+| 2026-09-30 | v3.2: AA 보존 규칙 인벤토리(§8.16) 추가, AA 핀치를 기존 연속 배율로 정정(25% 단위 snap 삭제), AA 루트 재지정은 새 산문 설정만 |
 | 2026-09-30 | v3.1: §17 결정 확정(권장안 채택, 동기화·RUM·/ops 매핑 보류), M5를 QR·백업 병합으로 축소, web-vitals·jsdiff 제거, §18 지시 방법 |
 | 2026-09-30 | v3: 외부 검토 2건 판정(부록 D). 공통 기반 M0 선행, 페이지 모드 transform, 실제 경로 SW·snapshot·인증 정책, 동기화 owner·rev·op_id, Canvas 공유(modern-screenshot 제거), MaruBuri 공식 1.000(@kfonts 제거), 글꼴 core/rest·버전 디렉터리·원본 보관, vendor 재빌드 검사, KWIC 범위·history, 바코드 bin, 목록 임계, 통계 정의, 도크 점유, 댓글 단일 DOM, 마일스톤 M0–M7, T01–T34 |
 
