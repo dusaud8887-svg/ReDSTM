@@ -929,7 +929,7 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     objects = tmp_path / "objects"
@@ -1185,7 +1185,7 @@ def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     sources = collector.configured_sources({})
@@ -1239,7 +1239,7 @@ def test_enabling_body_canary_queues_already_indexed_unknown_chapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     sources = collector.configured_sources({})
@@ -1384,7 +1384,7 @@ def test_linked_chapter_coverage_never_skips_unverified_body(tmp_path: Path) -> 
 def test_source_cooldown_does_not_block_sibling_domain_and_unknown_blocks_need_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1423,7 +1423,7 @@ def test_ondobook_identity_requires_novel_chapter_url() -> None:
 def test_upstream_502_cools_only_failed_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1442,7 +1442,7 @@ def test_upstream_502_cools_only_failed_source(
 def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1476,7 +1476,7 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
 def test_oracle_does_not_promote_challenged_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1947,3 +1947,26 @@ def test_failed_prune_keeps_the_publish_and_is_retried(
     assert [key for key in remote if key.startswith("published/releases/")] == [
         f"published/releases/novel/{retried['release_sha256']}.json"
     ]
+
+
+def test_collector_process_runs_paced_steps_until_a_cooldown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    results = iter([{"status": "stored"}, {"status": "held"}, {"status": "cooldown"}, {}])
+    monkeypatch.setattr(collector, "run_one", lambda *_a, **_k: next(results))
+    monkeypatch.setattr(collector, "configured_sources", lambda **_: ())
+    monkeypatch.setattr(collector, "configured_body_source", lambda: None)
+    monkeypatch.setattr("sys.argv", ["collector", "--seconds", "600"])
+
+    collector.main()
+
+    report = json.loads(capsys.readouterr().out)
+    assert report == {"steps": {"cooldown": 1, "held": 1, "stored": 1}, "stop_reason": "cooldown"}
+
+    def deferred(*_a: object, **_k: object) -> dict[str, object]:
+        raise collector.RuntimeWindowError("typemoon_memory_reserved")
+
+    monkeypatch.setattr(collector, "run_one", deferred)
+    with pytest.raises(SystemExit) as stopped:
+        collector.main()
+    assert stopped.value.code == 75

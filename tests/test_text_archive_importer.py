@@ -794,22 +794,24 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     def active(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 0)
 
-    with pytest.raises(runtime.RuntimeWindowError, match="schedule_active"):
+    # systemd says a TypeMoon unit runs but its cgroup is unreadable: its whole peak is reserved.
+    with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
             status_path=status,
+            cgroup_root=tmp_path / "no-cgroup",
             root_path=tmp_path,
             run=active,
         ):
-            pytest.fail("active TypeMoon schedule must block the text operation")
+            pytest.fail("a starting TypeMoon run keeps its memory")
 
 
 @pytest.mark.parametrize(
     ("meminfo_text", "disk_free", "reason"),
     [
         (
-            "MemAvailable: 250000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
+            "MemAvailable: 150000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
             41 * 1024**3,
             "memory_below_floor",
         ),
@@ -848,39 +850,87 @@ def test_operation_window_defers_below_resource_floors(
             pytest.fail("resource limits must defer the text operation")
 
 
-def test_operation_window_needs_more_memory_beside_a_typemoon_command(
+def _typemoon_cgroup(root: Path, unit: str, current: int) -> Path:
+    unit_root = root / "system.slice" / unit
+    unit_root.mkdir(parents=True)
+    (unit_root / "cgroup.procs").write_text("1234\n", encoding="ascii")
+    (unit_root / "memory.current").write_text(f"{current}\n", encoding="ascii")
+    return root
+
+
+def test_operation_window_leaves_typemoon_its_measured_headroom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     publish_lock = tmp_path / "static" / ".publish.lock"
     publish_lock.parent.mkdir()
     meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 400000 kB\n")
     status = _process_status(tmp_path)
     monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
 
-    def command_running(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(command, 0 if "redstm-control.service" in command else 3)
+    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 3)
 
-    meminfo.write_text("MemAvailable: 400000 kB\n")
-    with pytest.raises(runtime.RuntimeWindowError, match="memory_below_command_floor"):
-        with runtime.operation_window(
+    def window(cgroups: Path, need: int = 150 * 1024**2) -> Any:
+        return runtime.operation_window(
             publish_lock=publish_lock,
+            need_bytes=need,
             meminfo_path=meminfo,
             status_path=status,
+            cgroup_root=cgroups,
             root_path=tmp_path,
-            run=command_running,
-        ):
-            pytest.fail("a TypeMoon command with little headroom must defer the text operation")
-    meminfo.write_text("MemAvailable: 700000 kB\n")
-    with runtime.operation_window(
-        publish_lock=publish_lock,
-        meminfo_path=meminfo,
-        status_path=status,
-        root_path=tmp_path,
-        run=command_running,
-    ):
+            run=inactive,
+        )
+
+    # A crawl just starting (100 MiB of its 620 MiB peak) keeps 520 MiB: no room for text.
+    early = _typemoon_cgroup(tmp_path / "early", "redstm-control.service", 100 * 1024**2)
+    assert runtime.typemoon_reserve(early, inactive) == 520 * 1024**2
+    with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
+        with window(early):
+            pytest.fail("text must wait while TypeMoon can still grow into the free memory")
+    # Near its peak TypeMoon needs little more; the rest is text's.
+    late = _typemoon_cgroup(tmp_path / "late", "redstm-schedule.service", 580 * 1024**2)
+    with window(late):
         pass
+    # Idle TypeMoon reserves nothing; a small collector step needs less than a publish.
+    meminfo.write_text("MemAvailable: 150000 kB\n")
+    with window(tmp_path / "idle", need=60 * 1024**2):
+        pass
+    with pytest.raises(runtime.RuntimeWindowError, match="memory_below_floor"):
+        with window(tmp_path / "idle"):
+            pytest.fail("a publish-sized step must wait for memory")
+
+
+def test_heavy_text_operations_run_one_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish_lock = tmp_path / "static" / ".publish.lock"
+    publish_lock.parent.mkdir()
+    operation_lock = tmp_path / ".operation.lock"
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 800000 kB\n")
+    status = _process_status(tmp_path)
+    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
+
+    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 3)
+
+    options: dict[str, Any] = {
+        "publish_lock": publish_lock,
+        "operation_lock": operation_lock,
+        "meminfo_path": meminfo,
+        "status_path": status,
+        "cgroup_root": tmp_path / "cgroup",
+        "root_path": tmp_path,
+        "run": inactive,
+    }
+    with runtime.FileLock(str(operation_lock)):
+        with pytest.raises(runtime.RuntimeWindowError, match="text_operation_busy"):
+            with runtime.operation_window(exclusive=True, **options):
+                pytest.fail("a second heavy text step must wait")
+        # The light collector does not take the heavy-step lock.
+        with runtime.operation_window(**options):
+            pass
 
 
 def test_operation_window_defers_only_for_typemoon_publish(

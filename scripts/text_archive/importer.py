@@ -1575,7 +1575,7 @@ _OBJECT_ROOT = Path("/srv/redstm-text/objects")
 
 def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
     try:
-        with operation_window(lock_wait_seconds=30):
+        with operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=100 * 1024 * 1024):
             result = import_batch(
                 inbox_root,
                 batch_id,

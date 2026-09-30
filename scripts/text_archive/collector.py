@@ -437,7 +437,7 @@ def _get(
 
         retry_delay = 0
         response_data: tuple[int, bytes, dict[str, str]] | None = None
-        with operation_window():
+        with operation_window(need_bytes=60 * 1024 * 1024):
             db = _connect(db_path)
             try:
                 group = db.execute(
@@ -1157,23 +1157,48 @@ def run_one(
             http.close()
 
 
+# One process runs steps for most of its timer period instead of one interpreter start per
+# request: on the small Oracle VM a Python start every 5 s cost more CPU than the requests.
+# The shared 5 s gap and per-source cooldowns (_get) still pace every request.
+_RUN_SECONDS = 270
+_STEP_HEADROOM_SECONDS = _REQUEST_GAP + 25
+
+
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run one conservative novel JSON collector step")
-    parser.parse_args()
+    parser = argparse.ArgumentParser(description="Run paced novel JSON collector steps")
+    parser.add_argument("--seconds", type=int, default=_RUN_SECONDS, help="stop after this long")
+    args = parser.parse_args()
+    deadline = time.monotonic() + max(1, args.seconds)
+    db_path = Path("/srv/redstm-text/text-archive.sqlite")
+    session = requests.Session()
+    session.trust_env = False
+    statuses: dict[str, int] = {}
+    stop_reason = "time_budget"
     try:
-        result = run_one(
-            Path("/srv/redstm-text/text-archive.sqlite"),
-            Path("/srv/redstm-text/objects"),
-            configured_sources(db_path=Path("/srv/redstm-text/text-archive.sqlite")),
-            body_source=configured_body_source(),
-        )
-    except RuntimeWindowError as exc:
-        parser.exit(75, f"text collection deferred: {exc}\n")
-    except CollectorError as exc:
-        parser.exit(75, f"text collection deferred: {exc}\n")
-    print(json.dumps(result, sort_keys=True))
+        while time.monotonic() + _STEP_HEADROOM_SECONDS < deadline or not statuses:
+            try:
+                result = run_one(
+                    db_path,
+                    Path("/srv/redstm-text/objects"),
+                    configured_sources(db_path=db_path),
+                    body_source=configured_body_source(),
+                    session=session,
+                )
+            except (RuntimeWindowError, CollectorError) as exc:
+                if not statuses:
+                    parser.exit(75, f"text collection deferred: {exc}\n")
+                stop_reason = str(exc)
+                break
+            status = str(result.get("status", "stored"))
+            statuses[status] = statuses.get(status, 0) + 1
+            if status in {"cooldown", "deferred"}:
+                stop_reason = status
+                break
+    finally:
+        session.close()
+    print(json.dumps({"steps": statuses, "stop_reason": stop_reason}, sort_keys=True))
 
 
 if __name__ == "__main__":

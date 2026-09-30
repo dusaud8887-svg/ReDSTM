@@ -1,5 +1,5 @@
 [Unit]
-Description=Run one bounded ReDSTM novel JSON collector step
+Description=Run paced ReDSTM novel JSON collector steps for one timer period
 After=network-online.target
 Wants=network-online.target
 
@@ -18,7 +18,7 @@ ExecCondition=/usr/bin/flock -n /srv/redstm/static/.publish.lock /usr/bin/true
 ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.collector
 SuccessExitStatus=75
 Restart=no
-TimeoutStartSec=1min
+TimeoutStartSec=6min
 MemoryMax=150M
 MemorySwapMax=0
 CPUWeight=10

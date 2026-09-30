@@ -442,7 +442,9 @@ def main() -> None:
             return
         seen.add(batch_id)
         try:
-            with operation_window(lock_wait_seconds=30):
+            with operation_window(
+                lock_wait_seconds=30, exclusive=True, need_bytes=120 * 1024 * 1024
+            ):
                 receipt = import_media_batch(
                     inbox_root,
                     batch_id,

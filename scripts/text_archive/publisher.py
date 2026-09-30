@@ -47,6 +47,11 @@ _PRUNING = "pruning"
 _PRUNABLE_KEY = r"published/(?:releases|indexes)/{lane}/[a-f0-9]{{64}}\.json"
 
 
+def _window() -> Any:
+    """One exclusive heavy text step (runtime.operation_window); publishing needs ~150 MiB."""
+    return operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=150 * 1024 * 1024)
+
+
 def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
     """Source episode numbers outrank labels and import time."""
     parsed = parse_title(str(row.get("chapter_label") or ""))
@@ -568,7 +573,7 @@ def _publish_object_batch(
         ("".join(f"{digest}  {name}\n" for name, (_, digest) in zip(names, objects))).encode(),
     )
     destination = f"{remote}/published/objects/sha256"
-    with operation_window(lock_wait_seconds=30):
+    with _window():
         _run(
             [
                 "rclone",
@@ -596,7 +601,7 @@ def _publish_object_batch(
             runner,
         )
     try:
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             _run(
                 [
                     "rclone",
@@ -721,7 +726,7 @@ def _prune_lane(
     selection = build_root / f"pending-prune-{lane}.txt"
     _write(selection, ("\n".join(key.removeprefix("published/") for key in batch) + "\n").encode())
     try:
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             _run(
                 [
                     "rclone",
@@ -988,7 +993,7 @@ def publish_lane(
     metadata_key = f"metadata:{lane}"
     metadata_updated = 0
     if lane == "arcalive":
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
     metadata_digest = metadata_fingerprint(db_path, lane)
     if lane == "arcalive":
@@ -997,7 +1002,7 @@ def publish_lane(
         ).hexdigest()
     # Pre-flight gate: yield before the unwindowed catalog build (the novel lane has no
     # earlier window) when TypeMoon is publishing or memory/disk is below the floor.
-    with operation_window(lock_wait_seconds=30):
+    with _window():
         pass
     if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
         with sqlite3.connect(db_path) as db:
@@ -1010,7 +1015,7 @@ def publish_lane(
             pointer_hash = _published_hash(db, f"published/{lane}/release.json")
             metadata_matches = _published_hash(db, metadata_key) == metadata_digest
         if pending is None and pointer_hash and not metadata_updated and metadata_matches:
-            with operation_window(lock_wait_seconds=30):
+            with _window():
                 pointer = _run(
                     [
                         "rclone",
@@ -1057,7 +1062,7 @@ def publish_lane(
                 body = local.read_bytes()
                 if hashlib.sha256(body).hexdigest() != digest:
                     raise ValueError(f"local publish file failed verification: {key}")
-                with operation_window(lock_wait_seconds=30):
+                with _window():
                     _run(
                         [
                             "rclone",
@@ -1069,7 +1074,7 @@ def publish_lane(
                         ],
                         runner,
                     )
-                with operation_window(lock_wait_seconds=30):
+                with _window():
                     readback = _run(
                         ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
                         runner,
@@ -1081,7 +1086,7 @@ def publish_lane(
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
         pointer_hash = hashlib.sha256(pointer_body).hexdigest()
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             _run(
                 [
                     "rclone",
@@ -1093,7 +1098,7 @@ def publish_lane(
                 ],
                 runner,
             )
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             pointer_readback = _run(
                 ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{pointer_key}"],
                 runner,
