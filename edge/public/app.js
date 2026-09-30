@@ -44,6 +44,7 @@ import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
+import { renderChapterRun } from "/reader-chrome.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
@@ -1418,6 +1419,7 @@ function renderReaderNavigation(nav) {
   elements["chapter-end-note"].textContent = nav.note ?? "";
   elements["chapter-end-note"].hidden = !nav.note;
   elements["reader-topbar-title"].textContent = nav.context ?? "";
+  renderChapterRun(document.querySelector("#end-run"), document.querySelector("#end-run-label"), nav.run ?? null);
   schedulePrefetch(nav.next?.prefetch);
   elements["reader-more-context"].textContent = nav.context ?? "";
 }
@@ -3612,6 +3614,19 @@ function updateNavigation() {
   if (readerSource === "typemoon") renderReaderNavigation(typeMoonNavigation());
 }
 
+// Where this episode sits in its work, for the chapter-end card: only this one is "reading".
+function collectionRun(collection, index) {
+  const read = historyByIdentityMap();
+  return {
+    position: index + 1, total: collection.entries.length, unit: "편",
+    entries: collection.entries.map((entry, at) => ({
+      position: entry.position,
+      state: !entry.object_key ? "missing" : at === index ? "reading"
+        : postReadingState(read.get(postIdentity(entry))?.progress) === "finished" ? "read" : "unread",
+    })),
+  };
+}
+
 function entryStep(entry) {
   return entry ? {
     title: entry.title || "제목 없음",
@@ -3640,6 +3655,7 @@ function typeMoonNavigation() {
       endFallback: next.target ? null : { kicker: "마지막 보존 편", label: "작품 목차로 돌아가기", action: "toc" },
       hasToc: true,
       context: `${collection.title} · ${index + 1}/${collection.entries.length}`,
+      run: collectionRun(collection, index),
     };
   }
   // Other posts step through the list the session came from, in that list's order.

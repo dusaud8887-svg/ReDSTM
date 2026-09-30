@@ -1189,6 +1189,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         : { kicker: "현재 보존된 마지막 회차", label: "회차 목록으로", action: "toc" },
       hasToc: Boolean(sequence?.toc),
       context,
+      run: sequence?.toc && sequence.index >= 0 ? {
+        position: sequence.index + 1, total: sequence.entries.length, unit,
+        entries: sequence.entries.map((entry, at) => ({
+          position: at + 1,
+          state: at === sequence.index ? "reading" : (history.history[identity(entry, current.lane, current.work)]?.progress ?? 0) >= FINISHED ? "read" : "unread",
+        })),
+      } : null,
     };
   }
 

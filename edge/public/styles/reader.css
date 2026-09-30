@@ -175,3 +175,27 @@ body.find-open .reader-bottom { visibility: hidden; }
 .action-toast { inset: auto 12px calc(80px + env(safe-area-inset-bottom)); max-width: 420px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 6px 6px 16px; border: 0; border-radius: 12px; background: var(--ink); color: var(--surface); font-size: 14px; box-shadow: var(--e2); }
 .action-toast[hidden] { display: none; }
 .action-toast button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--accent-soft); font-weight: 650; cursor: pointer; }
+
+/* Reader dock (DESIGN §8.3, docs/24 §8.7): a floating glass pill over the page, 목록 · 이전 ·
+   다음 화 · Aa · 더보기, with 다음 the widest target in accent. Disabled steps go neutral (U1). */
+@media (max-width: 759px) {
+  .reader-bottom {
+    right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); left: 12px; height: 60px; padding: 4px; padding-bottom: 4px;
+    border: 0; border-radius: 18px; background: var(--glass); box-shadow: var(--e2), 0 0 0 1px var(--line);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
+  }
+  body.reader-active.reader-controls-hidden .reader-bottom { transform: translateY(calc(100% + 12px + env(safe-area-inset-bottom))); }
+  .reader-bottom button { min-height: 52px; border-radius: 14px; color: var(--ink-2); }
+  .reader-bottom .step-next:not(:disabled) { background: transparent; color: var(--accent); }
+  .reader-bottom button:disabled { opacity: 1; color: var(--ink-3); }
+  .reader-bottom button span { font-size: 12px; }
+  .reader { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 759px) and (prefers-reduced-transparency: reduce) { .reader-bottom { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+.step-button:disabled { opacity: 1; border-color: var(--line); background: transparent; color: var(--ink-3); }
+
+/* Chapter end: the next episode's title in the display serif, and where this one sits in the work. */
+.chapter-end-next strong { font-family: var(--font-display); font-weight: 700; }
+.chapter-end-run { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 0 4px; }
+.chapter-end-run[hidden] { display: none; }
+.chapter-end-run small { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }

@@ -1553,3 +1553,11 @@ test("The mini bar appears on a list opened directly once saved records resolve"
   await expect(page.locator("#mini-bar")).toBeVisible();
   await expect(page.locator("#mini-bar")).toHaveAccessibleName(/3편 제목/);
 });
+
+test("The chapter end shows where the episode sits in its work", async ({ page }) => {
+  await useLongCollection(page, 12);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#end-run-label")).toHaveText("2/12편");
+  await expect(page.locator("#end-run .barcode-mini .bin.reading")).toHaveCount(1);
+});
