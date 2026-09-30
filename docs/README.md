@@ -31,7 +31,7 @@
 | [`13`](13_crawler_comparison_and_adoption.md) | crawler 선택 근거 |
 | [`15`](15_reader_navigation_refresh.md), [`19`](19_mobile_reader_redesign.md) | Reader 탐색과 모바일 구현 계약. 이동·Back 동작은 `19`가 우선 |
 | [`18`](18_text_archive_predeploy.md), [`20`](20_arcalive_media_archive.md) | 별도 텍스트 장서와 이미지 보관 계약 |
-| [`24`](24_frontend_redesign_spec.md) v3, [`DESIGN.md`](../DESIGN.md) v2.2 | 프론트 개편(Ribbon Library) 확정 설계·개발 지시서: 외부 검토 2건 판정(부록 D), 마일스톤 M0–M7 티켓, 테스트 T01–T34(구현 전, 의존성·vendor·글꼴 자산 준비 완료). 근거 조사 [`디자인 개편/`](디자인%20개편/), 시안 [`assets/2026-09-30-redesign/`](assets/2026-09-30-redesign/prototype.html) |
+| [`24`](24_frontend_redesign_spec.md) v3.1, [`DESIGN.md`](../DESIGN.md) v2.2 | 프론트 개편(Ribbon Library) 확정 설계·개발 지시서: 외부 검토 판정(부록 D), 결정 확정(§17), 마일스톤 M0–M7 티켓·에이전트 지시문(§18)(구현 전, 의존성·vendor·글꼴 자산 준비 완료). 근거 조사 [`디자인 개편/`](디자인%20개편/), 시안 [`assets/2026-09-30-redesign/`](assets/2026-09-30-redesign/prototype.html) |
 
 `00`과 `04`의 오래된 수치·계획 문단은 작성 당시 기록이다. 현재 배포 판정에는 위 날짜별
 체크포인트와 최신 검증 report를 사용한다. 공개 동작, schema, API, 설정, 권한이 바뀌면 해당 계약을

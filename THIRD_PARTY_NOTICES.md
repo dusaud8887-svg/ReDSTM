@@ -93,9 +93,7 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
     | idb | 8.0.3 | ISC | [jakearchibald/idb](https://github.com/jakearchibald/idb) |
     | @floating-ui/dom | 1.8.0 | MIT | [floating-ui/floating-ui](https://github.com/floating-ui/floating-ui) |
     | @use-gesture/vanilla | 10.3.1 | MIT | [pmndrs/use-gesture](https://github.com/pmndrs/use-gesture) |
-    | web-vitals | 6.2.2 | Apache-2.0 | [GoogleChrome/web-vitals](https://github.com/GoogleChrome/web-vitals) |
     | uqr | 0.1.3 | MIT | [unjs/uqr](https://github.com/unjs/uqr) |
-    | diff (jsdiff) | 9.0.0 | BSD-3-Clause | [kpdecker/jsdiff](https://github.com/kpdecker/jsdiff) |
     | workbox-routing/strategies/expiration/cacheable-response/range-requests/precaching | 7.4.1 | MIT | [GoogleChrome/workbox](https://github.com/GoogleChrome/workbox) |
     | photoswipe (배포 ESM·CSS 그대로 복사) | 5.4.4 | MIT | [dimsemenov/PhotoSwipe](https://github.com/dimsemenov/PhotoSwipe) |
 

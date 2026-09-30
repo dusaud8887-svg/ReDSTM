@@ -50,22 +50,6 @@
       "sha256": "fc03ef22b9e6feb8b01f913110f4298188882d90750441a511d15a9949c844a0"
     },
     {
-      "name": "diff",
-      "version": "9.0.0",
-      "path": "/vendor/diff@9.0.0/diff.js",
-      "bytes": 7072,
-      "gzip": 2735,
-      "sha256": "6ede55bfed4e6c3336c50acb44f565e24ffd71738fbfad1760f1e7e88a9191b1"
-    },
-    {
-      "name": "web-vitals",
-      "version": "6.2.2",
-      "path": "/vendor/web-vitals@6.2.2/web-vitals.js",
-      "bytes": 8644,
-      "gzip": 3276,
-      "sha256": "0b3935abefd67eaad5ea4778df3ed3091bb2fdca4a75ab110052197b7fc7d59e"
-    },
-    {
       "name": "workbox-routing",
       "version": "7.4.1",
       "path": "/vendor/workbox@7.4.1/workbox.js",

@@ -1,6 +1,7 @@
 # 프론트엔드 개편 — 최종 설계서 · 명세서 · 개발 지시서 (v3)
 
-- 상태: **확정 설계, 구현 전**. 의존성·vendor 번들·글꼴 자산은 준비 완료(§12.2). 화면 연결은 M0부터(§15).
+- 상태: **확정 설계, 구현 전. 결정 사항 모두 확정(§17, 2026-09-30 사용자 위임 — 권장안 채택, 불필요 항목 보류)**.
+  의존성·vendor 번들·글꼴 자산은 준비 완료(§12.2). 화면 연결은 M0부터(§15). 에이전트 지시 방법은 §18.
 - 작성: 2026-09-30 · v1 → v2(범위 확대) → **v3(외부 검토 2건 반영, 판정표 부록 D)**
 - 방향: **Ribbon Library** — 규범 토큰·컴포넌트·불변식은 [`DESIGN.md`](../DESIGN.md) v2.2
 - 시안: [`assets/2026-09-30-redesign/prototype.html`](assets/2026-09-30-redesign/prototype.html) — 모바일(S22+ 384px) 26화면 + 데스크톱 3화면.
@@ -20,7 +21,7 @@
 ## 0. 구현 에이전트에게 (먼저 읽기)
 
 1. **새 라이브러리 조사·프레임워크 재선정은 하지 않는다.** 결정은 §5, 라이브러리는 §11에 확정돼 있다.
-2. 작업 전 §17의 **미승인 항목**이 해당 마일스톤에 걸리는지 확인한다. 걸리면 그 티켓은 승인 전까지 시작하지 않는다.
+2. §17 결정은 확정됐다. **보류(pass) 항목**(동기화 M5 일부, RUM, `/ops` 매핑)은 구현하지 않는다.
 3. 작업 단위는 §15 티켓. 티켓당 **손으로 편집하는 파일 ≤ 5**(저장소 규칙). 새 테스트 파일·문서도 센다.
    생성·복사한 바이너리(글꼴, vendor, screenshot 기준 이미지)는 세지 않는다. 넘치면 티켓을 쪼갠다.
 4. 모든 티켓의 공통 완료 조건: `npm test` · `npm run check` · `npm run lint`(M0 이후 0 error) · Playwright 전체 · axe 통과.
@@ -64,6 +65,8 @@ ReDSTM의 기반(보존·검색·Reader·Back 계약·AA parity)은 탄탄하지
 | G8 | AA | 핀치 60fps(transform), 가로 전체화면(도구·메시지 포함), 격자 불변(T06) |
 | G9 | 오프라인 | 세 출처 작품 저장 → 앱 종료 → 완전 단절에서 새로 시작 → 목차·본문·이전/다음(T07) |
 | G10 | 품질 | 기존 E2E·axe 통과, 첫 로드 추가 외부 JS ≤ 15KB gzip, 첫 방문 글꼴 ≤ 700KB(서재), 실기기 체크리스트 |
+
+기기 간 이어 읽기는 **QR + 백업 v4 파일 병합**으로 해결한다(서버 동기화는 보류, §17).
 
 ### 1.3 포지셔닝
 
@@ -137,7 +140,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | 밤 침대 | S22+ 먹 면, 밝기 최저 | 밝기 overlay·따뜻하게, 자동 스크롤, 듣기(가능한 범위) |
 | AA 연재 몰아 보기 | S22+ 가로 | 가로 전체화면, 핀치, 장면 이동, 미니맵 |
 | "그 대사 몇 화였지?" | 폰 또는 PC | 작품 안 KWIC → 원문 → 원래 위치 |
-| PC로 옮겨 이어 읽기 | 데스크톱 | 동기화 또는 QR |
+| PC로 옮겨 이어 읽기 | 데스크톱 | QR(지금 위치 링크), 기록은 백업 파일 병합 |
 | 좋은 문장 남기기 | 폰 | 선택 → 표시/메모 → 발췌 카드 이미지 공유 |
 
 핵심 동선(모두 E2E로 고정):
@@ -177,13 +180,13 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | D-19 | `text-autospace` 한국어 미적용 | 한글–한자 간격 문제 | — |
 | D-20 | 페이지 모드 = CSS multi-column 배치 + **transform 이동**(탭·pointer 스와이프). `::column` snap은 지원 시 추가 기능 | column 박스는 snap 대상이 아니다(`::column`은 Chromium 전용) | 스크롤 고정 |
 | D-21 | Service Worker(Workbox): **실제 경로표**(§12.6) + 오프라인 snapshot + 자동 skipWaiting 금지 | 이동 중 읽기, 구/신 모듈 혼합 방지 | 앱 캐시 초기화 버튼 |
-| D-22 | 동기화 = Worker + D1 `(owner_id, key)` + 서버 revision + op_id 멱등 + 데이터별 병합 규칙(§12.7), **승인 후** | 계정 경계·중복·시계 차이 대응 | 동기화 끄기, 수동 백업 유지 |
+| D-22 | 서버 동기화는 **보류**. 기기 간 이동은 QR(위치 링크) + 백업 v4 병합. §12.7 설계는 필요해질 때를 위해 남긴다 | 1인 개인 보존본에 D1 용도 확장·계약 개정 비용이 과함 | §12.7대로 M5 재개 |
 | D-23 | AA 핀치 = @use-gesture로 제스처 중 transform, 끝나면 허용 단계로 확정 | 60fps + 선명 | 버튼 배율 |
 | D-24 | 이미지 = PhotoSwipe 갤러리(긴 세로 이미지 제외) | 핀치·스와이프 | 기존 뷰어 |
 | D-25 | 공유 이미지(발췌·AA·기록) = **Canvas 2D 직접 렌더** → PNG 1080×1350. modern-screenshot 제거 | DOM 캡처는 `data:` 이미지 → 현재 CSP에 막힘. 직접 렌더는 CSP 완화·메모리 폭증 없음 | 텍스트 복사만 |
 | D-26 | Back = **overlay 관리자**(native 이벤트 반영 + 제스처 안에서 만든 CloseWatcher), LIFO 한 층 | watcher 그룹화·top layer 순서 문제 | 닫기 버튼 + Esc |
 | D-27 | 듣기 = Web Speech + (가능하면) Media Session, **잠금화면 제어는 확인 항목** | 기기별 편차 | 기능 숨김 |
-| D-28 | RUM(web-vitals) = 설치됨, 수집은 승인 후(M1 끝에 켜서 이후 순서 결정에 사용) | 실기기 수치 | — |
+| D-28 | RUM **보류**(web-vitals 제거). 성능 근거는 마일스톤별 S22+ 실기기 확인과 로컬 측정으로 | 수집 저장소·Worker endpoint 비용 대비 1인 사용 이득 작음 | web-vitals 재설치 |
 | D-29 | 정적 자산 중 **버전 디렉터리**(`/vendor/*@*/`, `/fonts/*@*/`)는 Worker가 `Cache-Control: public, max-age=31536000, immutable` | 매 방문 재검증 제거, SW 캐시와 일관 | 헤더 제거 |
 | D-30 | 키보드 대응은 전역 `interactive-widget`을 쓰지 않고 요소별 VirtualKeyboard API/visualViewport | 전역 viewport 변화가 진행 저장·anchor를 흔듦 | — |
 
@@ -212,7 +215,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | F17 | **실측**: MaruBuri 공식(NAVER CDN, SHA `4cf134…`/`2fddd6…`)은 Version 1.000, ascent/descent 800/−200. npm `@kfonts/maruburi`는 2.000, 965/−380, 한글 6,806자 advance 다름 | D-05 |
 | F18 | **실측**: 글꼴 바이트 — Pretendard 가변 동적 조각 UI 문구만 19조각 522KB · 정적 400+600+700 672KB · **가변 core 459KB**. MaruBuri 700 core 218KB · 400 core 208KB. 한국어 12,526자 표본 중 KS X 1001 밖 3자 | D-04, D-05 |
 | F19 | **실측**: `npm run fonts` 두 번 실행 결과 바이트 동일(timestamp 고정), 1분 | 재현성 |
-| F20 | **실측**: 번들(min+gzip) es-hangul 2.95KB · uFuzzy 4.28 · idb 1.41 · Floating UI 7.81 · use-gesture 8.97 · web-vitals 3.28 · Workbox 8.86 · uqr 4.2 · jsdiff 2.5 · PhotoSwipe 4.47+16.45(+CSS 2.34) | §12.8 |
+| F20 | **실측**: 번들(min+gzip) es-hangul 2.95KB · uFuzzy 4.28 · idb 1.41 · Floating UI 7.81 · use-gesture 8.97 · Workbox 8.86 · uqr 4.2 · PhotoSwipe 4.47+16.45(+CSS 2.34) | §12.8 |
 | F21 | Android: Badging API 미지원, Periodic Background Sync는 설치 앱만. `speechSynthesis`만으로는 미디어 알림이 안 뜨는 경우가 많다 | 새 화 알림 P3, D-27 |
 | F22 | Web Share는 사용자 활성화가 필요 — 긴 비동기 생성 뒤 호출하면 `NotAllowedError` | 미리 생성 후 버튼에서 share |
 
@@ -322,11 +325,11 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 |---|---|---|---|
 | G1 | SW 앱 셸 + 불변 객체 캐시 | 신규 | M4 |
 | G2 | 작품 오프라인 저장·관리 | 신규 | M4 |
-| G3 | 기기 간 동기화 | 신규 | M5(승인) |
+| G3 | 기기 간 동기화 | 신규 | 보류(QR + 백업 병합으로 대체) |
 | G4 | 햅틱·전체화면·화면 켜 두기 | 개편 | M2 |
 | G5 | 설치 앱 바로가기 확장 | 개편 | M4 |
 | G6 | 새 화 알림(Push) | 신규 | 범위 밖 |
-| G7 | RUM | 신규 | M1 끝(승인) |
+| G7 | RUM | 신규 | 보류 |
 
 ---
 
@@ -608,10 +611,9 @@ API 존재와 필요한 조합 동작은 따로 검증한다. 실기기 확인 �
 | PhotoSwipe | 5.4.4 | 20.9KB | Lightbox `dataSource`, `uiRegister`, `closeOnVerticalDrag` | 이미지 갤러리 | 이미지 탭 |
 | Workbox | 7.4.1 | 8.86KB | `registerRoute` `NavigationRoute` `CacheFirst` `NetworkFirst` `NetworkOnly` `ExpirationPlugin` `CacheableResponsePlugin` `RangeRequestsPlugin` `precacheAndRoute` `cleanupOutdatedCaches` | SW(§12.6) | SW 안 |
 | uqr | 0.1.3 | ~4.2KB | `renderSVG`(inline SVG로 삽입) | QR 이어 읽기 | 버튼 시 |
-| jsdiff | 9.0.0 | ~2.5KB | `diffWordsWithSpace` `diffLines` | 개정 비교(범위 밖, 설치만) | — |
-| web-vitals | 6.2.2 | 3.28KB | `onLCP` `onINP` `onCLS` `onFCP` `onTTFB` | RUM(승인 후) | idle |
 
 v3에서 제거: **modern-screenshot**(D-25, Canvas 직접 렌더로 대체), **@kfonts/maruburi**(D-05, 공식 1.000 사용).
+결정 확정 후 제거: **web-vitals**(RUM 보류), **jsdiff**(개정 비교 범위 밖). 필요해지면 다시 설치한다.
 
 조합:
 - **한국어 검색** = `canBeChoseong` 판정 → 초성 색인 / NFKC 공백 제거 substring / `disassemble`+uFuzzy → 그룹 병합 → `highlight` 인덱스 변환 → 결과 0 + 라틴 입력이면 `convertQwertyToHangul` 제안.
@@ -669,7 +671,7 @@ v3에서 제거: **modern-screenshot**(D-25, Canvas 직접 렌더로 대체), **
 | `aa-viewer.js` · `gallery.js` | AA·갤러리 | M2 |
 | `annotations.js` · `share-canvas.js` · `stats.js` | 표시·메모·발췌 / Canvas 공유 / 기록 | M3 |
 | `offline.js` · `sw.js` | SW 등록·오프라인 저장 / Service Worker | M4 |
-| `sync.js` | 동기화 | M5 |
+| `sync.js` | 동기화(보류) | — |
 | `tts.js` · `kwic-worker.js` · `kwic-core.js` | 듣기·KWIC | M6 |
 
 순수 로직(색 hash, 바코드 bin, 퍼지 파이프라인, 대응표, locator 복원, snapZoom, KWIC, 통계 집계, 병합 규칙)은 DOM 없이 `node --test`.
@@ -818,7 +820,7 @@ offline[workKey] = {
 - 데이터 release hash와 앱 build hash는 별개로 보존.
 - `offline` 플래그 off = 새 저장 버튼 숨김·진행 중 저장 중단. 기존 snapshot 열람은 유지. SW 제거·캐시 삭제는 설정의 별도 버튼(T24).
 
-### 12.7 동기화 (M5, 승인 필요)
+### 12.7 동기화 — 보류(재개할 때의 설계)
 
 - 테이블(D1 migration, 예시 — 최종 형태는 P5-1에서 확정):
 
@@ -922,9 +924,9 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | T07 | 세 출처 작품 저장 → 탭 종료 → 완전 단절 cold start → 목차·본문·이전/다음·글꼴 변경·새로고침 | 모두 열림 |
 | T08 | 저장 중 SW 종료·일부 실패·quota | `partial`, 재개·삭제 가능 |
 | T09 | Access redirect·로그인 HTML·401·403·단절 | 캐시 오염 없음, 상태 구분 |
-| T10 | 사용자 A → B 로그인 후 sync | namespace 분리, A 기록 업로드 금지 |
-| T11 | 기기 시계 차이·중복 push·ack 유실 | 누락·중복 없이 서버 순서 승자 |
-| T12 | 오래 꺼져 있던 기기가 삭제된 주석과 함께 연결 | 부활하지 않음 |
+| T10 | 사용자 A → B 로그인(같은 브라우저) | namespace 분리, A 기록이 B 화면에 보이지 않음(sync 부분은 보류) |
+| T11 | (보류 — 동기화 재개 시) 기기 시계 차이·중복 push·ack 유실 | 누락·중복 없이 서버 순서 승자 |
+| T12 | 백업 v4 병합: 한 기기에서 지운 주석이 든 옛 백업을 가져오기 | tombstone으로 부활하지 않음 |
 | T13 | 실제 Edge CSP 아래 한글·AA 공유 이미지 | 1080×1350, 글꼴 정확, 실패 시 텍스트 복사 |
 | T14 | clean checkout → `npm ci` → `npm run fonts` | 결과 바이트 동일, 원본 누락 없음 |
 | T15 | vendor manifest 누락·빈 목록·entry 변경·여분 파일 | `npm run check` 실패 |
@@ -961,7 +963,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | M2 | 페이지 넘김·가장자리 Back·회전·주소창, AA 핀치 시작점·경계·전체화면 내부 도구, 갤러리 취소 |
 | M3 | 선택 핸들 vs 메뉴(T26), 공유(T13/T33), 저장 실패 |
 | M4 | 탭 종료 후 단절 시작(T07), 인증 실패(T09), 중단/재개·용량 부족 |
-| M5 | 다중 기기 충돌·계정 경계·삭제 부활 방지 |
+| M5 | QR로 PC→폰·폰→PC 이어 읽기, 백업 병합 |
 | M7 | 전체 통합 회귀(첫 검증 장소가 아님) |
 
 ---
@@ -969,7 +971,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 ## 15. 마일스톤 · 티켓
 
 각 티켓: 손으로 편집하는 파일 ≤ 5(테스트·문서 포함, 생성 자산 제외). 공통 완료 조건은 §0-4. 마일스톤 끝마다 §14.5 실기기 확인과
-사용자 시각 확인. **M1 끝에 RUM을 켜서(승인 시) M2 이후 순서를 수치로 조정한다.**
+사용자 시각 확인. M1 끝 실기기 확인 결과로 M2 이후 우선순위를 조정한다.
 
 ### M0 — 공통 기반 (시각 변화 없음)
 
@@ -1007,7 +1009,6 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | P1-13 | search-suggest.js + 테스트(queryId·취소·상한·IME) | search-suggest.js, test/search-suggest.test.js, app.js, board-navigator.js |
 | P1-14 | 필터 칩화(U2) | app.js, index.html, library.css |
 | P1-15 | find.js + 찾기 바(VirtualKeyboard)·돌아가기 | find.js, app.js, index.html, reader.css |
-| P1-16 | (승인 시) RUM 수집 | src/rum.js, src/index.js, public/rum.js, test/rum.test.js |
 
 ### M2 — Reader 완성
 
@@ -1031,7 +1032,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | P3-4 | stats.js + 기록 › 통계 + 서재 이번 주 + 작품 통계 | stats.js, test/stats.test.js, home.js, library.css |
 | P3-5 | 백업 v4(.json.gz) + 가져오기 병합(T22) | user-state.js, store.js, app.js, test/user-state.test.js |
 
-### M4 — 오프라인 (A5 승인)
+### M4 — 오프라인 (A5 최소 범위)
 
 | 티켓 | 내용 | 파일 |
 |---|---|---|
@@ -1040,13 +1041,14 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | P4-3 | cold-start 오프라인 서재·작품(T07) + 인증 상태(T09) + namespace(§12.6.3) | offline.js, app.js, home.js, e2e/offline.spec.js |
 | P4-4 | SW 업데이트 안전 지점(T23) + 플래그 의미(T24) + 설치 바로가기 | offline.js, sw.js, manifest.webmanifest, app.js |
 
-### M5 — 동기화 (A6 승인)
+### M5 — 기기 간 이어 읽기 (서버 동기화 보류)
 
 | 티켓 | 내용 | 파일 |
 |---|---|---|
-| P5-1 | D1 migration + Worker `/api/v1/sync/{push,pull}`(owner·rev·op_id) | migrations/xxxx_user_sync.sql, src/sync.js, src/index.js, test/sync.test.js |
-| P5-2 | sync.js + localStorage 재조정 + 데이터별 병합(T10–T12) | sync.js, store.js, app.js, test/sync-merge.test.js |
-| P5-3 | QR 이어 읽기(uqr) + 동기화 상태 UI | reader-chrome.js, index.html, app.js |
+| P5-1 | QR 이어 읽기(uqr): 더보기 `다른 기기에서` → 지금 위치 URL(locator 포함) QR, 받은 기기에서 그 문장으로 열기 | reader-chrome.js, index.html, app.js, text-model.js |
+| P5-2 | 백업 v4 병합 UX 다듬기(주석·기록 포함, 충돌 사본 표시) | app.js, user-state.js, store.js, test/user-state.test.js |
+
+서버 동기화(§12.7)·T10–T12는 재개 결정 전까지 하지 않는다.
 
 ### M6 — 확장
 
@@ -1081,27 +1083,69 @@ P7-3 docs/19·09·07·README 본문 갱신.
 
 ---
 
-## 17. 사용자 결정·승인 (2026-09-30 현재 모두 **미승인**)
+## 17. 결정 (2026-09-30 확정 — 사용자 위임: 권장안 채택, 과하지 않게, 불필요 항목 보류)
 
-| # | 항목 | 권장 | 막히는 마일스톤 |
+| # | 항목 | 결정 | 적용 |
 |---|---|---|---|
-| A1 | 의존성 설치 | **완료**(사용자 지시 2026-09-30). 연결은 M1부터 | — |
-| A2 | 시각 방향(시안 확인) | 승인. 대안: accent를 red로 되돌리는 값 교체 | M1 |
-| A3 | IA: 하단 탭 4 + 미니바, 텍스트 → 둘러보기, 보관함 → 기록 | 승인 | M1 |
-| A4 | 백업 v4 | 승인 | M3 |
-| A5 | Service Worker + 오프라인 평문 기기 보관 정책(§12.6.3) | 승인 | M4 |
-| A6 | 동기화: D1 용도 확장(`docs/00` 개정)·owner 정책(다중/단일) | 결정 필요 | M5 |
-| A7 | RUM 저장소(Analytics Engine vs D1) | 결정 필요 | M1 끝 |
-| A8 | `/ops` 토큰 매핑 | 보류 | — |
+| A1 | 의존성 설치 | **완료** | 연결은 M1부터 |
+| A2 | 시각 방향 Ribbon Library(청록 행동 + 주홍 가름끈) | **채택** | M1 |
+| A3 | IA: 하단 탭 4 + 미니바, 텍스트 → 둘러보기 출처, 보관함 → 기록 | **채택**(기존 URL 전부 유지) | M1 |
+| A4 | 백업 v4(.json.gz, 주석·기록·작품 스타일 선택 필드) | **채택**(v1–v3 가져오기 유지) | M3 |
+| A5 | Service Worker + 오프라인 | **채택, 최소 범위**: 사용자가 `이 기기에 저장`한 작품만 평문 보관, 설정에 `이 기기 기록 지우기`, 권한 철회 시 회수 불가를 명시 | M4 |
+| A6 | 서버 동기화(D1 확장) | **보류(pass)** — QR 이어 읽기 + 백업 병합으로 대체. `docs/00` 계약 변경 없음 | M5는 QR·병합만 |
+| A7 | RUM 수집 | **보류(pass)** — web-vitals 제거, 실기기 확인으로 대체 | — |
+| A8 | `/ops` 토큰 매핑 | **보류(pass)** | — |
 
-승인하면 이 표에 날짜를 적는다. 표와 §0이 서로 다르면 이 표가 우선한다.
+보류 항목을 다시 하려면 이 표를 먼저 바꾼다.
 
----
+## 18. 에이전트 지시 방법 · 인계 체크리스트
 
-## 18. 인계 체크리스트
+### 18.1 운영 원칙
 
-- [ ] §17에서 이번 마일스톤을 막는 항목 확인
-- [ ] M0 스파이크(S1·S3·S4) 결과를 §19에 기록한 뒤 M2·M4·M6 해당 티켓 시작
+- **한 세션 = 한 마일스톤**(M0는 크니 `M0 앞부분(P0)` / `M0 뒷부분(F0·S)`로 두 세션). 세션이 끝나면 결과를 보고 다음을 지시한다.
+- 에이전트는 티켓 순서대로 진행하고, 티켓마다 커밋한다. 마일스톤이 끝나면 main에 병합·푸시하고 CI 통과까지 확인한다.
+- 실기기 확인(§14.5)은 사람이 한다. 에이전트는 확인할 목록과 방법을 마지막에 정리해 넘긴다. 결과를 알려 주면 §19에 기록시킨다.
+- 에이전트가 설계와 다르게 해야 할 이유를 찾으면 **멈추고 보고**하게 한다(임의로 설계를 바꾸지 않음).
+
+### 18.2 공통 지시문 (매 세션 맨 앞에 붙인다)
+
+```text
+ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
+- 반드시 먼저 읽기: docs/24_frontend_redesign_spec.md(v3, §0·§5·§12·§15·§17), DESIGN.md(v2.2)
+- 새 라이브러리 조사·프레임워크 재선정 금지. §17의 보류(pass) 항목은 구현하지 않는다.
+- 티켓 순서대로, 티켓당 손으로 고치는 파일 5개 이하, 티켓마다 커밋.
+- 티켓 완료 조건: npm test · npm run check · npm run lint · Playwright 전체 · axe 통과 + 티켓에 적힌 T 번호.
+- E2E가 쓰는 id는 유지. 저장 형식을 옮기는 작업은 원본을 지우지 않는 롤백 경계를 둔다.
+- 설계와 다르게 해야 할 근거가 생기면 멈추고 근거와 선택지를 보고한다.
+- 마일스톤이 끝나면 docs/24 §19에 결과를 적고 main에 병합·푸시한 뒤 CI 결과를 확인한다.
+- 마지막에 내가 S22+ 실기기에서 확인할 목록(§14.5 해당 행)을 짧게 정리해 준다.
+```
+
+### 18.3 마일스톤별 지시문 (공통 지시문 뒤에 붙인다)
+
+| 순서 | 붙일 문장 |
+|---|---|
+| 1 | `이번 세션: M0 앞부분(P0-1 ~ P0-5). Biome 0 error, Linux CI 시각 기준선, Worker immutable 헤더와 /api/v1/me, 간헐 실패 원인, CI 글꼴 재현 검사.` |
+| 2 | `이번 세션: M0 뒷부분(F0-1 ~ F0-4, 스파이크 S1·S3·S4). 스파이크는 코드가 아니라 결과를 docs/24 §19에 기록한다. S1 결과가 150ms를 넘으면 구간 배치 안을 함께 적는다.` |
+| 3 | `이번 세션: M1 전반(P1-1a ~ P1-9). 토큰·글꼴·셸·기록 탭·미니바·표지·서재. 끝나면 시안(docs/assets/2026-09-30-redesign)과 스크린샷을 비교해 차이를 보고한다.` |
+| 4 | `이번 세션: M1 후반(P1-10 ~ P1-15). 바코드·작품 머리·긴 목록·한국어 검색·필터 칩·본문 찾기.` |
+| 5 | `이번 세션: M2(P2-1 ~ P2-7). 페이지 모드는 §19에 기록된 S1 결과를 따른다.` |
+| 6 | `이번 세션: M3(P3-1 ~ P3-5). 공유 이미지는 Canvas 직접 렌더, CSP는 바꾸지 않는다.` |
+| 7 | `이번 세션: M4(P4-1 ~ P4-4). §12.6 경로표 순서를 그대로, S3 결과를 따른다. 오프라인은 사용자가 저장한 작품만.` |
+| 8 | `이번 세션: M5(P5-1 ~ P5-2). 서버 동기화는 하지 않는다.` |
+| 9 | `이번 세션: M6에서 P6-3(KWIC)·P6-4(명령 팔레트·스마트 서재)부터. 듣기(P6-1)는 §19의 S4 결과가 '가능'일 때만.` |
+| 10 | `이번 세션: M7. 내가 전달하는 실기기 확인 결과로 통합 회귀, 옛 자산·별칭 제거, docs/19·09·07·README 본문 갱신.` |
+
+### 18.4 중간에 쓰는 짧은 지시
+
+- 이어서 하기: `docs/24 §19 마지막 기록부터 이어서 진행해.`
+- 실기기 결과 반영: `S22+ 확인 결과: <항목별 통과/실패와 증상>. §19에 기록하고 실패 항목을 고쳐.`
+- 방향 바꾸기: `§17의 <항목>을 <새 결정>으로 바꾼다. 문서부터 고치고 영향받는 티켓을 다시 정리해 보고해.`
+
+### 18.5 체크리스트
+
+- [ ] 이번 마일스톤이 §17 보류 항목에 걸리지 않는지 확인
+- [ ] M0 스파이크(S1·S3·S4) 결과가 §19에 있어야 M2·M4·M6 해당 티켓 시작
 - [ ] 티켓마다 §0-4 공통 완료 조건 + 적힌 T 번호 통과
 - [ ] 마일스톤마다 §14.5 실기기 확인 결과를 §19에 기록
 - [ ] 새 라이브러리 = `package.json` → `vendor.mjs` → `npm run vendor` → NOTICE / 글꼴 = `npm run fonts`
@@ -1114,6 +1158,7 @@ P7-3 docs/19·09·07·README 본문 갱신.
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
 | 2026-09-30 | v2: 상용 수준 범위, 레퍼런스, 기능 카탈로그, 플랫폼·라이브러리 매트릭스, Phase 0–14, 의존성·자산 설치 |
+| 2026-09-30 | v3.1: §17 결정 확정(권장안 채택, 동기화·RUM·/ops 매핑 보류), M5를 QR·백업 병합으로 축소, web-vitals·jsdiff 제거, §18 지시 방법 |
 | 2026-09-30 | v3: 외부 검토 2건 판정(부록 D). 공통 기반 M0 선행, 페이지 모드 transform, 실제 경로 SW·snapshot·인증 정책, 동기화 owner·rev·op_id, Canvas 공유(modern-screenshot 제거), MaruBuri 공식 1.000(@kfonts 제거), 글꼴 core/rest·버전 디렉터리·원본 보관, vendor 재빌드 검사, KWIC 범위·history, 바코드 bin, 목록 임계, 통계 정의, 도크 점유, 댓글 단일 DOM, 마일스톤 M0–M7, T01–T34 |
 
 ---
@@ -1152,7 +1197,7 @@ P7-3 docs/19·09·07·README 본문 갱신.
 | R-MD-03 use-gesture | adopt | P2-5 |
 | R-ST-01 IndexedDB | 신규 데이터 idb, 이전은 P6-6 | §12.4 |
 | R-ST-02 persist | adopt | §12.4 |
-| R-ST-03 동기화 | 승인 후 | M5 |
+| R-ST-03 동기화 | 보류(QR·백업 병합으로 대체) | §17 |
 | R-ST-04 오프라인 | adopt | M4 |
 | R-ST-05 CRDT | reject | — |
 | R-UI-01 content-visibility | adopt(3,000행 이하) | P1-12 |
@@ -1169,11 +1214,11 @@ P7-3 docs/19·09·07·README 본문 갱신.
 | R-UI-16 SUIT 드문 음절 | Pretendard core/rest로 해소 | D-04 |
 | R-VZ-01 독서 캘린더 | adopt | P3-4 |
 | R-VZ-02–06 | 범위 밖/reject | — |
-| R-QA-01 web-vitals | 설치, 수집은 A7 | P1-16 |
+| R-QA-01 web-vitals | 보류(제거) | §17 |
 | R-QA-02 Biome | 설치, M0 0 error | P0-1 |
 | R-QA-03 checkJs | 새 모듈 JSDoc 권장 | — |
 | R-QA-04 toHaveScreenshot | adopt(Linux 기준) | P0-2 |
-| R-AR-01 jsdiff | 설치, 화면 범위 밖 | — |
+| R-AR-01 jsdiff | 범위 밖(제거) | — |
 
 ## 부록 B. 대비 검증 스크립트
 

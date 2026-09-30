@@ -28,8 +28,6 @@ const bundles = [
     source: `export { Gesture, PinchGesture, DragGesture } from "@use-gesture/vanilla";`,
   },
   { name: "uqr", file: "uqr.js", source: `export { renderSVG } from "uqr";` },
-  { name: "diff", file: "diff.js", source: `export { diffChars, diffWordsWithSpace, diffLines } from "diff";` },
-  { name: "web-vitals", file: "web-vitals.js", source: `export { onLCP, onINP, onCLS, onFCP, onTTFB } from "web-vitals";` },
   {
     name: "workbox-routing", dir: "workbox", file: "workbox.js", licenseFrom: "workbox-core",
     source: [
