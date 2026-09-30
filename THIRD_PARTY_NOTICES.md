@@ -84,7 +84,7 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
   `edge/package-lock.json`이 source of truth다.
   - `edge/public/vendor/<name>@<version>/`: `edge/scripts/vendor.mjs`가 npm 패키지를 esbuild로 한 파일
     ESM으로 묶은 결과와 각 패키지 LICENSE. 파일별 SHA-256·크기는 `edge/public/vendor/manifest.json`,
-    검증은 `npm run check`(`vendor.mjs --check`).
+    검증은 `npm run check`(`vendor.mjs --check`가 메모리에서 다시 번들해 바이트·파일 집합이 같은지 확인).
 
     | Package | Version | License | Upstream |
     |---|---:|---|---|
@@ -93,22 +93,27 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
     | idb | 8.0.3 | ISC | [jakearchibald/idb](https://github.com/jakearchibald/idb) |
     | @floating-ui/dom | 1.8.0 | MIT | [floating-ui/floating-ui](https://github.com/floating-ui/floating-ui) |
     | @use-gesture/vanilla | 10.3.1 | MIT | [pmndrs/use-gesture](https://github.com/pmndrs/use-gesture) |
-    | modern-screenshot | 4.7.0 | MIT | [qq15725/modern-screenshot](https://github.com/qq15725/modern-screenshot) |
     | web-vitals | 6.2.2 | Apache-2.0 | [GoogleChrome/web-vitals](https://github.com/GoogleChrome/web-vitals) |
     | uqr | 0.1.3 | MIT | [unjs/uqr](https://github.com/unjs/uqr) |
     | diff (jsdiff) | 9.0.0 | BSD-3-Clause | [kpdecker/jsdiff](https://github.com/kpdecker/jsdiff) |
     | workbox-routing/strategies/expiration/cacheable-response/range-requests/precaching | 7.4.1 | MIT | [GoogleChrome/workbox](https://github.com/GoogleChrome/workbox) |
     | photoswipe (배포 ESM·CSS 그대로 복사) | 5.4.4 | MIT | [dimsemenov/PhotoSwipe](https://github.com/dimsemenov/PhotoSwipe) |
 
-  - `edge/public/fonts/pretendard/`: Pretendard Variable 1.3.9 동적 서브셋 92개 WOFF2(npm `pretendard`
-    `dist/web/variable/woff2-dynamic-subset`), SIL OFL 1.1, [orioncactus/pretendard](https://github.com/orioncactus/pretendard).
-    `LICENSE.txt` 동봉.
-  - `edge/public/fonts/maruburi/`: MaruBuri Regular·Bold(npm `@kfonts/maruburi` 0.1.0의 원본 TTF, NAVER, OFL 1.1)를
-    `edge/scripts/build-fonts.py`가 Pretendard의 unicode-range 묶음대로 나눈 WOFF2. 글리프 변형 없음(subset만).
-  - `edge/public/fonts/gowun-batang/`: Gowun Batang 400·700 unicode-range 조각(npm `@fontsource/gowun-batang` 5.3.0),
-    SIL OFL 1.1, [yangheeryu/Gowun-Batang](https://github.com/yangheeryu/Gowun-Batang).
-  - `edge/public/fonts/Saitamaar-Regular.woff2`: 위 Saitamaar TTF의 무손실 WOFF2 재포장(subset 없음). 빌드 스크립트가
-    cmap과 advance width가 원본과 같은지 검사한다.
+  - 글꼴 빌드 원본(배포하지 않음) `edge/font-sources/`, 빌드는 `npm run fonts`(fonttools 4.66.1, brotli 1.2.0 고정):
+    - `MaruBuri-Regular.woff2` Version 1.000, SHA-256 `4cf1341cf2f23fb3e263712dfde1d8f25eedcc328b696a2e5a2c8add55e5c17b`
+      (위 NAVER webfont CDN 배포본과 동일).
+    - `MaruBuri-Bold.woff2` Version 1.000, NAVER webfont CDN
+      `https://hangeul.pstatic.net/hangeul_static/webfont/MaruBuri/MaruBuri-Bold.woff2`, SHA-256
+      `2fddd698f58d6e105ae5b4273a72036ec646c7e5ff0b257288ee8ba62650bfac`, SIL OFL 1.1(NAVER 라이선스는 위와 같음).
+    - `Saitamaar-Regular.ttf` 위 Saitamaar와 같은 파일(SHA-256 `64fed56d…d7c5`).
+    - npm 재포장본 `@kfonts/maruburi`(Version 2.000, 한글 advance·세로 metric이 공식 1.000과 다름)는 쓰지 않는다.
+  - `edge/public/fonts/pretendard@1.3.9/`: npm `pretendard` 1.3.9의 `PretendardVariable.woff2`를 core(KS X 1001 한글
+    2,350자 + 라틴·구두점) 1파일과 나머지 256자 단위 조각으로 나눈 WOFF2, SIL OFL 1.1,
+    [orioncactus/pretendard](https://github.com/orioncactus/pretendard). `LICENSE.txt` 동봉.
+  - `edge/public/fonts/maruburi@1.000/`: 위 MaruBuri 1.000 Regular·Bold를 같은 방식으로 나눈 WOFF2. 글리프 변형 없음.
+  - `edge/public/fonts/gowun-batang@5.3.0/`: Gowun Batang 400·700 unicode-range 조각(npm `@fontsource/gowun-batang`
+    5.3.0), SIL OFL 1.1, [yangheeryu/Gowun-Batang](https://github.com/yangheeryu/Gowun-Batang).
+  - `edge/public/fonts/saitamaar@1.0/`: Saitamaar TTF의 무손실 WOFF2 재포장(subset 없음). 빌드가 cmap·advance 동일성을 검사한다.
   - 개발 도구: esbuild 0.28.2(MIT), @biomejs/biome 2.5.14(MIT OR Apache-2.0), lucide-static 1.49.0(ISC, 아이콘
     path 원천 — 필요한 아이콘만 sprite로 복사할 때 출처 표기).
 - TypeMoon category/views/restricted 판정 동작은 DSOTM commit

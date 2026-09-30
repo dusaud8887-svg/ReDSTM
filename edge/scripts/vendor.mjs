@@ -1,15 +1,15 @@
 // Bundles pinned browser libraries from node_modules into public/vendor/ as single ESM files.
 // The Reader has no build step; pages import these files by absolute path.
 //   node scripts/vendor.mjs          rebuild every bundle and public/vendor/manifest.json
-//   node scripts/vendor.mjs --check  verify bundles match manifest.json and package.json versions
+//   node scripts/vendor.mjs --check  rebuild in memory and require the committed files, manifest,
+//                                    LICENSEs, and file set to match exactly (no stale or extra files)
 import { build } from "esbuild";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 
 const root = new URL("../", import.meta.url);
 const vendorRoot = new URL("public/vendor/", root);
-const manifestUrl = new URL("manifest.json", vendorRoot);
 
 // name: npm package, file: output basename, source: re-export entry, license: package whose LICENSE ships.
 const bundles = [
@@ -27,7 +27,6 @@ const bundles = [
     name: "@use-gesture/vanilla", file: "use-gesture.js",
     source: `export { Gesture, PinchGesture, DragGesture } from "@use-gesture/vanilla";`,
   },
-  { name: "modern-screenshot", file: "modern-screenshot.js", source: `export { domToBlob, domToPng } from "modern-screenshot";` },
   { name: "uqr", file: "uqr.js", source: `export { renderSVG } from "uqr";` },
   { name: "diff", file: "diff.js", source: `export { diffChars, diffWordsWithSpace, diffLines } from "diff";` },
   { name: "web-vitals", file: "web-vitals.js", source: `export { onLCP, onINP, onCLS, onFCP, onTTFB } from "web-vitals";` },
@@ -62,50 +61,77 @@ const moduleUrl = (name, path = "") => new URL(`node_modules/${name}/${path}`, r
 const safe = (name) => name.replace(/^@/, "").replace("/", "-");
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-async function writeEntry(dir, relative, bytes, entries, meta) {
-  await writeFile(new URL(relative, dir), bytes);
-  entries.push({ ...meta, path: `/vendor/${dir.href.slice(vendorRoot.href.length)}${relative}`, bytes: bytes.length, gzip: gzipSync(bytes, { level: 9 }).length, sha256: digest(bytes) });
-}
-
-async function rebuild() {
-  await rm(vendorRoot, { recursive: true, force: true });
-  const entries = [];
+// Produces every vendor file in memory: [{ path (relative to public/vendor/), bytes, meta }].
+async function produce() {
+  const outputs = [];
+  const resolveDir = root.pathname.replace(/^\/([A-Za-z]:)/, "$1");
   for (const bundle of bundles) {
     const version = pinned(bundle.name);
-    const dir = new URL(`${bundle.dir ?? safe(bundle.name)}@${version}/`, vendorRoot);
-    await mkdir(dir, { recursive: true });
+    const dir = `${bundle.dir ?? safe(bundle.name)}@${version}/`;
     const result = await build({
-      stdin: { contents: bundle.source, resolveDir: root.pathname.replace(/^\/([A-Za-z]:)/, "$1"), loader: "js" },
+      stdin: { contents: bundle.source, resolveDir, loader: "js" },
       bundle: true, minify: true, format: "esm", target: "es2022", write: false, legalComments: "none",
       define: { "process.env.NODE_ENV": '"production"' },
     });
-    await writeEntry(dir, bundle.file, Buffer.from(result.outputFiles[0].contents), entries, { name: bundle.name, version });
-    await copyFile(moduleUrl(bundle.licenseFrom ?? bundle.name, "LICENSE"), new URL("LICENSE", dir));
+    outputs.push({ path: `${dir}${bundle.file}`, bytes: Buffer.from(result.outputFiles[0].contents), meta: { name: bundle.name, version } });
+    outputs.push({ path: `${dir}LICENSE`, bytes: await readFile(moduleUrl(bundle.licenseFrom ?? bundle.name, "LICENSE")) });
   }
   for (const item of copies) {
     const version = pinned(item.name);
-    const dir = new URL(`${safe(item.name)}@${version}/`, vendorRoot);
-    await mkdir(dir, { recursive: true });
+    const dir = `${safe(item.name)}@${version}/`;
     for (const file of item.files) {
-      const bytes = await readFile(moduleUrl(item.name, file));
-      await writeEntry(dir, file.split("/").pop(), bytes, entries, { name: item.name, version });
+      outputs.push({ path: `${dir}${file.split("/").pop()}`, bytes: await readFile(moduleUrl(item.name, file)), meta: { name: item.name, version } });
     }
-    await copyFile(moduleUrl(item.name, "LICENSE"), new URL("LICENSE", dir));
+    outputs.push({ path: `${dir}LICENSE`, bytes: await readFile(moduleUrl(item.name, "LICENSE")) });
   }
-  await writeFile(manifestUrl, `${JSON.stringify({ generatedBy: "edge/scripts/vendor.mjs", files: entries }, null, 2)}\n`);
+  const entries = outputs.filter((o) => o.meta).map((o) => ({
+    ...o.meta, path: `/vendor/${o.path}`, bytes: o.bytes.length, gzip: gzipSync(o.bytes, { level: 9 }).length, sha256: digest(o.bytes),
+  }));
+  const manifest = Buffer.from(`${JSON.stringify({ generatedBy: "edge/scripts/vendor.mjs", files: entries }, null, 2)}\n`);
+  outputs.push({ path: "manifest.json", bytes: manifest });
+  return { outputs, entries };
+}
+
+async function listFiles(dir, prefix = "") {
+  const found = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) found.push(...await listFiles(new URL(`${entry.name}/`, dir), `${prefix}${entry.name}/`));
+    else found.push(`${prefix}${entry.name}`);
+  }
+  return found;
+}
+
+// Builds into a sibling temp directory and swaps it in only after every file is written.
+async function rebuild() {
+  const { outputs, entries } = await produce();
+  const staging = new URL("public/vendor.tmp/", root);
+  await rm(staging, { recursive: true, force: true });
+  for (const output of outputs) {
+    const target = new URL(output.path, staging);
+    await mkdir(new URL("./", target), { recursive: true });
+    await writeFile(target, output.bytes);
+  }
+  await rm(vendorRoot, { recursive: true, force: true });
+  await rename(staging, vendorRoot);
   for (const entry of entries) console.log(`${entry.path}  ${entry.bytes} B, ${entry.gzip} B gzip`);
 }
 
 async function check() {
-  const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
-  for (const entry of manifest.files) {
-    if (pinned(entry.name) !== entry.version) throw new Error(`${entry.path} was built from ${entry.version}, package.json pins ${pinned(entry.name)}`);
-    const bytes = await readFile(new URL(entry.path.slice("/vendor/".length), vendorRoot));
-    if (digest(bytes) !== entry.sha256) throw new Error(`${entry.path} does not match its manifest hash`);
-    const license = await readFile(new URL(`${entry.path.slice("/vendor/".length).split("/")[0]}/LICENSE`, vendorRoot), "utf8");
-    if (!license.trim()) throw new Error(`${entry.path} has no LICENSE next to it`);
+  const { outputs } = await produce();
+  const expected = new Map(outputs.map((o) => [o.path, o.bytes]));
+  const actual = await listFiles(vendorRoot);
+  const extra = actual.filter((path) => !expected.has(path));
+  if (extra.length) throw new Error(`Unexpected files in public/vendor: ${extra.join(", ")}`);
+  for (const [path, bytes] of expected) {
+    let committed;
+    try {
+      committed = await readFile(new URL(path, vendorRoot));
+    } catch {
+      throw new Error(`public/vendor/${path} is missing; run npm run vendor`);
+    }
+    if (!committed.equals(bytes)) throw new Error(`public/vendor/${path} differs from a fresh build; run npm run vendor`);
   }
-  console.log(`Vendor bundles match manifest (${manifest.files.length} files).`);
+  console.log(`Vendor bundles match a fresh build (${expected.size} files).`);
 }
 
 try {

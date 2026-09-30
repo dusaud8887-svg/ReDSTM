@@ -1,6 +1,7 @@
 # 소설·AA Reader 상세 사양
 
 - 상태: Signal Archive Reader authenticated live; user visual and actual Android gates pending
+- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md) v2.2가 이 문서와 겹치는 항목(읽기 위치 기준값 = 원문 문장 locator, 산문 두 손가락은 글자 크기·AA는 배율, AA 도구·전체화면)을 대체한다. 본문 갱신은 `24` P7-3.
 - 기준일: 2026-07-12
 - 상위 UX: [`06_final_product_experience.md`](06_final_product_experience.md)
 - 시각 token: [`../DESIGN.md`](../DESIGN.md)

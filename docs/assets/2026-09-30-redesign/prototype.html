@@ -7,16 +7,16 @@
 <!--
   ReDSTM 프론트 개편 시안 v2 (docs/24_frontend_redesign_spec.md §8, DESIGN.md v2.1).
   가상 데이터, 외부 요청 없음. 프레임 번호(M1–M26, D1–D3)는 설계서 §8과 같다.
-  글꼴: 저장소 자산(edge/public/fonts)과, 있으면 edge/node_modules의 원본(npm ci 후)을 상대 경로로 읽는다.
+  글꼴: 저장소 자산(edge/public/fonts의 core 파일, edge/font-sources)을 상대 경로로 읽는다. 고운바탕만 npm ci 후 node_modules에서.
   AA 예시는 이 시안을 위해 만든 단순 그림이다.
 -->
 <style>
-@font-face { font-family: "Pretendard Variable"; src: url("../../../edge/node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2") format("woff2"); font-weight: 45 920; font-display: swap; }
+@font-face { font-family: "Pretendard Variable"; src: url("../../../edge/public/fonts/pretendard@1.3.9/core.woff2") format("woff2"); font-weight: 45 920; font-display: swap; }
 @font-face { font-family: "SUIT Variable"; src: url("../../../edge/public/fonts/SUIT-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @font-face { font-family: MaruBuri; src: url("../../../edge/public/fonts/MaruBuri-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: MaruBuri; src: url("../../../edge/node_modules/@kfonts/maruburi/MaruBuri-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: MaruBuri; src: url("../../../edge/font-sources/MaruBuri-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
 @font-face { font-family: "Gowun Batang"; src: url("../../../edge/node_modules/@fontsource/gowun-batang/files/gowun-batang-korean-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: Saitamaar; src: url("../../../edge/public/fonts/Saitamaar-Regular.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: Saitamaar; src: url("../../../edge/public/fonts/saitamaar@1.0/Saitamaar-Regular.woff2") format("woff2"); font-display: swap; }
 
 @layer tokens, base, components, screens;
 
@@ -42,7 +42,7 @@
   }
   :root[data-theme="dark"] { color-scheme: dark; }
   :root[data-surface="paper"] .rs { --reader-bg: light-dark(#F5EFE3, #1D1A15); --reader-ink: light-dark(#2B261F, #E6DDCC); --reader-ink-2: light-dark(#5E554A, #B5AA97); --reader-line: light-dark(#E4DAC7, #3A3329); }
-  :root[data-theme="dark"][data-surface="ink"] .rs { --reader-bg: #000; --reader-ink: #D6D8D4; --reader-ink-2: #9FA39E; --reader-line: #1F2221; }
+  :root[data-surface="ink"] .rs { color-scheme: dark; --reader-bg: #000; --reader-ink: #D6D8D4; --reader-ink-2: #9FA39E; --reader-line: #1F2221; }
   .hue-0 { --c-bg: light-dark(#D9ECFF, #1D2B3B); --c-mark: light-dark(#316CA5, #85BCF5); }
   .hue-1 { --c-bg: light-dark(#D0F0F8, #132F35); --c-mark: light-dark(#007890, #62C8DF); }
   .hue-2 { --c-bg: light-dark(#D6F1E2, #1A3024); --c-mark: light-dark(#177C52, #7BCBA1); }
@@ -82,7 +82,7 @@
   .chip { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); border: 0; font-size: 14px; font-weight: 550; white-space: nowrap; flex: none; }
   .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
   .chip svg.i { width: 16px; height: 16px; }
-  .badge-new { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--ribbon-soft); color: var(--ribbon-text); font-size: 12px; font-weight: 650; }
+  .badge-new { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 650; }
   .seg { display: flex; padding: 3px; background: var(--surface-2); border-radius: 10px; gap: 2px; }
   .seg button { flex: 1; min-height: 34px; border: 0; background: transparent; border-radius: 8px; color: var(--ink-2); font-size: 14px; font-weight: 550; white-space: nowrap; padding: 0 8px; }
   .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 650; box-shadow: var(--e1); }
@@ -100,7 +100,8 @@
   .caret { display: inline-block; width: 2px; height: 20px; background: var(--accent); margin-left: -8px; }
   .icon-btn { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); flex: none; }
   .progress { height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; }
-  .progress > span { display: block; height: 100%; background: var(--ribbon); }
+  .progress > span { display: block; height: 100%; background: color-mix(in oklab, var(--ink) 45%, transparent); }
+  .progress.mine > span { background: var(--ribbon); }
   .cover { position: relative; flex: none; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; border-radius: 3px; background: var(--c-bg); color: var(--ink); box-shadow: var(--e1); }
   .cover::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: linear-gradient(90deg, var(--c-mark), color-mix(in oklab, var(--c-mark) 70%, transparent)); }
   .cover.s { width: 32px; height: 44px; align-items: center; justify-content: center; }
@@ -111,7 +112,7 @@
   .cover .t { font: 700 15px/1.35 var(--font-display); word-break: keep-all; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
   .cover.l .t { font-size: 17px; }
   .cover .src { font-size: 11px; font-weight: 600; color: var(--ink-2); }
-  .cover .corner { position: absolute; right: 0; top: 0; border-style: solid; border-width: 0 14px 14px 0; border-color: transparent var(--ribbon) transparent transparent; }
+  .cover .corner { position: absolute; right: 0; top: 0; border-style: solid; border-width: 0 14px 14px 0; border-color: transparent var(--accent) transparent transparent; }
   .cover .dl { position: absolute; right: 6px; bottom: 6px; width: 16px; height: 16px; color: var(--ink-2); }
   .rows { background: var(--surface); border-radius: 14px; box-shadow: var(--e1); overflow: hidden; }
   .row { display: flex; gap: 12px; align-items: center; min-height: 60px; padding: 10px 14px; border-top: 1px solid var(--line); }
@@ -162,11 +163,12 @@
   .logo { position: relative; width: 26px; height: 26px; border-radius: 6px; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-size: 12px; font-weight: 800; flex: none; }
   .logo::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 5px; height: 8px; margin-left: -2.5px; background: var(--ribbon); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%); }
   .tabbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, 1fr); height: 80px; padding: 6px 8px 20px; border-top: 1px solid color-mix(in oklab, var(--line) 70%, transparent); }
+  .minibar + .tabbar { border-top-color: transparent; }
   .tabbar button { border: 0; background: none; display: grid; justify-items: center; align-content: center; gap: 2px; color: var(--ink-2); font-size: 12px; font-weight: 550; }
   .tabbar .pill { display: grid; place-items: center; width: 56px; height: 30px; border-radius: 999px; }
   .tabbar button[aria-current="page"] { color: var(--accent); font-weight: 650; }
   .tabbar button[aria-current="page"] .pill { background: var(--accent-soft); }
-  .minibar { position: absolute; left: 8px; right: 8px; bottom: 86px; z-index: 20; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 6px 0 12px; border-radius: 14px; box-shadow: var(--e2), 0 0 0 1px color-mix(in oklab, var(--line) 60%, transparent); overflow: hidden; }
+  .minibar { position: absolute; left: 0; right: 0; bottom: 80px; z-index: 21; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 6px 0 16px; border-radius: 16px 16px 0 0; box-shadow: 0 -6px 18px light-dark(rgb(28 27 25 / 8%), rgb(0 0 0 / 35%)); border-top: 1px solid color-mix(in oklab, var(--line) 70%, transparent); overflow: hidden; }
   .minibar::before { content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 38%; background: var(--ribbon); }
   .minibar .dot { width: 10px; height: 14px; border-radius: 2px; background: var(--c-bg); box-shadow: inset 3px 0 0 var(--c-mark); flex: none; }
   .minibar .txt { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -496,7 +498,7 @@ phone('M1', '서재 — 첫 화면', '이어읽기 카드의 버튼이 엄지 �
     <div class="field">${I('search')}작품·글·작가 검색</div>
     <article class="continue"><div class="continue-top">${cover('novel:1001', '달그림자 서고의 마술사', '소설')}<div style="min-width:0"><p class="label">이어 읽기 · 3분 전</p><p class="work">달그림자 서고의 마술사</p><p class="ch">119화 · 겨울 정원의 약속</p><p class="meta">한여름 · 남은 시간 약 7분</p></div></div>
       <p class="excerpt">그녀는 오래된 책을 덮고 천천히 고개를 들었다. 서고의 정원은 이미 하얗게 덮여 있었고, 약속한 사람은 아직 오지 않았다.</p>
-      <div class="pline"><div class="progress"><span style="width:38%"></span></div><span class="num">38%</span></div>
+      <div class="pline"><div class="progress mine"><span style="width:38%"></span></div><span class="num">38%</span></div>
       <div class="actions2"><button class="btn btn-primary">이어 읽기</button><button class="btn btn-secondary">목차</button></div></article>
     <div class="sec"><h2>읽던 작품</h2><button>모두 보기</button></div>
     <div class="shelf">${works.map((w) => shelfItem(w, { dl: w[0] === 'novel:1001' })).join('')}</div>
@@ -591,8 +593,10 @@ phone('M25', '더보기 시트', '섹션: 이 화 · 보기 · 작품 · 기기'
   <div class="grp"><p class="caption">보기</p><div class="grid4"><button>${I('layers')}AA로 보기</button><button>${I('focus')}집중</button><button>${I('rotate')}AA 가로</button><button>${I('scroll')}자동 스크롤</button><button>${I('headphones')}듣기</button></div></div>
   <div class="grp"><p class="caption">작품</p><div class="grid4"><button>${I('list')}목차</button><button>${I('find')}작품에서 찾기</button><button>${I('download')}이 기기에 저장</button><button>${I('record')}분류</button></div></div>
   <div class="grp"><p class="caption">기기</p><div class="set-row" style="border-top:0"><span>화면 켜 두기</span><span class="toggle"></span></div></div></section>`, { reader: 1, key: 'novel:1001' }),
-phone('M26', '댓글 시트', '본문 끝 `댓글 38` → 시트. 본문 아래 원 댓글은 until-found로 접힘', `<div class="scroll rs">${PROSE()}</div><div class="scrim"></div><section class="sheet" style="max-height:70%"><div class="grab"></div><h2>댓글 <span class="num" style="color:var(--ink-2)">38</span></h2>
-  ${[['서고지기', '2일 전', '할머니 대사 복선 회수 너무 좋다'], ['겨울밤', '2일 전', '"알겠어."가 두 번 나오는 거 의도한 거죠?'], ['ㅇㅇ', '1일 전', '다음 화 제목 보고 소리 지름'], ['정원사', '1일 전', 'AA판도 있으면 좋겠다'], ['별빛', '5시간 전', '120화 언제 보존되나요']].map(([n, t, c]) => `<div class="comment"><b>${n}</b><span class="meta">${t}</span><p>${c}</p></div>`).join('')}</section>`, { reader: 1 }),
+phone('M26', '댓글 — 본문 아래 펼침', '본문 끝 `댓글 38` → 원래 댓글 섹션(단일 DOM)을 펼치고 이동. 위로 돌아가는 pill', `<div class="scroll rs"><div class="prose plain" style="padding-bottom:40px"><div class="endcard"><div class="nx"><div><small>다음 화</small><strong>120화 · 서고의 문</strong></div>${I('next', 'width:26px;height:26px;color:var(--accent)')}</div></div>
+  <section style="margin-top:28px"><h2 style="font:650 18px/1.4 var(--font-ui)">댓글 <span class="num" style="color:var(--reader-ink-2)">38</span></h2>
+  ${[['서고지기', '2일 전', '할머니 대사 복선 회수 너무 좋다'], ['겨울밤', '2일 전', '"알겠어."가 두 번 나오는 거 의도한 거죠?'], ['ㅇㅇ', '1일 전', '다음 화 제목 보고 소리 지름'], ['정원사', '1일 전', 'AA판도 있으면 좋겠다'], ['별빛', '5시간 전', '120화 언제 보존되나요'], ['서고지기', '3시간 전', '저장해 둔 발췌랑 같이 보니 더 좋네요']].map(([n, t, c]) => `<div class="comment" style="border-top-color:var(--reader-line)"><b>${n}</b><span class="meta" style="color:var(--reader-ink-2)">${t}</span><p>${c}</p></div>`).join('')}</section></div></div>
+  <button class="chip glass" style="position:absolute;left:50%;translate:-50% 0;bottom:26px;z-index:20;box-shadow:var(--e2);color:var(--ink)">${I('up')} 본문으로</button>`, { reader: 1 }),
 ].join('');
 
 $('#f3').innerHTML = [
@@ -600,8 +604,8 @@ phone('M13', '본문 찾기 — 키보드 열림', 'Highlight API(DOM 불변) ·
   <div class="findbar glass" style="bottom:268px"><div class="ticks" id="ticks"></div><div class="findrow"><div class="field filled">${I('search')}정원</div><span class="count num" id="fcount">2/5</span><button class="icon-btn" id="fprev" aria-label="이전 적중">${I('up')}</button><button class="icon-btn" id="fnext" aria-label="다음 적중">${I('down')}</button><button class="icon-btn" aria-label="닫기">${I('close')}</button></div>
   <div style="display:flex;gap:6px;margin-top:8px"><button class="chip" aria-pressed="true">이 회차</button><button class="chip">작품 전체</button></div></div>
   <div class="kbd">${['ㅂㅈㄷㄱㅅㅛㅕㅑㅐㅔ', 'ㅁㄴㅇㄹㅎㅗㅓㅏㅣ', '⇧ㅋㅌㅊㅍㅠㅜㅡ⌫'].map((r) => `<div>${[...r].map((c) => `<span>${c}</span>`).join('')}</div>`).join('')}<div><span>?123</span><span>,</span><span class="w">스페이스</span><span>.</span><span>검색</span></div></div>`, { reader: 1, key: 'novel:1001' }),
-phone('M14', '문장 선택 · 표시한 문장', '선택 메뉴(Floating UI inline, 선택 아래) · 표시 문장 ribbon-soft · 메모 popover', `<div class="scroll rs">${PROSE('prose-sel')}</div><div class="r-progress" style="width:38%"></div>${RBAR()}
-  <div class="selmenu" style="left:12px;top:716px"><button>${I('mark', 'width:15px;height:15px;vertical-align:-3px')} 표시</button><button>메모</button><button>복사</button><button>작품에서 찾기</button><button>공유</button></div>
+phone('M14', '문장 선택 · 표시한 문장', '선택 메뉴 4항목(표시·메모·복사·⋯) 선택 아래 · 표시 문장 ribbon-soft · 메모 popover', `<div class="scroll rs">${PROSE('prose-sel')}</div><div class="r-progress" style="width:38%"></div>${RBAR()}
+  <div class="selmenu" style="left:60px;top:716px"><button>${I('mark', 'width:15px;height:15px;vertical-align:-3px')} 표시</button><button>메모</button><button>복사</button><button aria-label="더보기: 작품에서 찾기·공유">${I('more', 'width:16px;height:16px;vertical-align:-4px')}</button></div>
   <div class="popover" style="left:62px;top:220px"><p class="caption" style="margin-bottom:4px">내 메모 · 9월 18일</p><p>3부 복선 — 118화 대사와 연결</p><div style="display:flex;gap:6px;margin-top:10px"><button class="chip">편집</button><button class="chip">표시 지우기</button><button class="chip">${I('share')}공유</button></div></div>${DOCK()}`, { reader: 1, key: 'novel:1001' }),
 phone('M15', '발췌 카드 공유', 'modern-screenshot로 1080×1350 카드 → Web Share(files)', `<div class="scroll rs">${PROSE()}</div><div class="scrim"></div><section class="sheet"><div class="grab"></div><h2>발췌 카드</h2>
   <div class="grp" data-key="novel:1001"><div class="sharecard"><div class="band"></div><div class="in"><q>약속은 지키는 쪽이 먼저 잊지 않는 법이야.</q><div><p class="src"><b>달그림자 서고의 마술사</b>117화 · 한여름</p><p class="wm" style="margin-top:14px"><span class="logo" style="width:18px;height:18px;font-size:9px">Re</span>ReDSTM</p></div></div></div></div>
@@ -670,7 +674,7 @@ phone('M24', '빈 서재 (첫 사용)', '기록이 없을 때 검색·출처 3�
 
 const RAIL = (a) => `<nav class="rail"><span class="logo">Re</span>${[['library', '서재'], ['browse', '둘러보기'], ['search', '검색'], ['record', '기록']].map(([i, l]) => `<button ${a === i ? 'aria-current="page"' : ''}>${I(i)}${l}</button>`).join('')}<span class="grow"></span><button>${I('settings')}설정</button><button>${I('ops')}운영</button><button>${I('moon')}테마</button></nav>`;
 const DHOME = `<div class="d-home"><div class="d-inner"><div class="d-top"><div><h1 style="font-size:28px;font-weight:700">서재 <span class="meta num" style="font-size:13px">보존 330,760편</span></h1>
-  <article class="continue" style="display:flex;gap:20px;padding:20px">${cover('novel:1001', '달그림자 서고의 마술사', '소설 · 한여름', 'l')}<div style="flex:1;display:flex;flex-direction:column"><p class="label">이어 읽기 · 3분 전</p><p class="work" style="font-size:22px">달그림자 서고의 마술사</p><p class="ch" style="font-size:18px">119화 · 겨울 정원의 약속</p><p class="excerpt" style="font-size:15px">그녀는 오래된 책을 덮고 천천히 고개를 들었다. 서고의 정원은 이미 하얗게 덮여 있었고, 약속한 사람은 아직 오지 않았다.</p><div style="margin-top:auto;display:flex;align-items:center;gap:14px"><div class="progress" style="flex:1"><span style="width:38%"></span></div><span class="caption num" style="color:var(--ribbon-text);font-weight:650">38%</span><button class="btn btn-secondary">목차</button><button class="btn btn-primary">이어 읽기</button></div></div></article></div>
+  <article class="continue" style="display:flex;gap:20px;padding:20px">${cover('novel:1001', '달그림자 서고의 마술사', '소설 · 한여름', 'l')}<div style="flex:1;display:flex;flex-direction:column"><p class="label">이어 읽기 · 3분 전</p><p class="work" style="font-size:22px">달그림자 서고의 마술사</p><p class="ch" style="font-size:18px">119화 · 겨울 정원의 약속</p><p class="excerpt" style="font-size:15px">그녀는 오래된 책을 덮고 천천히 고개를 들었다. 서고의 정원은 이미 하얗게 덮여 있었고, 약속한 사람은 아직 오지 않았다.</p><div style="margin-top:auto;display:flex;align-items:center;gap:14px"><div class="progress mine" style="flex:1"><span style="width:38%"></span></div><span class="caption num" style="color:var(--ribbon-text);font-weight:650">38%</span><button class="btn btn-secondary">목차</button><button class="btn btn-primary">이어 읽기</button></div></div></article></div>
   <div><div class="field" style="margin-top:44px">${I('search')}작품·글·작가 검색<span class="kbdk">Ctrl K</span></div><div class="sec"><h2>스마트 서재</h2></div><div style="display:flex;flex-wrap:wrap;gap:8px"><button class="chip">${I('flame')}새 화 있음 4</button><button class="chip">읽는 중 12</button><button class="chip">AA 모음 9</button><button class="chip">완독 31</button></div><div class="sec"><h2>이번 주</h2><span class="meta">3시간 12분 · 12일 연속</span></div><div class="week" style="height:56px;margin:0">${[40, 20, 65, 10, 48, 3, 30].map((h, i) => `<div class="${i === 6 ? 'today' : ''}"><i style="height:${h * .8}px"></i></div>`).join('')}</div></div></div>
   <div class="sec"><h2>읽던 작품</h2><button>모두 보기</button></div><div class="d-grid">${works.map((w) => shelfItem(w, { bar: 1 })).join('')}</div>
   <div class="sec"><h2>오늘의 발견</h2><button>다른 추천</button></div><div class="d3"><div class="rows">${[['novel:5501', '안개 도시의 계약 마술사'], ['typemoon:collection:301', '영령 도서관 사서의 하루']].map(([k, t]) => `<div class="row">${cover(k, t, '', 's')}<div class="body"><p class="title">${t}</p><p class="meta">추천 · 아직 안 읽음</p></div></div>`).join('')}</div><div class="rows"><div class="row"><div class="body"><p class="title">설정 정리: 마술 회로와 각인</p><p class="meta">요즘 화제 · 댓글 212</p></div></div><div class="row"><div class="body"><p class="title">[AA] 성배전쟁 뒷이야기 7장</p><p class="meta">요즘 화제 · 댓글 96</p></div></div></div><div class="excerpt-card"><q>약속은 지키는 쪽이 먼저 잊지 않는 법이야.</q><p class="caption"><span>오늘의 발췌 · 117화</span></p></div></div></div></div>`;

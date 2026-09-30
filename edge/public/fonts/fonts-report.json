@@ -1,20 +1,27 @@
 {
-  "pretendard": {
-    "files": 92,
-    "bytes": 2957724
-  },
-  "maruburi": {
-    "files": 186,
-    "bytes": 3309304
-  },
-  "gowun-batang": {
+  "gowun-batang@5.3.0": {
     "files": 190,
-    "bytes": 3071092
+    "bytes": 3071092,
+    "core_bytes": {}
   },
-  "Saitamaar-Regular.ttf": {
-    "bytes": 2015748
+  "maruburi@1.000": {
+    "files": 78,
+    "bytes": 1351524,
+    "core_bytes": {
+      "400.core.woff2": 208300,
+      "700.core.woff2": 218212
+    }
   },
-  "Saitamaar-Regular.woff2": {
-    "bytes": 407288
+  "pretendard@1.3.9": {
+    "files": 47,
+    "bytes": 2709872,
+    "core_bytes": {
+      "core.woff2": 459168
+    }
+  },
+  "saitamaar@1.0": {
+    "files": 1,
+    "bytes": 407288,
+    "core_bytes": {}
   }
 }

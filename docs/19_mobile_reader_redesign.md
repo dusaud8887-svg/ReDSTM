@@ -1,6 +1,7 @@
 # 모바일 읽기 경험 개편 — 구현 계약
 
 - 상태: `main` 배포 및 local E2E 검증 완료; 실제 Android acceptance 대기
+- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md) §9.5가 이 문서의 하단 탭·텍스트 레인·읽기 면·더보기 `읽은 위치`·context bar 항목을 바꾼다. 이동·Back·목록 복원 계약(§1–§3)은 그대로 유지된다.
 - 갱신: 2026-09-29
 - 입력 명세: 로컬 `docs/개선/ReDSTM_Mobile_UX_Frontend_Redesign_Spec.md` (Git 미포함 참고자료)
 - 대체하는 계약: `15`의 Reader 이동·뒤로가기·설정 배치 중 아래 §7에 적은 항목

@@ -1,6 +1,7 @@
 # Frontend 구현 전략·채택 판단
 
 - 상태: Reader/Operations mobile-first live 배포; actual Android·사용자 acceptance pending
+- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md) v2.2가 이 문서의 §6 라이브러리 판정(Fuse·아이콘 패키지·IndexedDB·SW 등)과 구조 결정 중 겹치는 항목을 대체한다. 본문 갱신은 `24` P7-3.
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)

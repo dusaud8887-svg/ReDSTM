@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 const publicRoot = new URL("../public/", import.meta.url);
 const fonts = new URL("fonts/", publicRoot);
@@ -6,13 +6,14 @@ const assets = [
   ["SUIT-Variable.woff2", "SUIT-LICENSE.txt", true],
   ["MaruBuri-Regular.woff2", "MaruBuri-LICENSE.txt", true],
   ["Saitamaar-Regular.ttf", "Saitamaar-LICENSE.txt", false],
-  ["Saitamaar-Regular.woff2", "Saitamaar-LICENSE.txt", true],
 ];
-// Split web fonts built by scripts/build-fonts.py: every url() in the family CSS must be a real WOFF2.
+// Versioned web font directories built by scripts/build-fonts.py: every url() in the family CSS
+// must be a real WOFF2 inside the same directory, and every WOFF2 there must be referenced.
 const splitFamilies = [
-  ["pretendard/", "pretendard.css"],
-  ["maruburi/", "maruburi.css"],
-  ["gowun-batang/", "gowun-batang.css"],
+  ["pretendard@1.3.9/", "pretendard.css"],
+  ["maruburi@1.000/", "maruburi.css"],
+  ["gowun-batang@5.3.0/", "gowun-batang.css"],
+  ["saitamaar@1.0/", "saitamaar.css"],
 ];
 
 try {
@@ -37,9 +38,14 @@ try {
     const urls = [...css.matchAll(/url\(([^)]+)\)/g)].map((match) => match[1].replace(/["']/g, ""));
     if (urls.length === 0) throw new Error(`${dir}${cssName} declares no fonts`);
     for (const url of urls) {
+      if (!url.startsWith(`/fonts/${dir}`)) throw new Error(`${url} points outside ${dir}`);
       const font = await readFile(new URL(url.slice(1), publicRoot));
       if (font.subarray(0, 4).toString("ascii") !== "wOF2") throw new Error(`${url} is not WOFF2`);
     }
+    const files = (await readdir(base)).filter((name) => name.endsWith(".woff2"));
+    const referenced = new Set(urls.map((url) => url.split("/").pop()));
+    const orphan = files.find((name) => !referenced.has(name));
+    if (orphan) throw new Error(`${dir}${orphan} is not referenced by ${cssName}`);
   }
   const manifest = JSON.parse(await readFile(new URL("manifest.webmanifest", publicRoot), "utf8"));
   if (manifest.name !== "ReDSTM 개인 장서" || manifest.start_url !== "/" || manifest.display !== "standalone") {
