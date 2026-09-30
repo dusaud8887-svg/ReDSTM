@@ -1284,6 +1284,10 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P1-13 전체 E2E(worktree): 558 pass/2 fail/16 skip. medium `side list`(두 번째 발생)·compact `list sort … Back` 모두 P1-11b의 텍스트 작품 머리(L/M 표지 + 바코드)가 목록 위 고정 영역을 키워 목록 칸이 좁아진 것이 원인(표지·바코드를 각각 빼면 통과로 확인). P1-11d: 텍스트 작품 머리는 목록 위에 고정되므로 S 표지, Reader 옆 좁은 목록(`reading-context`)에서는 표지·바코드 숨김. 두 테스트 4폭 통과.
 - P1-15: `find.js` — 텍스트 모델 검색 사본에서 찾고 원문 offset→Range(`findMatches` 순수 테스트: 공백 접힘·전각·대소문자·상한 1000), Custom Highlight `redstm-find`/`-current`(본문 DOM 불변 E2E), 첫 이동은 화면 위 첫 결과, 결과를 화면 위 1/3로, 위치 띠 tick, 첫 이동 전 위치를 어댑터에서 직접 잡아(키보드 중 저장 정지와 무관) 닫을 때 `돌아가기` 토스트 4초(action toast, top layer). 찾기 바는 도크 자리(열리면 도크 숨김), bar 층으로 overlay 관리자 등록(CloseWatcher는 여는 클릭 안에서) + 관리자에 `closeLayer(id)` 추가(자체 ✕도 스택 정리, 단위 테스트). 키보드 위 배치: VirtualKeyboard `overlaysContent` + `env(keyboard-inset-height)`, 없으면 visualViewport 차이 `--keyboard-offset`. 진입: 모바일 context bar·데스크톱 도구줄·더보기 `본문 찾기`·단축키 `g`. 입력은 `type=text`(search 타입은 Esc를 지우기로 먹어 닫기 요청이 안 감). 범위 칩 `작품 전체`는 KWIC(P6-3)와 함께. 미지원 브라우저는 개수·이동만. 실기기: 찾기 바 키보드 위(T34) 확인 대기.
 
+- P1-7c: 저장 기록은 색인이 요약을 채운 뒤에야 가리킬 곳을 알 수 있어, 목록으로 바로 들어오면 미니바가 비어 있었다(시안 비교 중 발견). `hydrateSavedEntries` 뒤 미니바 갱신 + 직접 진입 E2E.
+- **M1 마감**: 최종 커밋 전체 E2E(worktree, workers=2) 566 pass/0 fail/18 skip(새 폰 전용 테스트 2건이 넓은 폭에서 skip), axe 포함. unit 149, check·lint 0 error. Linux 시각 기준선은 M1 동안 비워 CI가 매번 생성하게 했고, M1 main CI artifact로 새 기준선을 커밋한다.
+- M1 시안(`prototype.html`, preview-1/2) 대비 차이: ① 서재 머리 — 시안은 로고+설정만, 구현은 기존 앱 바(운영 링크·보존본 상태 유지, E2E 운영 접근 계약). ② 이어읽기 카드 — 시안의 채운 `이어 읽기` 버튼 대신 카드 전체가 주행동, `목차`는 카드 아래 보조 버튼. ③ 오늘의 발췌·이번 주 독서(M3), 스마트 서재 칩(M6)은 데이터 없는 빈 모듈이라 없음. ④ 둘러보기 — 시안 제목 `둘러보기`, 구현은 `게시판 둘러보기` + `게시판 글/작품` 범위 탭이 한 줄 더 있음. ⑤ 목록 행의 S 표지·진행선(DESIGN §7.5)은 아직 행에 연결하지 않음(후속: M2 전 또는 M7 정리 시 목록 행 공통 렌더에서). ⑥ 기록 탭 `발췌·통계`는 M3. ⑦ Reader context bar/도크/퀵 설정은 M2. ⑧ 폭 경계 760/1200 유지(DESIGN 600/960과 차이, P1-5 기록). 실기기 확인 대기(M1): 미니바·탭 no-wrap, 찾기 바 키보드 위(T34), 초성·IME 입력 — S22+ Chrome·Samsung Internet.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
