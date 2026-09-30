@@ -4,10 +4,12 @@ Run from the repository root:
     uv run --with fonttools --with brotli python edge/scripts/build-fonts.py
 
 Outputs under edge/public/fonts/:
-  pretendard/   Pretendard Variable dynamic subset (92 WOFF2, copied) + pretendard.css
-  maruburi/     MaruBuri Regular and Bold split along Pretendard's unicode-range groups + maruburi.css
-  gowun-batang/ Gowun Batang 400/700 unicode-range slices (copied from @fontsource) + gowun-batang.css
-  Saitamaar-Regular.woff2  lossless WOFF2 of the existing TTF (no subsetting; AA metrics must not change)
+  pretendard/    Pretendard Variable dynamic subset (92 WOFF2, copied)
+  maruburi/      MaruBuri Regular and Bold split along Pretendard's unicode-range groups
+  gowun-batang/  Gowun Batang 400/700 unicode-range slices (copied from @fontsource)
+                 (each directory also gets <name>.css and LICENSE.txt)
+  Saitamaar-Regular.woff2  lossless WOFF2 of the existing TTF (no subsetting; AA metrics
+                           must not change)
   fonts-report.json        file counts and byte totals
 The CSS files are not linked from index.html yet; wiring them in is Phase 1 of docs/24.
 """
@@ -62,7 +64,9 @@ def face(family: str, weight: str, url: str, ranges: str) -> str:
     return (
         "@font-face {\n"
         f"  font-family: {family};\n  font-style: normal;\n  font-display: swap;\n"
-        f"  font-weight: {weight};\n  src: url({url}) format(\"woff2\");\n  unicode-range: {ranges};\n}}\n"
+        f"  font-weight: {weight};\n"
+        f'  src: url({url}) format("woff2");\n'
+        f"  unicode-range: {ranges};\n}}\n"
     )
 
 
@@ -111,7 +115,7 @@ def build_maruburi(groups: list[list[tuple[int, int]]]) -> None:
             options.layout_features = ["*"]
             options.name_IDs = ["*"]
             options.notdef_outline = True
-            font = TTFont(source / file)
+            font = TTFont(source / file, recalcTimestamp=False)
             subsetter = subset.Subsetter(options)
             subsetter.populate(unicodes=cps)
             subsetter.subset(font)
@@ -130,10 +134,12 @@ def build_gowun() -> None:
     for weight in ("400", "700"):
         for match in FACE.finditer((source / f"{weight}.css").read_text(encoding="utf-8")):
             body = match.group("body")
-            woff2 = next(u.strip("'\"") for u in (m.group("url") for m in SRC.finditer(body)) if u.endswith(".woff2"))
+            urls = (m.group("url").strip("'\"") for m in SRC.finditer(body))
+            woff2 = next(u for u in urls if u.endswith(".woff2"))
             name = Path(woff2).name
             shutil.copyfile(source / woff2, out / name)
-            faces.append(face('"Gowun Batang"', weight, f"/fonts/gowun-batang/{name}", RANGE.search(body).group("ranges").strip()))
+            ranges = RANGE.search(body).group("ranges").strip()
+            faces.append(face('"Gowun Batang"', weight, f"/fonts/gowun-batang/{name}", ranges))
     shutil.copyfile(source / "LICENSE", out / "LICENSE.txt")
     (out / "gowun-batang.css").write_text("".join(faces), encoding="utf-8")
 
@@ -141,7 +147,7 @@ def build_gowun() -> None:
 def build_saitamaar() -> None:
     ttf = FONTS / "Saitamaar-Regular.ttf"
     woff2 = FONTS / "Saitamaar-Regular.woff2"
-    font = TTFont(ttf)
+    font = TTFont(ttf, recalcTimestamp=False)
     font.flavor = "woff2"
     font.save(woff2)
     original, packed = TTFont(ttf), TTFont(woff2)
