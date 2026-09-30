@@ -54,6 +54,154 @@ function rowOffset(scrollerSelector, rowSelector) {
 
 const mobileWidth = (page) => page.viewportSize().width < 760;
 
+for (const closeWatcher of [true, false]) {
+  test(`T03/T04: nested native overlays close one layer at a time (CloseWatcher ${closeWatcher})`, async ({ page }) => {
+    if (!closeWatcher) await page.addInitScript(() => { window.CloseWatcher = undefined; });
+    await useLongCollection(page, 3);
+    await page.goto("/read/board_a/2");
+    await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+    const historyLength = await page.evaluate(() => history.length);
+    await page.evaluate(async () => {
+      const { createOverlayManager } = await import("/overlay-manager.js");
+      const manager = createOverlayManager();
+      const bar = document.createElement("aside");
+      bar.id = "fixture-find";
+      bar.hidden = true;
+      bar.textContent = "찾기 ";
+      const close = document.createElement("button");
+      close.textContent = "찾기 닫기";
+      close.addEventListener("click", () => manager.closeTop("cancel"));
+      bar.append(close);
+      const open = document.createElement("button");
+      open.id = "fixture-open-find";
+      open.textContent = "찾기 열기";
+      Object.assign(open.style, { position: "fixed", left: "4px", top: "4px", zIndex: "100" });
+      open.addEventListener("click", () => {
+        manager.openBar("find", () => { bar.hidden = true; });
+        bar.hidden = false;
+      });
+      document.getElementById("reader").append(open, bar);
+      document.addEventListener("keydown", (event) => manager.handleEscape(event));
+      const sheet = document.getElementById("settings-dialog");
+      manager.watch(sheet);
+      const menu = document.createElement("div");
+      menu.id = "fixture-menu";
+      menu.setAttribute("popover", "auto");
+      const menuClose = document.createElement("button");
+      menuClose.textContent = "메뉴 닫기";
+      menuClose.addEventListener("click", () => manager.closeTop("cancel"));
+      menu.append(menuClose);
+      manager.watch(menu, "popover");
+      const menuOpen = document.createElement("button");
+      menuOpen.id = "fixture-open-menu";
+      menuOpen.type = "button";
+      menuOpen.textContent = "메뉴 열기";
+      menuOpen.addEventListener("click", () => menu.showPopover());
+      sheet.querySelector("form").prepend(menuOpen, menu);
+    });
+    await page.locator("#fixture-open-find").click();
+    await expect(page.locator("#fixture-find")).toBeVisible();
+    await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+    await page.locator("#fixture-open-menu").click();
+    await expect(page.locator("#fixture-menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#fixture-menu")).toBeHidden();
+    await expect(page.locator("#settings-dialog")).toBeVisible();
+    await expect(page.locator("#fixture-find")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#settings-dialog")).toBeHidden();
+    await expect(page.locator("#fixture-find")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#fixture-find")).toBeHidden();
+    await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
+    if (!closeWatcher) {
+      await page.locator("#fixture-open-find").click();
+      await page.getByRole("button", { name: "찾기 닫기", exact: true }).click();
+      await expect(page.locator("#fixture-find")).toBeHidden();
+    }
+  });
+}
+
+test("T20: a script scroll survives late fonts and images and saves its progress", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const top = await page.locator("#reader-pane").evaluate((pane) => new Promise((resolve) => {
+    document.fonts.dispatchEvent(new Event("loading"));
+    pane.addEventListener("scroll", () => {
+      document.fonts.dispatchEvent(new Event("loadingdone"));
+      const image = document.createElement("img");
+      image.hidden = true;
+      document.getElementById("archive-body").append(image);
+      image.dispatchEvent(new Event("load"));
+      image.remove();
+      resolve(pane.scrollTop);
+    }, { once: true });
+    pane.scrollTop = 999;
+  }));
+  expect(top).toBe(999);
+  const record = () => page.evaluate((key) => JSON.parse(localStorage.getItem("redstm.textState.v1")).history[key], `novel:${workId}:1`);
+  await expect.poll(async () => (await record()).scroll).toBe(999);
+  expect((await record()).progress).toBeGreaterThan(0);
+  expect((await record()).loc.start).toBeGreaterThan(0);
+});
+
+test("T20: a font completion before the queued scroll event cannot undo the move", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const top = await page.locator("#reader-pane").evaluate((pane) => {
+    document.fonts.dispatchEvent(new Event("loading"));
+    pane.scrollTop = 999;
+    document.fonts.dispatchEvent(new Event("loadingdone"));
+    return pane.scrollTop;
+  });
+  expect(top).toBe(999);
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem("redstm.textState.v1")).history[key]?.scroll,
+    `novel:${workId}:1`)).toBe(999);
+});
+
+test("T34: the keyboard pauses position saves and chrome folding, then saves resume", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#more-note").click();
+  await expect(page.locator("#bookmark-note")).toBeFocused();
+  const record = () => page.evaluate((key) => JSON.parse(localStorage.getItem("redstm.textState.v1")).history[key], `novel:${workId}:1`);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  const before = await record();
+  const folded = await page.locator("body").evaluate((body) => body.classList.contains("reader-controls-hidden"));
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport, "height", { configurable: true, get: () => innerHeight / 2 });
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  await expect(page.locator("body")).toHaveClass(/keyboard-open/);
+  await page.locator("#bookmark-note").fill("키보드 입력 중");
+  await page.locator("#reader-pane").evaluate((pane) => new Promise((resolve) => {
+    pane.addEventListener("scroll", () => { window.dispatchEvent(new Event("pagehide")); resolve(); }, { once: true });
+    pane.scrollTop = 999;
+  }));
+  expect(await record()).toEqual(before);
+  expect(await page.locator("body").evaluate((body) => body.classList.contains("reader-controls-hidden"))).toBe(folded);
+  await page.evaluate(() => {
+    delete window.visualViewport.height;
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  await expect(page.locator("body")).not.toHaveClass(/keyboard-open/);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect.poll(async () => (await record()).scroll).toBe(999);
+});
+
 test("TypeMoon: 200 → next → next → Back returns to the same table-of-contents viewport", async ({ page }) => {
   await useLongCollection(page, 300);
   await page.goto("/collections/1");

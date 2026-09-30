@@ -92,7 +92,8 @@ test("old text records shrink to what progress needs; the latest per work keeps 
   const full = (readAt, progress, extra = {}) => ({
     readAt, progress, route: "/text?lane=novel", listRoute: "/text?lane=novel&work=w", title: "1화", work: "작품",
     total: 10, anchor: "문장", offset: 5, anchorTop: 1, scroll: 900, revision: "a".repeat(64), chapterId: "1",
-    workId: "novel:a", ...extra,
+    loc: { v: 2, tm: 1, rev: "a".repeat(64), start: 5, end: 7, exact: "문장", prefix: "", suffix: "" },
+    documentId: "novel:source:1", workId: "novel:a", ...extra,
   });
   const history = {
     "novel:novel:a:1": full("2026-09-01T00:00:00Z", 1),
@@ -107,6 +108,8 @@ test("old text records shrink to what progress needs; the latest per work keeps 
   assert.deepEqual(history["novel:novel:a:2"], {
     readAt: "2026-09-02T00:00:00Z", progress: 0.123, anchor: "문장", offset: 5, anchorTop: 1, scroll: 900,
     revision: "a".repeat(64), chapterId: "1",
+    loc: { v: 2, tm: 1, rev: "a".repeat(64), start: 5, end: 7, exact: "문장", prefix: "", suffix: "" },
+    documentId: "novel:source:1",
   });
   // The latest record of each work is untouched.
   assert.equal(history["novel:novel:a:3"].route, "/text?lane=novel");

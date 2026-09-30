@@ -113,7 +113,8 @@ export function createBoardNavigator({ dialog, panel, search, boards, selected, 
     }
     let index = 0;
     for (const [group, list] of groups) {
-      const id = `board-group-${index += 1}`;
+      index += 1;
+      const id = `board-group-${index}`;
       const expanded = prefs.expanded.includes(group) || list.some((board) => board.id === current);
       const wrapper = document.createElement("section");
       wrapper.className = "board-group";

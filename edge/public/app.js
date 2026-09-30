@@ -7,6 +7,7 @@ import {
   migrateLegacyState,
   planImport,
   postIdentity,
+  readingLocationFields,
   sanitizeBookmarkMetadata,
   samePost,
   serializeUserState,
@@ -32,8 +33,12 @@ import {
 } from "/media.js";
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence } from "/sequence.js";
-import { captureTextAnchor, restoreTextAnchor } from "/text-anchor.js";
 import { createTextLibrary } from "/text-library.js";
+import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
+import { createOverlayManager } from "/overlay-manager.js";
+
+const readerSession = createDocumentSession();
+let fontGeneration = 0;
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const collectionObjectKeyPattern = /^collections\/[a-z0-9_/-]+-[a-f0-9]{64}\.json\.zst$/;
@@ -92,6 +97,9 @@ const elements = Object.fromEntries(
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
+const overlays = createOverlayManager();
+for (const dialog of document.querySelectorAll("dialog")) overlays.watch(dialog);
+overlays.watchFullscreen(document);
 
 const RESULT_PAGE_SIZE = 100;
 
@@ -202,9 +210,13 @@ const textLibrary = createTextLibrary({
     progress: bodyProgress,
     syncScroll: syncScrollBaseline,
     setList: renderReaderList,
-    captureAnchor: () => captureTextAnchor(elements["archive-body"], elements["reader-pane"], readerTopInset()),
+    captureAnchor: () => readerSession.capture(),
+    canSavePosition: () => readerSession.canSave,
+    cancelPendingWork: () => readerSession.cancelPendingWork(),
+    trackPendingWork: (cancel) => readerSession.track(cancel),
+    scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
-      restoreTextAnchor(elements["archive-body"], elements["reader-pane"], anchor, readerTopInset());
+      if (!readerSession.restore(anchor) && anchor.loc) showReaderFeedback("읽던 문장을 찾지 못했습니다", 2200);
       syncScrollBaseline();
     },
   },
@@ -256,7 +268,7 @@ function entriesFromState(map, timestampKey) {
       return {
         summary: { board_id: boardId, external_post_id: Number(externalId) },
         [timestampKey]: value[timestampKey],
-        ...(timestampKey === "readAt" ? { scroll: userState.scroll[identity] ?? 0, progress: value.progress ?? 0 } : {}),
+        ...(timestampKey === "readAt" ? { scroll: userState.scroll[identity] ?? 0, progress: value.progress ?? 0, ...readingLocationFields(value) } : {}),
         ...(timestampKey === "savedAt" ? { note: value.note ?? "", tags: value.tags ?? [] } : {}),
       };
     })
@@ -286,7 +298,7 @@ function persistUserState() {
     schema_version: 2,
     settings: savedSettings,
     history: Object.fromEntries(historyEntries.map((entry) => [
-      postIdentity(entry.summary), { readAt: entry.readAt, progress: entry.progress ?? 0 },
+      postIdentity(entry.summary), { readAt: entry.readAt, progress: entry.progress ?? 0, ...readingLocationFields(entry) },
     ]).filter(([identity]) => identity)),
     bookmarks: Object.fromEntries(bookmarks.map((entry) => [
       postIdentity(entry.summary), {
@@ -560,8 +572,8 @@ function readableAaInk(background) {
 function showReaderFeedback(text, duration = 1200) {
   clearTimeout(zoomFeedbackTimer);
   elements["aa-zoom-indicator"].textContent = text;
-  elements["aa-zoom-indicator"].hidden = false;
-  zoomFeedbackTimer = setTimeout(() => { elements["aa-zoom-indicator"].hidden = true; }, duration);
+  overlays.showToast(elements["aa-zoom-indicator"]);
+  zoomFeedbackTimer = setTimeout(() => overlays.hideToast(elements["aa-zoom-indicator"]), duration);
 }
 
 function showZoomFeedback() {
@@ -1053,12 +1065,14 @@ function closeMobileReader(focusSearch = false) {
 // its data and decides what "previous", "next", "list", and "toc" mean.
 
 function setReaderSource(source) {
+  const previousSource = readerSource;
   readerSource = source;
   elements.reader.hidden = !source;
   elements.reader.dataset.source = source ?? "";
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    if (previousSource) readerSession.cancelPendingWork();
     readerNavigation = null;
     listContext = null;
     if (wakeWanted) setScreenAwake(false);
@@ -1078,13 +1092,33 @@ function setReaderSource(source) {
   }
 }
 
-function openTextReader({ kicker, title, meta, text, sourceUrl }) {
-  cancelReaderSelection();
+function beginReaderDocument(documentKey, workId, rev) {
+  readerSession.begin({ documentKey, workId, rev });
+  fontGeneration = readerSession.generation;
+  readerSession.track(() => {
+    clearTimeout(scrollTimer);
+    clearTimeout(pagingTimer);
+    clearTimeout(zoomFeedbackTimer);
+    cancelAnimationFrame(progressFrame);
+    progressFrame = 0;
+    pagingScroll = false;
+    textLibrary.cancelPendingPosition();
+    overlays.hideToast(elements["aa-zoom-indicator"]);
+  });
+  readerSession.adapter = createScrollAdapter({
+    body: elements["archive-body"], scroller: elements["reader-pane"], topInset: readerTopInset,
+    revision: () => readerSession.rev, progress: bodyProgress, mode: currentMode === "aa" ? "aa" : "scroll",
+  });
+}
+
+function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision }) {
   if (currentSummary) persistReadingPosition();
+  cancelReaderSelection();
   currentSummary = null;
   currentPayload = null;
   currentCollection = null;
   currentMode = "prose";
+  beginReaderDocument(documentId, workId, revision);
   const continuing = readerSource === "text";
   setReaderSource("text");
   resetReaderChrome();
@@ -1106,7 +1140,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
   void archiveTextMedia(body, renderId);
   openMobileReader();
   updateShellMode();
-  requestAnimationFrame(() => elements["reader-title"].focus({ preventScroll: true }));
+  readerSession.frame(() => elements["reader-title"].focus({ preventScroll: true }));
 }
 
 // Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
@@ -1826,8 +1860,10 @@ function restoreCatalogPosition() {
 }
 
 function cancelReaderSelection() {
+  overlays.closeAll("navigate");
   readerViewId += 1;
   postController?.abort();
+  readerSession.cancelPendingWork();
 }
 
 function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true } = {}) {
@@ -1841,9 +1877,9 @@ function showDestination(destination, navigate = true, view = destination === "b
   }
   const wasText = currentDestination === "text";
   if (wasText && destination !== "text") textLibrary.leave();
-  cancelReaderSelection();
   if (currentSummary) persistReadingPosition();
   else if (currentDestination !== "library") persistCatalogState();
+  cancelReaderSelection();
   setImmersive(false, false);
   const leavingCatalog = ["browse", "search"].includes(currentDestination);
   if (!["browse", "search"].includes(destination)) setScope("posts");
@@ -2090,7 +2126,7 @@ function handleWorkerMessage({ data }) {
     populateBoardFilter();
     elements["result-list"].classList.remove("loading");
     // The text library boots on its own (see the end of this module); do not reset it here.
-    const textAlreadyOpen = routeHandled && currentDestination === "text";
+    const textAlreadyOpen = currentDestination === "text";
     if (!textAlreadyOpen) renderCover();
     if (routeSummary()) requestSearch();
     savedEntriesReady = hydrateSavedEntries();
@@ -2321,7 +2357,7 @@ async function renderReadingView() {
   elements["result-list"].replaceChildren();
   const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
-  inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
+  inProgress.forEach((post, index) => { fragment.append(resultItemElement(post, index, lookup)); });
   for (const collection of collections) fragment.append(collectionItemElement(collection));
   for (const work of novels) {
     fragment.append(textResultElement({
@@ -2492,7 +2528,7 @@ function renderResults(posts, status) {
   elements["result-list"].replaceChildren();
   const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
-  posts.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
+  posts.forEach((post, index) => { fragment.append(resultItemElement(post, index, lookup)); });
   elements["result-list"].append(fragment);
   renderWidenActions(!posts.length);
   updateLoadMore();
@@ -2505,7 +2541,7 @@ function appendResults(posts) {
   const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
   const base = renderedResults.length;
-  posts.forEach((post, index) => fragment.append(resultItemElement(post, base + index, lookup)));
+  posts.forEach((post, index) => { fragment.append(resultItemElement(post, base + index, lookup)); });
   elements["result-list"].append(fragment);
   renderedResults = renderedResults.concat(posts);
   resultCountText = `${resultTotal.toLocaleString("ko-KR")}건`;
@@ -3050,6 +3086,7 @@ async function updateCollection() {
     collectionPending = false;
     currentCollection = membership;
     if (membership) {
+      readerSession.workId = `typemoon:collection:${membership.collection.id}`;
       activeCollectionId = membership.collection.id;
       const unavailable = membership.collection.entries.filter((entry) => !entry.object_key).length;
       const label = `${membership.collection.title} · ${membership.index + 1}/${membership.collection.entries.length}` +
@@ -3071,12 +3108,15 @@ async function updateCollection() {
 async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
   const viewId = ++readerViewId;
   if (currentSummary) persistReadingPosition();
+  readerSession.cancelPendingWork();
   postController?.abort();
   postController = new AbortController();
   elements["reader-pane"].setAttribute("aria-busy", "true");
   if (!currentSummary && currentDestination === "library") {
     renderCover("본문을 불러오는 중", "보존 객체를 확인하고 있습니다.", false);
   }
+  const requestController = postController;
+  readerSession.track(() => requestController.abort());
   try {
     const resolved = summary?.object_key ? summary : (await resolvePosts([summary]))[0];
     if (viewId !== readerViewId) return;
@@ -3131,6 +3171,7 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   renderPostMeta(post, payload.comments.length);
   setSourceLink(post.canonical_url);
   renderPostBody();
+  beginReaderDocument(`typemoon:${postIdentity(currentSummary)}`, "", currentSummary.object_key?.match(/-([a-f0-9]{64})\.json\.(?:gz|zst)$/)?.[1] || "");
   renderComments(payload.comments);
   rememberHistory(currentSummary);
   updateBookmarkButton();
@@ -3140,7 +3181,7 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   void refreshTypeMoonList();
   openMobileReader();
   updateShellMode();
-  requestAnimationFrame(() => {
+  readerSession.frame(() => {
     elements["reader-title"].focus({ preventScroll: true });
     restoreReadingPosition(currentSummary);
   });
@@ -3183,6 +3224,7 @@ function renderPostBody() {
   const identity = `${post.board_id}:${post.external_post_id}`;
   const override = settings.viewModes[identity];
   currentMode = override ?? (post.is_aa ? "aa" : "prose");
+  if (readerSession.adapter) readerSession.adapter.mode = currentMode === "aa" ? "aa" : "scroll";
   const isAa = currentMode === "aa";
   elements["archive-body"].classList.toggle("aa", isAa);
   elements["archive-body"].ariaLabel = isAa ? "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다" : "글 본문";
@@ -3275,7 +3317,7 @@ function renderComments(comments) {
 function rememberHistory(summary) {
   const previous = historyEntries.find((entry) => samePost(entry.summary, summary));
   historyEntries = historyEntries.filter((entry) => !samePost(entry.summary, summary));
-  historyEntries.unshift({ summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0, progress: previous?.progress ?? 0 });
+  historyEntries.unshift({ ...previous, summary, readAt: new Date().toISOString(), scroll: previous?.scroll ?? 0, progress: previous?.progress ?? 0 });
   // Newest first: the oldest records go once the cap is passed, so the saved state (rewritten
   // on every scroll pause) cannot grow until localStorage runs out.
   if (historyEntries.length > HISTORY_LIMIT) historyEntries.length = HISTORY_LIMIT;
@@ -3290,21 +3332,31 @@ function readingPosition() {
   return elements["reader-pane"].scrollTop;
 }
 
-let restoredScroll = null;
 function restoreReadingPosition(summary) {
-  const position = historyEntries.find((entry) => samePost(entry.summary, summary))?.scroll ?? 0;
+  const entry = historyEntries.find((entry) => samePost(entry.summary, summary));
+  const position = entry?.loc ? 0 : entry?.scroll ?? 0;
   lastReaderScroll = position;
   readerScrollDelta = 0;
   elements["reader-pane"].scrollTop = position;
-  restoredScroll = elements["reader-pane"].scrollTop;
+  if (entry?.loc || entry?.anchor) {
+    const anchor = { offset: entry.offset, quote: entry.anchor, viewportOffset: entry.anchorTop ?? 0, atStart: entry.scroll === 0, ...(entry.loc ? { loc: entry.loc } : {}) };
+    if (!readerSession.restore(anchor) && entry.loc) showReaderFeedback("읽던 문장을 찾지 못했습니다", 2200);
+  }
+  syncScrollBaseline();
+  readerSession.capture();
 }
 
 function persistReadingPosition() {
   clearTimeout(scrollTimer);
-  if (!currentSummary) return;
+  if (!currentSummary || !readerSession.canSave) return;
   const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
   if (entry) {
     entry.scroll = readingPosition();
+    const anchor = readerSession.capture();
+    if (anchor) Object.assign(entry, {
+      offset: anchor.offset, anchor: anchor.quote, anchorTop: Math.round(anchor.viewportOffset), loc: anchor.loc,
+      revision: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
+    });
     const measured = bodyProgress();
     entry.progress = postReadingState(entry.progress) === "finished"
       ? Math.max(entry.progress, measured)
@@ -3323,6 +3375,7 @@ function markCurrentFinished() {
 
 function queueScrollSave() {
   clearTimeout(scrollTimer);
+  if (!readerSession.canSave) return;
   scrollTimer = setTimeout(persistReadingPosition, 250);
 }
 
@@ -3816,6 +3869,7 @@ for (const [id, delta] of [["reader-list-previous", -1], ["reader-list-next", 1]
 elements["reader-list-all"].addEventListener("click", () => readerCommand("list"));
 // Jump within a long body (the inverse of bodyProgress).
 elements["more-position"].addEventListener("input", () => {
+  readerSession.markUserScroll();
   const pane = elements["reader-pane"];
   const body = elements["archive-body"];
   const ratio = Number(elements["more-position"].value) / 100;
@@ -4138,6 +4192,7 @@ function pageByTap(event) {
   const ratio = (event.clientY - rect.top) / rect.height;
   const direction = ratio < PAGE_BACK_ZONE ? -1 : ratio > PAGE_FORWARD_ZONE ? 1 : 0;
   if (!direction) return false;
+  readerSession.markUserScroll();
   if (direction > 0) setReaderChromeHidden(true);
   const line = settings.proseSize * settings.lineHeight;
   const bottomBar = document.body.classList.contains("reader-controls-hidden") ? 0
@@ -4169,8 +4224,10 @@ elements["reader-pane"].addEventListener("scroll", () => {
   queueScrollSave();
   scheduleReadingProgress();
   const current = elements["reader-pane"].scrollTop;
+  readerSession.observeScroll(current);
   const delta = current - lastReaderScroll;
   lastReaderScroll = current;
+  if (readerSession.keyboardOpen) return;
   if (!document.body.classList.contains("reader-open")) return;
   if (current < 80 || readerAtEnd()) {
     setReaderChromeHidden(false);
@@ -4207,6 +4264,7 @@ elements["reader-pane"].addEventListener("pointerup", (event) => {
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
 });
 elements["reader-pane"].addEventListener("pointermove", (event) => {
+  if (pointerStart && Math.abs(event.clientY - pointerStart.y) > 4) readerSession.markUserScroll();
   if (event.pointerType !== "mouse" || !document.body.classList.contains("reader-controls-hidden")) return;
   if (event.clientY - elements["reader-pane"].getBoundingClientRect().top < 64) setReaderChromeHidden(false);
 }, { passive: true });
@@ -4277,7 +4335,7 @@ elements["mode-reset"].addEventListener("click", () => {
 let typographyPersistTimer = null;
 function changeTypography(mutate) {
   const keepAnchor = readerSource && currentMode === "prose";
-  const anchor = keepAnchor ? captureTextAnchor(elements["archive-body"], elements["reader-pane"], readerTopInset()) : null;
+  const anchor = keepAnchor ? readerSession.capture() : null;
   mutate();
   // Sliders fire on every step: apply at once, write the whole state once they settle.
   applySettings();
@@ -4287,7 +4345,7 @@ function changeTypography(mutate) {
     persistUserState();
   }, 250);
   if (anchor) {
-    restoreTextAnchor(elements["archive-body"], elements["reader-pane"], anchor, readerTopInset());
+    readerSession.restore(anchor);
     syncScrollBaseline();
   }
 }
@@ -4490,6 +4548,7 @@ elements["import-apply"].addEventListener("click", () => void applyImport(false)
 elements["import-merge"].addEventListener("click", () => void applyImport(true));
 
 document.addEventListener("keydown", (event) => {
+  if (overlays.handleEscape(event)) return;
   const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");
   if (catalogArrow && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
     event.preventDefault();
@@ -4555,16 +4614,24 @@ function updateKeyboardState() {
   const editing = document.activeElement?.matches?.("input:not([type='range'], [type='color'], [type='file']), textarea, [contenteditable]");
   const shrunk = window.visualViewport ? window.visualViewport.height < innerHeight * 0.75 : false;
   document.body.classList.toggle("keyboard-open", Boolean(editing && shrunk));
+  readerSession.setKeyboardOpen(editing && shrunk);
 }
 window.visualViewport?.addEventListener("resize", updateKeyboardState);
 document.addEventListener("focusout", () => requestAnimationFrame(updateKeyboardState));
 matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
 // Late web fonts can reflow the body; re-apply the saved position only if the reader has not
 // started scrolling in the meantime.
-document.fonts.ready.then(() => {
-  if (currentSummary && restoredScroll !== null && Math.abs(elements["reader-pane"].scrollTop - restoredScroll) < 2) {
-    restoreReadingPosition(currentSummary);
-  }
+document.fonts.addEventListener("loading", () => { fontGeneration = readerSession.generation; });
+document.fonts.addEventListener("loadingdone", () => {
+  if (readerSession.afterLayout(fontGeneration)) syncScrollBaseline();
+});
+elements["archive-body"].addEventListener("load", (event) => {
+  if (elements["archive-body"].contains(event.target) && readerSession.afterLayout(readerSession.generation)) syncScrollBaseline();
+}, { capture: true });
+elements["reader-pane"].addEventListener("wheel", () => readerSession.markUserScroll(), { passive: true });
+elements["reader-pane"].addEventListener("keydown", (event) => {
+  if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Home", "End"].includes(event.key) &&
+      !event.target.closest("input, textarea, [contenteditable]")) readerSession.markUserScroll();
 });
 applySettings();
 // Text archive routes do not depend on the TypeMoon search index; start them immediately.

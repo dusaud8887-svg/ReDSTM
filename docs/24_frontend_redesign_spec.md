@@ -24,8 +24,13 @@
 2. §17 결정은 확정됐다. **보류(pass) 항목**(동기화 M5 일부, RUM, `/ops` 매핑)은 구현하지 않는다.
 3. 작업 단위는 §15 티켓. 티켓당 **손으로 편집하는 파일 ≤ 5**(저장소 규칙). 새 테스트 파일·문서도 센다.
    생성·복사한 바이너리(글꼴, vendor, screenshot 기준 이미지)는 세지 않는다. 넘치면 티켓을 쪼갠다.
-4. 모든 티켓의 공통 완료 조건: `npm test` · `npm run check` · `npm run lint`(M0 이후 0 error) · Playwright 전체 · axe 통과.
-   **+ 그 티켓에 적힌 실기기 확인**(S22+ Chrome, 가능하면 Samsung Internet). 기대 문구가 바뀌면 같은 티켓에서 테스트를 고친다.
+4. 티켓마다 `npm test` · `npm run check` · `npm run lint`(M0 이후 0 error), 변경과 관련된 E2E spec을
+   `--project=desktop --project=mobile --workers=2`로 실행하고 적힌 T 번호를 검증한다. `reader-session`, `store/user-state`,
+   `overlay-manager`, `app.js` 라우팅, CSS 분할·토큰(P1-1/P1-2), `sw/offline`을 바꾸면 Playwright 전체를 추가한다.
+   마일스톤 끝에는 모든 project의 Playwright 전체 + axe + visual, §19 기록, main 병합·push와 CI 통과를 확인한다.
+   실패 재실행은 `--last-failed`, 동시 실행은 2(Windows ERR_NO_BUFFER_SPACE). 시각 기준선·로컬 visual 차이는 Linux CI로 판단한다.
+   실기기 항목은 §14.5 확인 대기에 쌓고 계속 진행한다. 같은 원인 실패가 독립 검증에서 두 번 넘게 반복되면 trace를 보존하고
+   원인 가설·확인한 것·선택지를 보고한다. 기대 문구가 바뀌면 같은 티켓에서 테스트를 고친다.
 5. **E2E가 쓰는 id는 유지**(`grep -ohE 'locator\("#[^"]+' edge/e2e | sort -u`). 모양은 class로, 구조를 바꿔도 id는 같은 의미의 요소로 옮긴다.
 6. 300줄 넘는 파일을 구조 변경하기 전에 Step 0(죽은 코드·미사용 export 제거)을 별도 커밋.
 7. 외부 라이브러리는 `import … from "/vendor/<name>@<ver>/<file>.js"`만(bare import 금지). 새 라이브러리 추가 순서:
@@ -1141,11 +1146,15 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - 반드시 먼저 읽기: docs/24_frontend_redesign_spec.md(v3, §0·§5·§12·§15·§17), DESIGN.md(v2.2)
 - 새 라이브러리 조사·프레임워크 재선정 금지. §17의 보류(pass) 항목은 구현하지 않는다.
 - 티켓 순서대로, 티켓당 손으로 고치는 파일 5개 이하, 티켓마다 커밋.
-- 티켓 완료 조건: npm test · npm run check · npm run lint · Playwright 전체 · axe 통과 + 티켓에 적힌 T 번호.
+- 티켓 완료 조건: npm test · npm run check · npm run lint + 관련 E2E spec(desktop/mobile, workers=2) + 적힌 T 번호.
+- reader-session, store/user-state, overlay-manager, app.js 라우팅, CSS 분할·토큰(P1-1/P1-2), sw/offline 변경은 Playwright 전체도 실행한다.
+- 마일스톤 끝에는 Playwright 전체(모든 project) + axe + visual. 기준선과 로컬 visual 차이는 Linux CI로 판단한다.
+- 실패 재실행은 --last-failed. 같은 원인 실패가 독립 검증에서 두 번 넘게 반복되면 trace를 보존하고 가설·확인한 것·선택지를 보고한다.
 - E2E가 쓰는 id는 유지. 저장 형식을 옮기는 작업은 원본을 지우지 않는 롤백 경계를 둔다.
 - 설계와 다르게 해야 할 근거가 생기면 멈추고 근거와 선택지를 보고한다.
 - 마일스톤이 끝나면 docs/24 §19에 결과를 적고 main에 병합·푸시한 뒤 CI 결과를 확인한다.
 - 마지막에 내가 S22+ 실기기에서 확인할 목록(§14.5 해당 행)을 짧게 정리해 준다.
+- 실기기에서는 멈추지 않고 확인 대기에 쌓는다. S4 미확인/불가이면 P6-1 듣기를 건너뛰고 §19에 기록한다.
 ```
 
 ### 18.3 마일스톤별 지시문 (공통 지시문 뒤에 붙인다)
@@ -1180,6 +1189,66 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 ---
 
 ## 19. 변경 기록
+
+### 구현 진행 (2026-09-30)
+
+- 사용자 검증 지시 변경: §0-4·§18.2를 티켓별 관련 E2E(desktop/mobile) + 공통 기반 변경 시 전체, 마일스톤 전체/axe/Linux visual/CI 방식으로 갱신. workers=2·실패 --last-failed 유지. 현재 F0-2b/c·F0-3a/b는 커밋 완료(`343b3ca`, `d8e2b0a`, `a1046bf`, `8742afc`). F0-4 구현/검증 중이며 P6-1은 S4가 가능으로 확인될 때만 구현한다.
+
+- P0-1: 호출부·CSS 선택자 사용 확인 후 삭제 가능한 죽은 코드 없음. Biome error 5건(콜백 반환 3, 표현식 대입 1, 테스트 중복 키 1) 수정. 손으로 편집한 파일 4개(이 기록 포함).
+- P0-1 검증: `npm test` 108/108, `npm run check` 통과, `npm run lint` 0 error(기존 warning 7/info 2), Playwright 전체 510 pass/14 skip, axe 4폭 통과. 공개 동작·저장 스키마 변화 없음.
+- P0-2a: 시각 fixture 48개(light/dark × 384/768/1440 × 8화면), Linux CI 초기 기준 생성·비교·artifact 업로드, CI lint gate 연결. `check`에 새 spec 포함. 로컬 공통 검증은 108 unit/510 E2E/14 기존 skip·axe·check·lint 통과. Linux 생성 기준선은 P0-2b에서 가져와 커밋 후 다시 비교한다(Windows 기준 생성 없음). 편집 5파일.
+- P0-2b: [Linux CI 36698362728](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36698362728) 성공. 생성 48개(46.2초), 전체 558 pass/14 기존 skip(8.2분), axe·unit·check·lint 및 python/text-edge job 통과. 해당 artifact의 PNG 48개를 그대로 커밋. M0 시각 변화 없음 기준선으로 사용하며, 이후 시각 개편 티켓은 Linux에서 새 기준 생성·시안 대조 후 비교한다.
+- P0-3: 버전 글꼴·vendor의 성공 응답에 public 1년 immutable(HTML fallback/실패 응답 제외). Access JWT 검증을 통과한 email로만 `GET /api/v1/me`의 SHA-256 앞 16자리 ownerHash를 계산하며 응답은 private/no-store. Basic·서비스 토큰·미인증 거절, 다른 계정 hash 분리 테스트 추가. 문서 3개 포함 편집 5파일. `npm test` 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(4.1분), axe 4폭 통과.
+- 실기기 확인 대기(M0): Back·시트·popover 중첩(T03/T04), 글꼴 도착 후 위치(T20), 키보드(T34), Playwright `_android` 연결 여부. F0 연결 뒤 확인.
+- P0-4 원인: `/`에서 TypeMoon worker 준비 전 텍스트 Reader를 연 경우 `routeHandled=false` 때문에 늦은 `ready` 응답이 텍스트 경로를 다시 열었다. trace에서 설정 시트 표시 직후 본문 중복 요청과 시트 닫힘 확인(수정 전 10회 중 1회 실패). 현재 목적지가 text면 독립 초기화를 존중하도록 수정. 응답을 설정 시트 표시 뒤로 고정한 회귀 테스트로 모바일 10/10 통과(15.8초), timeout 변경 없음.
+- P0-4 검증: unit 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(3.6분), axe 4폭 통과. 편집 3파일. P0-3 Linux CI 36700298564도 성공(시각 기준선 비교 포함).
+- P0-5: Python CI job에서 Node 24·`npm ci` 후 SHA 고정 원본과 fonttools 4.66.1/brotli 1.2.0으로 글꼴을 재생성하고 tracked diff·미추적 출력 파일을 검사. 별도 clean checkout `6c99fbe`에서 `npm ci → npm run fonts` 후 diff 0/미추적 출력 0(T14), 작업 checkout 재생성도 diff 0. 원본 유지. 편집 2파일.
+- P0-5 검증: unit 109/109, check·lint 0 error. 재생성과 검사를 겹친 첫 실행은 생성 중 파일 누락/nested Biome 설정/화면 준비 대기 실패가 있어 완료로 세지 않음. clean checkout을 저장소 밖으로 옮기고 생성 종료 후 check·lint 재검사, axe 해당 시나리오 4/4 및 전체 E2E 510 pass/14 기존 skip(3.8분) 통과. timeout 변경 없음. 이후 재생성·파일 검사·E2E는 순차 실행.
+- F0-1: 텍스트 모델 v1(블록 경계·UI/댓글/rt 제외·UTF-16 원문 좌표), NFKC·소문자·공백 검색 대응표, locator v2의 문맥/거리 복원과 모호 상태를 구현. 기존 anchor 경로 유지. 반복 문장·자모·이모지·ruby·정규화 확장 fixture 3개 추가. 편집 5파일(check·기록 포함).
+- F0-1 검증 중 Windows Chrome `reading-model.js` 요청의 `net::ERR_NO_BUFFER_SPACE`를 trace에서 확인. 앱 초기화 전 실패이며 locator 코드까지 도달하지 않음. 자산 생성 종료 후에도 발생했으므로 생성 중 누락과 구분한다. 저장 실패 시나리오 4폭은 workers=2에서 4/4 통과. 공통 E2E 실행을 CI와 동일한 동시 2개로 고정하고 전체 재검증(timeout 불변). 실패 trace는 로컬 `.wrangler/f0-1-storage-failure`에 보관.
+- F0-1 최종 검증: unit 112/112, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(5.2분, workers=2), axe 4폭 통과. P0-5 Linux CI 36702661741 성공(글꼴 재생성·시각 비교 포함).
+- F0-2a: 세션 기반을 먼저 분리(파일 제한). DocumentSession의 generation·AbortController·취소 작업/rAF 소유권, 사용자 스크롤·키보드 중 글꼴 보정/저장 정지, scroll/aa 어댑터 구현. 순수 세션 테스트 3개 추가. 실제 Reader·저장 연결과 T20/T34 브라우저 fixture는 F0-2b.
+- F0-2a 검증: unit 115/115, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(5.0분), axe 4폭 통과. 편집 4파일. text history의 기존 용량 압축 목록에도 새 위치 필드를 반영해야 하므로 연결(F0-2b, 5파일)과 추가 브라우저 회귀(F0-2c)를 분리한다.
+- F0-2b: Reader와 텍스트 장서에 세션 generation·취소 소유권·locator 선택 필드·documentId/workId 분리를 연결. 기존 pixel/offset/anchor 필드와 v2/v3 백업을 유지하며 새 저장 형식으로 옮기지 않는다. 취소 전에 기존 위치를 저장하고 새 문서의 늦은 콜백을 차단한다.
+- F0-2b 중단 원인: 입력 이벤트만 사용자 스크롤로 세어 script scroll·터치 관성·스크롤바 이동 뒤 늦은 글꼴/이미지 보정이 저장 위치 0으로 되돌렸다. 사용자 제공 진단을 적용해 앱이 복원한 expectedTop과 실제 scrollTop이 2px 넘게 다르면 사용자 이동으로 판정하고 보정을 중단한다. 수정 전 전체 505 pass/5 fail, 수정 후 해당 두 시나리오 4폭 8/8 pass(16.9초), unit 116/116, check·lint 0 error, 전체 510 pass/14 기존 skip(4.8분), axe 4폭 통과. 커밋 `343b3ca`, 편집 5파일. F0-2a Linux CI 36707044562 성공.
+- F0-2c: 파일 제한 때문에 위치 필드 round-trip/백업 테스트·기존 압축 정책 반영·T20/T34 브라우저 fixture와 이 기록을 후속 5파일 커밋으로 분리한다. T20은 저장 debounce 전에 script scroll → loadingdone/image load를 강제한다. T34는 축소 visualViewport + 메모 입력 중 pagehide 저장/도구 접기 정지와 키보드 종료 뒤 저장 재개를 검증한다.
+- F0-2c 검증: T20/T34 4폭 8/8 pass(13.2초), unit 117/117, check·lint 0 error, 전체 E2E 518 pass/14 기존 skip(5.0분), axe 4폭 통과. 오래된 완료 회차에서만 기존 압축 규칙대로 loc/documentId도 제거하며 미완료·최근·작품별 최신 기록은 유지한다. 저장 형식 이전·원본 삭제 없음. 편집 5파일.
+- 남은 위험(F0-2): cancelPendingWork의 AbortController 종료와 canSave가 연결돼 있다. 이번 실패 원인은 아니며 범위를 늘리지 않고 현재 저장 후 취소 순서를 유지한다. 향후 세션 수명과 작업 취소 분리 시 전환·pagehide 회귀를 함께 검증할 것. 실기기 T20은 열기 직후 강한 플릭과 글꼴 조각/이미지 도착 시 되돌아가지 않는지 특히 확인한다.
+- F0-3a: 기존 dialog 전체를 native beforetoggle/toggle/cancel/close로 스택에 연결. 바만 클릭 중 CloseWatcher를 소유하고 미지원 때 닫기/Esc를 사용한다. 부모 닫힘·회차/화면 이동은 상위 층부터 정리하며 history를 추가하지 않는다. 피드백 토스트는 manual popover로 최상단에 재표시하고 전체화면 host 안으로 이동한다. 기존 토스트 위치 값은 유지. 순수 테스트 3개, 편집 5파일. unit 120/120, check·lint 0 error, 관련 화면 14 pass/2 기존 skip, 전체 E2E 518 pass/14 기존 skip(4.6분), axe 4폭 통과. 커밋 `a1046bf`.
+- F0-3b: T03/T04의 실제 native dialog/popover + 클릭으로 열린 바 조합을 CloseWatcher 지원/미지원 × 4폭에서 검증한다. 자동화 Esc가 한 층씩 닫고 Reader/history를 유지하며 미지원 때 보이는 닫기 버튼도 동작해야 한다. 시스템 Back은 실기기 확인 대기.
+- F0-3b 검증: T03/T04 8/8 pass(8.3초), unit 120/120, check·lint 0 error, 전체 E2E 526 pass/14 기존 skip(4.6분), axe 4폭 통과. 편집 2파일. 앞선 branch CI는 새 커밋 push에 따른 concurrency 취소이며 실패로 기록하지 않는다. M0 최종 head와 main의 CI 완료를 기다려 확인한다.
+- 실기기 연결 확인(M0): 설치된 Playwright 1.62.1의 `_android.devices()`는 `127.0.0.1:5037 ECONNREFUSED`(ADB 서버 없음). S22+에 연결되지 않아 실제 플릭·시스템 Back·키보드 확인은 실행하지 못했다. 결과를 기다리지 않고 계속 진행한다.
+- F0-4: 계정별 `redstm:<ownerHash>` DB v1(주석·세션·작품·오프라인·outbox·meta), Web Locks/탭 알림, 데이터+outbox 원자적 쓰기, localStorage 어댑터와 재조정을 구현. 서버 통신·서버 동기화 없음. 기능 감지/저하 계약과 플래그, 제스처·reduced-motion·설정에 따른 8/12/15ms 햅틱 추가. 날짜 없는 플랫폼 기능 기본 off. 편집 5파일, 커밋 `2d77c8a`.
+- F0-4 검증: unit 125/125, check·lint 0 error, 전체 E2E 526 pass/14 기존 skip(4.5분), axe 4폭 통과. 별도 실제 Chrome IDB 실행에서 outbox 중복 키 ConstraintError로 변경 2건 모두 rollback, 이전 작품/receipt 유지, 다른 namespace는 빈 목록 확인. localStorage 쓰기 후 IDB 실패를 주입해 원본 `{"scroll":999}` 유지·재조정 1건·재실행 0건 확인. 기존 저장 키 이전/삭제 없음.
+- F0-2d 보강: Linux CI 36712628623에서 `A work not started…` medium/mobile 진행률 0 재발(다음 CI 36713560970은 전체/axe/visual 성공). 실패 trace를 `.wrangler/f0-3a-ci-failure`에 보존. 글꼴 응답·script scroll·Back이 인접한 trace를 바탕으로 scroll 이벤트 전 loadingdone 순서를 강제한 fixture를 추가하니 수정 전 desktop/mobile 모두 999→0 재현. capture/restore의 실제 pixel을 savedTop에 기억하고 afterLayout 직전에도 차이를 검사해 queued scroll을 보정하지 않도록 수정한다. 최초 수정의 observeScroll 경로는 유지하며 timeout은 바꾸지 않는다.
+- F0-2d 검증: 수정 후 `--last-failed` 2/2 pass(5.1초), unit 126/126, check·lint 0 error, 전체 E2E 530 pass/14 기존 skip(4.3분), axe 4폭 통과. 편집 4파일. F0-4 Linux CI 36715499623 성공(전체·axe·visual 포함).
+- S1(페이지 배치): Windows Chrome 154.0.8037.58, 384×844 → 844×384, 원문 10만 자 + 블록 경계/ruby 베이스 = 모델 100,169 UTF-16자. 명조 준비 후 columns 적용→scrollWidth 강제 배치 7회: 10.6/11.8/9.6/9.0/8.1/7.9/9.8ms, 중앙값 9.6ms·최대 11.8ms. 184쪽, 60% 지점 offset 59,957을 회전 뒤 134쪽에서 같은 Range로 복원하여 화면 안 유지. 긴 SVG 이미지 높이 제한·짧은 마지막 쪽의 끝 문자 표시·두 줄 rt DOM 보존 확인. 실행 결과 `.wrangler/s1-result.json`(코드는 커밋하지 않음).
+- S1 분기: 로컬 배치 게이트 150ms 미만이므로 M2는 §8.10의 전체 columns+transform부터 구현한다. S22+ 실제 진입 시간은 미확인. 초과하면 문단 약 2만 자로 구간을 만들고 현재 구간만 columns, 경계에서 다음 구간을 붙이며 locator 원문 offset은 유지한다. 주소창/회전/이미지/ruby 실기기 T02와 실제 전체 모드 진입 비용은 M2 확인 대기에 추가한다.
+- S1 검증: unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(55.9초). 스파이크 assertion(끝 문자·이미지 높이·원문 Range 회전 복원) 통과. 편집 1파일(측정 결과 기록만).
+- S3(캐시 재생): 가능(로컬 Chrome native module SW/Cache Storage). Node 24의 실제 zstd 압축 HTTP 응답을 `/archive/posts/board_a/1-<sha>.json.zst`로, UTF-8 본문을 `/api/v1/text/object/<sha>`로 제공하고 셸과 함께 3개 응답을 저장했다. persistent Chrome을 완전히 닫은 뒤 같은 profile의 새 context를 offline으로 시작: 셸·한글 JSON·텍스트 원문 모두 재생, cold start 뒤 HTTP 요청 0건. 캐시 응답의 `Content-Encoding: zstd`도 유지한 채 `response.json()` 성공. `.wrangler/s3-result.json`에 측정 보관(스파이크 SW 코드는 커밋하지 않음).
+- S3 분기: M4에서 `.json.zst`를 오프라인 대상에 포함한다. 저장 대상으로 사용자가 선택한 작품만 다루며 실제 §12.6.1 순서·인증 응답 검사·owner namespace·중단/재개는 M4에서 검증한다. S22+/Samsung Internet의 탭 종료 후 단절 T07은 확인 대기.
+- S3 검증: native SW cold start assertion 통과, unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(56.9초). 편집 1파일(결과 기록만).
+- S4(TTS): 미확인(S22+ 미연결). 로컬 Windows Chrome에서는 Web Speech·Media Session·Wake Lock 존재, ko-KR 음성 1개를 감지했지만 폰의 소리/백그라운드/잠금화면 동작을 증명하지 않는다. `.wrangler/s4-result.json`에 로컬 감지 결과 보관. 최신 사용자 분기에 따라 P6-1은 구현하지 않고 M6에서 건너뛴 이유를 다시 기록한다. 무음 audio 우회 없음.
+- S4 실기기 확인 방법: S22+ Chrome과 Samsung Internet 각각에서 ko-KR 음성을 확인하고 2분 한국어 문장 큐 재생 중 다른 앱으로 전환·화면을 1분 끈 뒤 지속 여부를 기록한다. Media Session의 제목/재생/일시정지 알림이 표시되는지, 누르면 실제 TTS가 제어되는지 확인한다. 전경 재생/백그라운드/화면 꺼짐/알림 제어를 각각 가능·불가로 전달한다. ADB 연결 후 remote DevTools에서 아래 probe를 실행할 수 있다(앱 기능 구현이 아닌 실기기 스파이크).
+
+```js
+speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
+(() => {
+  const u = new SpeechSynthesisUtterance("한국어 듣기 실기기 확인입니다. 문장이 계속 이어지는지 확인합니다. ".repeat(40));
+  u.lang = "ko-KR";
+  if (navigator.mediaSession) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: "ReDSTM 실기기 확인" });
+    navigator.mediaSession.setActionHandler("play", () => speechSynthesis.resume());
+    navigator.mediaSession.setActionHandler("pause", () => speechSynthesis.pause());
+    navigator.mediaSession.playbackState = "playing";
+  }
+  speechSynthesis.speak(u);
+})();
+```
+
+- S4 검증: unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(54.0초). 편집 1파일(결과와 실기기 방법만). M0 최종 전체/axe/Linux visual은 branch 및 main CI로 확인한다.
+- M0 마감: P0-1~5, F0-1~4와 S1·S3·S4 기록 완료. F0-2는 5파일 제한과 추가 회귀 때문에 a/b/c/d로 분할했다. [최종 코드 Linux CI 36718168285](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36718168285): unit 126, 전체 E2E 578 pass/14 기존 skip(7.7분, visual 48개 포함), axe·check·lint·글꼴 재현·D1 migration·Worker dry-run·python/text-edge 모두 통과. main의 AA 보존 문서 변경도 병합했다. S4 미확인으로 P6-1 보류, cancelPendingWork/canSave 결합과 실제 기기 동작은 남은 위험이다. main 병합 이후 CI 결과는 다음 기록에서 확정한다.
+- 실기기 확인 대기(M0 확정): T03/T04 — 바→시트→popover를 연 뒤 시스템 Back으로 한 층씩 닫히며 Reader/history 유지; T20 — 작품 진입 직후 플릭하고 늦은 글꼴/이미지 도착에도 위치가 되돌아가지 않음; T34 — 찾기/메모 키보드 표시·회전·주소창 변화 중 저장/도구가 오작동하지 않음. S4 방법은 위 probe, S1/T02와 S3/T07은 해당 마일스톤의 실기기 대기에 이어 기록한다.
 
 | 날짜 | 내용 |
 |---|---|
