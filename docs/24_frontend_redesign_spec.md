@@ -208,7 +208,7 @@ AA는 레퍼런스 서비스가 없는 ReDSTM 고유 영역이다(§8.16–8.17)
 | F19 | **실측**: es-hangul `disassemble` + uFuzzy(`intraMode:1`, unicode) — `세이바→세이버`, `마슐사→마술사`, `고양이 공방`(순서 무관) 통과. 공백 없는 `겨울방학`·2오타 `그랑부루`는 실패 → 공백 제거 substring 경로와 병행 | D-12 |
 | F20 | **실측**: 번들 크기(min+gzip) — es-hangul 2.95KB · uFuzzy 4.28 · idb 1.41 · Floating UI 7.81 · use-gesture 8.97 · modern-screenshot 9.89 · web-vitals 3.28 · Workbox 8.86 · uqr 4.2 · jsdiff 2.5 · PhotoSwipe 4.47+16.45(+CSS 2.34) | 예산 §12.8 |
 | F21 | **실측**: MaruBuri(@kfonts 원본 TTF) Pretendard 묶음 분할 → 400·700 각 93조각, 최대 조각 30KB, 합계 3.3MB | D-05 |
-| F22 | **실측**: Saitamaar TTF 2,015,748 → WOFF2 407,452 bytes, cmap·hmtx 동일 | D-16 |
+| F22 | **실측**: Saitamaar TTF 2,015,748 → WOFF2 407,288 bytes, cmap·hmtx 동일 | D-16 |
 | F23 | Pretext(canvas 줄바꿈 예측)·virtua(프레임워크 전용)·pure-web-bottom-sheet(0.1.0) 검토 | 미채택: 앞 둘은 필요 없음, 마지막은 같은 기법을 자체 구현(성숙도) |
 
 출처: [Interop 2026](https://web.dev/blog/interop-2026) · [anchor Baseline](https://www.buildmvpfast.com/blog/css-anchor-positioning-baseline-delete-floating-ui-2026) ·
