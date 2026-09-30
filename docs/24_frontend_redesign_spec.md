@@ -1218,6 +1218,10 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - F0-3b: T03/T04의 실제 native dialog/popover + 클릭으로 열린 바 조합을 CloseWatcher 지원/미지원 × 4폭에서 검증한다. 자동화 Esc가 한 층씩 닫고 Reader/history를 유지하며 미지원 때 보이는 닫기 버튼도 동작해야 한다. 시스템 Back은 실기기 확인 대기.
 - F0-3b 검증: T03/T04 8/8 pass(8.3초), unit 120/120, check·lint 0 error, 전체 E2E 526 pass/14 기존 skip(4.6분), axe 4폭 통과. 편집 2파일. 앞선 branch CI는 새 커밋 push에 따른 concurrency 취소이며 실패로 기록하지 않는다. M0 최종 head와 main의 CI 완료를 기다려 확인한다.
 - 실기기 연결 확인(M0): 설치된 Playwright 1.62.1의 `_android.devices()`는 `127.0.0.1:5037 ECONNREFUSED`(ADB 서버 없음). S22+에 연결되지 않아 실제 플릭·시스템 Back·키보드 확인은 실행하지 못했다. 결과를 기다리지 않고 계속 진행한다.
+- F0-4: 계정별 `redstm:<ownerHash>` DB v1(주석·세션·작품·오프라인·outbox·meta), Web Locks/탭 알림, 데이터+outbox 원자적 쓰기, localStorage 어댑터와 재조정을 구현. 서버 통신·서버 동기화 없음. 기능 감지/저하 계약과 플래그, 제스처·reduced-motion·설정에 따른 8/12/15ms 햅틱 추가. 날짜 없는 플랫폼 기능 기본 off. 편집 5파일, 커밋 `2d77c8a`.
+- F0-4 검증: unit 125/125, check·lint 0 error, 전체 E2E 526 pass/14 기존 skip(4.5분), axe 4폭 통과. 별도 실제 Chrome IDB 실행에서 outbox 중복 키 ConstraintError로 변경 2건 모두 rollback, 이전 작품/receipt 유지, 다른 namespace는 빈 목록 확인. localStorage 쓰기 후 IDB 실패를 주입해 원본 `{"scroll":999}` 유지·재조정 1건·재실행 0건 확인. 기존 저장 키 이전/삭제 없음.
+- F0-2d 보강: Linux CI 36712628623에서 `A work not started…` medium/mobile 진행률 0 재발(다음 CI 36713560970은 전체/axe/visual 성공). 실패 trace를 `.wrangler/f0-3a-ci-failure`에 보존. 글꼴 응답·script scroll·Back이 인접한 trace를 바탕으로 scroll 이벤트 전 loadingdone 순서를 강제한 fixture를 추가하니 수정 전 desktop/mobile 모두 999→0 재현. capture/restore의 실제 pixel을 savedTop에 기억하고 afterLayout 직전에도 차이를 검사해 queued scroll을 보정하지 않도록 수정한다. 최초 수정의 observeScroll 경로는 유지하며 timeout은 바꾸지 않는다.
+- F0-2d 검증: 수정 후 `--last-failed` 2/2 pass(5.1초), unit 126/126, check·lint 0 error, 전체 E2E 530 pass/14 기존 skip(4.3분), axe 4폭 통과. 편집 4파일. F0-4 Linux CI 36715499623 성공(전체·axe·visual 포함).
 
 | 날짜 | 내용 |
 |---|---|

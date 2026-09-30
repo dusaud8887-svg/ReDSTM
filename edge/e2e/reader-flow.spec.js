@@ -151,6 +151,25 @@ test("T20: a script scroll survives late fonts and images and saves its progress
   expect((await record()).loc.start).toBeGreaterThan(0);
 });
 
+test("T20: a font completion before the queued scroll event cannot undo the move", async ({ page }) => {
+  const workId = await useLongNovel(page, 3);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const top = await page.locator("#reader-pane").evaluate((pane) => {
+    document.fonts.dispatchEvent(new Event("loading"));
+    pane.scrollTop = 999;
+    document.fonts.dispatchEvent(new Event("loadingdone"));
+    return pane.scrollTop;
+  });
+  expect(top).toBe(999);
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem("redstm.textState.v1")).history[key]?.scroll,
+    `novel:${workId}:1`)).toBe(999);
+});
+
 test("T34: the keyboard pauses position saves and chrome folding, then saves resume", async ({ page }) => {
   const workId = await useLongNovel(page, 3);
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&chapter=1`);

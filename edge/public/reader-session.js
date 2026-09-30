@@ -23,14 +23,14 @@ export function createDocumentSession() {
   const pending = new Set();
   const session = {
     generation: 0, documentKey: "", workId: "", rev: "", adapter: null,
-    saved: null, userScrolled: false, keyboardOpen: false, expectedTop: null,
+    saved: null, savedTop: null, userScrolled: false, keyboardOpen: false, expectedTop: null,
     get signal() { return controller.signal; },
     get canSave() { return !session.keyboardOpen && !controller.signal.aborted; },
     begin({ documentKey, workId = "", rev = "", adapter = null }) {
       session.cancelPendingWork();
       controller = new AbortController();
       session.generation += 1;
-      Object.assign(session, { documentKey, workId, rev, adapter, saved: null, userScrolled: false, expectedTop: null });
+      Object.assign(session, { documentKey, workId, rev, adapter, saved: null, savedTop: null, userScrolled: false, expectedTop: null });
       return session.generation;
     },
     cancelPendingWork() {
@@ -60,6 +60,7 @@ export function createDocumentSession() {
     capture() {
       if (!session.canSave || !session.adapter) return null;
       session.saved = session.adapter.captureVisiblePosition();
+      session.savedTop = session.adapter.scrollTop?.() ?? null;
       return session.saved;
     },
     restore(anchor = session.saved, policy = "keep-top") {
@@ -67,6 +68,7 @@ export function createDocumentSession() {
       const restored = session.adapter.scrollToRange(anchor, policy);
       if (restored) session.saved = anchor;
       session.expectedTop = session.adapter.scrollTop?.() ?? null;
+      session.savedTop = session.expectedTop;
       return restored;
     },
     observeScroll(top) {
@@ -75,6 +77,12 @@ export function createDocumentSession() {
     },
     afterLayout(generation) {
       if (generation !== session.generation || session.userScrolled || session.keyboardOpen) return false;
+      const top = session.adapter?.scrollTop?.();
+      // Scroll events are queued: a font/image callback may run before observeScroll.
+      if (session.savedTop !== null && top !== undefined && Math.abs(top - session.savedTop) > 2) {
+        session.markUserScroll();
+        return false;
+      }
       return session.restore();
     },
     markUserScroll() { session.userScrolled = true; },

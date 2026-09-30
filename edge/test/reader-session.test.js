@@ -90,3 +90,23 @@ test("only the app's restored scroll may be corrected after a late layout", () =
   session.observeScroll(300);
   assert.equal(session.userScrolled, true);
 });
+
+test("late layout also respects a move whose scroll event is still queued", () => {
+  const session = createDocumentSession();
+  let top = 0;
+  let restores = 0;
+  session.begin({ documentKey: "text:1", adapter: {
+    scrollTop: () => top,
+    captureVisiblePosition: () => ({ offset: 0 }),
+    scrollToRange: () => { top = 0; restores += 1; return true; },
+  } });
+  session.capture();
+  assert.equal(session.afterLayout(session.generation), true);
+  top = 999;
+  assert.equal(session.afterLayout(session.generation), false);
+  assert.equal(top, 999);
+  assert.equal(session.userScrolled, true);
+  assert.equal(restores, 1);
+  session.begin({ documentKey: "text:2" });
+  assert.equal(session.savedTop, null);
+});
