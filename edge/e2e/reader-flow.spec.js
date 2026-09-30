@@ -1492,3 +1492,4 @@ test("A text work shows its cover and barcode, and the barcode opens a chapter",
   await summary.getByRole("button", { name: "이 회차로" }).click();
   await expect(page.locator("#reader-title")).toContainText("40화");
 });
+
