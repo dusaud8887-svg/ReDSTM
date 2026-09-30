@@ -81,16 +81,16 @@
           <p id="collection-source">Oracle 수집본과 Reader 게시본은 기준 시각이 다릅니다.</p>
         </header>
         <dl class="collection-kpis">
-          <div><dt>파악된 게시글</dt><dd id="discovered-posts">—</dd><small>Oracle 원본 DB에 등록된 전체 게시글</small></div>
-          <div><dt>원본 본문 확보</dt><dd id="body-collected">—</dd><small>현재 본문 버전이 저장된 게시글</small></div>
-          <div><dt>Reader 반영 글</dt><dd id="reader-posts">—</dd><small>마지막 게시 시점에 Reader에서 읽을 수 있는 글</small></div>
-          <div><dt>본문 미확보</dt><dd id="outline-only">—</dd><small>목차는 있으나 본문을 아직 확보하지 못한 글</small></div>
+          <div><dt>파악된 게시글</dt><dd id="discovered-posts">—</dd><dd class="kpi-note">Oracle 원본 DB에 등록된 전체 게시글</dd></div>
+          <div><dt>원본 본문 확보</dt><dd id="body-collected">—</dd><dd class="kpi-note">현재 본문 버전이 저장된 게시글</dd></div>
+          <div><dt>Reader 반영 글</dt><dd id="reader-posts">—</dd><dd class="kpi-note">마지막 게시 시점에 Reader에서 읽을 수 있는 글</dd></div>
+          <div><dt>본문 미확보</dt><dd id="outline-only">—</dd><dd class="kpi-note">목차는 있으나 본문을 아직 확보하지 못한 글</dd></div>
         </dl>
         <dl class="queue-progress">
-          <div><dt>자동 처리 대상</dt><dd id="missing-body-pending">—</dd><small>본문 미확보 중 대기·처리·재시도 상태</small></div>
-          <div><dt>재검토 필요</dt><dd id="missing-body-dead">—</dd><small>본문 미확보 중 자동 재시도를 마친 항목</small></div>
-          <div><dt>전체 작업 큐</dt><dd id="frontier-waiting">—</dd><small>기존 본문 갱신까지 포함한 전체 대기 작업</small></div>
-          <div><dt>전체 목차</dt><dd id="inventory-progress">—</dd><small id="inventory-detail">게시판별 전체 목록 확인 이력 집계</small></div>
+          <div><dt>자동 처리 대상</dt><dd id="missing-body-pending">—</dd><dd class="kpi-note">본문 미확보 중 대기·처리·재시도 상태</dd></div>
+          <div><dt>재검토 필요</dt><dd id="missing-body-dead">—</dd><dd class="kpi-note">본문 미확보 중 자동 재시도를 마친 항목</dd></div>
+          <div><dt>전체 작업 큐</dt><dd id="frontier-waiting">—</dd><dd class="kpi-note">기존 본문 갱신까지 포함한 전체 대기 작업</dd></div>
+          <div><dt>전체 목차</dt><dd id="inventory-progress">—</dd><dd class="kpi-note" id="inventory-detail">게시판별 전체 목록 확인 이력 집계</dd></div>
         </dl>
         <details class="release-evidence">
           <summary>데이터 기준 보기</summary>
@@ -159,16 +159,16 @@
           <p id="text-archive-source">TypeMoon과 별도인 소설·아카라이브 장서입니다. Oracle 텍스트 게시기가 실행마다 기록한 상태입니다.</p>
         </header>
         <dl class="collection-kpis">
-          <div><dt>아카라이브 글</dt><dd id="text-arcalive">—</dd><small id="text-arcalive-detail">게시 확인 / 수입</small></div>
-          <div><dt>소설 회차</dt><dd id="text-novel">—</dd><small id="text-novel-detail">게시 확인 / 수입</small></div>
-          <div><dt>PC 마지막 수신</dt><dd id="text-pc-last">—</dd><small id="text-pc-detail">뉴토미가 보낸 배치</small></div>
-          <div><dt>보관 이미지</dt><dd id="text-media">—</dd><small id="text-media-detail">아카라이브 이미지 보관본</small></div>
+          <div><dt>아카라이브 글</dt><dd id="text-arcalive">—</dd><dd class="kpi-note" id="text-arcalive-detail">게시 확인 / 수입</dd></div>
+          <div><dt>소설 회차</dt><dd id="text-novel">—</dd><dd class="kpi-note" id="text-novel-detail">게시 확인 / 수입</dd></div>
+          <div><dt>PC 마지막 수신</dt><dd id="text-pc-last">—</dd><dd class="kpi-note" id="text-pc-detail">뉴토미가 보낸 배치</dd></div>
+          <div><dt>보관 이미지</dt><dd id="text-media">—</dd><dd class="kpi-note" id="text-media-detail">아카라이브 이미지 보관본</dd></div>
         </dl>
         <dl class="queue-progress">
-          <div><dt>수신함 대기</dt><dd id="text-drop">—</dd><small>SFTP 수신함에서 수입을 기다리는 배치</small></div>
-          <div><dt>충돌 보류</dt><dd id="text-conflicts">—</dd><small>같은 출처 ID의 다른 본문 (기존 본문 유지)</small></div>
-          <div><dt>Oracle 수집 큐</dt><dd id="text-queue">—</dd><small id="text-queue-detail">블랙툰·마루마루 본문 대기</small></div>
-          <div><dt>출처 냉각</dt><dd id="text-cooldown">—</dd><small id="text-cooldown-detail">403·429·5xx 뒤 쉬는 출처</small></div>
+          <div><dt>수신함 대기</dt><dd id="text-drop">—</dd><dd class="kpi-note">SFTP 수신함에서 수입을 기다리는 배치</dd></div>
+          <div><dt>충돌 보류</dt><dd id="text-conflicts">—</dd><dd class="kpi-note">같은 출처 ID의 다른 본문 (기존 본문 유지)</dd></div>
+          <div><dt>Oracle 수집 큐</dt><dd id="text-queue">—</dd><dd class="kpi-note" id="text-queue-detail">블랙툰·마루마루 본문 대기</dd></div>
+          <div><dt>출처 냉각</dt><dd id="text-cooldown">—</dd><dd class="kpi-note" id="text-cooldown-detail">403·429·5xx 뒤 쉬는 출처</dd></div>
         </dl>
         <p id="text-archive-as-of" class="source-note">텍스트 장서 상태가 아직 게시되지 않았습니다.</p>
       </section>

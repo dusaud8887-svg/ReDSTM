@@ -12,7 +12,7 @@ colors:
   light-subtle: "#7C8798"
   light-line: "#E7E9EE"
   light-line-strong: "#CDD2DA"
-  light-accent: "#D92D3D"
+  light-accent: "#D12A3A"
   light-accent-hover: "#B42332"
   light-accent-soft: "#FFF1F2"
   light-focus: "#2E90FA"
@@ -191,7 +191,7 @@ Red 사용 지도(화면당 신호 한 곳 원칙의 구체화):
 본문 면 `종이`(설정 → 배경)는 Reader(`.reader`, 하단 읽기 도구, 진행 표시)에만 적용하는 따뜻한 읽기
 면이다. app chrome, catalog, dialog는 위 token을 그대로 쓴다. 같은 token 이름을 Reader 범위에서 다시
 정의하며, light는 red를 `#C42534`(hover `#A51F2C`)로 한 단계 낮춰 작은 red label이 종이 면에서도
-4.5:1 이상을 유지한다.
+4.5:1 이상을 유지한다. 밝은 테마 accent는 2026-09-30 axe 검사(`edge/e2e/a11y.spec.js`)에서 accent-soft 위 4.35:1로 나와 `#D12A3A`로 조정했다(앱 아이콘·manifest 색은 글자가 아니라 그대로).
 
 | token | 종이 light | 종이 dark |
 |---|---|---|
