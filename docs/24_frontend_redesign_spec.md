@@ -1228,6 +1228,25 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - S3(캐시 재생): 가능(로컬 Chrome native module SW/Cache Storage). Node 24의 실제 zstd 압축 HTTP 응답을 `/archive/posts/board_a/1-<sha>.json.zst`로, UTF-8 본문을 `/api/v1/text/object/<sha>`로 제공하고 셸과 함께 3개 응답을 저장했다. persistent Chrome을 완전히 닫은 뒤 같은 profile의 새 context를 offline으로 시작: 셸·한글 JSON·텍스트 원문 모두 재생, cold start 뒤 HTTP 요청 0건. 캐시 응답의 `Content-Encoding: zstd`도 유지한 채 `response.json()` 성공. `.wrangler/s3-result.json`에 측정 보관(스파이크 SW 코드는 커밋하지 않음).
 - S3 분기: M4에서 `.json.zst`를 오프라인 대상에 포함한다. 저장 대상으로 사용자가 선택한 작품만 다루며 실제 §12.6.1 순서·인증 응답 검사·owner namespace·중단/재개는 M4에서 검증한다. S22+/Samsung Internet의 탭 종료 후 단절 T07은 확인 대기.
 - S3 검증: native SW cold start assertion 통과, unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(56.9초). 편집 1파일(결과 기록만).
+- S4(TTS): 미확인(S22+ 미연결). 로컬 Windows Chrome에서는 Web Speech·Media Session·Wake Lock 존재, ko-KR 음성 1개를 감지했지만 폰의 소리/백그라운드/잠금화면 동작을 증명하지 않는다. `.wrangler/s4-result.json`에 로컬 감지 결과 보관. 최신 사용자 분기에 따라 P6-1은 구현하지 않고 M6에서 건너뛴 이유를 다시 기록한다. 무음 audio 우회 없음.
+- S4 실기기 확인 방법: S22+ Chrome과 Samsung Internet 각각에서 ko-KR 음성을 확인하고 2분 한국어 문장 큐 재생 중 다른 앱으로 전환·화면을 1분 끈 뒤 지속 여부를 기록한다. Media Session의 제목/재생/일시정지 알림이 표시되는지, 누르면 실제 TTS가 제어되는지 확인한다. 전경 재생/백그라운드/화면 꺼짐/알림 제어를 각각 가능·불가로 전달한다. ADB 연결 후 remote DevTools에서 아래 probe를 실행할 수 있다(앱 기능 구현이 아닌 실기기 스파이크).
+
+```js
+speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
+(() => {
+  const u = new SpeechSynthesisUtterance("한국어 듣기 실기기 확인입니다. 문장이 계속 이어지는지 확인합니다. ".repeat(40));
+  u.lang = "ko-KR";
+  if (navigator.mediaSession) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: "ReDSTM 실기기 확인" });
+    navigator.mediaSession.setActionHandler("play", () => speechSynthesis.resume());
+    navigator.mediaSession.setActionHandler("pause", () => speechSynthesis.pause());
+    navigator.mediaSession.playbackState = "playing";
+  }
+  speechSynthesis.speak(u);
+})();
+```
+
+- S4 검증: unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(54.0초). 편집 1파일(결과와 실기기 방법만). M0 최종 전체/axe/Linux visual은 branch 및 main CI로 확인한다.
 
 | 날짜 | 내용 |
 |---|---|
