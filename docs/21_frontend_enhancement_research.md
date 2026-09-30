@@ -8,6 +8,8 @@
 
 ## 0. 결론 요약
 
+> §0–§8은 `DESIGN.md §12`를 전제로 한 1차 판정이다. 전제의 근거를 감사하고 전제 없이 다시 판정한 결과는 **§9**가 우선한다.
+
 1. **React 계열(Magic UI, Aceternity UI, Animate UI, React Virtuoso)과 Lenis는 채택하지 않는다.**
    `DESIGN.md §12`가 framework·UI kit를 금지하고, 이들의 대표 효과(glow, gradient beam, glass,
    parallax, smooth scroll)는 `§2` 금지 방향 그 자체다. Lenis는 scroll 복원·AA 가로 scroll·pinch·
@@ -274,3 +276,98 @@ edge/e2e/
 2. R1 본문 찾기의 단축키: `g`(신규) 제안 — 기존 `/`(검색), `f`(집중)과 충돌 없음
 3. R2' publisher/export 계약에 `char_count` 추가 승인
 4. KWIC(R4)을 클라이언트 수집(P2a)으로 먼저 시도하는 것에 대한 동의
+
+## 9. 원점 재검토 — `DESIGN.md` 제약을 걷어낸 판단 (2026-09-30 추가)
+
+사용자 요청: "금지 사유가 타당하지 않다면 `DESIGN.md`를 무시하고 원점에서 다시 검토". 위 §0–§8은
+`DESIGN.md §12`를 전제로 했다. 이 절은 그 전제의 근거를 먼저 감사하고, 전제 없이 다시 판정한다.
+
+### 9.1 금지 조항의 근거 감사
+
+| 금지 조항 | 문서상 근거 | 근거의 성격 | 평가 |
+|---|---|---|---|
+| frontend framework/router | `00` ADR-010: "shell/search/reader/state가 표준 ES module로 작고 test 가능". `00 §4.2`: 읽기·검색 UI에 hydration 불필요. `00`: SvelteKit Node 배포는 Python과 **두 runtime·두 dependency lifecycle**을 만든다 | 공학적(당시 규모 기준) | 부분 타당. 이중 runtime 문제는 **SSR 서버**의 문제였고, 정적 build만 하는 SPA에는 해당하지 않는다. ADR-010 스스로 재검토 조건("직접 소유한 복합 widget 코드가 검증된 dependency보다 커질 때")을 두었다. 지금 UI JS는 약 7,000줄·421KB(미압축·미minify)이고 `app.js`가 4,571줄 단일 orchestration이라 **조건에 근접**했다 |
+| UI kit·Tailwind | `09 §6`: "token/semantic CSS보다 책임이 큼". `15 §7.1`: React/Tailwind/Motion build 추가, focus/history 재검증, 장문 Reader bundle 증가 | 공학적 + 비용 | 타당하지만 결정적이진 않음. 실제 핵심은 **build 단계 부재**다(현재 `public/`을 그대로 배포) |
+| icon runtime, font CDN | 개인 private 앱, Access 뒤, 외부 요청 최소화 | 보안·신뢰성 | **타당, 유지**. 외부 CDN은 Access 밖으로 요청을 새게 하고 오프라인·차단 시 깨진다. vendoring은 이 조항과 충돌하지 않는다 |
+| glass·glow·gradient mesh·violet·crescent·serif chrome | `05 §2.1`, `DESIGN §2`: 2026-07-11 "Moonlit Ledger"와 DSOTM legacy(violet/glass)가 **사용자 시각 검토에서 거절**됨 | **사용자 취향 기록** | 기술적 근거는 거의 없다. 당시 실패 원인도 효과 자체보다 "폰트 누락 + 종이색 + violet + 빈 cover가 한꺼번에" 겹친 faux-retro 인상이었다(`05 §2.1`). 사용자가 방향을 바꾸면 바꿀 수 있는 조항 |
+| red 5% 이하, shadow는 dialog만 | Signal Archive 미학 | 취향 + 가독성 | 가독성 부분(상태를 색만으로 전달 금지, 대비 AA)은 유지, 면적 비율은 취향 |
+
+요약: **외부 CDN 금지와 접근성·대비 규칙은 실제 이유가 있다. framework 금지는 "당시엔 필요 없었다"는
+판단이지 영구 원칙이 아니며, 시각 금지는 과거 사용자 취향 기록이다.** 따라서 이 절에서는 CDN 금지·접근성만
+남기고 나머지는 전제하지 않는다.
+
+그래도 남는 **기능적** 제약(취향과 무관하게 이 앱이 깨지는 것):
+
+- AA 폭 보존: 본문 DOM에 요소를 끼우거나 글꼴·자간을 바꾸면 그림이 깨진다.
+- 읽기 위치: `scrollTop` 기준 복원, 가로 scroll AA stage, pinch, Android Back(`19`).
+- 규모: 검색 index 330,760행, 댓글 423만 건, 1,000화 이상 작품.
+- 한국어: 공백 토큰화로는 조사가 붙은 단어를 못 찾는다.
+
+### 9.2 전제 없이 다시 판정 — 바뀐 것
+
+| 후보 | §3 판정 | 재판정 | 이유 |
+|---|---|---|---|
+| **Motion** (vanilla `animate`, `scroll`, `inView`) | native | **adopt** | spring·interrupt 가능한 전환, scroll 연동 진행선, 숫자 변화 등을 WAAPI 직접 작성보다 짧고 안정적으로. React 불필요. 번들된 ESM 한 파일 vendoring |
+| **AutoAnimate** | native | **adopt** | `autoAnimate(list)` 한 줄로 책장·저장함·필터 chip·댓글 펼침에 add/remove/reorder 전환. 약 2KB. View Transition보다 적용 비용이 낮음. 1,000행 이상 목록에는 끔 |
+| **Floating UI** | conditional | **adopt** | 메모 popover 외에도 tooltip·바코드 hover·AA 도구 popover 위치를 일관되게 |
+| **MiniSearch** | conditional | **adopt (텍스트 장서)** | 작품·작가·저장 메모·태그 검색에 prefix·오타 허용·필드 가중치. 한국어는 bigram tokenizer를 넣는다. TypeMoon 330k 제목 검색은 현행 substring 유지 |
+| Fuse.js | reject | **adopt (소규모 한정)** | 게시판 이름(수십 개)·작품 이름·명령 팔레트처럼 작은 집합의 오타 허용 검색. 대규모 index에는 계속 쓰지 않음 |
+| Rough Notation | reject | **conditional (선택 스타일)** | 사용자 하이라이트를 "형광펜/동그라미" 손그림으로 보여 주는 **설정 옵션**으로는 재미있다. SVG를 본문 위 overlay로 그리므로 DOM을 건드리지 않아 AA에도 안전. 기본값은 Highlight API의 단정한 밑줄 |
+| Rough.js | reject | reject 유지 | 쓸 곳이 빈 상태 삽화 정도뿐. 효용 낮음 |
+| Vivliostyle.js | reject | **conditional P3 (책 모드)** | AGPL은 **배포**할 때 의무가 생기며, 개인 비공개 사용에서는 사실상 문제 없다. 소설을 쪽 단위·세로쓰기·각주로 읽는 "책 모드"가 필요하면 가장 완성도 높은 선택지. 단, 수백 KB 크기와 위치 복원 좌표계 차이가 있어 소설 lane 전용 실험으로 |
+| Magic UI / Aceternity / Animate UI | reject | **idea-only → vanilla 이식** | 컴포넌트 대부분이 landing page용(marquee, globe, spotlight, bento)이라 framework를 들여도 Reader에 쓸 것이 적다. 쓸 만한 것은 아래 §9.4처럼 CSS/Motion 수십 줄로 이식 |
+| React Virtuoso | reject | reject 유지 | §9.3에서 framework를 택하지 않는 한 무의미. `content-visibility`가 이 앱의 anchor 복원·찾기 요구에 더 맞음 |
+| Lenis | reject | **reject 유지** | 취향이 아니라 기능 문제(§9.1 읽기 위치 제약). 관성 scroll은 긴 글 읽기에 해롭다 |
+| remark/rehype, string-width, xterm.js | reject | reject 유지 | 각각 sanitize 경계 이중화, 비례폭 AA와 불일치, 과한 로그 UI — 모두 기능적 이유 |
+| glass (backdrop blur) | 금지 | **adopt (떠 있는 chrome 한정)** | 모바일 하단 도구·상단 context bar·바텀시트처럼 **본문 위에 떠 있는 층**에는 반투명+blur가 위치감을 준다. `prefers-reduced-transparency`와 저사양 fallback(불투명)을 둔다. 본문·목록 면에는 쓰지 않음(긴 scroll에서 Android GPU 비용) |
+| gradient | 금지(장식) | **adopt (기능적)** | 잘린 목록·가로 넘치는 AA 가장자리의 fade mask, 이어읽기 카드 진행 표시. 배경 gradient mesh는 여전히 가독성 이득 없음 |
+| glow | 금지 | 대부분 reject | 텍스트 glow는 대비를 낮춘다. 예외: 찾기 결과로 이동한 직후 1초 pulse 정도 |
+| accent 색·서체 수 | red, 3종 | 사용자 결정 | 기술적 제약 아님. 원하면 accent·테마 preset(예: 사용자 지정 accent)을 설정으로 여는 것도 가능 |
+
+Voyant 계열 판정(§3.5)은 **바뀌지 않는다.** 거절 이유가 취향이 아니라 한국어 처리·모바일 판독성·개인정보였기 때문이다.
+
+### 9.3 framework 도입 여부 — 따로 판단
+
+| 선택지 | 얻는 것 | 치르는 것 | 판정 |
+|---|---|---|---|
+| A. vanilla 유지 + vanilla 라이브러리 자유 사용(§9.2) | 위 채택 목록 전부. 기존 E2E 324건·axe 그대로 | vendoring 관리, `app.js` 비대 문제는 남음 | **권장** |
+| A'. A + `app.js` 모듈 분할 | 4,571줄을 reader/catalog/home/settings/routes로 분리 | 리팩터 비용(동작 불변, E2E가 안전망) | **권장 (A와 함께)** |
+| B. Vite build 도입 (framework 없이) | minify·tree-shake로 전송량 감소, npm 라이브러리 import 편의 | 배포 파이프라인·`check-assets`·release smoke 수정 | 조건부: 라이브러리가 3개 이상 늘면 |
+| C. Svelte 5 / Preact(+signals) 점진 이관 | 상태→화면 동기화 코드 감소, 컴포넌트 단위 test | 7,000줄 재작성, focus/history/scroll 복원 재검증, 2~4주 | 보류: KWIC·메모·분석 패널처럼 상태가 많은 기능이 실제로 쌓이면 재검토 |
+| D. React + Tailwind로 전면 전환(Magic UI 등 사용) | 요청 라이브러리를 원형대로 사용 | C의 비용 + Tailwind 이관 + 번들 증가. 정작 얻는 컴포넌트가 Reader에 거의 안 맞음 | **비권장** |
+
+핵심: React 계열 라이브러리를 쓰기 위해 framework를 들이는 것은 앞뒤가 바뀐 선택이다. 그 라이브러리들의
+강점(마케팅 페이지 효과)은 이 앱의 병목(긴 목록, 위치 복원, AA, 검색)과 겹치지 않는다.
+
+### 9.4 React 컴포넌트에서 가져올 아이디어 (vanilla 이식)
+
+| 원본 | ReDSTM 적용 | 구현 |
+|---|---|---|
+| Aceternity *Tracing Beam* | 본문 왼쪽 여백의 읽기 진행 beam(현재 상단 2px 선의 대안, 넓은 화면만) | CSS scroll-driven + Motion `scroll()` |
+| Aceternity *Timeline* | 작품 회차 목록의 "연대기 보기"(게시일 축 + 회차) | 회차 바코드와 같은 데이터 |
+| Magic UI *Number Ticker* / Animate UI *Sliding Number* | 홈 보존 글 수·읽음 x/N 변화 시에만 짧게 | Motion `animate` |
+| Magic UI *Blur Fade* / *Animated List* | 홈 섹션 첫 진입, 새 화 알림 행 | AutoAnimate / Motion `inView` |
+| Animate UI *Tabs*(sliding highlight) | 게시판 글/작품 탭, 정렬 chip | CSS anchor 또는 Motion layout |
+| Aceternity *Floating Dock* | 사용하지 않음(모바일 하단 5버튼이 더 명확) | — |
+| Magic UI *Marquee, Globe, Particles*, Aceternity *Spotlight, Beams* | 사용하지 않음(Reader 기능과 무관) | — |
+
+### 9.5 수정된 로드맵
+
+§6의 R0–R5는 유지하고 다음을 끼워 넣는다.
+
+| Phase | 추가 내용 |
+|---|---|
+| R0 | U1–U5 + 떠 있는 chrome에 glass(fallback 포함) + 목록·AA fade mask |
+| R0.5 | `public/vendor/`에 Motion·AutoAnimate·Floating UI 번들 ESM vendoring, `THIRD_PARTY_NOTICES`·`check` 등록. 홈·책장·chip 전환 적용 |
+| R1–R2 | 변동 없음(본문 찾기, 회차 바코드) |
+| R2.5 | 텍스트 장서 검색을 MiniSearch(bigram)로, 게시판·작품 이름 찾기에 Fuse |
+| R3 | `app.js` 모듈 분할(A') |
+| R5 | Rough Notation 하이라이트 스타일 옵션, Vivliostyle 책 모드 실험 |
+
+### 9.6 `DESIGN.md` 개정 제안 (사용자 승인 시)
+
+`DESIGN.md`는 현재 규범 문서이므로 이 절의 판단만으로 바꾸지 않았다. 채택하면 같은 변경에서 다음을 고친다.
+
+- `§12` "frontend framework, UI kit, icon runtime, font CDN" → "font/script CDN 금지, 외부 JS는 vendoring과 notice 필수, framework는 ADR로만"
+- `§2`/`§12` glass·gradient 금지 → "본문과 목록 면에는 금지, 떠 있는 chrome의 반투명과 기능적 fade mask는 허용"
+- `09 §6` Fuse.js reject → 소규모 집합 adopt, Motion·AutoAnimate·Floating UI·MiniSearch 행 추가
