@@ -104,8 +104,15 @@
             <button type="button" data-arcalive-view="files" aria-pressed="true">파일별</button>
             <button type="button" data-arcalive-view="works" aria-pressed="false">작품별</button>
           </nav>
+          <nav class="view-tabs novel-views" id="novel-views" aria-label="소설 목록 보기" hidden>
+            <button type="button" data-novel-view="all" aria-pressed="true">전체 목록</button>
+            <button type="button" data-novel-view="shelves" aria-pressed="false">분류별</button>
+            <button type="button" class="novel-shelf-manage" id="novel-shelf-manage">분류 관리</button>
+          </nav>
           <button class="catalog-back text-work-back" id="text-work-back" type="button" hidden>← 작품 목록</button>
+          <div class="text-work-summary-host" id="text-work-summary" hidden></div>
           <div class="filter-chips text-sort-chips" id="text-sort-chips" role="group" aria-label="목록 정렬" hidden></div>
+          <div class="filter-chips text-sort-chips text-read-chips" id="text-read-chips" role="group" aria-label="읽기 상태" hidden></div>
           <nav class="view-tabs saved-tabs" aria-label="보관함 보기" hidden>
             <button type="button" data-view="reading" aria-pressed="false">읽는 중</button>
             <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장한 글</button>
@@ -281,10 +288,7 @@
           </div>
 
           <div class="aa-controls" id="aa-controls" aria-label="AA 보기 설정" hidden>
-            <div class="aa-control-group" aria-label="AA 글자 크기">
-              <button type="button" data-aa-size-delta="-2" aria-label="AA 글자 크기 줄이기">A−</button><output id="aa-inline-size">16px</output><button type="button" data-aa-size-delta="2" aria-label="AA 글자 크기 키우기">A+</button>
-            </div>
-            <div class="aa-control-group" aria-label="AA 확대/축소">
+            <div class="aa-control-group" aria-label="AA 배율 · 이 글에만 기억됩니다">
               <button type="button" id="aa-fit" title="화면 너비에 맞추기" aria-label="AA를 화면 너비에 맞추기">맞춤</button>
               <button type="button" data-aa-zoom-delta="-0.25" aria-label="AA 축소">−</button><button class="aa-zoom-reset" id="aa-zoom-reset" type="button" title="100%로 초기화"><output id="aa-zoom-output">100%</output></button><button type="button" data-aa-zoom-delta="0.25" aria-label="AA 확대">+</button>
             </div>
@@ -437,7 +441,15 @@
         </fieldset>
         <fieldset class="settings-group aa-settings">
           <legend>AA 화면</legend>
-          <label>AA 크기 <output id="aa-size-output"></output><input id="aa-size" type="range" min="9" max="24" step="1"></label>
+          <label>AA 기본 크기 <output id="aa-size-output"></output><input id="aa-size" type="range" min="9" max="24" step="1"></label>
+          <div class="setting-row">
+            <span class="setting-label" id="aa-auto-fit-label">넓은 AA 화면에 맞추기</span>
+            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="aa-auto-fit-label">
+              <button type="button" role="radio" data-aa-auto-fit="off" aria-checked="false">끄기</button>
+              <button type="button" role="radio" data-aa-auto-fit="on" aria-checked="false">켜기</button>
+            </div>
+            <p class="setting-hint">본문 도구줄의 배율(맞춤·−·+)은 글마다 기억하고, 가로로 옮긴 위치도 다시 열 때 이어집니다.</p>
+          </div>
           <div class="aa-control-group aa-presets" aria-label="AA 화면 프리셋">
             <button type="button" data-aa-preset="16:auto">기본 16</button><button type="button" data-aa-preset="11:800">11 / 800</button><button type="button" data-aa-preset="9:680">9 / 680</button>
           </div>
@@ -469,7 +481,7 @@
           <input id="import-state-file" type="file" accept="application/json" hidden>
           <section class="import-review" id="import-review" aria-live="polite" hidden>
             <p id="import-review-summary"></p>
-            <div><button id="import-cancel" type="button">취소</button><button id="import-apply" type="button">가져오기 적용</button></div>
+            <div><button id="import-cancel" type="button">취소</button><button id="import-apply" type="button" title="이 브라우저의 기록과 설정을 파일 내용으로 바꿉니다">덮어쓰기</button><button id="import-merge" type="button" title="더 최근 기록을 남기고 저장·분류를 합칩니다. 설정은 그대로입니다">합쳐서 가져오기</button></div>
           </section>
         </section>
       </form>
@@ -487,12 +499,32 @@
           <button id="more-mode" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16"/></svg><span id="more-mode-label">AA로 보기</span></button>
           <button id="more-mode-reset" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg><span>자동 보기</span></button>
           <button id="more-immersive" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span id="more-immersive-label">집중 모드</span></button>
+          <button id="more-mark-read" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 12.5 4.5 4.5L20 5.5M4 7.5l2.5 2.5M11 11.5l3-3"/></svg><span id="more-mark-read-label">이전 회차 모두 읽음</span></button>
           <button id="more-link" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 13.5a4.5 4.5 0 0 0 6.4.4l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2M14 10.5a4.5 4.5 0 0 0-6.4-.4l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></svg><span>링크 복사</span></button>
           <button id="more-wake" type="button" aria-pressed="false" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M12 7v4M10 9.5l2 1.5 2-1.5"/></svg><span>화면 켜 두기</span></button>
         </div>
       </form>
     </dialog>
 
+    <dialog id="shelf-dialog" aria-labelledby="shelf-dialog-title">
+      <form method="dialog" id="shelf-form">
+        <header><div><p id="shelf-dialog-work">이 브라우저에 저장됩니다</p><h2 id="shelf-dialog-title" tabindex="-1">작품 분류</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <fieldset class="shelf-choice" id="shelf-choice">
+          <legend>이 작품을 둘 분류</legend>
+          <div class="shelf-options" id="shelf-options" role="radiogroup" aria-label="분류"></div>
+        </fieldset>
+        <section class="shelf-manage" aria-labelledby="shelf-manage-title">
+          <h3 id="shelf-manage-title">분류 관리</h3>
+          <ol class="shelf-manage-list" id="shelf-manage-list"></ol>
+          <div class="shelf-add">
+            <label>새 분류<input id="shelf-new-name" type="text" maxlength="30" placeholder="예: BL, 완결 후 정주행" autocomplete="off" enterkeyhint="done"></label>
+            <label class="shelf-hidden-choice"><input id="shelf-new-hidden" type="checkbox">전체 목록에서 숨기기</label>
+            <button type="button" id="shelf-add">추가</button>
+          </div>
+          <p class="setting-hint" id="shelf-message" role="status">숨긴 분류의 작품은 전체 목록에 나오지 않고 분류별 보기에서만 보입니다.</p>
+        </section>
+      </form>
+    </dialog>
     <dialog id="bookmark-dialog" aria-labelledby="bookmark-dialog-title">
       <form id="bookmark-form">
         <header><div><p>이 브라우저에 저장됩니다</p><h2 id="bookmark-dialog-title">저장한 글 메모</h2></div><button class="icon-button" type="button" data-bookmark-close aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>

@@ -160,6 +160,25 @@ def _text_key(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+_SIDE_LABEL = re.compile(r"외전|특별편|후기")
+_SIDE_KIND_WORDS = ("side", "extra", "special", "bonus", "외전", "특별")
+
+
+def normalize_chapter_kind(kind: object, label: str = "") -> str:
+    """ "main" or "side"; same rule as Newtomi core/novel_identity.chapter_kind.
+
+    An explicit main/side wins, other API kinds that name a side story count as side, and
+    anything else falls back to the label (외전·특별편·후기). Shared fixture:
+    tests/fixtures/novel_body_contract.json.
+    """
+    raw = unicodedata.normalize("NFKC", str(kind or "")).casefold().strip()
+    if raw in {"main", "side"}:
+        return raw
+    if any(word in raw for word in _SIDE_KIND_WORDS):
+        return "side"
+    return "side" if _SIDE_LABEL.search(_text_key(label)) else "main"
+
+
 def _title_key(value: str) -> str:
     return re.sub(r"[^\w]+", "", unicodedata.normalize("NFKC", value).casefold())
 
@@ -1359,7 +1378,11 @@ def import_batch(
                             title,
                             author,
                             data.get("chapter_label", ""),
-                            data.get("chapter_kind", ""),
+                            normalize_chapter_kind(
+                                data.get("chapter_kind"), str(data.get("chapter_label") or "")
+                            )
+                            if candidate["lane"] == "novel"
+                            else "",
                             data.get("access", "unknown"),
                             digest,
                             len(body),
@@ -1421,7 +1444,9 @@ def import_batch(
                                 candidate["source_work_id"],
                                 candidate["source_chapter_id"],
                                 data.get("chapter_label", ""),
-                                data.get("chapter_kind", "main"),
+                                normalize_chapter_kind(
+                                    data.get("chapter_kind"), str(data.get("chapter_label") or "")
+                                ),
                                 data.get("access", "unknown"),
                                 digest,
                                 "complete",
@@ -1540,41 +1565,58 @@ def _next_ready_batch(inbox_root: Path) -> str | None:
     return None
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Import one committed Newtomi text batch")
-    parser.add_argument("--batch-id", help="import one batch; default is the oldest ready batch")
-    args = parser.parse_args()
-    inbox_root = Path("/srv/redstm-text-inbox")
-    batch_id = args.batch_id or _next_ready_batch(inbox_root)
-    if batch_id is None:
-        print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
-        return
+# One run drains the ready batches in order but leaves room under the unit's 5 min timeout.
+_DRAIN_SECONDS = 180
+_DRAIN_BATCHES = 20
+_INBOX_ROOT = Path("/srv/redstm-text-inbox")
+_DB_PATH = Path("/srv/redstm-text/text-archive.sqlite")
+_OBJECT_ROOT = Path("/srv/redstm-text/objects")
+
+
+def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
     try:
-        with operation_window(lock_wait_seconds=30):
+        with operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=100 * 1024 * 1024):
             result = import_batch(
                 inbox_root,
                 batch_id,
-                Path("/srv/redstm-text/text-archive.sqlite"),
-                Path("/srv/redstm-text/objects"),
+                _DB_PATH,
+                _OBJECT_ROOT,
                 inbox_root / "receipts",
             )
-    except RuntimeWindowError as exc:
-        parser.exit(75, f"text import deferred: {exc}\n")
     except BatchRejectedError as exc:
         _record_batch_rejection(inbox_root, batch_id, str(exc))
-        print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
-        return
+        return {"status": "rejected", "batch_id": batch_id, "reason": str(exc)}
     if result is None:
-        parser.exit(0, "batch not ready; no receipt written\n")
-    print(
-        json.dumps(
-            {
-                "batch_id": batch_id,
-                "revision": result["revision"],
-                "items": len(result["items"]),
-            }
-        )
-    )
+        return None
+    return {"batch_id": batch_id, "revision": result["revision"], "items": len(result["items"])}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Import committed Newtomi text batches")
+    parser.add_argument("--batch-id", help="import one batch; default drains the ready batches")
+    args = parser.parse_args()
+    inbox_root = _INBOX_ROOT
+    deadline = time.monotonic() + _DRAIN_SECONDS
+    seen: set[str] = set()
+    imported = 0
+    while True:
+        batch_id = args.batch_id or _next_ready_batch(inbox_root)
+        if batch_id is None or batch_id in seen:
+            if not imported:
+                print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
+            return
+        seen.add(batch_id)
+        try:
+            outcome = _import_one(inbox_root, batch_id)
+        except RuntimeWindowError as exc:
+            parser.exit(75, f"text import deferred: {exc}\n")
+        if outcome is None:
+            parser.exit(0, "batch not ready; no receipt written\n")
+        print(json.dumps(outcome))
+        imported += 1
+        # Newtomi keeps up to eight batches in flight; one per timer tick left them waiting.
+        if args.batch_id or imported >= _DRAIN_BATCHES or time.monotonic() >= deadline:
+            return
 
 
 if __name__ == "__main__":

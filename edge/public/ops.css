@@ -3,7 +3,7 @@
   color-scheme: light;
   --page: #fff; --surface: #f7f8fa; --raised: #fff; --ink: #15171a;
   --muted: #4b5565; --subtle: #667085; --line: #e7e9ee; --strong: #cdd2da;
-  --accent: #d92d3d; --accent-soft: #fff1f2; --focus: #2e90fa;
+  --accent: #d12a3a; --accent-soft: #fff1f2; --focus: #2e90fa;
   --success: #027a48; --warning: #b54708; --danger: #b42318;
   font-family: "SUIT Variable", SUIT, "Malgun Gothic", sans-serif;
 }
@@ -129,13 +129,13 @@ dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere
 .collection-kpis > div { min-width: 0; padding: 20px 20px 20px 0; }
 .collection-kpis > div + div { padding-left: 20px; border-left: 1px solid var(--line); }
 .collection-kpis dd { margin-top: 8px; font-size: clamp(21px, 2vw, 28px); letter-spacing: -.035em; }
-.collection-kpis small, .queue-progress small, .source-note { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.collection-kpis small, .queue-progress small { display: block; margin-top: 6px; }
+.collection-kpis .kpi-note, .queue-progress .kpi-note, .source-note { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.collection-kpis .kpi-note, .queue-progress .kpi-note { display: block; margin: 6px 0 0; letter-spacing: normal; }
 .queue-progress { margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
 .queue-progress > div { padding: 16px 20px 16px 0; }
 .queue-progress > div + div { padding-left: 20px; border-left: 1px solid var(--line); }
 .queue-progress dd { font-size: 18px; }
-.queue-progress > div:nth-child(2) dd { color: var(--warning); }
+.queue-progress > div:nth-child(2) dd:not(.kpi-note) { color: var(--warning); }
 .release-evidence { margin-top: 14px; border-bottom: 1px solid var(--line); }
 .release-evidence > summary { min-height: 48px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 620; list-style: none; }
 .release-evidence > summary::-webkit-details-marker { display: none; }

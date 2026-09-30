@@ -372,6 +372,18 @@ test("text archive API exposes only fixed private read routes", async () => {
   assert.equal((await workerFetch(request(`/api/v1/text/object/${"a".repeat(64)}`, { method: "POST" }), env)).status, 405);
 });
 
+test("text archive status is served uncached from its fixed key", async () => {
+  let key;
+  const env = environment({
+    TEXT_ARCHIVE: { async get(selected) { key = selected; return archiveObject('{"schema":1}'); } },
+  });
+  const response = await workerFetch(request("/api/v1/text/status"), env);
+  assert.equal(response.status, 200);
+  assert.equal(key, "published/status/text.json");
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+  assert.equal((await workerFetch(request("/api/v1/text/status", { method: "POST" }), env)).status, 405);
+});
+
 test("scheduled maintenance reconciles stale runs and retains terminal evidence by outcome", async () => {
   const statements = [];
   const env = {

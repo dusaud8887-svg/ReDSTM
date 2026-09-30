@@ -101,6 +101,13 @@ DOWNLOAD_MAXSIZE = 64 << 20
 DOWNLOAD_FAIL_ON_DATALOSS = False
 COOKIES_ENABLED = True
 TELNETCONSOLE_ENABLED = False
+# The Oracle host has 1 GB and the control/schedule units cap at 700 MiB (MemoryMax). Close the
+# crawl cleanly before that, so a memory spike ends one batch as partial (the rest of the queue
+# is kept) instead of a SIGKILL that loses the report.
+MEMUSAGE_ENABLED = True
+MEMUSAGE_LIMIT_MB = 560
+MEMUSAGE_WARNING_MB = 450
+MEMUSAGE_CHECK_INTERVAL_SECONDS = 10.0
 LOG_LEVEL = "INFO"
 
 DOWNLOADER_MIDDLEWARES: dict[str, int | None] = {

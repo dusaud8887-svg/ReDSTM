@@ -1431,10 +1431,17 @@ def _chunks(values: list[int], size: int = 500) -> Iterator[list[int]]:
 
 def _changed_tasks(
     connection: sqlite3.Connection, output: Path, post_ids: list[int]
-) -> list[_PostTask]:
-    comments: dict[int, list[NormalizedComment]] = defaultdict(list)
+) -> Iterator[_PostTask]:
+    """Changed posts one chunk at a time.
+
+    A backfill (본문 채우기, full content) can change thousands of posts; holding every body and
+    comment list at once would take hundreds of MB on the 1 GB runner, so only one chunk of
+    bodies is alive while the export consumes it.
+    """
+    produced = 0
     for chunk in _chunks(post_ids):
         placeholders = ",".join("?" for _ in chunk)
+        comments: dict[int, list[NormalizedComment]] = defaultdict(list)
         for row in connection.execute(
             f"""
             SELECT post_id, position, source_comment_id, parent_position, depth,
@@ -1446,10 +1453,6 @@ def _changed_tasks(
             chunk,
         ):
             comments[int(row["post_id"])].append(_comment(row))
-
-    tasks: list[_PostTask] = []
-    for chunk in _chunks(post_ids):
-        placeholders = ",".join("?" for _ in chunk)
         for row in connection.execute(
             f"""
             SELECT p.id AS post_id, p.board_id, p.external_post_id, p.canonical_url,
@@ -1467,20 +1470,18 @@ def _changed_tasks(
             if origin not in {"live", "legacy_import", "reparse"}:
                 raise ValueError(f"unsupported capture origin: {origin}")
             post_id = int(row["post_id"])
-            tasks.append(
-                _PostTask(
-                    output,
-                    post_id,
-                    str(row["created_at_source"] or ""),
-                    _post_from_row(row, tuple(comments.get(post_id, ()))),
-                    cast(Literal["live", "legacy_import", "reparse"], origin),
-                )
+            produced += 1
+            yield _PostTask(
+                output,
+                post_id,
+                str(row["created_at_source"] or ""),
+                _post_from_row(row, tuple(comments.get(post_id, ()))),
+                cast(Literal["live", "legacy_import", "reparse"], origin),
             )
-    if len(tasks) != len(post_ids):
+    if produced != len(post_ids):
         raise IncrementalExportError(
             "incremental_snapshot_changed", "a changed post disappeared from the read snapshot"
         )
-    return tasks
 
 
 def _collection_entry_rows(

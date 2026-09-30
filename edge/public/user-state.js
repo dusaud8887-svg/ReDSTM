@@ -1,3 +1,5 @@
+import { mergeShelfState, sanitizeShelfState } from "./text-shelves.js";
+
 export const STATE_KEY = "redstm.userState.v2";
 
 const boardPattern = /^[a-z0-9_]+$/;
@@ -54,6 +56,7 @@ function sanitizeSettings(value, defaults = {}) {
   pick("proseAlign", (value) => proseAlignments.has(value));
   pick("readerSurface", (value) => readerSurfaces.has(value));
   pick("tapPaging", (value) => toggles.has(value));
+  pick("aaAutoFit", (value) => toggles.has(value));
   pick("aaCanvasWidth", (value) => [null, 680, 800].includes(value));
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),
     (value) => value.toLowerCase());
@@ -113,6 +116,24 @@ function viewModeMap(value) {
     validStablePostId(identity) && (mode === "aa" || mode === "prose")));
 }
 
+// Per-post AA view: the zoom chosen for that picture and how far it was moved sideways.
+const AA_VIEW_LIMIT = 300;
+function aaViewMap(value) {
+  if (!isRecord(value)) return {};
+  const views = [];
+  for (const [identity, view] of Object.entries(value)) {
+    if (!validStablePostId(identity) || !isRecord(view)) continue;
+    const kept = {};
+    if (Number.isFinite(view.zoom) && view.zoom >= 0.1 && view.zoom <= 3) kept.zoom = view.zoom;
+    if (Number.isFinite(view.left) && view.left >= 0) kept.left = Math.round(view.left);
+    if (!Object.keys(kept).length) continue;
+    kept.at = Number.isFinite(view.at) && view.at > 0 ? Math.round(view.at) : 0;
+    views.push([identity, kept]);
+  }
+  views.sort((left, right) => right[1].at - left[1].at);
+  return Object.fromEntries(views.slice(0, AA_VIEW_LIMIT));
+}
+
 function safeCatalogState(value) {
   if (!isRecord(value)) return null;
   const copy = (item) => {
@@ -136,6 +157,7 @@ export function defaultUserState(defaultSettings = {}) {
     bookmarks: {},
     scroll: {},
     viewModes: {},
+    aaViews: {},
     lastCatalogState: null,
   };
 }
@@ -180,14 +202,125 @@ function normalizeV2State(value, defaultSettings = {}) {
     bookmarks: bookmarkMap(value.bookmarks),
     scroll: scrollMap(value.scroll),
     viewModes: viewModeMap(value.viewModes),
+    aaViews: aaViewMap(value.aaViews),
     lastCatalogState: safeCatalogState(value.lastCatalogState),
   };
 }
 
-// The backup file people download: normalized and indented for reading.
-export function exportUserState(state) {
-  const normalized = normalizeV2State(state, state?.settings);
-  return `${JSON.stringify(normalized, null, 2)}\n`;
+const textIdentityPattern = /^(?:novel|arcalive):[^\s]{1,300}$/;
+const textHashPattern = /^[a-f0-9]{64}$/;
+const textLanes = new Set(["novel", "arcalive"]);
+
+function validTimestamp(value) {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+// The text library's reading records and saved items (redstm.textState.v1). They live in their
+// own localStorage key, so backups carry them as an optional `text` section.
+export function sanitizeTextState(value) {
+  const source = isRecord(value) ? value : {};
+  const history = {};
+  for (const [identity, record] of Object.entries(isRecord(source.history) ? source.history : {})) {
+    if (!textIdentityPattern.test(identity) || !isRecord(record) || !validTimestamp(record.readAt)) continue;
+    const kept = { readAt: record.readAt };
+    if (Number.isFinite(record.progress) && record.progress >= 0 && record.progress <= 1) kept.progress = record.progress;
+    if (Number.isFinite(record.scroll) && record.scroll >= 0) kept.scroll = record.scroll;
+    if (Number.isInteger(record.offset) && record.offset >= 0) kept.offset = record.offset;
+    if (Number.isFinite(record.anchorTop)) kept.anchorTop = record.anchorTop;
+    if (Number.isInteger(record.total) && record.total >= 0) kept.total = record.total;
+    for (const key of ["title", "work", "workId", "chapterId"]) {
+      if (typeof record[key] === "string") kept[key] = record[key].slice(0, 300);
+    }
+    if (typeof record.anchor === "string") kept.anchor = record.anchor.slice(0, 500);
+    if (typeof record.revision === "string" && textHashPattern.test(record.revision)) kept.revision = record.revision;
+    for (const key of ["route", "listRoute"]) {
+      if (typeof record[key] === "string" && record[key].startsWith("/text?")) kept[key] = record[key].slice(0, 2000);
+    }
+    history[identity] = kept;
+  }
+  const bookmarks = {};
+  for (const [identity, saved] of Object.entries(isRecord(source.bookmarks) ? source.bookmarks : {})) {
+    if (
+      !textIdentityPattern.test(identity) || !isRecord(saved) || !validTimestamp(saved.savedAt) ||
+      !textLanes.has(saved.lane) || !isRecord(saved.entry) || !textHashPattern.test(saved.entry.sha256 ?? "")
+    ) continue;
+    const kept = { savedAt: saved.savedAt, lane: saved.lane, entry: safeCatalogState(saved.entry) };
+    if (isRecord(saved.work)) kept.work = safeCatalogState(saved.work);
+    if (typeof saved.title === "string") kept.title = saved.title.slice(0, 300);
+    const metadata = sanitizeBookmarkMetadata(saved.note, saved.tags);
+    if (metadata.note) kept.note = metadata.note;
+    if (metadata.tags.length) kept.tags = metadata.tags;
+    bookmarks[identity] = kept;
+  }
+  // Personal shelves ride along only when the source has them (older backups do not).
+  return { schema_version: 1, history, bookmarks, ...(Array.isArray(source.shelves) ? sanitizeShelfState(source) : {}) };
+}
+
+export const BACKUP_FORMAT = "redstm-backup";
+
+// The backup file people download (schema 3): the TypeMoon reading state and the text library's
+// state (history, bookmarks, shelves) as separate sections, normalized and indented for reading.
+export function exportUserState(state, textState = null, { exportedAt = new Date().toISOString() } = {}) {
+  const { schema_version: _version, ...typemoon } = normalizeV2State(state, state?.settings);
+  return `${JSON.stringify({
+    format: BACKUP_FORMAT,
+    schema_version: 3,
+    exported_at: exportedAt,
+    typemoon,
+    ...(textState ? { text: sanitizeTextState(textState) } : {}),
+  }, null, 2)}\n`;
+}
+
+function newer(left, right, key) {
+  return String(right?.[key] ?? "") > String(left?.[key] ?? "");
+}
+
+// 합쳐서 가져오기: each post keeps its most recent reading record (and the furthest progress),
+// saved posts and view choices are united, and this browser's settings stay.
+export function mergeUserStates(current, incoming) {
+  const merged = normalizeV2State(current, current?.settings);
+  const other = normalizeV2State(incoming, current?.settings);
+  for (const [identity, record] of Object.entries(other.history)) {
+    const mine = merged.history[identity];
+    const progress = Math.max(mine?.progress ?? 0, record.progress ?? 0);
+    if (!mine || newer(mine, record, "readAt")) {
+      merged.history[identity] = { ...record };
+      if (other.scroll[identity] !== undefined) merged.scroll[identity] = other.scroll[identity];
+    }
+    if (progress > 0) merged.history[identity].progress = progress;
+  }
+  for (const [identity, saved] of Object.entries(other.bookmarks)) {
+    if (!merged.bookmarks[identity] || newer(merged.bookmarks[identity], saved, "savedAt")) merged.bookmarks[identity] = saved;
+  }
+  merged.viewModes = { ...other.viewModes, ...merged.viewModes };
+  for (const [identity, view] of Object.entries(other.aaViews)) {
+    if (!merged.aaViews[identity] || (view.at ?? 0) > (merged.aaViews[identity].at ?? 0)) merged.aaViews[identity] = view;
+  }
+  return normalizeV2State(merged, current?.settings);
+}
+
+// The same for the text library; shelves with the same name become one.
+export function mergeTextStates(current, incoming) {
+  const merged = sanitizeTextState(current);
+  const other = sanitizeTextState(incoming);
+  for (const [identity, record] of Object.entries(other.history)) {
+    const mine = merged.history[identity];
+    const progress = Math.max(mine?.progress ?? 0, record.progress ?? 0);
+    if (!mine || newer(mine, record, "readAt")) merged.history[identity] = { ...record };
+    if (progress > 0) merged.history[identity].progress = progress;
+  }
+  for (const [identity, saved] of Object.entries(other.bookmarks)) {
+    if (!merged.bookmarks[identity] || newer(merged.bookmarks[identity], saved, "savedAt")) merged.bookmarks[identity] = saved;
+  }
+  if (Array.isArray(other.shelves)) {
+    const shelves = mergeShelfState(
+      { shelves: merged.shelves ?? [], workShelves: merged.workShelves ?? {} },
+      { shelves: other.shelves, workShelves: other.workShelves },
+    );
+    merged.shelves = shelves.shelves;
+    merged.workShelves = shelves.workShelves;
+  }
+  return merged;
 }
 
 // The localStorage copy: the same normalized state without indentation. It is rewritten on
@@ -198,7 +331,7 @@ export function serializeUserState(state) {
 
 export function planImport(text, defaultSettings = {}) {
   const payload = JSON.parse(text);
-  const suppliedSettings = sanitizeSettings(payload?.settings);
+  const suppliedSettings = sanitizeSettings(payload?.schema_version === 3 ? payload?.typemoon?.settings : payload?.settings);
   const defaultedSettings = Object.keys(sanitizeSettings(defaultSettings))
     .filter((key) => !(key in suppliedSettings));
   let state;
@@ -206,16 +339,26 @@ export function planImport(text, defaultSettings = {}) {
     state = migrateLegacyState(payload, defaultSettings);
   } else if (payload?.schema_version === 2) {
     state = normalizeV2State(payload, defaultSettings);
+  } else if (payload?.schema_version === 3 && payload.format === BACKUP_FORMAT && isRecord(payload.typemoon)) {
+    state = normalizeV2State({ ...payload.typemoon, schema_version: 2 }, defaultSettings);
   } else {
     throw new Error("지원하지 않는 상태 파일 형식");
   }
+  // Files exported before the text library existed have no `text`; importing them keeps the
+  // text reading records already in this browser.
+  const textState = payload?.schema_version >= 2 && isRecord(payload.text) ? sanitizeTextState(payload.text) : null;
   return {
     state,
+    text: textState,
     summary: {
       history: Object.keys(state.history).length,
       bookmarks: Object.keys(state.bookmarks).length,
       scroll: Object.keys(state.scroll).length,
       viewModes: Object.keys(state.viewModes).length,
+      textHistory: textState ? Object.keys(textState.history).length : null,
+      textBookmarks: textState ? Object.keys(textState.bookmarks).length : null,
+      shelves: textState?.shelves ? textState.shelves.length : null,
+      exportedAt: payload?.schema_version === 3 && typeof payload.exported_at === "string" ? payload.exported_at : null,
       defaultedSettings,
     },
   };

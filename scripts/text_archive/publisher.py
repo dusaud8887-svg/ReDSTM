@@ -4,9 +4,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import closing
 from datetime import UTC, datetime
@@ -26,10 +28,12 @@ from scripts.text_archive.importer import (
     _connect,
     _write_receipt,
     arcalive_header,
+    normalize_chapter_kind,
     novel_text_sha256,
 )
 from scripts.text_archive.recovery_metadata import metadata_fingerprint
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
+from scripts.text_archive.status import publish_status
 
 _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
@@ -43,6 +47,11 @@ _PRUNE_BATCH_LIMIT = 500
 # mistaken for a verified upload and is retried by the next prune.
 _PRUNING = "pruning"
 _PRUNABLE_KEY = r"published/(?:releases|indexes)/{lane}/[a-f0-9]{{64}}\.json"
+
+
+def _window() -> Any:
+    """One exclusive heavy text step (runtime.operation_window); publishing needs ~150 MiB."""
+    return operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=150 * 1024 * 1024)
 
 
 def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -249,6 +258,9 @@ def _arcalive_works(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], di
             "category": category,
             "chapter_count": len(chapters),
             "last_imported_at": max(str(row["imported_at"]) for row in chapters),
+            # Reading order; the Reader counts read chapters per work from these
+            # (identity = arcalive:<board>:<post_id>:text) without loading every detail.
+            "post_ids": [int(row["source_post_id"]) for row in chapters],
         }
         detail = {
             "schema": 1,
@@ -405,6 +417,7 @@ def build_publish_tree(
                                 "source_published_at": row["source_published_at"],
                                 "source_site": row["source_site"],
                                 "source_chapter_id": row["source_chapter_id"],
+                                "source_url": row["source_url"],
                                 "sha256": row["content_sha256"],
                                 "source_variants": row.get("source_variants", []),
                             }
@@ -562,7 +575,7 @@ def _publish_object_batch(
         ("".join(f"{digest}  {name}\n" for name, (_, digest) in zip(names, objects))).encode(),
     )
     destination = f"{remote}/published/objects/sha256"
-    with operation_window(lock_wait_seconds=30):
+    with _window():
         _run(
             [
                 "rclone",
@@ -590,7 +603,7 @@ def _publish_object_batch(
             runner,
         )
     try:
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             _run(
                 [
                     "rclone",
@@ -715,7 +728,7 @@ def _prune_lane(
     selection = build_root / f"pending-prune-{lane}.txt"
     _write(selection, ("\n".join(key.removeprefix("published/") for key in batch) + "\n").encode())
     try:
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             _run(
                 [
                     "rclone",
@@ -837,6 +850,55 @@ def _finalize_receipts(db_path: Path, receipts_root: Path) -> None:
         db.close()
 
 
+# Every publish with changed novels writes a new paged snapshot; the PC only needs the current
+# one (and may still be reading the previous one), so older snapshots go after a day.
+_SNAPSHOT_KEEP = 3
+_SNAPSHOT_MIN_AGE_SECONDS = 24 * 60 * 60
+# Receipts of batches the PC already removed from the drop are no longer read.
+_RECEIPT_KEEP_SECONDS = 60 * 24 * 60 * 60
+
+
+def prune_availability_snapshots(
+    receipts_root: Path, *, keep_id: str, now: float | None = None
+) -> int:
+    root = receipts_root / "availability" / "novel" / "snapshots"
+    if not root.is_dir():
+        return 0
+    current = time.time() if now is None else now
+    snapshots = sorted(
+        (path for path in root.iterdir() if path.is_dir() and not path.is_symlink()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    removed = 0
+    for index, path in enumerate(snapshots):
+        if path.name == keep_id or index < _SNAPSHOT_KEEP:
+            continue
+        if current - path.stat().st_mtime < _SNAPSHOT_MIN_AGE_SECONDS:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed += 1
+    return removed
+
+
+def prune_receipts(receipts_root: Path, drop_root: Path, *, now: float | None = None) -> int:
+    """Remove old batch receipts whose batch is gone from the drop."""
+    if not receipts_root.is_dir():
+        return 0
+    current = time.time() if now is None else now
+    removed = 0
+    for path in receipts_root.glob("*.json"):
+        batch = path.name.removesuffix(".status.json").removesuffix(".json")
+        try:
+            old = current - path.stat().st_mtime > _RECEIPT_KEEP_SECONDS
+        except OSError:
+            continue
+        if old and not (drop_root / batch).exists():
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
 def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str, Any]:
     """Write a content-addressed, paged snapshot of novel items verified in R2."""
     db = _connect(db_path)
@@ -856,8 +918,10 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
                 """SELECT i.*,p.verified_at FROM text_archive_items i
                    JOIN text_archive_publications p
                      ON p.key='item:'||i.identity AND p.sha256=i.content_sha256
-                   WHERE i.lane='novel' ORDER BY i.identity"""
+                   WHERE i.lane='novel' AND i.access='free' ORDER BY i.identity"""
             ):
+                # Newtomi rejects a whole snapshot on an item outside its contract
+                # (access "free", kind "main"/"side"), so older rows are normalized here.
                 yield {
                     "identity": row["identity"],
                     "source_site": row["source_site"],
@@ -869,7 +933,9 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
                     "title": row["title"],
                     "author": row["author"],
                     "chapter_label": row["chapter_label"],
-                    "chapter_kind": row["chapter_kind"],
+                    "chapter_kind": normalize_chapter_kind(
+                        row["chapter_kind"], str(row["chapter_label"] or "")
+                    ),
                     "access": row["access"],
                     "sha256": row["content_sha256"],
                     "bytes": row["bytes"],
@@ -949,7 +1015,13 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         _share_availability(
             receipts_root / "availability" / "novel" / "current.json", receipts_root
         )
-        return {"status": "published", "snapshot_id": snapshot_id, "item_count": count}
+        pruned = prune_availability_snapshots(receipts_root, keep_id=snapshot_id)
+        return {
+            "status": "published",
+            "snapshot_id": snapshot_id,
+            "item_count": count,
+            "pruned_snapshots": pruned,
+        }
     finally:
         db.close()
 
@@ -978,7 +1050,7 @@ def publish_lane(
     metadata_key = f"metadata:{lane}"
     metadata_updated = 0
     if lane == "arcalive":
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             metadata_updated = _backfill_arcalive_metadata(db_path, object_root)
     metadata_digest = metadata_fingerprint(db_path, lane)
     if lane == "arcalive":
@@ -987,7 +1059,7 @@ def publish_lane(
         ).hexdigest()
     # Pre-flight gate: yield before the unwindowed catalog build (the novel lane has no
     # earlier window) when TypeMoon is publishing or memory/disk is below the floor.
-    with operation_window(lock_wait_seconds=30):
+    with _window():
         pass
     if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
         with sqlite3.connect(db_path) as db:
@@ -1000,7 +1072,7 @@ def publish_lane(
             pointer_hash = _published_hash(db, f"published/{lane}/release.json")
             metadata_matches = _published_hash(db, metadata_key) == metadata_digest
         if pending is None and pointer_hash and not metadata_updated and metadata_matches:
-            with operation_window(lock_wait_seconds=30):
+            with _window():
                 pointer = _run(
                     [
                         "rclone",
@@ -1047,7 +1119,7 @@ def publish_lane(
                 body = local.read_bytes()
                 if hashlib.sha256(body).hexdigest() != digest:
                     raise ValueError(f"local publish file failed verification: {key}")
-                with operation_window(lock_wait_seconds=30):
+                with _window():
                     _run(
                         [
                             "rclone",
@@ -1059,7 +1131,7 @@ def publish_lane(
                         ],
                         runner,
                     )
-                with operation_window(lock_wait_seconds=30):
+                with _window():
                     readback = _run(
                         ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
                         runner,
@@ -1071,7 +1143,7 @@ def publish_lane(
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
         pointer_hash = hashlib.sha256(pointer_body).hexdigest()
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             _run(
                 [
                     "rclone",
@@ -1083,7 +1155,7 @@ def publish_lane(
                 ],
                 runner,
             )
-        with operation_window(lock_wait_seconds=30):
+        with _window():
             pointer_readback = _run(
                 ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{pointer_key}"],
                 runner,
@@ -1151,6 +1223,29 @@ def main() -> None:
             )
         except RuntimeWindowError as exc:
             parser.exit(75, f"text publish deferred: {exc}\n")
+    # Operational status (docs/18 §5.2 "운영 상태"). It never fails the publish.
+    try:
+        results.append(
+            {
+                "status_document": publish_status(
+                    Path("/srv/redstm-text/text-archive.sqlite"),
+                    Path("/srv/redstm-text-inbox"),
+                    Path("/srv/redstm-text/build"),
+                )
+            }
+        )
+    except (OSError, RuntimeWindowError, sqlite3.Error, subprocess.SubprocessError) as exc:
+        results.append({"status_document": f"failed: {type(exc).__name__}: {exc}"[:300]})
+    try:
+        results.append(
+            {
+                "pruned_receipts": prune_receipts(
+                    Path("/srv/redstm-text-inbox/receipts"), Path("/srv/redstm-text-inbox/drop")
+                )
+            }
+        )
+    except OSError as exc:
+        results.append({"pruned_receipts": f"failed: {type(exc).__name__}"})
     print(json.dumps(results, sort_keys=True))
 
 

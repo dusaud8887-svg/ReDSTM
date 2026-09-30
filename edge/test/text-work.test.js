@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { migrateNovelChapterState, migrateNovelState, novelRecordWorkId, orderChapters } from "../public/text-work.js";
+import {
+  compactTextHistory, trimTextState,
+  arcaliveBody, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId, orderChapters,
+} from "../public/text-work.js";
 
 test("finds the work of a novel reading record with production-shaped ids", () => {
   const workId = "novel:1b2c3d4e-0000-4000-8000-000000000001";
@@ -63,4 +66,59 @@ test("chapter aliases restore progress and bookmarks across PC and Oracle IDs", 
   assert.equal(state.history[current].progress, 0.8);
   assert.equal(state.bookmarks[current].work, work);
   assert.equal(migrateNovelChapterState(state, work, [chapter]), false);
+});
+
+test("lifts the Newtomi novel wrapper out of the body", () => {
+  const body = "# 1화\n# https://blacktoon452.com/novel/24753/914174\n\n　첫 문단\n\n둘째 문단\n";
+  assert.deepEqual(novelBody(body), {
+    text: "　첫 문단\n\n둘째 문단\n",
+    sourceUrl: "https://blacktoon452.com/novel/24753/914174",
+  });
+  assert.deepEqual(novelBody("# 제목\n#\nhttps://toki31.com/novel/1/2\n\n본문"), {
+    text: "본문",
+    sourceUrl: "https://toki31.com/novel/1/2",
+  });
+  // Oracle bodies and other "#" lines stay as they are.
+  assert.deepEqual(novelBody("본문만 있다\n"), { text: "본문만 있다\n", sourceUrl: "" });
+  assert.deepEqual(novelBody("# 장 제목\n본문"), { text: "# 장 제목\n본문", sourceUrl: "" });
+});
+
+test("keeps the Arcalive body after its front matter", () => {
+  const post = "# 제목\n\n- channel: novel\n- url: https://arca.live/b/novel/108\n\n---\n\n본문\n";
+  assert.deepEqual(arcaliveBody(post), { text: "본문\n", sourceUrl: "https://arca.live/b/novel/108" });
+});
+
+test("old text records shrink to what progress needs; the latest per work keeps its detail", () => {
+  const full = (readAt, progress, extra = {}) => ({
+    readAt, progress, route: "/text?lane=novel", listRoute: "/text?lane=novel&work=w", title: "1화", work: "작품",
+    total: 10, anchor: "문장", offset: 5, anchorTop: 1, scroll: 900, revision: "a".repeat(64), chapterId: "1",
+    workId: "novel:a", ...extra,
+  });
+  const history = {
+    "novel:novel:a:1": full("2026-09-01T00:00:00Z", 1),
+    "novel:novel:a:2": full("2026-09-02T00:00:00Z", 0.123456),
+    "novel:novel:a:3": full("2026-09-03T00:00:00Z", 0.5),
+    "novel:novel:b:1": full("2026-08-01T00:00:00Z", 1, { workId: "novel:b" }),
+  };
+  assert.equal(compactTextHistory(history, { keepRecent: 0 }), true);
+  // Finished and old: only when and how far.
+  assert.deepEqual(history["novel:novel:a:1"], { readAt: "2026-09-01T00:00:00Z", progress: 1 });
+  // Unfinished and old: keeps its position for 이어 읽기 inside the chapter.
+  assert.deepEqual(history["novel:novel:a:2"], {
+    readAt: "2026-09-02T00:00:00Z", progress: 0.123, anchor: "문장", offset: 5, anchorTop: 1, scroll: 900,
+    revision: "a".repeat(64), chapterId: "1",
+  });
+  // The latest record of each work is untouched.
+  assert.equal(history["novel:novel:a:3"].route, "/text?lane=novel");
+  assert.equal(history["novel:novel:b:1"].total, 10);
+  assert.equal(compactTextHistory(history, { keepRecent: 0 }), false);
+
+  const state = { history: {}, bookmarks: { keep: { savedAt: "x" } } };
+  for (let index = 0; index < 100; index += 1) {
+    state.history[`novel:w:${index}`] = { readAt: `2026-09-01T00:00:${String(index % 60).padStart(2, "0")}Z`, progress: 1 };
+  }
+  const removed = trimTextState(state, 2000);
+  assert.ok(removed > 0);
+  assert.ok(JSON.stringify(state).length <= 2000);
+  assert.deepEqual(state.bookmarks, { keep: { savedAt: "x" } });
 });

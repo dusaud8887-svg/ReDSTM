@@ -5,13 +5,16 @@ import json
 import re
 import sqlite3
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from scripts.text_archive import importer, runtime
+from scripts.text_archive import importer, runtime, status
 
 _ROOT = Path(__file__).parent
 _FIXTURE = _ROOT / "fixtures" / "text_archive_contract.json"
@@ -117,9 +120,16 @@ def test_contract_fixture_hash_and_copies_match() -> None:
     assert fixture["schema"] == 1
     assert len(body) == fixture["body"]["bytes"]
     assert hashlib.sha256(body).hexdigest() == fixture["body"]["sha256"]
-    newtomi_copy = Path(r"E:\newtomi\tests\fixtures\text_archive_contract.json")
-    if newtomi_copy.is_file():
-        assert fixture == json.loads(newtomi_copy.read_text(encoding="utf-8"))
+    for newtomi_copy in (
+        Path(r"E:\newtomi\tests\fixtures\text_archive_contract.json"),
+        Path(__file__).resolve().parents[2]
+        / "newtomi"
+        / "tests"
+        / "fixtures"
+        / "text_archive_contract.json",
+    ):
+        if newtomi_copy.is_file():
+            assert fixture == json.loads(newtomi_copy.read_text(encoding="utf-8"))
 
 
 def test_importer_accepts_more_than_twenty_items_but_caps_total_bytes(
@@ -766,7 +776,9 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     meminfo.write_text("MemAvailable: 300000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3000000 kB\n")
     status = _process_status(tmp_path)
     monkeypatch.setattr(
-        runtime.shutil, "disk_usage", lambda _path: SimpleNamespace(free=41 * 1024**3)
+        runtime.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=200 * 1024**3, free=41 * 1024**3),
     )
 
     def inactive(_command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -784,22 +796,24 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
     def active(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 0)
 
-    with pytest.raises(runtime.RuntimeWindowError, match="schedule_active"):
+    # systemd says a TypeMoon unit runs but its cgroup is unreadable: its whole peak is reserved.
+    with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
             status_path=status,
+            cgroup_root=tmp_path / "no-cgroup",
             root_path=tmp_path,
             run=active,
         ):
-            pytest.fail("active TypeMoon schedule must block the text operation")
+            pytest.fail("a starting TypeMoon run keeps its memory")
 
 
 @pytest.mark.parametrize(
     ("meminfo_text", "disk_free", "reason"),
     [
         (
-            "MemAvailable: 250000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
+            "MemAvailable: 150000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
             41 * 1024**3,
             "memory_below_floor",
         ),
@@ -822,7 +836,11 @@ def test_operation_window_defers_below_resource_floors(
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(meminfo_text)
     status = _process_status(tmp_path)
-    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _path: SimpleNamespace(free=disk_free))
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=200 * 1024**3, free=disk_free),
+    )
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
@@ -838,6 +856,97 @@ def test_operation_window_defers_below_resource_floors(
             pytest.fail("resource limits must defer the text operation")
 
 
+def _typemoon_cgroup(root: Path, unit: str, current: int) -> Path:
+    unit_root = root / "system.slice" / unit
+    unit_root.mkdir(parents=True)
+    (unit_root / "cgroup.procs").write_text("1234\n", encoding="ascii")
+    (unit_root / "memory.current").write_text(f"{current}\n", encoding="ascii")
+    return root
+
+
+def test_operation_window_leaves_typemoon_its_measured_headroom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish_lock = tmp_path / "static" / ".publish.lock"
+    publish_lock.parent.mkdir()
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 400000 kB\n")
+    status = _process_status(tmp_path)
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
+
+    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 3)
+
+    def window(cgroups: Path, need: int = 150 * 1024**2) -> Any:
+        return runtime.operation_window(
+            publish_lock=publish_lock,
+            need_bytes=need,
+            meminfo_path=meminfo,
+            status_path=status,
+            cgroup_root=cgroups,
+            root_path=tmp_path,
+            run=inactive,
+        )
+
+    # A crawl just starting (100 MiB of its 620 MiB peak) keeps 520 MiB: no room for text.
+    early = _typemoon_cgroup(tmp_path / "early", "redstm-control.service", 100 * 1024**2)
+    assert runtime.typemoon_reserve(early, inactive) == 520 * 1024**2
+    with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
+        with window(early):
+            pytest.fail("text must wait while TypeMoon can still grow into the free memory")
+    # Near its peak TypeMoon needs little more; the rest is text's.
+    late = _typemoon_cgroup(tmp_path / "late", "redstm-schedule.service", 580 * 1024**2)
+    with window(late):
+        pass
+    # Idle TypeMoon reserves nothing; a small collector step needs less than a publish.
+    meminfo.write_text("MemAvailable: 150000 kB\n")
+    with window(tmp_path / "idle", need=60 * 1024**2):
+        pass
+    with pytest.raises(runtime.RuntimeWindowError, match="memory_below_floor"):
+        with window(tmp_path / "idle"):
+            pytest.fail("a publish-sized step must wait for memory")
+
+
+def test_heavy_text_operations_run_one_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish_lock = tmp_path / "static" / ".publish.lock"
+    publish_lock.parent.mkdir()
+    operation_lock = tmp_path / ".operation.lock"
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 800000 kB\n")
+    status = _process_status(tmp_path)
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
+
+    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 3)
+
+    options: dict[str, Any] = {
+        "publish_lock": publish_lock,
+        "operation_lock": operation_lock,
+        "meminfo_path": meminfo,
+        "status_path": status,
+        "cgroup_root": tmp_path / "cgroup",
+        "root_path": tmp_path,
+        "run": inactive,
+    }
+    with runtime.FileLock(str(operation_lock)):
+        with pytest.raises(runtime.RuntimeWindowError, match="text_operation_busy"):
+            with runtime.operation_window(exclusive=True, **options):
+                pytest.fail("a second heavy text step must wait")
+        # The light collector does not take the heavy-step lock.
+        with runtime.operation_window(**options):
+            pass
+
+
 def test_operation_window_defers_only_for_typemoon_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -848,7 +957,11 @@ def test_operation_window_defers_only_for_typemoon_publish(
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n")
     status = _process_status(tmp_path)
-    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
 
     def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 3)
@@ -872,3 +985,72 @@ def test_operation_window_defers_only_for_typemoon_publish(
                 run=inactive,
             ):
                 pytest.fail("a held TypeMoon publish lock must defer the text operation")
+
+
+def test_main_drains_every_ready_batch_in_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox = tmp_path / "inbox"
+    _batch(inbox, _BATCHES[0])
+    _batch(inbox, _BATCHES[1], body=b"second body")
+    _batch(inbox, _BATCHES[2], ready=False)
+    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
+    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["importer"])
+    importer.main()
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["batch_id"] for line in lines] == list(_BATCHES[:2])
+    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
+    assert not (inbox / "receipts" / f"{_BATCHES[2]}.json").exists()
+
+
+def _imported_for_status(tmp_path: Path) -> tuple[Path, Path]:
+    inbox = tmp_path / "inbox"
+    _batch(inbox, _BATCHES[0])
+    db_path = tmp_path / "text.sqlite"
+    importer.import_batch(inbox, _BATCHES[0], db_path, tmp_path / "objects", inbox / "receipts")
+    _batch(inbox, _BATCHES[1], body=b"waiting body")
+    return inbox, db_path
+
+
+def test_status_reports_deliveries_drop_backlog_and_collector_state(tmp_path: Path) -> None:
+    inbox, db_path = _imported_for_status(tmp_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """INSERT INTO text_collector_groups(group_id,last_request_at,cooldown_until,
+               last_status,last_error,last_source) VALUES('g',1,2000000000,429,?,'blacktoon')""",
+            ("x" * 400,),
+        )
+    document = status.build_status(db_path, inbox, now=1_800_000_000)
+    assert document["generated_at"] == "2027-01-15T08:00:00Z"
+    assert document["lanes"]["arcalive"]["items"] == 1
+    assert document["lanes"]["arcalive"]["published"] == 0
+    assert document["pc"]["batches"] == 1
+    assert document["drop"]["text_waiting"] == 1
+    group = document["collector"]["groups"][0]
+    assert group["cooldown_until"] == "2033-05-18T03:33:20Z"
+    assert group["last_status"] == 429 and len(group["last_error"]) == 160
+    body = json.dumps(document, ensure_ascii=False)
+    assert "fixture body" not in body and str(tmp_path) not in body
+
+
+def test_status_upload_is_read_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inbox, db_path = _imported_for_status(tmp_path)
+    stored: dict[str, bytes] = {}
+
+    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] == "copyto":
+            stored[argv[5]] = Path(argv[4]).read_bytes()
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        return subprocess.CompletedProcess(argv, 0, stored[argv[4]], b"")
+
+    monkeypatch.setattr(status, "operation_window", lambda **_: nullcontext())
+    result: dict[str, Any] = status.publish_status(
+        db_path, inbox, tmp_path / "build", runner=rclone
+    )
+    key = "r2text:redstm-text-archive/published/status/text.json"
+    assert result["status"] == "published"
+    assert json.loads(stored[key])["schema"] == 1
+    assert hashlib.sha256(stored[key]).hexdigest()

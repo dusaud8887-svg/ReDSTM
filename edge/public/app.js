@@ -2,6 +2,8 @@ import {
   STATE_KEY,
   defaultUserState,
   exportUserState,
+  mergeTextStates,
+  mergeUserStates,
   migrateLegacyState,
   planImport,
   postIdentity,
@@ -44,12 +46,12 @@ const storageKeys = {
 };
 const defaultSettings = {
   theme: "system", readerSurface: "default", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
-  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
+  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
@@ -62,7 +64,7 @@ const elements = Object.fromEntries(
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
-    "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls", "aa-inline-size",
+    "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
@@ -83,9 +85,9 @@ const elements = Object.fromEntries(
     "discover-day-group", "discover-day-title", "discover-day",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
     "reader-bottom-previous-label", "reader-bottom-next-label",
-    "reader-more", "reader-more-context", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
+    "reader-more", "reader-more-context", "more-mark-read", "more-mark-read-label", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
     "more-mode", "more-mode-label", "more-mode-reset", "more-immersive", "more-immersive-label",
-    "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-cancel",
+    "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-merge", "import-cancel",
     "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove",
   ].map((id) => [id, document.getElementById(id)]),
 );
@@ -98,6 +100,10 @@ let userState = loadUserState();
 let lastStoredState = null;
 let settings;
 let historyEntries;
+// Per-post AA zoom and sideways position (see effectiveAaZoom).
+let aaViews = {};
+let aaAutoZoom = null;
+let aaLeftTimer;
 let bookmarks;
 applyUserState(userState);
 let renderedResults = [];
@@ -266,6 +272,7 @@ function applyUserState(state) {
   };
   historyEntries = entriesFromState(state.history, "readAt");
   bookmarks = entriesFromState(state.bookmarks, "savedAt");
+  aaViews = { ...(state.aaViews ?? {}) };
 }
 
 // The idle archive label; a failing local save stays visible over later "loaded" updates.
@@ -292,6 +299,7 @@ function persistUserState() {
       postIdentity(entry.summary), entry.scroll ?? 0,
     ]).filter(([identity]) => identity)),
     viewModes,
+    aaViews,
     lastCatalogState: userState.lastCatalogState,
   };
   try {
@@ -463,8 +471,9 @@ function applySettings() {
   root.style.setProperty("--prose-width", `${settings.proseWidth}px`);
   root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
   root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
-  root.style.setProperty("--aa-effective-size", `${settings.aaSize * settings.aaZoom}px`);
-  root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * settings.aaZoom}px`);
+  const aaZoom = effectiveAaZoom();
+  root.style.setProperty("--aa-effective-size", `${settings.aaSize * aaZoom}px`);
+  root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * aaZoom}px`);
   root.style.setProperty("--aa-background", settings.aaBackground);
   root.style.setProperty("--aa-ink", readableAaInk(settings.aaBackground));
   elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
@@ -474,6 +483,7 @@ function applySettings() {
     ["[data-reader-surface]", "readerSurface", settings.readerSurface],
     ["[data-prose-align]", "proseAlign", settings.proseAlign],
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
+    ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
   ]) {
     for (const choice of elements["settings-dialog"].querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
@@ -491,8 +501,7 @@ function applySettings() {
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
-  elements["aa-inline-size"].value = `${settings.aaSize}px`;
-  elements["aa-zoom-output"].value = `${Math.round(settings.aaZoom * 100)}%`;
+  elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
@@ -504,7 +513,7 @@ function applySettings() {
   for (const button of document.querySelectorAll("[data-aa-preset]")) {
     const [size, width] = button.dataset.aaPreset.split(":");
     button.classList.toggle("active", settings.aaSize === Number(size) &&
-      settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && settings.aaZoom === 1);
+      settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && aaZoom === 1);
   }
   let backgroundPresetSelected = false;
   for (const button of document.querySelectorAll("[data-aa-background]")) {
@@ -556,7 +565,40 @@ function showReaderFeedback(text, duration = 1200) {
 }
 
 function showZoomFeedback() {
-  showReaderFeedback(`${Math.round(settings.aaZoom * 100)}%`);
+  showReaderFeedback(`${Math.round(effectiveAaZoom() * 100)}%`);
+}
+
+// AA zoom is kept per picture (aaViews): the zoom chosen for this post, else an automatic fit
+// for this visit (넓은 AA 화면에 맞추기), else the default zoom.
+function currentAaKey() {
+  return currentSummary && currentMode === "aa" ? postIdentity(currentSummary) : "";
+}
+
+function effectiveAaZoom() {
+  const key = currentAaKey();
+  return (key && aaViews[key]?.zoom) || (key && aaAutoZoom) || settings.aaZoom;
+}
+
+function rememberAaView(change) {
+  const key = currentAaKey();
+  if (!key) return;
+  const next = { ...aaViews[key], ...change, at: Date.now() };
+  if (next.zoom == null) delete next.zoom;
+  aaViews[key] = next;
+}
+
+// Restores the zoom and sideways position of an AA post as it opens.
+function restoreAaView() {
+  const key = currentAaKey();
+  aaAutoZoom = null;
+  if (!key) return;
+  const saved = aaViews[key];
+  requestAnimationFrame(() => {
+    if (currentAaKey() !== key) return;
+    if (!saved?.zoom && settings.aaAutoFit === "on") fitAaZoom({ remember: false });
+    elements["archive-body"].scrollLeft = saved?.left ?? 0;
+    updateAaOverflowCue(true);
+  });
 }
 
 function updateAaOverflowCue(showHint = false) {
@@ -570,8 +612,11 @@ function updateAaOverflowCue(showHint = false) {
   }
 }
 
-function setAaZoom(value, debounce = false) {
-  settings.aaZoom = Math.max(0.1, Math.min(3, value));
+function setAaZoom(value, debounce = false, { remember = true } = {}) {
+  const zoom = Math.round(Math.max(0.1, Math.min(3, value)) * 1000) / 1000;
+  if (!currentAaKey()) settings.aaZoom = zoom;
+  else if (remember) rememberAaView({ zoom });
+  else aaAutoZoom = zoom;
   applySettings();
   showZoomFeedback();
   clearTimeout(zoomPersistTimer);
@@ -582,7 +627,7 @@ function setAaZoom(value, debounce = false) {
 // 맞춤: the zoom at which the widest AA line fits the stage without horizontal scrolling. The
 // picture's width scales with the zoom, so one measurement at the current zoom is enough. It
 // only shrinks; a picture that already fits returns to 100%.
-function fitAaZoom() {
+function fitAaZoom({ remember = true } = {}) {
   const body = elements["archive-body"];
   const canvas = body.querySelector(".aa-canvas");
   if (currentMode !== "aa" || !canvas) return;
@@ -599,7 +644,7 @@ function fitAaZoom() {
   const style = getComputedStyle(body);
   const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
   if (!(content > 0) || !(available > 0)) return;
-  setAaZoom(Math.min(1, Math.floor(settings.aaZoom * (available / content) * 100) / 100));
+  setAaZoom(Math.min(1, Math.floor(effectiveAaZoom() * (available / content) * 100) / 100), false, { remember });
   body.scrollLeft = 0;
 }
 
@@ -895,12 +940,15 @@ async function renderReadingWorks() {
     typeMoonFailed = true;
   }
   if (currentDestination !== "library") return;
-  for (const work of textLibrary.readingWorks()) {
+  const textWorks = await textLibrary.readingWorks();
+  if (currentDestination !== "library") return;
+  for (const work of textWorks) {
     items.push({
       title: work.title,
       meta: ["소설", work.meta],
       readAt: work.readAt,
-      fresh: false,
+      fresh: work.newCount > 0,
+      badge: work.newCount > 0 ? `새 ${work.newCount}화` : "",
       open: () => openTextFromHome({ identity: "novel:", listRoute: work.listRoute, progress: 0 }, { listOnly: true }),
     });
   }
@@ -917,7 +965,9 @@ async function renderReadingWorks() {
     empty.textContent = "읽기 상태를 확인하지 못했습니다.";
     list.append(empty);
   }
-  for (const item of shown) list.append(homeRow(item.title, item.meta, item.open, { badge: item.fresh ? "새 편" : "" }));
+  for (const item of shown) {
+    list.append(homeRow(item.title, item.meta, item.open, { badge: item.badge || (item.fresh ? "새 편" : "") }));
+  }
   if (failedBoards.size && shown.length) {
     const note = document.createElement("li");
     note.className = "home-empty";
@@ -1061,21 +1111,33 @@ function openTextReader({ kicker, title, meta, text, sourceUrl }) {
 
 // Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
 // as rendered (live signed links load; expired ones point at the source post).
+// Archived copies never change (R2 keys are CDN path keys), so a path found once is not asked
+// about again in this session; paths still missing are asked again on the next open.
+const archivedMediaUrls = new Map();
+
 async function archiveTextMedia(body, renderId) {
   const paths = arcaPaths(body);
+  const known = Object.fromEntries(
+    paths.filter((path) => archivedMediaUrls.has(path)).map((path) => [path, { url: archivedMediaUrls.get(path) }]),
+  );
+  if (Object.keys(known).length) applyArchivedMedia(body, known);
+  const unknown = paths.filter((path) => !archivedMediaUrls.has(path));
   // The Worker checks each path with one R2 call, so a request carries at most 40.
-  for (let start = 0; start < paths.length; start += 40) {
+  for (let start = 0; start < unknown.length; start += 40) {
     let media;
     try {
       const response = await fetch("/api/v1/text/media/resolve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paths: paths.slice(start, start + 40) }),
+        body: JSON.stringify({ paths: unknown.slice(start, start + 40) }),
       });
       if (!response.ok) return;
       media = (await response.json()).media ?? {};
     } catch {
       return;
+    }
+    for (const [path, entry] of Object.entries(media)) {
+      if (typeof entry?.url === "string") archivedMediaUrls.set(path, entry.url);
     }
     if (body.dataset.renderId !== renderId) return;
     applyArchivedMedia(body, media);
@@ -1268,6 +1330,9 @@ function openReaderMore() {
   elements["more-position-output"].value = `${percent}%`;
   renderRemainingTime(progress);
   renderWakeState();
+  const unreadBefore = readerSource === "text" ? textLibrary.previousUnreadCount() : 0;
+  elements["more-mark-read"].hidden = unreadBefore === 0;
+  elements["more-mark-read-label"].textContent = `이전 회차 모두 읽음 (${unreadBefore.toLocaleString("ko-KR")}화)`;
   if (!elements["reader-more"].open) {
     moreOpener = document.activeElement;
     elements["reader-more"].showModal();
@@ -1477,17 +1542,10 @@ function applyTextSortOptions() {
   // The text library owns its sort (it travels in the URL); the select only mirrors it.
   select.value = allowed.has(wanted) ? wanted : options[0][1];
   textLibrary.setSort(select.value);
-  // The select is hidden in the text library; these chips are its visible control.
-  const chips = elements["text-sort-chips"];
-  chips.hidden = sortOptions.length < 2;
-  chips.replaceChildren(...sortOptions.map(([label, value]) => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.dataset.textSort = value;
-    chip.textContent = label;
-    chip.setAttribute("aria-pressed", String(value === select.value));
-    return chip;
-  }));
+  // The result bar's sort menu is the control, as on TypeMoon lists; a separate chip row cost a
+  // whole row of the phone screen above the list.
+  elements["text-sort-chips"].hidden = true;
+  document.querySelector(".sort-field").hidden = sortOptions.length < 2;
   elements["search-input"].placeholder = textLibrary.searchPlaceholder();
 }
 
@@ -2184,7 +2242,52 @@ function renderCurrentView() {
   const entries = currentView === "history" ? historyEntries : bookmarks;
   const posts = localResults(entries);
   const label = currentView === "history" ? "최근 읽음" : "저장한 글";
-  renderResults(posts, posts.length ? `${label} ${posts.length}건 · 이 브라우저` : `${label}이 없습니다`);
+  // Saved novel chapters and Arcalive posts live in the text library; list them here too.
+  const textSaved = currentView === "bookmarks" ? textLibrary.savedItems(elements["search-input"].value) : [];
+  const total = posts.length + textSaved.length;
+  renderResults(posts, total
+    ? `${label} ${total}건${textSaved.length ? ` (텍스트 ${textSaved.length})` : ""} · 이 브라우저` : `${label}이 없습니다`);
+  if (textSaved.length) {
+    elements["search-widen"].hidden = true;
+    elements["result-list"].append(...textSaved.map((item) => textResultElement(item)));
+  }
+}
+
+// A text library row in 보관함; it opens through the text library's own routes.
+function textResultElement({ title, meta, note = "", badge = "", listRoute, route = "" }) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "result-item text-result";
+  button.dataset.textListRoute = listRoute;
+  if (route) button.dataset.textRoute = route;
+  button.dataset.key = `text:${route || listRoute}`;
+  const titleLine = document.createElement("span");
+  titleLine.className = "result-title-line";
+  const heading = document.createElement("strong");
+  heading.className = "result-title";
+  heading.textContent = title;
+  titleLine.append(heading);
+  if (badge) {
+    const badges = document.createElement("span");
+    badges.className = "result-badges";
+    const part = document.createElement("span");
+    part.textContent = badge;
+    badges.append(part);
+    titleLine.append(badges);
+  }
+  const metaLine = document.createElement("span");
+  metaLine.className = "result-meta";
+  metaLine.textContent = meta;
+  button.append(titleLine, metaLine);
+  if (note) {
+    const noteLine = document.createElement("span");
+    noteLine.className = "bookmark-note";
+    noteLine.textContent = note;
+    button.append(noteLine);
+  }
+  item.append(button);
+  return item;
 }
 
 async function renderReadingView() {
@@ -2208,9 +2311,11 @@ async function renderReadingView() {
     collections = [];
   }
   if (currentView !== "reading") return;
+  const novels = await textLibrary.readingWorks().catch(() => []);
+  if (currentView !== "reading") return;
   renderedResults = inProgress;
   renderedCollections = collections;
-  resultTotal = inProgress.length + collections.length;
+  resultTotal = inProgress.length + collections.length + novels.length;
   elements["search-empty"].hidden = true;
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren();
@@ -2218,6 +2323,12 @@ async function renderReadingView() {
   const fragment = document.createDocumentFragment();
   inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
   for (const collection of collections) fragment.append(collectionItemElement(collection));
+  for (const work of novels) {
+    fragment.append(textResultElement({
+      title: work.title, meta: ["소설", work.meta].filter(Boolean).join(" · "),
+      badge: work.newCount ? `새 ${work.newCount}화` : "", listRoute: work.listRoute,
+    }));
+  }
   elements["result-list"].append(fragment);
   const failedNote = collectionProgressFailedBoards.size ? " · 일부 읽기 상태 미확인" : "";
   elements["result-status"].textContent = resultTotal
@@ -2340,20 +2451,22 @@ function renderWidenActions(empty) {
   if (!actions.length && activeFilterItems().length) {
     actions.push(["reset", "필터 초기화"]);
   }
-  if (!actions.length) {
-    host.hidden = true;
-    return;
-  }
+  const widening = actions.length > 0;
+  // The same words may name a novel or an Arcalive work in the text library.
+  actions.push(["text:novel", "소설에서 찾기"], ["text:arcalive", "아카라이브 작품에서 찾기"]);
   host.hidden = false;
   const lead = document.createElement("p");
-  lead.textContent = "결과가 없습니다. 조건을 한 단계 넓혀 보세요.";
+  lead.textContent = widening ? "결과가 없습니다. 조건을 한 단계 넓혀 보거나 텍스트 장서에서 찾아보세요."
+    : "결과가 없습니다. 텍스트 장서에서 찾아볼 수 있습니다.";
   host.append(lead);
   for (const [key, label] of actions) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
+    button.dataset.widen = key;
     button.addEventListener("click", () => {
-      if (key === "reset") resetFilters();
+      if (key.startsWith("text:")) searchTextLibrary(key.slice(5));
+      else if (key === "reset") resetFilters();
       else clearFilter(key);
     });
     host.append(button);
@@ -3091,7 +3204,8 @@ function renderPostBody() {
   decorateImages(elements["archive-body"]);
   if (!isAa) enhanceHtmlMedia(elements["archive-body"]);
   updateReaderLength();
-  requestAnimationFrame(() => updateAaOverflowCue(true));
+  if (isAa) restoreAaView();
+  else requestAnimationFrame(() => updateAaOverflowCue(true));
 }
 
 function normalizeReaderTypography(container) {
@@ -3583,10 +3697,21 @@ elements["result-list"].addEventListener("click", (event) => {
     const withinSession = Boolean(history.state?.redstmReader || history.state?.redstmCollection);
     const navigation = withinSession ? "replace" : "push";
     if (!withinSession) persistCatalogState();
-    if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId), navigation);
+    if (button.dataset.textListRoute) {
+      const route = button.dataset.textRoute;
+      openTextFromHome({ identity: "", listRoute: button.dataset.textListRoute, route, progress: 0 }, { listOnly: !route });
+    } else if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId), navigation);
     else loadPost(renderedResults[Number(button.dataset.index)], navigation);
   }
 });
+// 검색 → 텍스트 장서: the same words in the novel works or Arcalive works list.
+function searchTextLibrary(lane) {
+  const query = elements["search-input"].value.trim();
+  const params = new URLSearchParams({ lane, ...(lane === "arcalive" ? { view: "works" } : {}), ...(query ? { q: query } : {}) });
+  history.pushState({ redstmText: true, redstmParent: currentRoute() }, "", `/text?${params}`);
+  void handleRoute();
+}
+
 // Continue from Home places the work's table of contents under the Reader, so Back walks
 // Reader → 목차 → 홈 without flashing the table of contents first.
 // Text: the chapter list goes under the chapter so Back walks 본문 → 회차 목록 → 홈.
@@ -3675,6 +3800,11 @@ elements["more-link"].addEventListener("click", () => {
 });
 // Stays in the sheet so the toggle's new state is visible.
 elements["more-wake"].addEventListener("click", () => setScreenAwake(!wakeWanted));
+elements["more-mark-read"].addEventListener("click", () => {
+  const count = textLibrary.markPreviousRead();
+  closeReaderMore();
+  if (count) showReaderFeedback(`이전 ${count.toLocaleString("ko-KR")}화를 읽음으로 표시했습니다`, 2200);
+});
 elements["reader-list-items"].addEventListener("click", (event) => {
   const button = event.target.closest(".reader-list-row");
   const row = button && readerListModel?.rows[Number(button.dataset.index)];
@@ -4097,6 +4227,12 @@ for (const choice of document.querySelectorAll("button[data-reader-surface]")) {
     saveSettings();
   });
 }
+for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {
+  choice.addEventListener("click", () => {
+    settings.aaAutoFit = choice.dataset.aaAutoFit;
+    saveSettings();
+  });
+}
 for (const choice of document.querySelectorAll("button[data-tap-paging]")) {
   choice.addEventListener("click", () => {
     settings.tapPaging = choice.dataset.tapPaging;
@@ -4175,16 +4311,13 @@ for (const choice of document.querySelectorAll("button[data-prose-align]")) {
     settings.proseAlign = choice.dataset.proseAlign;
   }));
 }
-for (const button of document.querySelectorAll("[data-aa-size-delta]")) {
-  button.addEventListener("click", () => {
-    settings.aaSize = Math.max(9, Math.min(24, settings.aaSize + Number(button.dataset.aaSizeDelta)));
-    saveSettings();
-  });
-}
 for (const button of document.querySelectorAll("[data-aa-preset]")) {
   button.addEventListener("click", () => {
     const [size, width] = button.dataset.aaPreset.split(":");
     settings = { ...settings, aaSize: Number(size), aaCanvasWidth: width === "auto" ? null : Number(width), aaZoom: 1 };
+    // A preset is a fresh start for the open picture too.
+    rememberAaView({ zoom: null });
+    aaAutoZoom = null;
     saveSettings();
     showZoomFeedback();
   });
@@ -4229,8 +4362,9 @@ elements["archive-body"].addEventListener("touchmove", (event) => {
   }
   if (currentMode !== "aa" || !pinchDistance) return;
   const distance = touchDistance(event);
-  const next = settings.aaZoom + (distance - pinchDistance) * 0.003;
-  if (Math.abs(next - settings.aaZoom) > 0.002) setAaZoom(next, true);
+  const zoom = effectiveAaZoom();
+  const next = zoom + (distance - pinchDistance) * 0.003;
+  if (Math.abs(next - zoom) > 0.002) setAaZoom(next, true);
   pinchDistance = distance;
 }, { passive: true });
 elements["archive-body"].addEventListener("touchend", () => {
@@ -4239,9 +4373,19 @@ elements["archive-body"].addEventListener("touchend", () => {
 }, { passive: true });
 elements["archive-body"].addEventListener("dblclick", () => {
   if (currentMode !== "aa") return;
-  setAaZoom(settings.aaZoom < 1.25 ? 1.5 : settings.aaZoom < 1.75 ? 2 : 1);
+  const zoom = effectiveAaZoom();
+  setAaZoom(zoom < 1.25 ? 1.5 : zoom < 1.75 ? 2 : 1);
 });
-elements["archive-body"].addEventListener("scroll", () => updateAaOverflowCue(), { passive: true });
+elements["archive-body"].addEventListener("scroll", () => {
+  updateAaOverflowCue();
+  // The sideways position of a wide AA is kept with its zoom.
+  if (!currentAaKey()) return;
+  clearTimeout(aaLeftTimer);
+  aaLeftTimer = setTimeout(() => {
+    rememberAaView({ left: elements["archive-body"].scrollLeft });
+    persistUserState();
+  }, 300);
+}, { passive: true });
 function touchDistance(event) {
   return Math.hypot(
     event.touches[0].clientX - event.touches[1].clientX,
@@ -4254,7 +4398,7 @@ elements["reset-settings"].addEventListener("click", () => {
 });
 elements["export-state"].addEventListener("click", () => {
   persistUserState();
-  const blob = new Blob([exportUserState(userState)], {
+  const blob = new Blob([exportUserState(userState, textLibrary.exportState())], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
@@ -4269,8 +4413,10 @@ function resetImportReview() {
   pendingImportPlan = null;
   elements["import-review"].hidden = true;
   elements["import-review"].removeAttribute("data-state");
-  elements["import-apply"].disabled = false;
-  elements["import-apply"].hidden = false;
+  for (const id of ["import-apply", "import-merge"]) {
+    elements[id].disabled = false;
+    elements[id].hidden = false;
+  }
   elements["import-cancel"].textContent = "취소";
   elements["import-state-file"].value = "";
 }
@@ -4289,44 +4435,59 @@ elements["import-state-file"].addEventListener("change", async () => {
     const summary = pendingImportPlan.summary;
     const defaulted = summary.defaultedSettings.length
       ? ` · 기본값 보정 ${summary.defaultedSettings.map((key) => settingLabels[key] ?? key).join(", ")}` : "";
+    const exported = Date.parse(summary.exportedAt ?? "");
     elements["import-review-summary"].textContent =
-      `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}${defaulted}`;
+      (Number.isFinite(exported) ? `${new Date(exported).toLocaleString("ko-KR")} 백업 · ` : "") +
+      `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}` +
+      (summary.textHistory === null ? " · 텍스트 기록 없음(현재 기록 유지)"
+        : ` · 텍스트 읽기 ${summary.textHistory} · 텍스트 저장 ${summary.textBookmarks}`) +
+      (summary.shelves ? ` · 분류 ${summary.shelves}` : "") + defaulted;
     elements["import-review"].dataset.state = "ready";
     elements["import-review"].hidden = false;
-    elements["import-apply"].focus();
+    elements["import-merge"].focus();
   } catch (error) {
     pendingImportPlan = null;
     elements["import-review-summary"].textContent = error.message;
     elements["import-review"].dataset.state = "error";
     elements["import-review"].hidden = false;
     elements["import-apply"].disabled = true;
+    elements["import-merge"].disabled = true;
   } finally {
     elements["import-state-file"].value = "";
   }
 });
 elements["import-cancel"].addEventListener("click", resetImportReview);
-elements["import-apply"].addEventListener("click", async () => {
+// 덮어쓰기 replaces this browser's records and settings; 합쳐서 가져오기 keeps the newer record of
+// each post, unites saved items and shelves, and leaves the settings as they are.
+async function applyImport(merge) {
   if (!pendingImportPlan) return;
   elements["import-apply"].disabled = true;
+  elements["import-merge"].disabled = true;
   try {
-    applyUserState(pendingImportPlan.state);
     persistUserState();
+    applyUserState(merge ? mergeUserStates(userState, pendingImportPlan.state) : pendingImportPlan.state);
+    persistUserState();
+    if (pendingImportPlan.text) {
+      textLibrary.importState(merge ? mergeTextStates(textLibrary.exportState(), pendingImportPlan.text) : pendingImportPlan.text);
+    }
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
     pendingImportPlan = null;
-    elements["import-review-summary"].textContent = "사용자 상태를 가져왔습니다";
+    elements["import-review-summary"].textContent = merge ? "기록을 합쳐서 가져왔습니다" : "사용자 상태를 가져왔습니다";
     elements["import-review"].dataset.state = "success";
     elements["import-apply"].hidden = true;
+    elements["import-merge"].hidden = true;
     elements["import-cancel"].textContent = "닫기";
     elements["import-cancel"].focus();
   } catch (error) {
     pendingImportPlan = null;
     elements["import-review-summary"].textContent = error.message;
     elements["import-review"].dataset.state = "error";
-    elements["import-apply"].disabled = true;
   }
-});
+}
+elements["import-apply"].addEventListener("click", () => void applyImport(false));
+elements["import-merge"].addEventListener("click", () => void applyImport(true));
 
 document.addEventListener("keydown", (event) => {
   const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");

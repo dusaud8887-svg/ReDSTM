@@ -31,6 +31,8 @@ export const safeCodeLabels = {
   scheduled_succeeded: "예약 실행 완료", scheduled_partial: "예약 실행 일부 완료",
   scheduled_failed: "예약 실행 실패", run_partial: "일부 항목 미완료",
   run_failed: "실행 실패", run_stale: "실행 종료 신호 누락", runner_failed: "수집기 내부 실패",
+  runner_killed: "수집 프로세스 강제 종료 · 메모리 부족 가능, 두 번 재시도 후 중단",
+  memory_limit: "메모리 한도에 닿아 배치를 먼저 끝냄 · 남은 글은 다음 배치로",
   runner_interrupted: "수집기 프로세스 중단 · 진행분은 보존됨",
   recovery_time_budget: "실행 시간 상한 도달 · 진행분과 재시도 큐는 보존됨",
   archive_locked: "보관소 파일이 다른 작업에 잠김 · 이전 수집/백업 프로세스 종료 후 재시도",
@@ -191,6 +193,65 @@ async function api(path, options = {}) {
     throw new Error(payload?.error?.code || `http_${response.status}`);
   }
   return payload.data;
+}
+
+// Text archive status is a plain R2 document written by the Oracle text publisher
+// (scripts/text_archive/status.py), not a control-plane API response.
+async function loadTextStatus() {
+  const response = await fetch("/api/v1/text/status", {
+    signal: AbortSignal.timeout(API_TIMEOUT_MS), cache: "no-store", credentials: "same-origin",
+  });
+  if (response.status === 404) {
+    byId("text-archive-as-of").textContent = "텍스트 장서 상태가 아직 게시되지 않았습니다.";
+    return;
+  }
+  if (!response.ok) throw new Error(`http_${response.status}`);
+  renderTextStatus(await response.json());
+}
+
+function sumCounts(counts, predicate) {
+  return Object.entries(counts || {}).reduce((total, [key, value]) => total + (predicate(key) ? Number(value) || 0 : 0), 0);
+}
+
+function renderTextStatus(status) {
+  if (status?.schema !== 1) throw new Error("text_status_invalid");
+  const lanes = status.lanes || {};
+  for (const [lane, id] of [["arcalive", "text-arcalive"], ["novel", "text-novel"]]) {
+    const value = lanes[lane] || {};
+    byId(id).textContent = `${number(value.published)} / ${number(value.items)}`;
+    byId(`${id}-detail`).textContent = value.last_published_at
+      ? `게시 확인 / 수입 · 마지막 게시 ${age(value.last_published_at)}`
+      : "게시 확인 / 수입";
+  }
+  const pc = status.pc || {};
+  byId("text-pc-last").textContent = pc.last_batch_at ? age(pc.last_batch_at) : "수신 없음";
+  byId("text-pc-detail").textContent = `배치 ${number(pc.batches)} · 게시 확인 ${number(pc.published_batches)}`;
+  const media = status.media || {};
+  byId("text-media").textContent = number(media.images);
+  byId("text-media-detail").textContent = media.last_stored_at
+    ? `${bytes(media.bytes)} · 마지막 보관 ${age(media.last_stored_at)}`
+    : "아카라이브 이미지 보관본";
+  const drop = status.drop || {};
+  const rejected = (drop.text_rejected_in_drop || 0) + (drop.media_rejected_in_drop || 0);
+  byId("text-drop").textContent = `텍스트 ${number(drop.text_waiting)} · 이미지 ${number(drop.media_waiting)}`
+    + (rejected ? ` · 거절 ${number(rejected)}` : "");
+  const collector = status.collector || {};
+  byId("text-conflicts").textContent = `PC ${number(pc.held_conflicts)} · Oracle ${number(collector.oracle_conflicts)}`;
+  const queue = collector.queue || {};
+  const waiting = sumCounts(queue, (key) => /:(pending|retry)$/.test(key));
+  const review = sumCounts(queue, (key) => /:review$/.test(key));
+  byId("text-queue").textContent = number(waiting);
+  byId("text-queue-detail").textContent = `처리 대기·재시도 · 재검토 ${number(review)} · 포인트 대기 ${
+    number(sumCounts(collector.chapters, (key) => key.endsWith(":waiting")))}`;
+  const now = Date.now();
+  const cooling = (collector.groups || []).filter((group) => Date.parse(group.cooldown_until) > now);
+  byId("text-cooldown").textContent = cooling.length
+    ? cooling.map((group) => group.last_source || group.group).join(", ")
+    : "없음";
+  byId("text-cooldown-detail").textContent = cooling.length
+    ? cooling.map((group) => `${group.last_status ?? "-"} · ${time(group.cooldown_until)}까지`).join(" / ")
+    : "403·429·5xx 뒤 쉬는 출처";
+  byId("text-archive-as-of").textContent = `기준 ${time(status.generated_at)} (${age(status.generated_at)}) · Oracle 텍스트 게시기 기록`;
 }
 
 function runnerState(runner) {
@@ -804,6 +865,7 @@ async function loadAll() {
     ["게시판별 진척", loadBoards()],
     ["최종 실패 게시글", loadFailures()],
     ["Reader 글·댓글", api("/api/v1/ops/releases").then(renderReleases)],
+    ["텍스트 장서", loadTextStatus()],
   ];
   const results = await Promise.allSettled(tasks.map(([, task]) => task));
   const failures = results.flatMap((result, index) =>

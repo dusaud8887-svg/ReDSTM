@@ -25,6 +25,7 @@ from scripts.text_archive.importer import (
     _store_object,
     _title_key,
     mark_cross_source_covered,
+    normalize_chapter_kind,
     novel_text_sha256,
 )
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
@@ -228,7 +229,7 @@ def parse_work_detail(value: Any) -> WorkDetail:
             episode_number = int(episode_number)
         chapter_title = str(row.get("title") or "").strip()
         label = (chapter_title or (str(episode_number) if episode_number is not None else ""))[:300]
-        kind = str(row.get("chapterKind") or row.get("kind") or "main")[:40]
+        kind = normalize_chapter_kind(row.get("chapterKind") or row.get("kind"), label)
         normalized.append(
             {
                 "id": chapter_id,
@@ -244,7 +245,13 @@ def parse_work_detail(value: Any) -> WorkDetail:
     return WorkDetail(work_id, work_title, author, normalized)
 
 
+def _block_kind(block: dict[str, Any]) -> Any:
+    # "kind" first, like the paid-block check below and Newtomi extractors/novel_json.py.
+    return block.get("kind", block.get("type"))
+
+
 def _plain_text(body_json: Any) -> str:
+    """Stored body text, byte for byte the same as Newtomi (fixtures/novel_body_contract.json)."""
     text: str
     if isinstance(body_json, str):
         try:
@@ -256,7 +263,7 @@ def _plain_text(body_json: Any) -> str:
     elif isinstance(body_json, list):
         parts: list[str] = []
         for block in body_json:
-            if not isinstance(block, dict) or block.get("type", block.get("kind")) not in {
+            if not isinstance(block, dict) or _block_kind(block) not in {
                 "text",
                 "paragraph",
                 "narration",
@@ -267,7 +274,7 @@ def _plain_text(body_json: Any) -> str:
                 raise CollectorError("body_block_requires_review")
             parts.append(text_value)
         text = "\n\n".join(parts)
-    elif isinstance(body_json, dict) and body_json.get("type", body_json.get("kind")) in {
+    elif isinstance(body_json, dict) and _block_kind(body_json) in {
         "text",
         "paragraph",
         "narration",
@@ -430,7 +437,7 @@ def _get(
 
         retry_delay = 0
         response_data: tuple[int, bytes, dict[str, str]] | None = None
-        with operation_window():
+        with operation_window(need_bytes=60 * 1024 * 1024):
             db = _connect(db_path)
             try:
                 group = db.execute(
@@ -750,7 +757,7 @@ def _apply_episode(
     except json.JSONDecodeError:
         blocks = body_json
     if any(
-        isinstance(block, dict) and block.get("kind", block.get("type")) == "paid"
+        isinstance(block, dict) and _block_kind(block) == "paid"
         for block in (blocks if isinstance(blocks, list) else [blocks])
     ):
         with db:
@@ -1150,23 +1157,48 @@ def run_one(
             http.close()
 
 
+# One process runs steps for most of its timer period instead of one interpreter start per
+# request: on the small Oracle VM a Python start every 5 s cost more CPU than the requests.
+# The shared 5 s gap and per-source cooldowns (_get) still pace every request.
+_RUN_SECONDS = 270
+_STEP_HEADROOM_SECONDS = _REQUEST_GAP + 25
+
+
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run one conservative novel JSON collector step")
-    parser.parse_args()
+    parser = argparse.ArgumentParser(description="Run paced novel JSON collector steps")
+    parser.add_argument("--seconds", type=int, default=_RUN_SECONDS, help="stop after this long")
+    args = parser.parse_args()
+    deadline = time.monotonic() + max(1, args.seconds)
+    db_path = Path("/srv/redstm-text/text-archive.sqlite")
+    session = requests.Session()
+    session.trust_env = False
+    statuses: dict[str, int] = {}
+    stop_reason = "time_budget"
     try:
-        result = run_one(
-            Path("/srv/redstm-text/text-archive.sqlite"),
-            Path("/srv/redstm-text/objects"),
-            configured_sources(db_path=Path("/srv/redstm-text/text-archive.sqlite")),
-            body_source=configured_body_source(),
-        )
-    except RuntimeWindowError as exc:
-        parser.exit(75, f"text collection deferred: {exc}\n")
-    except CollectorError as exc:
-        parser.exit(75, f"text collection deferred: {exc}\n")
-    print(json.dumps(result, sort_keys=True))
+        while time.monotonic() + _STEP_HEADROOM_SECONDS < deadline or not statuses:
+            try:
+                result = run_one(
+                    db_path,
+                    Path("/srv/redstm-text/objects"),
+                    configured_sources(db_path=db_path),
+                    body_source=configured_body_source(),
+                    session=session,
+                )
+            except (RuntimeWindowError, CollectorError) as exc:
+                if not statuses:
+                    parser.exit(75, f"text collection deferred: {exc}\n")
+                stop_reason = str(exc)
+                break
+            status = str(result.get("status", "stored"))
+            statuses[status] = statuses.get(status, 0) + 1
+            if status in {"cooldown", "deferred"}:
+                stop_reason = status
+                break
+    finally:
+        session.close()
+    print(json.dumps({"steps": statuses, "stop_reason": stop_reason}, sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,8 @@ import hashlib
 import json
 import sqlite3
 import subprocess
-from contextlib import closing
+import sys
+from contextlib import closing, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -205,3 +206,39 @@ def test_unready_batch_returns_none(tmp_path: Path) -> None:
 def test_path_key_accepts_the_older_two_character_directory() -> None:
     assert media_importer._PATH_KEY.fullmatch("ba/" + "a" * 16 + ".jpg")
     assert not media_importer._PATH_KEY.fullmatch("b/" + "a" * 16 + ".jpg")
+
+
+def test_post_rule_accepts_published_lanes_only() -> None:
+    assert media_importer._POST.fullmatch("arcalive:monmusu:1:text")
+    assert media_importer._POST.fullmatch("arcalive:monmusu:1:both")
+    assert not media_importer._POST.fullmatch("arcalive:monmusu:1:media")
+
+
+def test_main_drains_ready_batches_in_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox = tmp_path / "inbox"
+    second = "20260927T120001Z-media-0000000b"
+    _batch(inbox, {"000001.webp": _WEBP}, [_item(_PATH_A, "000001.webp", _WEBP, "image/webp")])
+    _batch(
+        inbox,
+        {"000001.webp": _WEBP},
+        [_item(_PATH_C.replace(".png", ".webp"), "000001.webp", _WEBP, "image/webp")],
+        batch_id=second,
+    )
+    r2 = FakeR2()
+    original = media_importer.import_media_batch
+
+    def with_fake_r2(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return original(*args, **{**kwargs, "runner": r2})
+
+    monkeypatch.setattr(media_importer, "import_media_batch", with_fake_r2)
+    monkeypatch.setattr(media_importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(media_importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(media_importer, "_BUILD_ROOT", tmp_path / "build")
+    monkeypatch.setattr(media_importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["media_importer"])
+    media_importer.main()
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["batch_id"] for line in lines] == [_BATCH, second]
+    assert media_importer.next_ready_batch(inbox) is None

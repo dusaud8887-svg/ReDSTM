@@ -152,8 +152,10 @@ R2 writer key와 Access service token은 별도 credential file로만
   `redstm_install_not_started`로 끝난다.
 - crawler는 listing global/domain concurrency 2(환경변수로 1–3), detail concurrency 1과 fixed
   start delay 10초를 유지한다.
-- disk는 40GiB 미만에서 경고하고 20GiB 미만에서는 새 crawl 또는 장기 작업의 다음 bounded child를
-  시작하지 않는다. `disk_low`로 끝난 전체 목차·본문은 공간 확보 뒤 같은 명령으로 checkpoint부터
+- disk 경고/정지 기준은 볼륨 크기에 비례한다(`scripts/storage_policy.py`): 경고 = 전체의 20%(5–40GiB),
+  정지 = 10%(3–20GiB). 큰 볼륨에서는 예전 40/20GiB와 같다. 환경변수 `REDSTM_DISK_LOW_BYTES`/`REDSTM_DISK_STOP_BYTES`가
+  있으면 그 값을 쓴다. 정지 기준 아래로 내려가면 먼저 오래된 WARC·보고서를 정리하고 다시 잰 뒤에야 새 crawl
+  또는 장기 작업의 다음 bounded child를 시작하지 않는다. `disk_low`로 끝난 전체 목차·본문은 공간 확보 뒤 같은 명령으로 checkpoint부터
   재개한다.
 - systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 control timer가
   checkpointed full-catalog/full-content command를 같은 run으로 재개한다. 짧은 증분 작업은 durable
@@ -172,6 +174,20 @@ R2 writer key와 Access service token은 별도 credential file로만
   `<report-dir>/commands/<command-id>.error.txt`(local 전용, 본문/cookie 없음)에 남는다.
   `/ops` 증상은 항상 배포된 빌드의 동작이므로 repo 수정은 release deploy 뒤에만 반영된다.
 - `Nice=10`, control/schedule oneshot에는 idle I/O priority를 사용한다.
+
+### 5.4 보존·정리 루틴
+
+예약 실행이 끝날 때 하루 한 번(`state/maintenance.last`) 정리하고 결과를 `reports/maintenance.json`에 남긴다.
+정리는 실행을 실패시키지 않는다.
+
+| 대상 | 정책 | 설정 |
+|---|---|---|
+| `/srv/redstm/warc/*.warc.gz` | 60일 지난 파일, 그리고 예산(볼륨 10%, 2–20GiB)을 넘으면 오래된 것부터 삭제. 하루 안에 바뀐 파일은 건드리지 않음 | `REDSTM_WARC_KEEP_DAYS`, `REDSTM_WARC_MAX_BYTES` |
+| `/srv/redstm/reports/**` | 90일 지난 JSON·진단 텍스트 삭제 | `REDSTM_REPORT_KEEP_DAYS` |
+| `/srv/redstm/static` + R2 | 현재·ledger의 직전·최근 5개·7일 안의 release가 참조하지 않고 7일 지난 객체(옛 검색/게시판/작품 색인, 대체된 글 버전)를 R2에서 먼저, 그다음 로컬에서 삭제. ledger 크기를 R2 실측으로 갱신. smoke 대기 중이거나 release를 못 읽으면 건너뜀 | `publish_static.collect_static_garbage` |
+
+WARC는 원본 증거다. canonical DB가 모든 파싱 버전을 보존하므로 오래된 capture는 창과 예산 안에서만 둔다.
+장기 보관이 필요하면 삭제 전에 외부로 옮긴다(현재 자동 백업 없음, §4).
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.
   `deploy/oracle/redstm-journald.conf`는 persistent 1GiB, runtime 256MiB, 14일/1일 file rotation을

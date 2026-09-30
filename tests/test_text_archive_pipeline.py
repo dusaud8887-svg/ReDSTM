@@ -317,6 +317,7 @@ def test_arcalive_publisher_emits_work_view_without_changing_file_catalog(tmp_pa
     )
     work = work_page["items"][0]
     assert work["chapter_count"] == 2
+    assert work["post_ids"] == [108, 109]
     detail = json.loads((tmp_path / "build" / work["detail_key"]).read_text(encoding="utf-8"))
     assert [chapter["identity"] for chapter in detail["chapters"]] == [
         "arcalive:novel:108:text",
@@ -812,6 +813,61 @@ def test_novel_availability_streaming_keeps_snapshot_hash_across_pages(
     assert pointer["snapshot_id"] == hashlib.sha256(publisher._json_bytes(items)).hexdigest()
 
 
+def test_novel_availability_keeps_newtomi_item_contract(tmp_path: Path) -> None:
+    """Newtomi rejects a whole snapshot on one item outside main/side or free access."""
+    inbox = tmp_path / "inbox"
+    batch_id = "20260923T140000Z-pc-00000009"
+    _incoming_novel_batch(inbox, batch_id)
+    db_path = tmp_path / "state" / "text.sqlite"
+    receipts = inbox / "receipts"
+    importer.import_batch(inbox, batch_id, db_path, tmp_path / "objects", receipts)
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        columns = [row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")]
+        original = dict(
+            db.execute("SELECT * FROM text_archive_items WHERE lane='novel'").fetchone()
+        )
+        rows = []
+        for chapter_id, label, kind, access in (
+            ("8794078", "번외편", "SIDE_STORY", "free"),
+            ("8794079", "후기", "legacy", "free"),
+            ("8794080", "5화", "main", "point"),
+        ):
+            row = dict(original)
+            row.update(
+                identity=f"novel_chapter:toki:63670:{chapter_id}",
+                source_chapter_id=chapter_id,
+                source_url=f"https://toki31.com/novel/63670/{chapter_id}",
+                chapter_label=label,
+                chapter_kind=kind,
+                access=access,
+            )
+            rows.append(row)
+        db.executemany(
+            f"INSERT INTO text_archive_items({','.join(columns)}) "
+            f"VALUES({','.join('?' for _ in columns)})",
+            [[row[column] for column in columns] for row in rows],
+        )
+        db.executemany(
+            "INSERT INTO text_archive_publications(key,sha256,verified_at) VALUES(?,?,?)",
+            [
+                (f"item:{row['identity']}", original["content_sha256"], "2026-09-25T00:00:00Z")
+                for row in (original, *rows)
+            ],
+        )
+    publisher.build_availability_snapshot(db_path, receipts)
+    pointer = json.loads((receipts / "availability/novel/current.json").read_text(encoding="utf-8"))
+    manifest = json.loads((inbox / pointer["manifest_key"]).read_text(encoding="utf-8"))
+    items = [
+        item
+        for page in manifest["pages"]
+        for item in json.loads((inbox / page["key"]).read_text(encoding="utf-8"))["items"]
+    ]
+    kinds = {item["source_chapter_id"]: item["chapter_kind"] for item in items}
+    assert kinds == {original["source_chapter_id"]: "main", "8794078": "side", "8794079": "side"}
+    assert {item["access"] for item in items} == {"free"}
+
+
 def test_publisher_does_not_claim_an_item_imported_after_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -873,7 +929,7 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     objects = tmp_path / "objects"
@@ -1129,7 +1185,7 @@ def test_oracle_collector_probes_unknown_access_without_publishing_paid_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     sources = collector.configured_sources({})
@@ -1183,7 +1239,7 @@ def test_enabling_body_canary_queues_already_indexed_unknown_chapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REDSTM_TEXT_JSON_OWNER", "oracle")
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     sources = collector.configured_sources({})
@@ -1328,7 +1384,7 @@ def test_linked_chapter_coverage_never_skips_unverified_body(tmp_path: Path) -> 
 def test_source_cooldown_does_not_block_sibling_domain_and_unknown_blocks_need_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1367,7 +1423,7 @@ def test_ondobook_identity_requires_novel_chapter_url() -> None:
 def test_upstream_502_cools_only_failed_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1386,7 +1442,7 @@ def test_upstream_502_cools_only_failed_source(
 def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1420,7 +1476,7 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
 def test_oracle_does_not_promote_challenged_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(collector, "operation_window", nullcontext)
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
     db_path = tmp_path / "text.sqlite"
     session: Any = FakeSession(
@@ -1891,3 +1947,54 @@ def test_failed_prune_keeps_the_publish_and_is_retried(
     assert [key for key in remote if key.startswith("published/releases/")] == [
         f"published/releases/novel/{retried['release_sha256']}.json"
     ]
+
+
+def test_collector_process_runs_paced_steps_until_a_cooldown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    results = iter([{"status": "stored"}, {"status": "held"}, {"status": "cooldown"}, {}])
+    monkeypatch.setattr(collector, "run_one", lambda *_a, **_k: next(results))
+    monkeypatch.setattr(collector, "configured_sources", lambda **_: ())
+    monkeypatch.setattr(collector, "configured_body_source", lambda: None)
+    monkeypatch.setattr("sys.argv", ["collector", "--seconds", "600"])
+
+    collector.main()
+
+    report = json.loads(capsys.readouterr().out)
+    assert report == {"steps": {"cooldown": 1, "held": 1, "stored": 1}, "stop_reason": "cooldown"}
+
+    def deferred(*_a: object, **_k: object) -> dict[str, object]:
+        raise collector.RuntimeWindowError("typemoon_memory_reserved")
+
+    monkeypatch.setattr(collector, "run_one", deferred)
+    with pytest.raises(SystemExit) as stopped:
+        collector.main()
+    assert stopped.value.code == 75
+
+
+def test_old_availability_snapshots_and_receipts_are_pruned(tmp_path: Path) -> None:
+    import os
+
+    receipts = tmp_path / "receipts"
+    snapshots = receipts / "availability" / "novel" / "snapshots"
+    now = 1_900_000_000.0
+    for index, name in enumerate(["a", "b", "c", "d", "e"]):
+        path = snapshots / name
+        path.mkdir(parents=True)
+        (path / "manifest.json").write_text("{}")
+        age = (10 - index) * 86400
+        os.utime(path, (now - age, now - age))
+    # "a" is the oldest but current; b is old; c-e are the three newest.
+    assert publisher.prune_availability_snapshots(receipts, keep_id="a", now=now) == 1
+    assert sorted(path.name for path in snapshots.iterdir()) == ["a", "c", "d", "e"]
+
+    drop = tmp_path / "drop"
+    (drop / "20260101T000000Z-pc-aaaaaaaa").mkdir(parents=True)
+    old_gone = receipts / "20250101T000000Z-pc-bbbbbbbb.json"
+    old_pending = receipts / "20260101T000000Z-pc-aaaaaaaa.json"
+    recent = receipts / "20260901T000000Z-pc-cccccccc.status.json"
+    for path, age in ((old_gone, 90), (old_pending, 90), (recent, 5)):
+        path.write_text("{}")
+        os.utime(path, (now - age * 86400, now - age * 86400))
+    assert publisher.prune_receipts(receipts, drop, now=now) == 1
+    assert not old_gone.exists() and old_pending.exists() and recent.exists()

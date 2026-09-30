@@ -477,8 +477,9 @@ test("arcalive follows board/category/files even when titles look like a series"
   await page.locator("#result-list .result-item").first().click();
   await expect(page.locator("#result-list .result-title").first()).toHaveText("agr");
   await page.locator("#result-list .result-item").first().click();
+  // Posts in a category list newest first, like a board.
   await expect(page.locator("#result-list .result-title")).toHaveText([
-    "해리포터와 뛰어노는 조랑말들 1화", "해리포터와 뛰어노는 조랑말들 2화",
+    "해리포터와 뛰어노는 조랑말들 2화", "해리포터와 뛰어노는 조랑말들 1화",
   ]);
   await page.locator('[data-arcalive-view="works"]').click();
   await expect(page).toHaveURL(/view=works/);
@@ -883,7 +884,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(245, 245, 240)");
   await page.locator('[data-aa-preset="11:800"]').click();
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
-  await expect(page.locator("#aa-inline-size")).toHaveText("11px");
+  await expect(page.locator("#aa-size-output")).toHaveText("11px");
   await expect(page.locator("#archive-body font")).toHaveCSS("font-size", "11px");
   await expect(page.locator("#archive-body font")).toHaveCSS("font-weight", "700");
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("font-size", "11px");

@@ -32,7 +32,7 @@
 
 ### 2.1 대상과 상태
 
-- 대상: `text_archive_outbox`의 `kind='arcalive_post'`이면서 identity가 `:text`로 끝나는 행(텍스트 레인). `both`/`media` 레인은 ReDSTM 텍스트 장서에 없으므로 제외한다.
+- 대상: `text_archive_outbox`의 `kind='arcalive_post'`이면서 identity가 `:text` 또는 `:both`로 끝나는 행. 두 레인 모두 ReDSTM 텍스트 장서에 게시된다(2026-09-29 정정: 이전 문구는 `both`가 장서에 없다고 잘못 적었다). `media` 레인만 제외한다. 본문의 `[image]`/`[img]` 줄과, Reader처럼 아카라이브 이미지 URL만 있는 줄을 대상으로 한다.
 - 테이블(`core/storage.py`):
   - `text_media_posts(identity PK, file_path, content_sha256, status pending|done|gone|failed, attempts, next_attempt_at, last_error, updated_at)` — 글 단위 진행.
   - `text_media_items(path_key PK, identity, status ready|batched|stored|failed, file_name, content_type, bytes, sha256, width, height, batch_id, last_error, updated_at)` — 이미지 단위. 경로 키가 같으면 한 번만 받는다.

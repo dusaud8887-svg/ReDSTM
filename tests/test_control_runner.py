@@ -1720,6 +1720,50 @@ def test_fill_missing_content_keeps_full_batches_after_isolated_failure(
     ]
 
 
+def test_fill_missing_content_retries_a_killed_batch_then_names_the_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    killed = {"ok": False, "status": "failed", "safe_code": "runner_killed", "signal": 9}
+    reports = iter(
+        [
+            {"ok": True, "status": "succeeded", "selected_posts": 3, "outcomes": {"stored": 3}},
+            killed,
+            {"ok": True, "status": "succeeded", "selected_posts": 0, "outcomes": {}},
+        ]
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(runner, "_execute_report", lambda *_a, **_k: next(reports))
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda value: sleeps.append(value))
+
+    report = runner._execute_action(
+        "fill-missing-content", "fill-kill", "fill-kill", command_id="m"
+    )
+
+    assert report["status"] == "succeeded"
+    assert report["safe_code"] == "missing_content_succeeded"
+    assert sum(sleeps) == 60
+
+    always_killed = iter([killed, killed, killed])
+    monkeypatch.setattr(runner, "_execute_report", lambda *_a, **_k: next(always_killed))
+    report = runner._execute_action(
+        "fill-missing-content", "fill-kill2", "fill-kill2", command_id="m"
+    )
+    assert report["status"] == "failed"
+    assert report["safe_code"] == "runner_killed"
+
+
+def test_a_child_killed_by_a_signal_reports_runner_killed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    monkeypatch.setattr(runner, "_wait", lambda *_a, **_k: -9)
+
+    report = runner._execute_report(["true"], tmp_path / "missing.json", "run", "step")
+
+    assert report == {"ok": False, "status": "failed", "safe_code": "runner_killed", "signal": 9}
+
+
 def test_recovery_returns_to_normal_chunk_after_successful_canary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2830,3 +2874,50 @@ def test_outage_backoff_heartbeats_and_obeys_pause(
     assert len(heartbeats) == 1
     assert heartbeats[0]["active_run_id"] == "retry-test"
     assert heartbeats[0]["state"] == "degraded"
+
+
+def test_retention_prunes_old_and_over_budget_warc_but_never_fresh_files(tmp_path: Path) -> None:
+    import os
+
+    from scripts.retention import prune_files
+
+    now = 1_900_000_000.0
+    files = []
+    for name, age_days, size in (("a", 90, 10), ("b", 30, 40), ("c", 20, 40), ("d", 0.5, 40)):
+        path = tmp_path / f"{name}.warc.gz"
+        path.write_bytes(b"x" * size)
+        os.utime(path, (now - age_days * 86400, now - age_days * 86400))
+        files.append(path)
+
+    removed = prune_files(files, keep_seconds=60 * 86400, max_bytes=90, now=now)
+
+    # a is past the window; b goes to get under 90 bytes; d is too fresh to touch.
+    assert (removed.files, removed.bytes) == (2, 50)
+    assert [path.name for path in files if path.exists()] == ["c.warc.gz", "d.warc.gz"]
+
+
+def test_storage_maintenance_runs_daily_and_never_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    calls: list[str] = []
+
+    def collect(*_a: object, **_k: object) -> dict[str, Any]:
+        calls.append("gc")
+        return {"status": "clean"}
+
+    monkeypatch.setattr("scripts.control_runner.collect_static_garbage", collect)
+    (runner.profile.static_root).mkdir(parents=True, exist_ok=True)
+    (runner.profile.static_root / "release.json").write_text("{}")
+
+    first = runner._maintain_storage()
+    assert first is not None and first["static"] == {"status": "clean"}
+    assert runner._maintain_storage() is None
+    assert calls == ["gc"]
+
+    def broken(*_a: object, **_k: object) -> dict[str, Any]:
+        raise RuntimeError("rclone failed")
+
+    monkeypatch.setattr("scripts.control_runner.collect_static_garbage", broken)
+    forced = runner._maintain_storage(force=True)
+    assert forced is not None and forced["static"]["status"] == "failed"
