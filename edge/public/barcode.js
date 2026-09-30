@@ -246,6 +246,9 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
       cursor.hidden = true;
       bubble.hidden = true;
       layout();
+      // A slider always names a value; before any scrub it is the first bin.
+      track.setAttribute("aria-valuenow", "1");
+      track.setAttribute("aria-valuetext", model.bins[0] ? binLabel(entries, model.bins[0]) : text);
     },
     destroy() { resize?.disconnect(); },
   };
