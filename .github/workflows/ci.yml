@@ -44,8 +44,24 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run check
+      - run: npm run lint
       - run: npx playwright install --with-deps chrome
+      - name: Generate initial Linux visual baselines
+        if: hashFiles('edge/e2e/visual.spec.js-snapshots/*.png') == ''
+        run: npx playwright test --project visual --update-snapshots
+        env:
+          VISUAL: "1"
       - run: npm run test:e2e
+        env:
+          VISUAL: "1"
+      - name: Upload Linux visual baselines and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: edge-visual-linux
+          path: |
+            edge/e2e/visual.spec.js-snapshots
+            edge/test-results
       - name: Validate empty and existing-schema D1 migrations
         run: npm run test:d1
       - run: npx wrangler deploy --dry-run --strict

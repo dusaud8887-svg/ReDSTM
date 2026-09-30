@@ -1158,6 +1158,7 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 
 - P0-1: 호출부·CSS 선택자 사용 확인 후 삭제 가능한 죽은 코드 없음. Biome error 5건(콜백 반환 3, 표현식 대입 1, 테스트 중복 키 1) 수정. 손으로 편집한 파일 4개(이 기록 포함).
 - P0-1 검증: `npm test` 108/108, `npm run check` 통과, `npm run lint` 0 error(기존 warning 7/info 2), Playwright 전체 510 pass/14 skip, axe 4폭 통과. 공개 동작·저장 스키마 변화 없음.
+- P0-2a: 시각 fixture 48개(light/dark × 384/768/1440 × 8화면), Linux CI 초기 기준 생성·비교·artifact 업로드, CI lint gate 연결. `check`에 새 spec 포함. 로컬 공통 검증은 108 unit/510 E2E/14 기존 skip·axe·check·lint 통과. Linux 생성 기준선은 P0-2b에서 가져와 커밋 후 다시 비교한다(Windows 기준 생성 없음). 편집 5파일.
 - 실기기 확인 대기(M0): Back·시트·popover 중첩(T03/T04), 글꼴 도착 후 위치(T20), 키보드(T34), Playwright `_android` 연결 여부. F0 연결 뒤 확인.
 
 | 날짜 | 내용 |
