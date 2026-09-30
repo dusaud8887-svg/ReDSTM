@@ -1189,6 +1189,8 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - P0-2b: [Linux CI 36698362728](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36698362728) 성공. 생성 48개(46.2초), 전체 558 pass/14 기존 skip(8.2분), axe·unit·check·lint 및 python/text-edge job 통과. 해당 artifact의 PNG 48개를 그대로 커밋. M0 시각 변화 없음 기준선으로 사용하며, 이후 시각 개편 티켓은 Linux에서 새 기준 생성·시안 대조 후 비교한다.
 - P0-3: 버전 글꼴·vendor의 성공 응답에 public 1년 immutable(HTML fallback/실패 응답 제외). Access JWT 검증을 통과한 email로만 `GET /api/v1/me`의 SHA-256 앞 16자리 ownerHash를 계산하며 응답은 private/no-store. Basic·서비스 토큰·미인증 거절, 다른 계정 hash 분리 테스트 추가. 문서 3개 포함 편집 5파일. `npm test` 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(4.1분), axe 4폭 통과.
 - 실기기 확인 대기(M0): Back·시트·popover 중첩(T03/T04), 글꼴 도착 후 위치(T20), 키보드(T34), Playwright `_android` 연결 여부. F0 연결 뒤 확인.
+- P0-4 원인: `/`에서 TypeMoon worker 준비 전 텍스트 Reader를 연 경우 `routeHandled=false` 때문에 늦은 `ready` 응답이 텍스트 경로를 다시 열었다. trace에서 설정 시트 표시 직후 본문 중복 요청과 시트 닫힘 확인(수정 전 10회 중 1회 실패). 현재 목적지가 text면 독립 초기화를 존중하도록 수정. 응답을 설정 시트 표시 뒤로 고정한 회귀 테스트로 모바일 10/10 통과(15.8초), timeout 변경 없음.
+- P0-4 검증: unit 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(3.6분), axe 4폭 통과. 편집 3파일. P0-3 Linux CI 36700298564도 성공(시각 기준선 비교 포함).
 
 | 날짜 | 내용 |
 |---|---|

@@ -272,7 +272,9 @@ test("shows a row skeleton until the archive index is ready", async ({ page }) =
 });
 
 test("keeps text reading, search, settings, and bookmarks inside the shared Reader", async ({ page }) => {
-  await useCollectionFixture(page);
+  let releaseResponse;
+  const releaseGate = new Promise((resolve) => { releaseResponse = resolve; });
+  await useCollectionFixture(page, { releaseGate: () => releaseGate });
   const releaseHash = "d".repeat(64);
   const catalogHash = "e".repeat(64);
   const detailHash = "c".repeat(64);
@@ -318,6 +320,9 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   const mobileText = page.viewportSize().width < 760;
   await page.locator(mobileText ? "#reader-bottom-settings" : "#reader-settings").click();
   await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
+  // A late TypeMoon boot must not reopen the independent text Reader.
+  releaseResponse();
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await page.locator(mobileText ? "#reader-top-bookmark" : "#bookmark-post").click();
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");

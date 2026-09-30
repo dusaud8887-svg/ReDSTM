@@ -2090,7 +2090,7 @@ function handleWorkerMessage({ data }) {
     populateBoardFilter();
     elements["result-list"].classList.remove("loading");
     // The text library boots on its own (see the end of this module); do not reset it here.
-    const textAlreadyOpen = routeHandled && currentDestination === "text";
+    const textAlreadyOpen = currentDestination === "text";
     if (!textAlreadyOpen) renderCover();
     if (routeSummary()) requestSearch();
     savedEntriesReady = hydrateSavedEntries();
