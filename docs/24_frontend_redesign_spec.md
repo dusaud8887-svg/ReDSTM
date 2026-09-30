@@ -24,8 +24,13 @@
 2. §17 결정은 확정됐다. **보류(pass) 항목**(동기화 M5 일부, RUM, `/ops` 매핑)은 구현하지 않는다.
 3. 작업 단위는 §15 티켓. 티켓당 **손으로 편집하는 파일 ≤ 5**(저장소 규칙). 새 테스트 파일·문서도 센다.
    생성·복사한 바이너리(글꼴, vendor, screenshot 기준 이미지)는 세지 않는다. 넘치면 티켓을 쪼갠다.
-4. 모든 티켓의 공통 완료 조건: `npm test` · `npm run check` · `npm run lint`(M0 이후 0 error) · Playwright 전체 · axe 통과.
-   **+ 그 티켓에 적힌 실기기 확인**(S22+ Chrome, 가능하면 Samsung Internet). 기대 문구가 바뀌면 같은 티켓에서 테스트를 고친다.
+4. 티켓마다 `npm test` · `npm run check` · `npm run lint`(M0 이후 0 error), 변경과 관련된 E2E spec을
+   `--project=desktop --project=mobile --workers=2`로 실행하고 적힌 T 번호를 검증한다. `reader-session`, `store/user-state`,
+   `overlay-manager`, `app.js` 라우팅, CSS 분할·토큰(P1-1/P1-2), `sw/offline`을 바꾸면 Playwright 전체를 추가한다.
+   마일스톤 끝에는 모든 project의 Playwright 전체 + axe + visual, §19 기록, main 병합·push와 CI 통과를 확인한다.
+   실패 재실행은 `--last-failed`, 동시 실행은 2(Windows ERR_NO_BUFFER_SPACE). 시각 기준선·로컬 visual 차이는 Linux CI로 판단한다.
+   실기기 항목은 §14.5 확인 대기에 쌓고 계속 진행한다. 같은 원인 실패가 독립 검증에서 두 번 넘게 반복되면 trace를 보존하고
+   원인 가설·확인한 것·선택지를 보고한다. 기대 문구가 바뀌면 같은 티켓에서 테스트를 고친다.
 5. **E2E가 쓰는 id는 유지**(`grep -ohE 'locator\("#[^"]+' edge/e2e | sort -u`). 모양은 class로, 구조를 바꿔도 id는 같은 의미의 요소로 옮긴다.
 6. 300줄 넘는 파일을 구조 변경하기 전에 Step 0(죽은 코드·미사용 export 제거)을 별도 커밋.
 7. 외부 라이브러리는 `import … from "/vendor/<name>@<ver>/<file>.js"`만(bare import 금지). 새 라이브러리 추가 순서:
@@ -1141,11 +1146,15 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - 반드시 먼저 읽기: docs/24_frontend_redesign_spec.md(v3, §0·§5·§12·§15·§17), DESIGN.md(v2.2)
 - 새 라이브러리 조사·프레임워크 재선정 금지. §17의 보류(pass) 항목은 구현하지 않는다.
 - 티켓 순서대로, 티켓당 손으로 고치는 파일 5개 이하, 티켓마다 커밋.
-- 티켓 완료 조건: npm test · npm run check · npm run lint · Playwright 전체 · axe 통과 + 티켓에 적힌 T 번호.
+- 티켓 완료 조건: npm test · npm run check · npm run lint + 관련 E2E spec(desktop/mobile, workers=2) + 적힌 T 번호.
+- reader-session, store/user-state, overlay-manager, app.js 라우팅, CSS 분할·토큰(P1-1/P1-2), sw/offline 변경은 Playwright 전체도 실행한다.
+- 마일스톤 끝에는 Playwright 전체(모든 project) + axe + visual. 기준선과 로컬 visual 차이는 Linux CI로 판단한다.
+- 실패 재실행은 --last-failed. 같은 원인 실패가 독립 검증에서 두 번 넘게 반복되면 trace를 보존하고 가설·확인한 것·선택지를 보고한다.
 - E2E가 쓰는 id는 유지. 저장 형식을 옮기는 작업은 원본을 지우지 않는 롤백 경계를 둔다.
 - 설계와 다르게 해야 할 근거가 생기면 멈추고 근거와 선택지를 보고한다.
 - 마일스톤이 끝나면 docs/24 §19에 결과를 적고 main에 병합·푸시한 뒤 CI 결과를 확인한다.
 - 마지막에 내가 S22+ 실기기에서 확인할 목록(§14.5 해당 행)을 짧게 정리해 준다.
+- 실기기에서는 멈추지 않고 확인 대기에 쌓는다. S4 미확인/불가이면 P6-1 듣기를 건너뛰고 §19에 기록한다.
 ```
 
 ### 18.3 마일스톤별 지시문 (공통 지시문 뒤에 붙인다)
@@ -1182,6 +1191,8 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 ## 19. 변경 기록
 
 ### 구현 진행 (2026-09-30)
+
+- 사용자 검증 지시 변경: §0-4·§18.2를 티켓별 관련 E2E(desktop/mobile) + 공통 기반 변경 시 전체, 마일스톤 전체/axe/Linux visual/CI 방식으로 갱신. workers=2·실패 --last-failed 유지. 현재 F0-2b/c·F0-3a/b는 커밋 완료(`343b3ca`, `d8e2b0a`, `a1046bf`, `8742afc`). F0-4 구현/검증 중이며 P6-1은 S4가 가능으로 확인될 때만 구현한다.
 
 - P0-1: 호출부·CSS 선택자 사용 확인 후 삭제 가능한 죽은 코드 없음. Biome error 5건(콜백 반환 3, 표현식 대입 1, 테스트 중복 키 1) 수정. 손으로 편집한 파일 4개(이 기록 포함).
 - P0-1 검증: `npm test` 108/108, `npm run check` 통과, `npm run lint` 0 error(기존 warning 7/info 2), Playwright 전체 510 pass/14 skip, axe 4폭 통과. 공개 동작·저장 스키마 변화 없음.
