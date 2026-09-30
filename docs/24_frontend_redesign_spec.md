@@ -1225,6 +1225,9 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - S1(페이지 배치): Windows Chrome 154.0.8037.58, 384×844 → 844×384, 원문 10만 자 + 블록 경계/ruby 베이스 = 모델 100,169 UTF-16자. 명조 준비 후 columns 적용→scrollWidth 강제 배치 7회: 10.6/11.8/9.6/9.0/8.1/7.9/9.8ms, 중앙값 9.6ms·최대 11.8ms. 184쪽, 60% 지점 offset 59,957을 회전 뒤 134쪽에서 같은 Range로 복원하여 화면 안 유지. 긴 SVG 이미지 높이 제한·짧은 마지막 쪽의 끝 문자 표시·두 줄 rt DOM 보존 확인. 실행 결과 `.wrangler/s1-result.json`(코드는 커밋하지 않음).
 - S1 분기: 로컬 배치 게이트 150ms 미만이므로 M2는 §8.10의 전체 columns+transform부터 구현한다. S22+ 실제 진입 시간은 미확인. 초과하면 문단 약 2만 자로 구간을 만들고 현재 구간만 columns, 경계에서 다음 구간을 붙이며 locator 원문 offset은 유지한다. 주소창/회전/이미지/ruby 실기기 T02와 실제 전체 모드 진입 비용은 M2 확인 대기에 추가한다.
 - S1 검증: unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(55.9초). 스파이크 assertion(끝 문자·이미지 높이·원문 Range 회전 복원) 통과. 편집 1파일(측정 결과 기록만).
+- S3(캐시 재생): 가능(로컬 Chrome native module SW/Cache Storage). Node 24의 실제 zstd 압축 HTTP 응답을 `/archive/posts/board_a/1-<sha>.json.zst`로, UTF-8 본문을 `/api/v1/text/object/<sha>`로 제공하고 셸과 함께 3개 응답을 저장했다. persistent Chrome을 완전히 닫은 뒤 같은 profile의 새 context를 offline으로 시작: 셸·한글 JSON·텍스트 원문 모두 재생, cold start 뒤 HTTP 요청 0건. 캐시 응답의 `Content-Encoding: zstd`도 유지한 채 `response.json()` 성공. `.wrangler/s3-result.json`에 측정 보관(스파이크 SW 코드는 커밋하지 않음).
+- S3 분기: M4에서 `.json.zst`를 오프라인 대상에 포함한다. 저장 대상으로 사용자가 선택한 작품만 다루며 실제 §12.6.1 순서·인증 응답 검사·owner namespace·중단/재개는 M4에서 검증한다. S22+/Samsung Internet의 탭 종료 후 단절 T07은 확인 대기.
+- S3 검증: native SW cold start assertion 통과, unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(56.9초). 편집 1파일(결과 기록만).
 
 | 날짜 | 내용 |
 |---|---|
