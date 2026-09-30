@@ -89,3 +89,17 @@ test("without CloseWatcher Escape closes one bar and native dialogs retain their
   assert.equal(closes, 1);
   assert.equal(manager.layers.length, 0);
 });
+
+test("a bar closed from its own button leaves the stack and destroys its watcher", () => {
+  const destroyed = [];
+  class Watcher extends EventTarget { destroy() { destroyed.push(true); } }
+  const closed = [];
+  const manager = createOverlayManager({ CloseWatcher: Watcher, onClose: (layer) => closed.push(layer) });
+  let hidden = 0;
+  manager.openBar("find-bar", () => { hidden += 1; });
+  assert.equal(manager.closeLayer("find-bar"), true);
+  assert.equal(hidden, 1);
+  assert.deepEqual(destroyed, [true]);
+  assert.deepEqual(closed, [{ id: "find-bar", kind: "bar", reason: "cancel" }]);
+  assert.equal(manager.closeLayer("find-bar"), false);
+});

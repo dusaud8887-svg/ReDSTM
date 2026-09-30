@@ -43,6 +43,7 @@ import { fillContinueCard, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
+import { createFind } from "/find.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
@@ -234,6 +235,50 @@ const textLibrary = createTextLibrary({
     updateShellMode();
     if (currentDestination === "text") applyTextSortOptions();
   },
+});
+
+// Find in the chapter (docs/24 §8.11): the bar takes the dock's place and, after moving through
+// hits, closing it offers the place the reader was before.
+const find = createFind({
+  bar: document.querySelector("#find-bar"),
+  input: document.querySelector("#find-input"),
+  count: document.querySelector("#find-count"),
+  band: document.querySelector("#find-band"),
+  root: () => elements["archive-body"],
+  scroller: elements["reader-pane"],
+  topInset: () => readerTopInset(),
+  overlays,
+  session: {
+    get generation() { return readerSession.generation; },
+    markUserScroll: () => readerSession.markUserScroll(),
+    capturePosition: () => readerSession.adapter?.captureVisiblePosition() ?? null,
+  },
+});
+let findReturnTimer = null;
+let findReturnAnchor = null;
+function openFind() {
+  if (!readerSource) return;
+  find.open((anchor) => {
+    if (!anchor) return;
+    findReturnAnchor = anchor;
+    const toast = document.querySelector("#find-return");
+    overlays.showToast(toast);
+    clearTimeout(findReturnTimer);
+    findReturnTimer = setTimeout(() => overlays.hideToast(toast), 4000);
+  });
+}
+for (const id of ["reader-find", "reader-toolbar-find"]) document.querySelector(`#${id}`).addEventListener("click", openFind);
+document.querySelector("#more-find").addEventListener("click", () => {
+  elements["reader-more"].close();
+  openFind();
+});
+document.querySelector("#find-next").addEventListener("click", () => find.next());
+document.querySelector("#find-previous").addEventListener("click", () => find.previous());
+document.querySelector("#find-close").addEventListener("click", () => find.close());
+document.querySelector("#find-return-button").addEventListener("click", () => {
+  overlays.hideToast(document.querySelector("#find-return"));
+  if (findReturnAnchor && readerSession.restore(findReturnAnchor)) syncScrollBaseline();
+  findReturnAnchor = null;
 });
 
 const miniBar = createMiniBar({ element: document.querySelector("#mini-bar"), homeCard: elements["continue-block"] });
@@ -4829,6 +4874,9 @@ document.addEventListener("keydown", (event) => {
     readerCommand("next");
   } else if (event.key.toLowerCase() === "b") {
     readerCommand("bookmark");
+  } else if (event.key.toLowerCase() === "g" && readerSource) {
+    event.preventDefault();
+    openFind();
   } else if (event.key.toLowerCase() === "f" && readerSource) {
     setImmersive(!document.body.classList.contains("immersive"));
   } else if (event.key === "?" && !isNarrowScreen()) {
@@ -4871,6 +4919,10 @@ function updateKeyboardState() {
   const editing = document.activeElement?.matches?.("input:not([type='range'], [type='color'], [type='file']), textarea, [contenteditable]");
   const shrunk = window.visualViewport ? window.visualViewport.height < innerHeight * 0.75 : false;
   document.body.classList.toggle("keyboard-open", Boolean(editing && shrunk));
+  // Without the VirtualKeyboard API the find bar rides above the keyboard by this offset.
+  const viewport = window.visualViewport;
+  const keyboard = viewport && !navigator.virtualKeyboard ? Math.max(0, innerHeight - viewport.height - viewport.offsetTop) : 0;
+  document.documentElement.style.setProperty("--keyboard-offset", `${Math.round(keyboard)}px`);
   readerSession.setKeyboardOpen(editing && shrunk);
 }
 window.visualViewport?.addEventListener("resize", updateKeyboardState);

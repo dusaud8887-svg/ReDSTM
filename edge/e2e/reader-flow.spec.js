@@ -1503,3 +1503,41 @@ test("A text work shows its cover and barcode, and the barcode opens a chapter",
   await expect(page.locator("#reader-title")).toContainText("40화");
 });
 
+
+// docs/24 §8.11 · T34: find paints hits without touching the body, moves to them, and closing
+// offers the place before the first move.
+test("Find in the chapter counts hits, moves to them, and offers the place it started from", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const bodyBefore = await page.locator("#archive-body").innerHTML();
+  const startTop = await page.locator("#reader-pane").evaluate((pane) => pane.scrollTop);
+  await page.locator(mobileWidth(page) ? "#reader-find" : "#reader-toolbar-find").click();
+  const input = page.locator("#find-input");
+  await expect(input).toBeFocused();
+  await input.fill("본문 3");
+  // "본문 3", "본문 30" … "본문 39": 11 hits in document order.
+  await expect(page.locator("#find-count")).toHaveText("1/11");
+  expect(await page.evaluate(() => CSS.highlights.get("redstm-find")?.size)).toBe(11);
+  await input.press("Enter");
+  await input.press("Enter");
+  await expect(page.locator("#find-count")).toHaveText("2/11");
+  const moved = await page.locator("#reader-pane").evaluate((pane) => pane.scrollTop);
+  expect(moved).toBeGreaterThan(startTop);
+  expect(await page.locator("#archive-body").innerHTML()).toBe(bodyBefore);
+  if (mobileWidth(page)) await expect(page.locator(".reader-bottom")).toBeHidden();
+  await page.locator("#find-close").click();
+  await expect(page.locator("#find-bar")).toBeHidden();
+  expect(await page.evaluate(() => CSS.highlights.has("redstm-find"))).toBe(false);
+  await page.locator("#find-return-button").click();
+  await expect.poll(() => page.locator("#reader-pane").evaluate((pane) => pane.scrollTop)).toBeLessThan(moved);
+  // g opens it again from the keyboard; Escape closes it as one layer.
+  if (!mobileWidth(page)) {
+    await page.locator("#archive-body").click();
+    await page.keyboard.press("g");
+    await expect(page.locator("#find-bar")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#find-bar")).toBeHidden();
+    await expect(page.locator("#reader")).toBeVisible();
+  }
+});

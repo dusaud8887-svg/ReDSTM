@@ -1281,6 +1281,9 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-14: U2 동작(기본값 아닌 조건만 칩 + ✕ 해제, 나머지는 필터 시트, `필터 N`)은 이미 있어 계약 유지. 칩을 DESIGN §7.1 규격으로(32px, 꺼짐 surface-2/ink-2, 켜짐 accent-soft/accent + ✓, 비활성 ink-3), 조건 줄을 한 줄 가로 스크롤(44px 터치 줄)로. 편집 1파일(library.css).
 
+- P1-13 전체 E2E(worktree): 558 pass/2 fail/16 skip. medium `side list`(두 번째 발생)·compact `list sort … Back` 모두 P1-11b의 텍스트 작품 머리(L/M 표지 + 바코드)가 목록 위 고정 영역을 키워 목록 칸이 좁아진 것이 원인(표지·바코드를 각각 빼면 통과로 확인). P1-11d: 텍스트 작품 머리는 목록 위에 고정되므로 S 표지, Reader 옆 좁은 목록(`reading-context`)에서는 표지·바코드 숨김. 두 테스트 4폭 통과.
+- P1-15: `find.js` — 텍스트 모델 검색 사본에서 찾고 원문 offset→Range(`findMatches` 순수 테스트: 공백 접힘·전각·대소문자·상한 1000), Custom Highlight `redstm-find`/`-current`(본문 DOM 불변 E2E), 첫 이동은 화면 위 첫 결과, 결과를 화면 위 1/3로, 위치 띠 tick, 첫 이동 전 위치를 어댑터에서 직접 잡아(키보드 중 저장 정지와 무관) 닫을 때 `돌아가기` 토스트 4초(action toast, top layer). 찾기 바는 도크 자리(열리면 도크 숨김), bar 층으로 overlay 관리자 등록(CloseWatcher는 여는 클릭 안에서) + 관리자에 `closeLayer(id)` 추가(자체 ✕도 스택 정리, 단위 테스트). 키보드 위 배치: VirtualKeyboard `overlaysContent` + `env(keyboard-inset-height)`, 없으면 visualViewport 차이 `--keyboard-offset`. 진입: 모바일 context bar·데스크톱 도구줄·더보기 `본문 찾기`·단축키 `g`. 입력은 `type=text`(search 타입은 Esc를 지우기로 먹어 닫기 요청이 안 감). 범위 칩 `작품 전체`는 KWIC(P6-3)와 함께. 미지원 브라우저는 개수·이동만. 실기기: 찾기 바 키보드 위(T34) 확인 대기.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
