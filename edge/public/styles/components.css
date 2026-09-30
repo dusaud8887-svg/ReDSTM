@@ -112,3 +112,35 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .type-cover-progress.mine { background: linear-gradient(to right, var(--ribbon) var(--cover-progress, 0%), transparent 0); }
 .type-cover-offline { position: absolute; right: 6px; bottom: 6px; width: 12px; height: 12px; border: 2px solid var(--ink-2); border-top: 0; border-radius: 0 0 3px 3px; }
 .badge-new { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* Episode barcode (DESIGN §7.4): read ink 45%, reading ribbon, unread line-strong, missing dashed,
+   new episodes a 2px accent line on top. One scrub area; the strip picks the episode. */
+.barcode { display: grid; gap: 6px; }
+.barcode-summary { margin: 0; font-size: 14px; font-weight: 600; }
+.barcode-track { position: relative; height: 44px; display: flex; align-items: center; touch-action: pan-y; cursor: pointer; border-radius: 4px; }
+.barcode-track:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.barcode-track svg, .barcode-mini { display: block; width: 100%; height: 24px; overflow: visible; }
+.barcode-mini { height: 8px; }
+:is(.barcode-track, .barcode-mini) .bin.read { fill: var(--other-progress); }
+:is(.barcode-track, .barcode-mini) .bin.reading { fill: var(--ribbon); }
+:is(.barcode-track, .barcode-mini) .bin.unread { fill: var(--line-strong); }
+:is(.barcode-track, .barcode-mini) .bin.missing { fill: none; stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 2; }
+:is(.barcode-track, .barcode-mini) .bin-fresh { fill: var(--accent); }
+.barcode-cursor { position: absolute; top: 6px; bottom: 6px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink); pointer-events: none; }
+.barcode-bubble { position: absolute; bottom: calc(100% - 2px); width: max-content; max-width: 240px; padding: 4px 8px; border-radius: 6px; background: var(--ink); color: var(--surface); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.barcode-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: var(--ink-2); font-size: 12px; }
+.barcode-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 2px; vertical-align: -1px; }
+.barcode-legend i.read { background: var(--other-progress); }
+.barcode-legend i.reading { background: var(--ribbon); }
+.barcode-legend i.unread { background: var(--line-strong); }
+.barcode-legend i.missing { border: 1px dashed var(--ink-3); }
+.barcode-legend i.fresh { height: 3px; vertical-align: 3px; background: var(--accent); }
+.barcode-strip { display: grid; gap: 8px; padding: 10px; border-radius: var(--radius-control); background: var(--surface-2); }
+.barcode-strip-list { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+.barcode-option { flex: 0 0 auto; min-width: 48px; min-height: 40px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.barcode-option.read { color: var(--ink-2); }
+.barcode-option.reading { box-shadow: inset 0 -2px 0 var(--ribbon); }
+.barcode-option:disabled { border-style: dashed; color: var(--ink-3); cursor: default; }
+.barcode-option[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.barcode-go { justify-self: end; min-height: 40px; padding: 0 16px; border: 0; border-radius: var(--radius-control); background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
+.barcode-go:disabled { background: var(--line); color: var(--ink-3); cursor: default; }

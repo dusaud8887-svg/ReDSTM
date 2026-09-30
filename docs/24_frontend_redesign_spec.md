@@ -1269,6 +1269,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-9: `home.js`(서가 카드·이어읽기 카드 표지/문장/상대 시간) + 서재 순서 재구성(검색 → 첫 방문 온보딩 → 이어읽기 카드 → 읽던 작품 서가(표지 M 가로, 넓은 화면 격자, 최대 8) → 자주 보는 게시판 → 오늘의 발견 → 최근 목록 → 제목·신선도 줄). 오류 제목일 때만 머리 문구가 맨 위(`home-alert`). 빈 모듈 숨김(최근 읽은 글 포함). 마지막 문장은 `reading-model.lastSentenceQuote(loc)`: 저장 locator의 prefix+exact+suffix에서 저장 위치를 담은 문장 시작부터(맥락이 문장 중간에서 시작하면 저장 위치부터), 원문 외 문구 없음, 120자·CSS 두 줄. 텍스트 `readingWorks`에 `workId`·`progress` 추가(편집 6파일 — 표지 키에 필요한 한 줄). 설정 `서재에 마지막 문장 보이기`는 설정 재구성(P2-2)에서 추가. 미니바 점은 작품색(컬렉션 밖 글 키 — 카드의 컬렉션 색과 다를 수 있음, P1-11에서 정리). E2E: 온보딩·문장.
 
+- P1-10: `barcode.js` — 순수 `barcodeModel(entries, width, {mode})`(bin 목표 3px, 순서 균등 기본·`분량 보기`는 글자 수 비례이되 bin마다 한 화 이상, 상태 우선순위 읽는 중>누락>안 읽음>읽음, 새 화 윗선), 요약 문장·bin 라벨, SVG 렌더(칸별 버튼 없음), 한 스크럽 영역(pointer capture, 말풍선, 놓으면 확대 띠에서 회차 선택 → `이 회차로`), 키보드 `role=slider` ←→/Home/End/Enter, 비대화형 `miniBarcode`. T27 모델: 10,000화 400 bin < 16ms(단위). 화면 연결은 P1-11.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
