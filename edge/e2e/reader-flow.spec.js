@@ -1416,8 +1416,11 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   const list = page.locator("#result-list");
   await list.evaluate((element) => { element.scrollTop = 600; });
   await expect(bar).toHaveClass(/folded/);
+  // Out of sight is out of the tab order too.
+  await expect(bar).toHaveJSProperty("inert", true);
   await list.evaluate((element) => { element.scrollTop = 200; });
   await expect(bar).not.toHaveClass(/folded/);
+  await expect(bar).toHaveJSProperty("inert", false);
   // The list keeps room for the bar and the tabs together.
   const listBottom = await page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom));
   expect(listBottom).toBeGreaterThanOrEqual(102);
@@ -1468,6 +1471,13 @@ test("The work barcode summarises a long run and opens an episode picked on its 
   await track.focus();
   await track.press("ArrowRight");
   await expect(track).toHaveAttribute("aria-valuetext", /편–\d+편 · (읽는 중|안 읽음 포함)/);
+  // A narrower bar regroups the bins but keeps the chosen episode and a valid value.
+  await track.press("End");
+  const size = page.viewportSize();
+  await page.setViewportSize({ width: Math.max(320, Math.round(size.width / 2)), height: size.height });
+  await expect(track).toHaveAttribute("aria-valuetext", /3000편 · /);
+  expect(Number(await track.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(Number(await track.getAttribute("aria-valuemax")));
+  await page.setViewportSize(size);
   await track.press("Home");
   await expect(track).toHaveAttribute("aria-valuetext", /^1편–\d+편 · 읽는 중/);
   await track.press("Enter");

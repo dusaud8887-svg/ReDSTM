@@ -52,3 +52,14 @@ test("T27: a 10,000-episode model is built within a frame", () => {
   assert.ok(elapsed < 16, `${elapsed}ms`);
   assert.equal(bins.filter((bin) => bin.state === "reading").length, 1);
 });
+
+test("분량 보기 widths follow length even when each bin holds one episode", () => {
+  const entries = episodes(2).map((entry, index) => ({ ...entry, weight: index ? 99 : 1 }));
+  const { bins } = barcodeModel(entries, 300, { mode: "length" });
+  assert.equal(bins.length, 2);
+  assert.equal(bins[0].w, 3);
+  assert.equal(bins[1].x, 3);
+  assert.equal(bins[1].w, 297);
+  const order = barcodeModel(entries, 300);
+  assert.deepEqual(order.bins.map((bin) => bin.w), [150, 150]);
+});

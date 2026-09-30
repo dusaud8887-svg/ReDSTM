@@ -1275,6 +1275,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-12(측정 우선, §11.2 게이트): 3,000/10,000편 목차에서 먼 회차 이동은 이미 예산 안(18–64ms, ≤300ms)이었으나 **목차에서 회차를 열면 3,000편 2.2초·10,000편 30.7초**. CPU 프로파일에서 `captureListAnchor`가 화면 위 모든 행에 `getBoundingClientRect`를 호출(선형 탐색)한 것이 원인 → 문서 순서의 단조 위치로 이진 탐색(숨은 행 대비 앞 한 칸부터 확인). 결과 열기 47/317ms·Back 160/454ms(3,000/10,000, 모바일 폭, in-page 측정). `content-visibility: auto`도 시도했으나 추정 높이 때문에 목차 복귀 위치가 39px 어긋나(기존 `200 → next → next → Back` 테스트) 적용하지 않음. 전체 DOM 방식으로 예산을 충족하므로 TanStack Virtual 조건부 설치·목표 구간 우선 렌더는 하지 않음. T18 E2E(`long-list.spec.js`, trace off): 3,000편 먼 이동 <300ms·초점·Back 후 행 복원. 10,000편은 Playwright locator가 1만 행 DOM에서 제시간에 응답하지 못해(앱은 idle, 행 존재 확인) 측정 스크립트 값으로 기록한다.
 
+- P1-11c(지원 에이전트 위험 검토 R03·R06·R07 재현 항목 반영): 접힌 미니바를 `inert`로 초점·접근성 트리에서 제외(T28 E2E에 inert 확인 추가), `분량 보기` bin의 x·폭을 누적 분량 비례로(한 bin 한 화여도 1:99가 3:297px), 포인터 bin 판정을 x 기준 이진 탐색으로, resize 뒤 같은 회차를 담은 bin으로 `aria-valuenow`·커서 재정렬(E2E: End → 폭 절반 → 값 ≤ max·같은 회차). 분량 모드 UI는 아직 연결 전이며 `char_count` 메타데이터가 없어 bytes로 대체하지 않는다(R 문서의 계약 표).
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
