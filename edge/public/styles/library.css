@@ -397,3 +397,14 @@ body.reading .home { display: none; }
 .shelf-card .type-cover-source { color: var(--ink-2); font-size: 12px; }
 .shelf-card .home-badge { justify-self: start; margin: 0; font-size: 12px; }
 @media (min-width: 760px) { .shelf { flex-wrap: wrap; overflow: visible; } }
+
+/* Work header (docs/24 §8.6): cover beside the serif title, then actions and the barcode. */
+.work-head { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: end; gap: 16px; }
+.work-cover { display: flex; }
+.work-head-copy { min-width: 0; }
+.collection-view-header h1 { font-family: var(--font-display); font-weight: 700; }
+.work-barcode { margin-top: 20px; }
+@media (max-width: 759px) {
+  .work-head { align-items: start; gap: 14px; }
+  .collection-view-header h1 { font-size: 24px; }
+}

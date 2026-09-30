@@ -1451,3 +1451,28 @@ test("Home greets a first visit with sources and later quotes the last sentence 
   await expect(page.locator("#continue-cover .type-cover")).toBeVisible();
   await expect(onboarding).toBeHidden();
 });
+
+// T27 (browser part): the work barcode summarises the run, draws within a frame, and picks an
+// episode by keyboard through the magnified strip.
+test("The work barcode summarises a long run and opens an episode picked on its strip", async ({ page }) => {
+  await useLongCollection(page, 3000);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.goto("/collections/1");
+  const barcode = page.locator("#collection-barcode");
+  await expect(barcode.locator(".barcode-summary")).toHaveText("3,000화 중 0화 읽음");
+  expect(Number(await barcode.getAttribute("data-render-ms"))).toBeLessThan(16);
+  await expect(page.locator("#collection-cover .type-cover")).toBeVisible();
+  const track = barcode.getByRole("slider");
+  await expect(track).toHaveAccessibleName(/회차 바코드: 3,000화 중 0화 읽음/);
+  await track.focus();
+  await track.press("ArrowRight");
+  await expect(track).toHaveAttribute("aria-valuetext", /편–\d+편 · (읽는 중|안 읽음 포함)/);
+  await track.press("Home");
+  await expect(track).toHaveAttribute("aria-valuetext", /^1편–\d+편 · 읽는 중/);
+  await track.press("Enter");
+  const options = barcode.locator(".barcode-option");
+  await options.nth(2).click();
+  await barcode.getByRole("button", { name: "이 회차로" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("3편 제목");
+});

@@ -41,6 +41,7 @@ import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme
 import { createMiniBar } from "/shell.js";
 import { fillContinueCard, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
+import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -2925,6 +2926,15 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     }
     elements["collection-entry-list"].replaceChildren(fragment);
     elements["collection-entry-list"].dataset.collectionId = collection.id;
+    fillWorkCover(document.querySelector("#collection-cover"), {
+      title: collection.title, source: "타입문넷", hueKey: workKey({ source: "typemoon", id: collection.id }),
+      progress: available.length ? finishedEntries.length / available.length : null,
+    });
+    // The barcode picks an episode through its row, so the list's own navigation stays the one path.
+    showWorkBarcode(document.querySelector("#collection-barcode"), collection.entries.map((entry) => ({
+      position: entry.position, label: `${entry.position}편`, missing: !entry.object_key, current: entry === lastRead,
+      finished: postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) === "finished",
+    })), (entry) => elements["collection-entry-list"].querySelector(`.collection-entry[data-key="${entry.position}"]`)?.click());
     document.title = `${collection.title} — ReDSTM`;
     const route = `/collections/${collection.id}`;
     if (navigation === "push") {
