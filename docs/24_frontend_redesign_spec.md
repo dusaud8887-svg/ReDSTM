@@ -1222,6 +1222,9 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - F0-4 검증: unit 125/125, check·lint 0 error, 전체 E2E 526 pass/14 기존 skip(4.5분), axe 4폭 통과. 별도 실제 Chrome IDB 실행에서 outbox 중복 키 ConstraintError로 변경 2건 모두 rollback, 이전 작품/receipt 유지, 다른 namespace는 빈 목록 확인. localStorage 쓰기 후 IDB 실패를 주입해 원본 `{"scroll":999}` 유지·재조정 1건·재실행 0건 확인. 기존 저장 키 이전/삭제 없음.
 - F0-2d 보강: Linux CI 36712628623에서 `A work not started…` medium/mobile 진행률 0 재발(다음 CI 36713560970은 전체/axe/visual 성공). 실패 trace를 `.wrangler/f0-3a-ci-failure`에 보존. 글꼴 응답·script scroll·Back이 인접한 trace를 바탕으로 scroll 이벤트 전 loadingdone 순서를 강제한 fixture를 추가하니 수정 전 desktop/mobile 모두 999→0 재현. capture/restore의 실제 pixel을 savedTop에 기억하고 afterLayout 직전에도 차이를 검사해 queued scroll을 보정하지 않도록 수정한다. 최초 수정의 observeScroll 경로는 유지하며 timeout은 바꾸지 않는다.
 - F0-2d 검증: 수정 후 `--last-failed` 2/2 pass(5.1초), unit 126/126, check·lint 0 error, 전체 E2E 530 pass/14 기존 skip(4.3분), axe 4폭 통과. 편집 4파일. F0-4 Linux CI 36715499623 성공(전체·axe·visual 포함).
+- S1(페이지 배치): Windows Chrome 154.0.8037.58, 384×844 → 844×384, 원문 10만 자 + 블록 경계/ruby 베이스 = 모델 100,169 UTF-16자. 명조 준비 후 columns 적용→scrollWidth 강제 배치 7회: 10.6/11.8/9.6/9.0/8.1/7.9/9.8ms, 중앙값 9.6ms·최대 11.8ms. 184쪽, 60% 지점 offset 59,957을 회전 뒤 134쪽에서 같은 Range로 복원하여 화면 안 유지. 긴 SVG 이미지 높이 제한·짧은 마지막 쪽의 끝 문자 표시·두 줄 rt DOM 보존 확인. 실행 결과 `.wrangler/s1-result.json`(코드는 커밋하지 않음).
+- S1 분기: 로컬 배치 게이트 150ms 미만이므로 M2는 §8.10의 전체 columns+transform부터 구현한다. S22+ 실제 진입 시간은 미확인. 초과하면 문단 약 2만 자로 구간을 만들고 현재 구간만 columns, 경계에서 다음 구간을 붙이며 locator 원문 offset은 유지한다. 주소창/회전/이미지/ruby 실기기 T02와 실제 전체 모드 진입 비용은 M2 확인 대기에 추가한다.
+- S1 검증: unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(55.9초). 스파이크 assertion(끝 문자·이미지 높이·원문 Range 회전 복원) 통과. 편집 1파일(측정 결과 기록만).
 
 | 날짜 | 내용 |
 |---|---|
