@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="ko" data-theme="light" data-surface="default" data-glass="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ribbon Library 시안</title>
+<!--
+  ReDSTM 프론트 개편 시안 v2 (docs/24_frontend_redesign_spec.md §8, DESIGN.md v2.1).
+  가상 데이터, 외부 요청 없음. 프레임 번호(M1–M26, D1–D3)는 설계서 §8과 같다.
+  글꼴: 저장소 자산(edge/public/fonts)과, 있으면 edge/node_modules의 원본(npm ci 후)을 상대 경로로 읽는다.
+  AA 예시는 이 시안을 위해 만든 단순 그림이다.
+-->
+<style>
+@font-face { font-family: "Pretendard Variable"; src: url("../../../edge/node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2") format("woff2"); font-weight: 45 920; font-display: swap; }
+@font-face { font-family: "SUIT Variable"; src: url("../../../edge/public/fonts/SUIT-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: MaruBuri; src: url("../../../edge/public/fonts/MaruBuri-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: MaruBuri; src: url("../../../edge/node_modules/@kfonts/maruburi/MaruBuri-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Gowun Batang"; src: url("../../../edge/node_modules/@fontsource/gowun-batang/files/gowun-batang-korean-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: Saitamaar; src: url("../../../edge/public/fonts/Saitamaar-Regular.woff2") format("woff2"); font-display: swap; }
+
+@layer tokens, base, components, screens;
+
+@layer tokens {
+  :root {
+    color-scheme: light;
+    --bg: light-dark(#F7F6F3, #121413); --surface: light-dark(#FFFFFF, #1A1D1C); --surface-2: light-dark(#EFEEEA, #222625);
+    --ink: light-dark(#1C1B19, #ECEEEA); --ink-2: light-dark(#5A5750, #AEB4AF); --ink-3: light-dark(#8B877E, #7E8580);
+    --line: light-dark(#E4E2DC, #2C3130); --line-strong: light-dark(#CFCCC4, #3B4240);
+    --accent: light-dark(#1E6B5F, #7FD1BE); --accent-hover: light-dark(#17574D, #9ADCCB); --accent-soft: light-dark(#E1EFEB, #1D3A34); --on-accent: light-dark(#FFFFFF, #0E1A17);
+    --ribbon: light-dark(#D2452B, #FF7A5C); --ribbon-text: light-dark(#B3361F, #FF8C72); --ribbon-soft: light-dark(#FBE3DC, #3A231D);
+    --focus: light-dark(#2563EB, #8AB4FF); --success-text: light-dark(#1F7A3F, #5FD08A); --warning-text: light-dark(#9A5B00, #F2B84B); --danger-text: light-dark(#B42318, #FF8A80);
+    --hl-find: light-dark(#FFE8A3, #5A4A12); --hl-current: light-dark(#FFC940, #7A600F); --hl-sel: light-dark(#CDE6E0, #2A4A43);
+    --heat-0: light-dark(#EFEEEA, #222625); --heat-1: light-dark(#CFE5DF, #1F4A42); --heat-2: light-dark(#9DCBC0, #2E6D61); --heat-3: light-dark(#5FA597, #4D9C8C); --heat-4: light-dark(#1E6B5F, #7FD1BE);
+    --e1: 0 1px 2px light-dark(rgb(28 27 25 / 6%), rgb(0 0 0 / 40%)), 0 0 0 1px var(--line);
+    --e2: 0 8px 24px light-dark(rgb(28 27 25 / 14%), rgb(0 0 0 / 50%));
+    --e3: 0 16px 48px light-dark(rgb(28 27 25 / 20%), rgb(0 0 0 / 60%));
+    --font-ui: "Pretendard Variable", Pretendard, "SUIT Variable", system-ui, "Malgun Gothic", sans-serif;
+    --font-display: MaruBuri, "Gowun Batang", "Noto Serif KR", serif;
+    --font-reading: MaruBuri, "Gowun Batang", "Noto Serif KR", Batang, serif;
+    --font-aa: Saitamaar, "MS PGothic", "ＭＳ Ｐゴシック", monospace;
+    --reader-bg: light-dark(#FDFCFA, #161918); --reader-ink: light-dark(#1C1B19, #E3E6E2); --reader-ink-2: light-dark(#5A5750, #AEB4AF); --reader-line: var(--line);
+  }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  :root[data-surface="paper"] .rs { --reader-bg: light-dark(#F5EFE3, #1D1A15); --reader-ink: light-dark(#2B261F, #E6DDCC); --reader-ink-2: light-dark(#5E554A, #B5AA97); --reader-line: light-dark(#E4DAC7, #3A3329); }
+  :root[data-theme="dark"][data-surface="ink"] .rs { --reader-bg: #000; --reader-ink: #D6D8D4; --reader-ink-2: #9FA39E; --reader-line: #1F2221; }
+  .hue-0 { --c-bg: light-dark(#D9ECFF, #1D2B3B); --c-mark: light-dark(#316CA5, #85BCF5); }
+  .hue-1 { --c-bg: light-dark(#D0F0F8, #132F35); --c-mark: light-dark(#007890, #62C8DF); }
+  .hue-2 { --c-bg: light-dark(#D6F1E2, #1A3024); --c-mark: light-dark(#177C52, #7BCBA1); }
+  .hue-3 { --c-bg: light-dark(#E6EDD4, #282D19); --c-mark: light-dark(#61721C, #AFC177); }
+  .hue-4 { --c-bg: light-dark(#F6E8D0, #332815); --c-mark: light-dark(#8A6000, #D9B06B); }
+  .hue-5 { --c-bg: light-dark(#FFE3D7, #39251B); --c-mark: light-dark(#9C522E, #EDA382); }
+  .hue-6 { --c-bg: light-dark(#FDE1ED, #37232C); --c-mark: light-dark(#974C72, #E89DC0); }
+  .hue-7 { --c-bg: light-dark(#F1E4FC, #2F2537); --c-mark: light-dark(#7C5598, #CBA6E8); }
+  .hue-8 { --c-bg: light-dark(#E2E8FF, #25293C); --c-mark: light-dark(#5762A8, #A4B3F8); }
+  .hue-9 { --c-bg: light-dark(#E9E9E9, #2A2A2A); --c-mark: light-dark(#696969, #B7B7B7); }
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body { margin: 0; color: var(--ink); font: 450 15px/1.55 var(--font-ui); letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  h1, h2, h3, p { margin: 0; }
+  mark { background: var(--hl-find); color: inherit; border-radius: 2px; }
+  .num { font-variant-numeric: tabular-nums; }
+  ::selection { background: var(--hl-sel); color: var(--ink); }
+  ::highlight(redstm-find) { background-color: var(--hl-find); }
+  ::highlight(redstm-find-current) { background-color: var(--hl-current); color: #1C1B19; text-decoration: underline 2px; }
+  ::highlight(redstm-mark) { background-color: var(--ribbon-soft); }
+  ::highlight(redstm-tts) { background-color: var(--accent-soft); }
+  ::highlight(redstm-sel) { background-color: var(--hl-sel); }
+}
+
+@layer components {
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 0 16px; border-radius: 10px; border: 1px solid transparent; font-weight: 600; font-size: 15px; white-space: nowrap; }
+  .btn.sm { min-height: 40px; font-size: 14px; padding: 0 12px; }
+  .btn-primary { background: var(--accent); color: var(--on-accent); }
+  .btn-secondary { background: var(--surface); border-color: var(--line-strong); color: var(--ink); }
+  .btn-quiet { background: transparent; color: var(--ink-2); padding: 0 8px; min-height: 44px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); border: 0; font-size: 14px; font-weight: 550; white-space: nowrap; flex: none; }
+  .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+  .chip svg.i { width: 16px; height: 16px; }
+  .badge-new { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--ribbon-soft); color: var(--ribbon-text); font-size: 12px; font-weight: 650; }
+  .seg { display: flex; padding: 3px; background: var(--surface-2); border-radius: 10px; gap: 2px; }
+  .seg button { flex: 1; min-height: 34px; border: 0; background: transparent; border-radius: 8px; color: var(--ink-2); font-size: 14px; font-weight: 550; white-space: nowrap; padding: 0 8px; }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 650; box-shadow: var(--e1); }
+  .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+  .tabs button { flex: none; border: 0; background: none; height: 44px; font-size: 15px; font-weight: 550; color: var(--ink-2); box-shadow: inset 0 -2px 0 transparent; padding: 0; }
+  .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 650; box-shadow: inset 0 -2px 0 var(--accent); }
+  .meta { font-size: 13px; color: var(--ink-2); }
+  .caption { font-size: 12px; font-weight: 500; color: var(--ink-2); }
+  .sec { display: flex; align-items: baseline; justify-content: space-between; margin: 24px 0 10px; }
+  .sec h2 { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; }
+  .sec button { border: 0; background: none; color: var(--accent); font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 2px; }
+  .field { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 14px; border-radius: 12px; background: var(--surface); box-shadow: var(--e1); color: var(--ink-2); font-size: 15px; }
+  .field.filled { color: var(--ink); }
+  .field.on-2 { background: var(--surface-2); box-shadow: none; }
+  .caret { display: inline-block; width: 2px; height: 20px; background: var(--accent); margin-left: -8px; }
+  .icon-btn { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); flex: none; }
+  .progress { height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .progress > span { display: block; height: 100%; background: var(--ribbon); }
+  .cover { position: relative; flex: none; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; border-radius: 3px; background: var(--c-bg); color: var(--ink); box-shadow: var(--e1); }
+  .cover::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: linear-gradient(90deg, var(--c-mark), color-mix(in oklab, var(--c-mark) 70%, transparent)); }
+  .cover.s { width: 32px; height: 44px; align-items: center; justify-content: center; }
+  .cover.s::before { width: 3px; }
+  .cover.s .t { font: 700 16px/1 var(--font-display); padding-left: 3px; }
+  .cover.m { width: 104px; height: 148px; padding: 12px 10px 10px 16px; }
+  .cover.l { width: 128px; height: 182px; padding: 14px 12px 12px 18px; }
+  .cover .t { font: 700 15px/1.35 var(--font-display); word-break: keep-all; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .cover.l .t { font-size: 17px; }
+  .cover .src { font-size: 11px; font-weight: 600; color: var(--ink-2); }
+  .cover .corner { position: absolute; right: 0; top: 0; border-style: solid; border-width: 0 14px 14px 0; border-color: transparent var(--ribbon) transparent transparent; }
+  .cover .dl { position: absolute; right: 6px; bottom: 6px; width: 16px; height: 16px; color: var(--ink-2); }
+  .rows { background: var(--surface); border-radius: 14px; box-shadow: var(--e1); overflow: hidden; }
+  .row { display: flex; gap: 12px; align-items: center; min-height: 60px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; }
+  .row .body { min-width: 0; flex: 1; }
+  .row .title { font-size: 15px; font-weight: 600; line-height: 1.4; word-break: keep-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .row .title.read { color: var(--ink-2); font-weight: 500; }
+  .row.current { box-shadow: inset 3px 0 0 var(--ribbon); background: var(--ribbon-soft); }
+  .row.dim { opacity: .45; }
+  .glass { background: color-mix(in oklab, var(--surface) 82%, transparent); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); }
+  :root[data-glass="off"] .glass { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  @media (prefers-reduced-transparency: reduce) { .glass { background: var(--surface); backdrop-filter: none; } }
+  .toggle { width: 44px; height: 26px; border-radius: 13px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong); position: relative; flex: none; }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--surface); box-shadow: var(--e2); }
+  .toggle.on { background: var(--accent); box-shadow: none; }
+  .toggle.on::after { left: 21px; }
+  .slider { display: flex; align-items: center; gap: 12px; }
+  .slider .track { flex: 1; height: 4px; border-radius: 2px; background: var(--line-strong); position: relative; }
+  .slider .track i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 2px; }
+  .slider .track b { position: absolute; top: 50%; width: 24px; height: 24px; margin: -12px; border-radius: 50%; background: var(--surface); box-shadow: var(--e2), 0 0 0 1px var(--line-strong); }
+  .barcode { display: block; width: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+}
+
+@layer screens {
+  .doc { max-width: 1560px; margin: 0 auto; padding: 24px 24px 80px; }
+  .doc-head { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: end; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 90; background: var(--bg); padding-top: 8px; }
+  .doc-head h1 { font: 700 26px/1.25 var(--font-display); }
+  .doc-head p { color: var(--ink-2); margin-top: 4px; max-width: 80ch; font-size: 14px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; }
+  .toc-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .toc-links a { font-size: 13px; color: var(--accent); text-decoration: none; padding: 4px 8px; border-radius: 6px; background: var(--surface-2); }
+  h2.part { font-size: 22px; font-weight: 700; margin: 40px 0 6px; scroll-margin-top: 150px; }
+  p.note { color: var(--ink-2); margin-bottom: 16px; max-width: 100ch; font-size: 14px; }
+  .frames { display: flex; flex-wrap: wrap; gap: 36px 28px; padding: 8px 4px 24px; }
+  .fw { flex: none; }
+  .fl { font-size: 13px; font-weight: 650; color: var(--ink-2); margin-bottom: 10px; max-width: 384px; }
+  .fl small { display: block; font-weight: 450; margin-top: 2px; }
+  .phone { position: relative; width: 384px; height: 832px; border-radius: 34px; overflow: hidden; background: var(--bg); box-shadow: 0 0 0 9px light-dark(#26282B, #000), var(--e3); }
+  .phone.land { width: 832px; height: 384px; }
+  .phone .scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+  .sb { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 12px; font-weight: 650; color: var(--ink); }
+  .pad { padding: 0 16px; }
+  .m-head { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; height: 52px; padding: 0 8px 0 16px; }
+  .m-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
+  .wordmark { font-weight: 800; font-size: 18px; letter-spacing: -0.03em; display: flex; align-items: center; gap: 8px; }
+  .logo { position: relative; width: 26px; height: 26px; border-radius: 6px; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-size: 12px; font-weight: 800; flex: none; }
+  .logo::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 5px; height: 8px; margin-left: -2.5px; background: var(--ribbon); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%); }
+  .tabbar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(4, 1fr); height: 80px; padding: 6px 8px 20px; border-top: 1px solid color-mix(in oklab, var(--line) 70%, transparent); }
+  .tabbar button { border: 0; background: none; display: grid; justify-items: center; align-content: center; gap: 2px; color: var(--ink-2); font-size: 12px; font-weight: 550; }
+  .tabbar .pill { display: grid; place-items: center; width: 56px; height: 30px; border-radius: 999px; }
+  .tabbar button[aria-current="page"] { color: var(--accent); font-weight: 650; }
+  .tabbar button[aria-current="page"] .pill { background: var(--accent-soft); }
+  .minibar { position: absolute; left: 8px; right: 8px; bottom: 86px; z-index: 20; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 6px 0 12px; border-radius: 14px; box-shadow: var(--e2), 0 0 0 1px color-mix(in oklab, var(--line) 60%, transparent); overflow: hidden; }
+  .minibar::before { content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 38%; background: var(--ribbon); }
+  .minibar .dot { width: 10px; height: 14px; border-radius: 2px; background: var(--c-bg); box-shadow: inset 3px 0 0 var(--c-mark); flex: none; }
+  .minibar .txt { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .minibar .txt small { font-weight: 450; color: var(--ink-2); margin-left: 4px; }
+  .minibar .go { border: 0; background: none; color: var(--ribbon-text); font-weight: 650; font-size: 14px; min-height: 44px; padding: 0 8px; display: flex; align-items: center; gap: 2px; }
+  .spacer-bottom { height: 150px; }
+  .continue { margin-top: 14px; padding: 16px; background: var(--surface); border-radius: 14px; box-shadow: var(--e1); }
+  .continue-top { display: flex; gap: 14px; }
+  .continue .label { font-size: 12px; font-weight: 650; color: var(--ribbon-text); }
+  .continue .work { font: 700 18px/1.35 var(--font-display); margin-top: 2px; word-break: keep-all; }
+  .continue .ch { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  .continue .excerpt { margin-top: 12px; font: 14px/1.7 var(--font-reading); color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .pline { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .pline .progress { flex: 1; }
+  .pline span { font-size: 12px; font-weight: 600; color: var(--ribbon-text); }
+  .actions2 { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 14px; }
+  .shelf { display: flex; gap: 14px; overflow-x: auto; padding: 4px 16px 8px; margin: 0 -16px; scroll-padding-inline: 16px; scroll-snap-type: x mandatory; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .shelf-item { flex: none; width: 104px; scroll-snap-align: start; }
+  .shelf-item .name { margin-top: 8px; font-size: 13px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: keep-all; }
+  .shelf-item .meta { font-size: 12px; margin-top: 2px; }
+  .shelf-item .progress { margin-top: 6px; }
+  .hscroll { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
+  .card { background: var(--surface); border-radius: 14px; box-shadow: var(--e1); padding: 16px; }
+  .excerpt-card { padding: 14px 14px 14px 16px; background: var(--surface); border-radius: 14px; box-shadow: var(--e1), inset 3px 0 0 var(--ribbon); margin-bottom: 10px; }
+  .excerpt-card q { quotes: none; font: 15px/1.7 var(--font-reading); display: block; }
+  .excerpt-card .note { margin-top: 8px; font-size: 13px; }
+  .excerpt-card .caption { margin-top: 8px; display: flex; justify-content: space-between; }
+  .week { display: flex; align-items: flex-end; gap: 10px; height: 72px; margin-top: 12px; }
+  .week div { flex: 1; display: grid; justify-items: center; gap: 4px; font-size: 11px; color: var(--ink-2); }
+  .week i { width: 100%; border-radius: 4px 4px 2px 2px; background: var(--heat-3); display: block; }
+  .week div.today i { background: var(--accent); }
+  .heat { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; }
+  .heat i { aspect-ratio: 1; border-radius: 4px; display: block; }
+  .ring { width: 124px; height: 124px; border-radius: 50%; background: conic-gradient(var(--accent) calc(var(--v) * 1%), var(--surface-2) 0); display: grid; place-items: center; flex: none; }
+  .ring > div { width: 100px; height: 100px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; text-align: center; }
+  .ring b { font-size: 26px; font-weight: 700; line-height: 1; }
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1; }
+  .kpi { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+  .kpi b { display: block; font-size: 20px; font-weight: 700; }
+  .work-head { display: flex; gap: 14px; padding: 4px 16px 0; }
+  .work-head h1 { font: 700 23px/1.3 var(--font-display); word-break: keep-all; }
+  .work-head .meta { margin-top: 6px; line-height: 1.6; }
+  .wk-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px 16px; }
+  .wk-actions .btn-primary { grid-column: 1 / -1; }
+  .barcode-box { margin: 0 16px; padding: 14px; background: var(--surface); border-radius: 14px; box-shadow: var(--e1); position: relative; }
+  .barcode-box .summary { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+  .tip { position: absolute; z-index: 40; padding: 8px 10px; border-radius: 10px; background: var(--ink); color: var(--bg); font-size: 12px; font-weight: 600; box-shadow: var(--e2); white-space: nowrap; }
+  .tip u { color: color-mix(in oklab, var(--accent) 60%, var(--bg)); text-decoration: none; margin-left: 8px; }
+  .toc .row { min-height: 54px; }
+  .toc .no { width: 44px; font-size: 13px; color: var(--ink-2); flex: none; }
+  .toc .state { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+  .toc .row.current .state { color: var(--ribbon-text); }
+  .rs { background: var(--reader-bg); color: var(--reader-ink); }
+  .r-progress { position: absolute; top: 0; left: 0; z-index: 25; height: 2px; background: var(--ribbon); }
+  .r-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; gap: 2px; height: 80px; padding: 32px 4px 0; }
+  .r-bar .ctx { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .r-bar .ctx .dot { width: 8px; height: 8px; border-radius: 2px; background: var(--c-mark); flex: none; }
+  .r-bar .ctx span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .r-bar .ctx .num { font-weight: 500; color: var(--reader-ink-2); font-size: 13px; flex: none; }
+  .r-bar .icon-btn { color: var(--reader-ink-2); }
+  .on-ribbon { color: var(--ribbon) !important; }
+  .prose { padding: 104px 20px 150px; }
+  .prose.plain { padding-top: 48px; }
+  .kicker { font-size: 13px; font-weight: 600; color: var(--reader-ink-2); }
+  .prose h1 { font: 400 24px/1.4 var(--font-reading); margin: 6px 0 8px; word-break: keep-all; }
+  .rmeta { font-size: 13px; color: var(--reader-ink-2); padding-bottom: 22px; margin-bottom: 26px; border-bottom: 1px solid var(--reader-line); }
+  .text { font: 18px/1.8 var(--font-reading); word-break: normal; overflow-wrap: break-word; }
+  .text p { margin: 0 0 .9em; }
+  .dock { position: absolute; left: 12px; right: 12px; bottom: 22px; z-index: 20; display: grid; grid-template-columns: 1fr 1fr 1.3fr 1fr 1fr; height: 60px; padding: 4px; border-radius: 18px; box-shadow: var(--e2), 0 0 0 1px color-mix(in oklab, var(--line) 60%, transparent); }
+  .dock button { border: 0; background: none; border-radius: 14px; display: grid; justify-items: center; align-content: center; gap: 1px; font-size: 12px; font-weight: 550; color: var(--ink-2); white-space: nowrap; }
+  .dock button.next { color: var(--accent); font-weight: 650; }
+  .dock button.on { background: var(--accent-soft); color: var(--accent); }
+  .dock .aa { font: 700 16px/20px var(--font-ui); }
+  .pct { position: absolute; right: 14px; bottom: 28px; z-index: 20; padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 650; color: var(--ribbon-text); box-shadow: var(--e1); }
+  .endcard { margin-top: 32px; padding: 16px; border-radius: 14px; background: var(--surface); box-shadow: var(--e1); color: var(--ink); }
+  .endcard .nx { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .endcard .nx small { display: block; font-size: 12px; font-weight: 650; color: var(--accent); }
+  .endcard .nx strong { font: 700 18px/1.4 var(--font-display); }
+  .endcard .row2 { display: flex; gap: 8px; margin-top: 12px; }
+  .pull { display: grid; justify-items: center; gap: 8px; padding: 26px 0 12px; color: var(--reader-ink-2); font-size: 13px; }
+  .pull .pr { width: 40px; height: 40px; border-radius: 50%; background: conic-gradient(var(--accent) 72%, var(--line) 0); display: grid; place-items: center; }
+  .pull .pr i { width: 32px; height: 32px; border-radius: 50%; background: var(--reader-bg); display: grid; place-items: center; font-style: normal; color: var(--accent); }
+  .panel { position: absolute; left: 12px; right: 12px; bottom: 92px; z-index: 40; padding: 16px; border-radius: 18px; background: var(--surface); color: var(--ink); box-shadow: var(--e3); }
+  .panel .row3 { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .panel .row3 > .caption { width: 64px; flex: none; }
+  .panel .row3 .seg { flex: 1; }
+  .sizer { display: flex; align-items: center; justify-content: space-between; background: var(--surface-2); border-radius: 12px; height: 48px; padding: 0 6px; }
+  .sizer button { width: 56px; height: 40px; border: 0; background: var(--surface); border-radius: 9px; box-shadow: var(--e1); }
+  .scrim { position: absolute; inset: 0; z-index: 45; background: light-dark(rgb(28 27 25 / 36%), rgb(0 0 0 / 60%)); }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 50; max-height: 86%; overflow: auto; padding: 8px 16px 30px; border-radius: 20px 20px 0 0; background: var(--surface); color: var(--ink); box-shadow: var(--e3); scrollbar-width: none; }
+  .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 4px auto 12px; }
+  .sheet h2 { font-size: 20px; font-weight: 700; }
+  .grp { margin-top: 18px; }
+  .grp > .caption { margin-bottom: 8px; font-weight: 650; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .grid4 button { border: 0; background: var(--surface-2); border-radius: 12px; min-height: 72px; display: grid; justify-items: center; align-content: center; gap: 6px; font-size: 12px; font-weight: 550; color: var(--ink); padding: 6px 2px; word-break: keep-all; text-align: center; }
+  .findbar { position: absolute; left: 0; right: 0; z-index: 30; padding: 8px 12px 10px; border-top: 1px solid color-mix(in oklab, var(--line) 70%, transparent); }
+  .ticks { position: relative; height: 4px; margin: 0 4px 8px; background: var(--line); border-radius: 2px; }
+  .ticks i { position: absolute; top: 0; width: 2px; height: 4px; background: var(--ink-3); }
+  .ticks i.cur { background: var(--ribbon); width: 3px; }
+  .findrow { display: flex; align-items: center; gap: 2px; }
+  .findrow .field { flex: 1; height: 44px; box-shadow: none; background: var(--surface-2); }
+  .findrow .count { font-size: 13px; font-weight: 650; color: var(--ink-2); padding: 0 6px; }
+  .kbd { position: absolute; left: 0; right: 0; bottom: 0; height: 268px; z-index: 29; background: light-dark(#D6D8DC, #2B2D30); display: grid; grid-template-rows: repeat(4, 1fr); gap: 8px; padding: 10px 4px 20px; }
+  .kbd div { display: flex; gap: 5px; justify-content: center; }
+  .kbd span { flex: 1; max-width: 34px; border-radius: 6px; background: light-dark(#fff, #4A4D52); display: grid; place-items: center; font-size: 17px; color: light-dark(#111, #eee); box-shadow: 0 1px 0 rgb(0 0 0 / 25%); }
+  .kbd span.w { max-width: 180px; flex: 4; font-size: 13px; }
+  .selmenu { position: absolute; z-index: 40; display: flex; padding: 4px; border-radius: 14px; background: var(--ink); color: var(--bg); box-shadow: var(--e2); }
+  .selmenu button { border: 0; background: none; color: inherit; min-height: 40px; padding: 0 9px; font-size: 13px; font-weight: 600; border-radius: 10px; white-space: nowrap; }
+  .handle { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); z-index: 35; }
+  .popover { position: absolute; z-index: 40; width: 260px; padding: 12px 14px; border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: var(--e3); font-size: 14px; }
+  .sharecard { width: 100%; aspect-ratio: 4 / 5; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--e2); background: var(--surface); }
+  .sharecard .band { height: 14px; background: var(--c-mark); }
+  .sharecard .in { flex: 1; padding: 28px 24px; display: flex; flex-direction: column; justify-content: space-between; background: color-mix(in oklab, var(--c-bg) 45%, var(--surface)); }
+  .sharecard q { quotes: none; font: 700 22px/1.6 var(--font-display); word-break: keep-all; }
+  .sharecard .src { font-size: 13px; color: var(--ink-2); }
+  .sharecard .src b { display: block; font: 700 15px/1.4 var(--font-display); color: var(--ink); }
+  .sharecard .wm { font-size: 11px; font-weight: 800; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+  .aa-bar { position: sticky; top: 48px; z-index: 15; display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 8px; border-bottom: 1px solid var(--reader-line); }
+  .aa-bar button { border: 0; background: var(--surface-2); color: var(--ink); height: 34px; min-width: 38px; border-radius: 9px; font-size: 13px; font-weight: 600; padding: 0 8px; display: grid; place-items: center; }
+  .aa-bar output { font-size: 13px; font-weight: 650; min-width: 44px; text-align: center; }
+  .aa-stage-wrap { position: relative; }
+  .aa-stage { overflow-x: auto; background: #F5F5F0; color: #24252A; padding: 16px 12px; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); }
+  .aa { font: 16px/1.125 var(--font-aa); white-space: pre; letter-spacing: 0; margin: 0; }
+  .aa .c1 { color: #C0392B; } .aa .c2 { color: #2E6FB0; }
+  .minimap { margin: 8px 12px 0; height: 6px; border-radius: 3px; background: var(--line); position: relative; }
+  .minimap i { position: absolute; left: 0; top: 0; height: 100%; width: 46%; border-radius: 3px; background: var(--ink-3); }
+  .hint { position: absolute; right: 10px; top: 50%; translate: 0 -50%; z-index: 5; padding: 6px 10px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 12px; font-weight: 600; }
+  .fs-top { position: absolute; left: 0; right: 0; top: 0; z-index: 20; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px; background: rgb(20 20 20 / 72%); color: #fff; font-size: 13px; font-weight: 600; }
+  .fs-top button { border: 0; background: rgb(255 255 255 / 14%); color: #fff; height: 32px; border-radius: 8px; padding: 0 10px; font-size: 13px; }
+  .gallery { position: absolute; inset: 0; background: #000; color: #fff; z-index: 60; }
+  .gallery .img { position: absolute; left: 0; top: 50%; translate: 0 -50%; width: 100%; aspect-ratio: 4 / 3; height: auto; }
+  .gallery .top, .gallery .bot { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; height: 56px; font-size: 14px; font-weight: 600; }
+  .gallery .top { top: 32px; } .gallery .bot { bottom: 24px; justify-content: center; gap: 12px; }
+  .gallery .bot button { border: 0; background: rgb(255 255 255 / 14%); color: #fff; height: 40px; border-radius: 10px; padding: 0 14px; font-size: 14px; }
+  .player { position: absolute; left: 12px; right: 12px; bottom: 22px; z-index: 30; padding: 10px 12px; border-radius: 18px; box-shadow: var(--e2), 0 0 0 1px color-mix(in oklab, var(--line) 60%, transparent); color: var(--ink); }
+  .player .ctl { display: flex; align-items: center; justify-content: space-between; }
+  .player .play { width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+  .kwic .line { display: grid; grid-template-columns: 44px 1fr; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.6; }
+  .kwic .line .no { font-size: 12px; font-weight: 650; color: var(--ink-2); padding-top: 2px; }
+  .kwic mark { font-weight: 650; }
+  .banner { display: flex; gap: 10px; align-items: center; margin: 4px 16px 0; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); font-size: 14px; }
+  .banner svg { color: var(--warning-text); }
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; border-top: 1px solid var(--line); font-size: 15px; }
+  .set-row small { display: block; font-size: 12px; color: var(--ink-2); }
+  .font-card { text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--surface); width: 100%; }
+  .font-card[aria-checked="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+  .font-card small { display: block; font: 650 12px/1.4 var(--font-ui); color: var(--ink-2); margin-bottom: 2px; }
+  .font-card[aria-checked="true"] small { color: var(--accent); }
+  .onb { text-align: center; padding: 40px 20px 0; }
+  .onb h1 { font: 700 24px/1.35 var(--font-display); }
+  .src-cards { display: grid; gap: 10px; margin-top: 20px; text-align: left; }
+  .src-card { display: flex; gap: 12px; align-items: center; padding: 14px; border-radius: 14px; background: var(--surface); box-shadow: var(--e1); }
+  .src-card .ic { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--c-bg); color: var(--c-mark); flex: none; }
+  .comment { padding: 12px 0; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.6; }
+  .comment b { font-size: 13px; }
+  .comment .meta { font-size: 12px; margin-left: 6px; }
+  .dsk { zoom: .62; }
+  .desk { position: relative; display: grid; grid-template-columns: 72px minmax(0, 1fr); width: 1440px; height: 900px; overflow: hidden; border-radius: 14px; background: var(--bg); box-shadow: var(--e3), 0 0 0 1px var(--line); }
+  .rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 0; border-right: 1px solid var(--line); }
+  .rail .logo { width: 40px; height: 40px; font-size: 16px; border-radius: 9px; margin-bottom: 20px; }
+  .rail .logo::after { width: 6px; height: 10px; margin-left: -3px; bottom: -8px; }
+  .rail button { width: 60px; border: 0; background: none; border-radius: 12px; display: grid; justify-items: center; gap: 4px; padding: 8px 0; font-size: 12px; font-weight: 550; color: var(--ink-2); }
+  .rail button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .rail .grow { flex: 1; }
+  .d-home { overflow: hidden; padding: 32px 40px; }
+  .d-inner { max-width: 1120px; margin: 0 auto; }
+  .d-top { display: grid; grid-template-columns: 1fr 360px; gap: 24px; }
+  .d-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px; }
+  .d-grid .shelf-item { width: auto; }
+  .d-grid .cover.m { width: 100%; height: auto; aspect-ratio: 104 / 148; }
+  .d3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .d-reader { display: grid; grid-template-columns: 380px minmax(0, 1fr) 340px; min-height: 0; }
+  .d-cat { border-right: 1px solid var(--line); overflow: hidden; }
+  .d-cat .rows { border-radius: 0; box-shadow: none; background: transparent; border-top: 1px solid var(--line); }
+  .d-main { position: relative; overflow: hidden; container-type: inline-size; }
+  .d-tool { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 2px; height: 56px; padding: 0 12px; border-bottom: 1px solid var(--reader-line); }
+  .d-tool .t { display: inline-flex; align-items: center; gap: 4px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; font-size: 14px; font-weight: 550; color: var(--ink-2); white-space: nowrap; flex: none; }
+  .d-tool .t.next { color: var(--accent); font-weight: 650; }
+  .d-tool .t[disabled] { color: var(--ink-3); }
+  .d-tool .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+  .d-tool .g { flex: 1; }
+  @container (max-width: 760px) { .d-tool .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); } }
+  .d-prose { max-width: 720px; margin: 0 auto; padding: 24px 40px; }
+  .d-prose h1 { font: 400 30px/1.35 var(--font-reading); margin: 6px 0 10px; }
+  .d-panel { border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .d-panel .tabs { padding: 0 20px; }
+  .hit { padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; line-height: 1.7; }
+  .hit small { display: block; font-size: 12px; color: var(--ink-2); }
+  .hit.cur mark { background: var(--hl-current); color: #1C1B19; }
+  .palette { position: absolute; left: 50%; top: 120px; translate: -50% 0; width: 640px; z-index: 50; border-radius: 16px; background: var(--surface); box-shadow: var(--e3), 0 0 0 1px var(--line); overflow: hidden; }
+  .palette .in { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 20px; font-size: 18px; border-bottom: 1px solid var(--line); }
+  .palette .pg { padding: 8px; }
+  .palette .pg > p { font-size: 12px; font-weight: 650; color: var(--ink-2); padding: 8px 12px 4px; }
+  .palette .it { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 12px; border-radius: 10px; font-size: 15px; }
+  .palette .it.sel { background: var(--accent-soft); }
+  .kbdk { margin-left: auto; font: 12px var(--font-ui); padding: 2px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-library" viewBox="0 0 24 24"><path d="M5 4h3v16H5zM10 4h3v16h-3zM15.5 5.2l2.9-.8 3.4 14.5-2.9.8z"/></symbol>
+  <symbol id="i-browse" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.7" cy="10.7" r="6.7"/><path d="m16 16 4 4"/></symbol>
+  <symbol id="i-record" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
+  <symbol id="i-find" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5M7.5 10h5"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-ops" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.3A8.5 8.5 0 0 1 8.7 4a8.5 8.5 0 1 0 11.3 11.3Z"/></symbol>
+  <symbol id="i-source" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v13M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3M22 12l-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 3h4M17 21h-4"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/></symbol>
+  <symbol id="i-skipb" viewBox="0 0 24 24"><path d="M19 5 9 12l10 7V5ZM5 5v14"/></symbol>
+  <symbol id="i-skipf" viewBox="0 0 24 24"><path d="m5 5 10 7-10 7V5ZM19 5v14"/></symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></symbol>
+  <symbol id="i-headphones" viewBox="0 0 24 24"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></symbol>
+  <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M12 5v14m-4-4 4 4 4-4M8 9l4-4 4 4"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13.5a4.5 4.5 0 0 0 6.4.4l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2M14 10.5a4.5 4.5 0 0 0-6.4-.4l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14v2"/></symbol>
+  <symbol id="i-focus" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5.2-2.8M19 12.9a10 10 0 0 0-2.3-1.6M2 8.8a15 15 0 0 1 4.2-2.7M22 8.8A15 15 0 0 0 11 5M12 20h.01"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-3 2-4 2-6 1 1 2 2 3 2 0-2-1-4 0-6Z"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M4 6.5 12 3l8 3.5-8 3.5-8-3.5Z"/><path d="m4 12 8 3.5 8-3.5M4 17.5 12 21l8-3.5"/></symbol>
+  <symbol id="i-cmd" viewBox="0 0 24 24"><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6Z"/></symbol>
+</svg>
+
+<main class="doc">
+  <header class="doc-head">
+    <div>
+      <h1>Ribbon Library — 가름끈 서재 · 시안 v2</h1>
+      <p>청록 = 누를 수 있는 것, 주홍 가름끈 = 내가 읽던 자리. 모바일 프레임은 Galaxy S22+ CSS 뷰포트(384×832). 번호는 <code>docs/24</code> §8과 같다. 가상 데이터.</p>
+      <nav class="toc-links"><a href="#p0">토큰</a><a href="#p1">서재·탐색·기록</a><a href="#p2">작품·Reader</a><a href="#p3">찾기·표시·공유</a><a href="#p4">AA·미디어·듣기</a><a href="#p5">설정·상태</a><a href="#p6">데스크톱</a></nav>
+    </div>
+    <div class="controls">
+      <div class="seg" data-ctl="theme"><button data-v="light" aria-pressed="true">밝게</button><button data-v="dark" aria-pressed="false">어둡게</button></div>
+      <div class="seg" data-ctl="surface"><button data-v="default" aria-pressed="true">기본</button><button data-v="paper" aria-pressed="false">종이</button><button data-v="ink" aria-pressed="false">먹</button></div>
+      <div class="seg" data-ctl="glass"><button data-v="on" aria-pressed="true">반투명</button><button data-v="off" aria-pressed="false">불투명</button></div>
+    </div>
+  </header>
+
+  <h2 class="part" id="p0">0. 토큰</h2>
+  <p class="note">semantic 토큰만 컴포넌트에서 참조한다. 작품색 10종은 작품 키 hash로 고정. 히트맵 5단계. <b>먹</b> 면은 어두운 테마에서만.</p>
+  <div id="tokens"></div>
+  <h2 class="part" id="p1">1. 서재 · 탐색 · 검색 · 기록</h2>
+  <div class="frames" id="f1"></div>
+  <h2 class="part" id="p2">2. 작품 · Reader</h2>
+  <div class="frames" id="f2"></div>
+  <h2 class="part" id="p3">3. 찾기 · 표시 · 공유</h2>
+  <div class="frames" id="f3"></div>
+  <h2 class="part" id="p4">4. AA · 이미지 · 듣기</h2>
+  <div class="frames" id="f4"></div>
+  <h2 class="part" id="p5">5. 설정 · 상태</h2>
+  <div class="frames" id="f5"></div>
+  <h2 class="part" id="p6">6. 데스크톱 (1440×900, 62% 축소)</h2>
+  <div class="frames" id="f6"></div>
+</main>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const I = (n, st = '') => `<svg class="i" ${st ? `style="${st}"` : ''}><use href="#i-${n}"/></svg>`;
+function hueIndex(key) { let h = 0x811c9dc5; for (const ch of key) { h ^= ch.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; } return h % 10; }
+const cover = (k, t, src = '', size = 'm', o = {}) => `<div class="cover ${size}" data-key="${k}"><span class="t">${size === 's' ? t.replace(/^\[.*?\]\s*/, '')[0] : t}</span>${size === 's' ? '' : `<span class="src">${src}</span>`}${o.new ? '<span class="corner"></span>' : ''}${o.dl ? '<svg class="i dl"><use href="#i-download"/></svg>' : ''}</div>`;
+const SB = () => `<div class="sb"><span>9:41</span><span>5G ▮▮▮ 82%</span></div>`;
+const TAB = (a) => `<nav class="tabbar glass">${[['library', '서재'], ['browse', '둘러보기'], ['search', '검색'], ['record', '기록']].map(([i, l]) => `<button ${a === i ? 'aria-current="page"' : ''}><span class="pill">${I(i)}</span>${l}</button>`).join('')}</nav>`;
+const MINI = `<div class="minibar glass" data-key="novel:1001"><span class="dot"></span><span class="txt">달그림자 서고의 마술사<small>119화</small></span><button class="go">이어 읽기${I('next', 'width:16px;height:16px')}</button></div>`;
+const RBAR = () => `<div class="r-bar glass"><button class="icon-btn" aria-label="목록">${I('prev')}</button><div class="ctx"><i class="dot"></i><span>달그림자 서고의 마술사</span><span class="num">119/340</span></div><button class="icon-btn" aria-label="찾기">${I('find')}</button><button class="icon-btn on-ribbon" aria-label="저장됨">${I('record', 'fill:currentColor')}</button></div>`;
+const DOCK = (on = '') => `<nav class="dock glass"><button>${I('list')}목록</button><button>${I('prev')}이전</button><button class="next">${I('next')}다음 화</button><button class="${on === 'aa' ? 'on' : ''}"><span class="aa">Aa</span>설정</button><button class="${on === 'more' ? 'on' : ''}">${I('more')}더보기</button></nav>`;
+const PARAS = ['창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮고 천천히 고개를 들었다. 서고의 정원은 이미 하얗게 덮여 있었고, 약속한 사람은 아직 오지 않았다.', '"약속은 지키는 쪽이 먼저 잊지 않는 법이야." 할머니가 늘 하던 말이었다. 그 말을 떠올릴 때마다 정원의 오래된 벤치가 함께 생각났다.', '문이 열리는 소리가 들렸다. 발소리는 가볍고, 조금 서두르는 듯했다. 그녀는 대답 대신 난로에 장작을 하나 더 넣었다.', '"늦었네." "알겠어. 미안해." 두 사람은 한동안 말없이 정원을 내다보았다. 눈 위로 작은 새 발자국이 이어져 있었다.', '마술이란 결국 기억의 기술이라고, 그는 언젠가 말했었다. 잊지 않으려는 마음이 형태를 얻는 것. 그렇다면 이 정원도 누군가의 마술일지 몰랐다.', '"알겠어." 그녀는 다시 한 번 말했다. 이번에는 조금 웃으면서.'];
+const PROSE = (id = '') => `<div class="prose"><p class="kicker">달그림자 서고의 마술사 · 119화</p><h1>겨울 정원의 약속</h1><p class="rmeta">한여름 · 2026. 9. 20 · 약 12분</p><div class="text" ${id ? `id="${id}"` : ''}>${PARAS.map((p) => `<p>${p}</p>`).join('')}</div></div>`;
+const phone = (id, label, sub, html, o = {}) => `<div class="fw"><p class="fl">${id} ${label}<small>${sub}</small></p><div class="phone ${o.reader ? 'rs' : ''} ${o.land ? 'land' : ''}" ${o.key ? `data-key="${o.key}"` : ''}>${html}</div></div>`;
+const works = [
+  ['novel:1001', '달그림자 서고의 마술사', '소설', 119, 340, 3], ['typemoon:collection:88', '일곱 번째 밤의 서약', '타입문넷', 42, 57, 3], ['novel:2210', '검은 고양이와 마술 공방의 사계절', '소설', 12, 180, 0],
+  ['arcalive:aa:31', '[AA] 성배전쟁 뒷이야기', '아카', 30, 31, 1], ['typemoon:collection:120', '붉은 외투의 귀환', '타입문넷', 3, 212, 0], ['novel:3302', '겨울 역에서 기다리는 사람', '소설', 88, 88, 0]];
+const shelfItem = ([k, t, s, r, n, nw], o = {}) => `<div class="shelf-item">${cover(k, t, s, 'm', { new: nw, dl: o.dl })}<p class="name">${t}</p><p class="meta num">${r}/${n}화 ${nw ? `<span class="badge-new">새 ${nw}화</span>` : ''}</p>${o.bar ? `<svg class="barcode mini" height="4" data-n="${n}" data-r="${r}" style="margin-top:6px"></svg>` : `<div class="progress"><span style="width:${Math.round(r / n * 100)}%"></span></div>`}</div>`;
+const workRow = ([k, t, s, r, n, nw], extra = '', cls = '') => `<div class="row ${cls}">${cover(k, t, '', 's')}<div class="body"><p class="title">${t}</p><p class="meta num">한여름 · ${s} · ${r}/${n}화 ${nw ? `<span class="badge-new">새 ${nw}</span>` : ''}</p><div class="progress" style="margin-top:6px"><span style="width:${Math.round(r / n * 100)}%"></span></div></div>${extra}</div>`;
+const N = 340, READ = 118, MISS = new Set([45, 46, 201, 202, 203]), NEW = new Set([338, 339, 340]);
+const st = (i) => MISS.has(i) ? 'missing' : i <= READ ? 'read' : i === READ + 1 ? 'current' : 'unread';
+const BARBOX = (withTip = false) => `<section class="barcode-box"><p class="summary"><span class="num">340</span>화 중 <span class="num">118</span>화 읽음 · 5화 보존 안 됨 · 새 3화</p><svg class="barcode big" height="16" role="img" aria-label="340화 중 118화 읽음, 5화 보존 안 됨, 새 3화"></svg><div class="legend"><span><i style="background:color-mix(in oklab,var(--ink) 45%,transparent)"></i>읽음</span><span><i style="background:var(--ribbon)"></i>읽는 중</span><span><i style="background:var(--line-strong)"></i>안 읽음</span><span><i style="border:1px dashed var(--ink-3)"></i>보존 안 됨</span><span><i style="background:var(--accent);height:3px;vertical-align:4px"></i>새 화</span></div>${withTip ? '<div class="tip" style="left:120px;top:40px">201화 · 보존 안 됨<u>이 회차로</u></div>' : ''}</section>`;
+const tocRows = (a, b) => { const tt = ['서고의 문', '먼지 낀 목록', '잊힌 이름', '겨울이 오기 전', '정원 관리인']; let h = ''; for (let i = a; i <= b; i++) { const s = st(i); h += `<div class="row ${s === 'current' ? 'current' : ''}"><span class="no num">${i}화</span><div class="body"><p class="title ${s === 'read' ? 'read' : ''}">${s === 'missing' ? '보존되지 않은 회차' : i === 119 ? '겨울 정원의 약속' : tt[i % 5]}</p></div><span class="state">${{ read: '읽음', current: '읽는 중', unread: '', missing: '보존 안 됨' }[s]}</span></div>`; } return h; };
+const AA_ART = `　　　　　　　　 ∧＿∧
+　　　　　　　　（　´∀｀）　 ＜ 여기가 달그림자 서고다
+　　　　　　　　（　　　　）
+　　　　　　　　｜ ｜　 |
+　　　　　　　　（_＿）＿）
+<span class="c1">＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿</span>
+｜　書　｜　書　｜　書　｜　書　｜　書　｜　書　｜　書　｜　書　｜
+｜＿＿＿｜＿＿＿｜＿＿＿｜＿＿＿｜＿＿＿｜＿＿＿｜＿＿＿｜＿＿＿｜
+　　　　　　　　　　　　　　　　　　 <span class="c2">∧∧</span>
+　　　　　　　　　　　　　　　　　　<span class="c2">(,,ﾟДﾟ)</span>　 ＜ 오늘도 정리 중이야`;
+
+$('#tokens').innerHTML = `
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">${[['--bg', 'canvas'], ['--surface', '카드·시트'], ['--surface-2', '묶음·칩'], ['--ink', '본문'], ['--ink-2', '보조·placeholder'], ['--ink-3', '비텍스트'], ['--line', '경계'], ['--line-strong', '입력·안 읽음'], ['--accent', '행동·선택'], ['--accent-soft', '선택 면'], ['--ribbon', '내 자리'], ['--ribbon-soft', '표시 문장'], ['--focus', '초점'], ['--hl-find', '찾기'], ['--hl-current', '현재 적중'], ['--reader-bg', '읽기 면']].map(([v, d]) => `<div class="card ${v === '--reader-bg' ? 'rs' : ''}" style="padding:0;overflow:hidden;font-size:12px"><b style="display:block;height:48px;background:var(${v})"></b><span style="display:block;padding:8px 10px;color:var(--ink-2)"><strong style="display:block;color:var(--ink);font-size:13px">${v}</strong>${d}</span></div>`).join('')}</div>
+<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:16px">${['쪽', '청', '녹', '올리브', '황토', '주', '자', '보', '남', '먹'].map((n, i) => `<div class="cover m hue-${i}"><span class="t">${n} · 작품색 ${i}</span><span class="src">hue ${i}</span></div>`).join('')}</div>
+<div class="card" style="margin-top:16px;display:grid;gap:10px">
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">display 28/700</code><span style="font-size:28px;font-weight:700;letter-spacing:-.02em">서재</span></div>
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">serif-xl 26/700</code><span style="font:700 26px/1.3 var(--font-display)">달그림자 서고의 마술사</span></div>
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">title 18/650</code><span style="font-size:18px;font-weight:650">119화 · 겨울 정원의 약속</span></div>
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">body 15/450</code><span>한여름 · 소설 · 340화 중 118화 읽음 · 드문 음절 뜌 쉪 펲</span></div>
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">마루부리 18/1.8</code><span style="font:18px/1.8 var(--font-reading)">창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.</span></div>
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">고운바탕 18/1.8</code><span style="font:18px/1.8 'Gowun Batang',serif">창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.</span></div>
+  <div style="display:flex;gap:16px;align-items:baseline"><code class="caption" style="width:130px">AA Saitamaar 16</code><span style="font:16px/1.125 var(--font-aa);white-space:pre">（　´∀｀）＜ 格子 保存</span></div>
+  <div style="display:flex;gap:16px;align-items:center"><code class="caption" style="width:130px">heat 0–4</code>${[0, 1, 2, 3, 4].map((i) => `<i style="width:22px;height:22px;border-radius:4px;background:var(--heat-${i})"></i>`).join('')}</div>
+</div>`;
+
+$('#f1').innerHTML = [
+phone('M1', '서재 — 첫 화면', '이어읽기 카드의 버튼이 엄지 영역에. 서가·스마트 서재 칩', `<div class="scroll">${SB()}
+  <div class="m-head glass"><span class="wordmark"><span class="logo">Re</span>ReDSTM</span><button class="icon-btn" aria-label="설정">${I('settings')}</button></div>
+  <div class="pad">
+    <div class="field">${I('search')}작품·글·작가 검색</div>
+    <article class="continue"><div class="continue-top">${cover('novel:1001', '달그림자 서고의 마술사', '소설')}<div style="min-width:0"><p class="label">이어 읽기 · 3분 전</p><p class="work">달그림자 서고의 마술사</p><p class="ch">119화 · 겨울 정원의 약속</p><p class="meta">한여름 · 남은 시간 약 7분</p></div></div>
+      <p class="excerpt">그녀는 오래된 책을 덮고 천천히 고개를 들었다. 서고의 정원은 이미 하얗게 덮여 있었고, 약속한 사람은 아직 오지 않았다.</p>
+      <div class="pline"><div class="progress"><span style="width:38%"></span></div><span class="num">38%</span></div>
+      <div class="actions2"><button class="btn btn-primary">이어 읽기</button><button class="btn btn-secondary">목차</button></div></article>
+    <div class="sec"><h2>읽던 작품</h2><button>모두 보기</button></div>
+    <div class="shelf">${works.map((w) => shelfItem(w, { dl: w[0] === 'novel:1001' })).join('')}</div>
+    <div class="sec"><h2>스마트 서재</h2><button>편집</button></div>
+    <div class="hscroll"><button class="chip">${I('flame')}새 화 있음 4</button><button class="chip">읽는 중 12</button><button class="chip">짧은 작품</button><button class="chip">AA 모음 9</button><button class="chip">완독 31</button></div>
+    <div class="spacer-bottom"></div>
+  </div></div>${TAB('library')}`),
+phone('M2', '서재 — 아래로', '카드가 화면 밖이면 이어읽기 미니바. 발견·오늘의 발췌·이번 주 독서', `<div class="scroll">${SB()}
+  <div class="m-head glass"><span class="wordmark"><span class="logo">Re</span>ReDSTM</span><button class="icon-btn">${I('settings')}</button></div>
+  <div class="pad">
+    <div class="sec" style="margin-top:4px"><h2>오늘의 발견</h2><button>다른 추천</button></div>
+    <div class="rows">${[['novel:5501', '안개 도시의 계약 마술사', '소설 · 64화 · 아직 안 읽음'], ['typemoon:collection:301', '영령 도서관 사서의 하루', '타입문넷 · 22편 · 조회 2.5만'], ['novel:6620', '천 번째 봄을 기다리며', '소설 · 140화']].map(([k, t, m]) => `<div class="row">${cover(k, t, '', 's')}<div class="body"><p class="title">${t}</p><p class="meta">${m}</p></div></div>`).join('')}</div>
+    <div class="sec"><h2>오늘의 발췌</h2><button>다른 발췌</button></div>
+    <div class="excerpt-card"><q>약속은 지키는 쪽이 먼저 잊지 않는 법이야.</q><p class="caption"><span>달그림자 서고의 마술사 › 117화</span><span>9월 18일</span></p></div>
+    <div class="sec"><h2>이번 주 독서</h2><button>통계</button></div>
+    <div class="card"><p style="font-size:15px;font-weight:650">3시간 12분 <span class="meta">· 12일 연속</span></p><div class="week">${[[40, '월'], [20, '화'], [65, '수'], [10, '목'], [48, '금'], [0, '토'], [30, '일']].map(([h, d], i) => `<div class="${i === 6 ? 'today' : ''}"><i style="height:${Math.max(h, 3)}px;${h ? '' : 'background:var(--heat-0)'}"></i>${d}</div>`).join('')}</div></div>
+    <div class="sec"><h2>새로 보존된 글</h2><button>둘러보기</button></div>
+    <div class="rows"><div class="row"><div class="body"><p class="title">[AA] 성배전쟁 뒷이야기 — 제7장</p><p class="meta">AA 연재 · 2시간 전 · 댓글 12</p></div></div><div class="row"><div class="body"><p class="title">검은 고양이와 마술 공방 (단편)</p><p class="meta">단편 모음 · 5시간 전</p></div></div></div>
+    <p class="caption" style="display:flex;justify-content:space-between;margin:18px 0 0"><span>마지막 보존 3시간 전 · 330,760편</span><span style="color:var(--accent);font-weight:600">수집 상태 ›</span></p>
+    <div class="spacer-bottom" style="height:170px"></div>
+  </div></div>${MINI}${TAB('library')}`),
+phone('M3', '둘러보기', '출처 전환(텍스트 목적지 흡수) · 활성 조건 칩 · 작품 행 표지 S', `<div class="scroll">${SB()}
+  <div class="m-head"><h1>둘러보기</h1><button class="icon-btn">${I('search')}</button></div>
+  <div class="pad"><div class="seg"><button>타입문넷</button><button aria-pressed="true">소설</button><button>아카라이브</button></div>
+    <div class="hscroll" style="margin-top:12px"><button class="chip" aria-pressed="true">전체</button><button class="chip">분류별</button><button class="chip" aria-pressed="true">출처: 북토끼 ${I('close')}</button><button class="chip">안 읽음</button><button class="chip">읽는 중</button></div>
+    <p class="meta" style="display:flex;justify-content:space-between;align-items:center;margin:12px 2px 8px"><span class="num">128개 작품 · 숨긴 분류 1개 제외</span><button class="chip">최근 갱신순 ${I('down')}</button></p>
+    <div class="rows">${works.concat([['novel:7710', '안개 도시의 계약 마술사', '소설', 0, 64, 0], ['novel:8820', '천 번째 봄을 기다리며', '소설', 140, 140, 0]]).map((w) => workRow(w)).join('')}</div>
+    <div class="spacer-bottom"></div></div></div>${MINI}${TAB('browse')}`),
+phone('M4', '검색 — 한국어 제안', '"세이바"(오타) → 자모 퍼지로 세이버. 정확/비슷한 제목 분리, 초성·영타 안내', `<div class="scroll">${SB()}
+  <div class="pad" style="padding-top:8px"><div class="field filled">${I('search')}세이바<span class="caret"></span><span style="margin-left:auto">${I('close')}</span></div>
+  <div class="tabs" style="margin-top:8px"><button aria-selected="true">전체</button><button>작품</button><button>글</button><button>내 기록</button></div>
+  <p class="caption" style="margin:14px 2px 6px;font-weight:650">작품 · 비슷한 제목</p>
+  <div class="rows"><div class="row">${cover('typemoon:collection:9', '세이버와 일곱 번째 밤', '', 's')}<div class="body"><p class="title"><mark>세이버</mark>와 일곱 번째 밤</p><p class="meta">타입문넷 · 57편 · 42편 읽음</p></div></div><div class="row">${cover('typemoon:collection:14', '세이버 얼터 관찰 일지', '', 's')}<div class="body"><p class="title"><mark>세이버</mark> 얼터 관찰 일지</p><p class="meta">타입문넷 · 12편</p></div></div></div>
+  <p class="caption" style="margin:14px 2px 6px;font-weight:650">게시판</p>
+  <div class="rows"><div class="row"><div class="body"><p class="title">세이버 팬픽 모음</p><p class="meta">타입문 창작 · 글 1,204</p></div></div></div>
+  <p class="caption" style="margin:14px 2px 6px;font-weight:650">글 제목 · 정확히 '세이바' <span class="num">12건</span></p>
+  <div class="rows"><div class="row"><div class="body"><p class="title">[단편] <mark>세이바</mark>는 왜 오타인가</p><p class="meta">잡담 · 2024. 3. 2</p></div></div></div>
+  <div class="card" style="margin-top:14px;font-size:13px;color:var(--ink-2);line-height:1.7">초성으로도 찾아요 <b style="color:var(--ink)">ㅅㅇㅂ</b> · 영문 자판으로 친 <b style="color:var(--ink)">tpdlqj</b>은 '세이버'로 제안 · 한 글자 오타는 '비슷한 제목'에</div>
+  <div class="spacer-bottom"></div></div></div>${TAB('search')}`),
+phone('M5', '기록 — 발췌', '저장·최근·발췌·통계 통합. 발췌 검색·태그·위치 상태', `<div class="scroll">${SB()}
+  <div class="m-head"><h1>기록</h1><button class="icon-btn">${I('share')}</button></div>
+  <div class="pad"><div class="tabs"><button>읽는 중</button><button>저장</button><button>최근</button><button aria-selected="true">발췌</button><button>통계</button></div>
+  <div class="field on-2" style="margin:12px 0 10px;height:44px">${I('search')}발췌·메모 검색</div>
+  <div class="hscroll" style="margin-bottom:12px"><button class="chip" aria-pressed="true">전체 42</button><button class="chip">#복선 8</button><button class="chip">#명대사 15</button><button class="chip">AA 장면 4</button></div>
+  ${[['약속은 지키는 쪽이 먼저 잊지 않는 법이야.', '3부 복선 — 118화 대사와 연결', '달그림자 서고의 마술사 › 117화', '위치 정확'], ['마술이란 결국 기억의 기술이라고, 그는 언젠가 말했었다.', '', '달그림자 서고의 마술사 › 119화', '위치 정확'], ['별은 떨어지는 게 아니라, 돌아오는 거야.', '원문이 바뀌었어요', '일곱 번째 밤의 서약 › 12편', '근처']].map(([q, n, s, p]) => `<div class="excerpt-card"><q>${q}</q>${n ? `<p class="note">${n}</p>` : ''}<p class="caption"><span>${s}</span><span style="${p === '근처' ? 'color:var(--warning-text)' : ''}">${p}</span></p></div>`).join('')}
+  <div class="spacer-bottom"></div></div></div>${MINI}${TAB('record')}`),
+phone('M6', '기록 — 통계', '오늘 링 · 연속 일수 · 월 히트맵 · 완독 표지', `<div class="scroll">${SB()}
+  <div class="m-head"><h1>기록</h1><button class="icon-btn">${I('share')}</button></div>
+  <div class="pad"><div class="tabs"><button>읽는 중</button><button>저장</button><button>최근</button><button>발췌</button><button aria-selected="true">통계</button></div>
+  <div class="card" style="display:flex;gap:14px;align-items:center;margin-top:14px"><div class="ring" style="--v:70"><div><div><b class="num">42</b><p class="caption">/ 60분</p></div></div></div><div class="kpis"><div class="kpi"><span class="caption">연속</span><b class="num">12일</b></div><div class="kpi"><span class="caption">이번 달</span><b class="num">21시간</b></div><div class="kpi"><span class="caption">완독</span><b class="num">4작품</b></div><div class="kpi"><span class="caption">읽은 글자</span><b class="num">138만</b></div></div></div>
+  <div class="sec"><h2>9월</h2><span class="caption">적게 ${[0, 1, 2, 3, 4].map((i) => `<i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--heat-${i})"></i>`).join(' ')} 많이</span></div>
+  <div class="card"><div class="heat" style="font-size:11px;color:var(--ink-2);text-align:center;margin-top:0">${['월', '화', '수', '목', '금', '토', '일'].map((d) => `<span>${d}</span>`).join('')}</div><div class="heat" id="heat"></div></div>
+  <div class="sec"><h2>이번 달 완독</h2></div>
+  <div class="hscroll">${works.slice(2, 6).map(([k, t, s]) => cover(k, t, s, 'm')).join('')}</div>
+  <div class="spacer-bottom"></div></div></div>${MINI}${TAB('record')}`),
+].join('');
+
+$('#f2').innerHTML = [
+phone('M7', '작품 상세', '공통 작품 머리 + 바코드(탭 = 두 단계 선택) + 필터 + 목차', `<div class="scroll">${SB()}
+  <div class="m-head glass"><button class="btn btn-quiet">${I('prev')}작품 목록</button><span style="display:flex"><button class="icon-btn" aria-label="작품에서 찾기">${I('find')}</button><button class="icon-btn">${I('more')}</button></span></div>
+  <header class="work-head">${cover('novel:1001', '달그림자 서고의 마술사', '소설', 'm', { new: 1, dl: 1 })}<div style="min-width:0"><h1>달그림자 서고의 마술사</h1><p class="meta">한여름 · 북토끼 · 원작 연재 중<br><span class="num">보존 340화 · 최신 342화 9/28<br>전체 약 41시간 · 남은 약 27시간</span></p></div></header>
+  <div class="wk-actions"><button class="btn btn-primary">이어 읽기 119화</button><button class="btn btn-secondary sm">처음부터</button><button class="btn btn-secondary sm">분류: 찜</button><button class="btn btn-secondary sm">${I('check', 'width:16px;height:16px')}저장됨</button></div>
+  ${BARBOX(true)}
+  <div style="display:flex;gap:8px;align-items:center;padding:14px 16px 10px;overflow-x:auto"><span class="chip">몇 화? <b style="color:var(--accent);margin-left:4px">이동</b></span><button class="chip" aria-pressed="true">전체</button><button class="chip">안 읽음</button><button class="chip">표시 있음</button></div>
+  <div class="pad" style="padding-bottom:40px"><div class="rows toc">${tocRows(114, 124)}</div></div></div>`, { key: 'novel:1001' }),
+phone('M8', 'Reader — 스크롤, 도구 표시', '상단 context bar(작품점) + 떠 있는 도크 + 가름끈 진행선', `<div class="scroll rs">${PROSE()}</div><div class="r-progress" style="width:38%"></div>${RBAR()}${DOCK()}`, { reader: 1, key: 'novel:1001' }),
+phone('M9', 'Reader — 본문 끝', '다음 화 카드 + 작품 미니 바코드 + 댓글 · 끝에서 당겨 다음 화', `<div class="scroll rs"><div class="prose plain"><div class="text"><p>${PARAS[4]}</p><p>${PARAS[5]}</p></div>
+  <div class="endcard"><div class="nx"><div><small>다음 화</small><strong>120화 · 서고의 문</strong></div>${I('next', 'width:26px;height:26px;color:var(--accent)')}</div>
+  <div style="margin-top:14px"><svg class="barcode mini" height="6" data-n="340" data-r="119"></svg><p class="caption num" style="margin-top:6px">119/340화 · 이 작품 14시간 읽음</p></div>
+  <div class="row2"><button class="btn btn-secondary sm" style="flex:1">${I('list', 'width:18px;height:18px')}목록으로</button><button class="btn btn-secondary sm" style="flex:1">작품 목차</button><button class="btn btn-secondary sm">${I('chat', 'width:18px;height:18px')}38</button></div>
+  <p class="caption" style="margin-top:12px">‹ 이전 화 · 118화 겨울이 오기 전</p></div>
+  <div class="pull"><div class="pr"><i>${I('down', 'width:18px;height:18px')}</i></div>놓으면 120화로</div></div></div><div class="r-progress" style="width:100%"></div><span class="pct glass num">100%</span>`, { reader: 1, key: 'novel:1001' }),
+phone('M10', '퀵 설정', 'Aa → 도크 위 패널: 크기·면·밝기·따뜻하게·읽기 방식·프로필', `<div class="scroll rs">${PROSE()}</div><div class="r-progress" style="width:38%"></div>${RBAR()}
+  <div class="panel"><div class="sizer"><button style="font-size:14px">가</button><span style="font-size:15px;font-weight:650" class="num">글자 18</span><button style="font-size:20px">가</button></div>
+  <div class="row3"><span class="caption">면</span><div class="seg"><button aria-pressed="true">기본</button><button>종이</button><button>먹</button></div></div>
+  <div class="row3"><span class="caption">밝기</span><div class="slider" style="flex:1">${I('sun', 'width:16px;height:16px;color:var(--ink-2)')}<div class="track"><i style="width:70%"></i><b style="left:70%"></b></div></div></div>
+  <div class="row3"><span class="caption">따뜻하게</span><div class="slider" style="flex:1"><div class="track"><i style="width:20%"></i><b style="left:20%"></b></div></div></div>
+  <div class="row3"><span class="caption">읽기 방식</span><div class="seg"><button aria-pressed="true">스크롤</button><button>페이지</button></div></div>
+  <div class="row3" style="justify-content:space-between"><span style="display:flex;gap:6px"><button class="chip" aria-pressed="true">낮</button><button class="chip">밤</button></span><button class="btn btn-quiet" style="color:var(--accent)">모든 설정 ›</button></div></div>${DOCK('aa')}`, { reader: 1, key: 'novel:1001' }),
+phone('M11', '스크러버', '진행 배지 탭 → 위치 슬라이더(표시 눈금) + 바코드 + 몇 화 + 돌아가기', `<div class="scroll rs">${PROSE()}</div><div class="scrim"></div>
+  <section class="sheet"><div class="grab"></div><h2>위치 이동</h2>
+  <div class="grp"><p class="caption">이 화 · <span class="num">38% · 남은 약 7분</span></p><div class="slider"><div class="track"><i style="width:38%"></i>${[12, 55, 71].map((x) => `<span style="position:absolute;left:${x}%;top:-6px;width:3px;height:16px;border-radius:2px;background:var(--ribbon)"></span>`).join('')}<b style="left:38%"></b></div></div><p class="caption" style="margin-top:10px">표시한 문장 3곳(주홍 눈금) · 찾기 적중은 노란 눈금</p></div>
+  <div class="grp"><p class="caption">작품 · 119/340화</p><svg class="barcode big" height="16"></svg></div>
+  <div class="grp" style="display:flex;gap:8px"><div class="field on-2" style="flex:1;height:44px">몇 화?</div><button class="btn btn-secondary sm">이동</button></div>
+  <div class="grp"><button class="btn btn-secondary" style="width:100%">${I('prev', 'width:18px;height:18px')}돌아가기 · 이동 전 위치(12%)</button></div></section>`, { reader: 1, key: 'novel:1001' }),
+phone('M12', '페이지 모드 + 탭 영역 안내', '가로 쪽 넘김(scroll-snap). 첫 사용 시 오른손 탭 영역 안내', `<div class="scroll rs" style="overflow:hidden">${PROSE()}</div><div class="r-progress" style="width:25%"></div>
+  <div style="position:absolute;inset:0;z-index:30;display:grid;grid-template-columns:30% 20% 50%;background:rgb(0 0 0/62%);color:#fff;text-align:center;font-weight:650;font-size:15px">
+   <div style="display:grid;place-items:center;border-right:1px dashed rgb(255 255 255/60%)">이전 쪽</div><div style="display:grid;place-items:center;border-right:1px dashed rgb(255 255 255/60%);font-size:13px">도구</div><div style="display:grid;place-items:center;align-content:center;gap:4px">다음 쪽<small style="font-weight:450;font-size:12px;opacity:.9">스와이프도 가능<br>가장자리 24px 제외</small></div></div>
+  <div style="position:absolute;left:12px;right:12px;bottom:18px;z-index:31;text-align:center;color:#fff;font-size:13px;background:rgb(0 0 0/70%);border-radius:10px;padding:8px"><span class="num">12 / 48쪽</span> · 한 번 탭하면 사라져요 · 설정에서 왼손으로</div>`, { reader: 1, key: 'novel:1001' }),
+phone('M25', '더보기 시트', '섹션: 이 화 · 보기 · 작품 · 기기', `<div class="scroll rs">${PROSE()}</div><div class="scrim"></div><section class="sheet"><div class="grab"></div><p class="caption">달그림자 서고의 마술사 · 119화</p><h2>더보기</h2>
+  <div class="grp"><p class="caption">이 화</p><div class="grid4"><button>${I('find')}본문 찾기</button><button>${I('mark')}표시 목록</button><button>${I('source')}원문</button><button>${I('link')}링크 복사</button><button>${I('qr')}다른 기기에서</button><button>${I('share')}공유</button><button>${I('chat')}댓글 38</button></div></div>
+  <div class="grp"><p class="caption">보기</p><div class="grid4"><button>${I('layers')}AA로 보기</button><button>${I('focus')}집중</button><button>${I('rotate')}AA 가로</button><button>${I('scroll')}자동 스크롤</button><button>${I('headphones')}듣기</button></div></div>
+  <div class="grp"><p class="caption">작품</p><div class="grid4"><button>${I('list')}목차</button><button>${I('find')}작품에서 찾기</button><button>${I('download')}이 기기에 저장</button><button>${I('record')}분류</button></div></div>
+  <div class="grp"><p class="caption">기기</p><div class="set-row" style="border-top:0"><span>화면 켜 두기</span><span class="toggle"></span></div></div></section>`, { reader: 1, key: 'novel:1001' }),
+phone('M26', '댓글 시트', '본문 끝 `댓글 38` → 시트. 본문 아래 원 댓글은 until-found로 접힘', `<div class="scroll rs">${PROSE()}</div><div class="scrim"></div><section class="sheet" style="max-height:70%"><div class="grab"></div><h2>댓글 <span class="num" style="color:var(--ink-2)">38</span></h2>
+  ${[['서고지기', '2일 전', '할머니 대사 복선 회수 너무 좋다'], ['겨울밤', '2일 전', '"알겠어."가 두 번 나오는 거 의도한 거죠?'], ['ㅇㅇ', '1일 전', '다음 화 제목 보고 소리 지름'], ['정원사', '1일 전', 'AA판도 있으면 좋겠다'], ['별빛', '5시간 전', '120화 언제 보존되나요']].map(([n, t, c]) => `<div class="comment"><b>${n}</b><span class="meta">${t}</span><p>${c}</p></div>`).join('')}</section>`, { reader: 1 }),
+].join('');
+
+$('#f3').innerHTML = [
+phone('M13', '본문 찾기 — 키보드 열림', 'Highlight API(DOM 불변) · 위치 띠 · 키보드 바로 위 찾기 바(↑↓ 동작)', `<div class="scroll rs" id="find-scroll">${PROSE('prose-f')}</div><div class="r-progress" style="width:52%"></div>
+  <div class="findbar glass" style="bottom:268px"><div class="ticks" id="ticks"></div><div class="findrow"><div class="field filled">${I('search')}정원</div><span class="count num" id="fcount">2/5</span><button class="icon-btn" id="fprev" aria-label="이전 적중">${I('up')}</button><button class="icon-btn" id="fnext" aria-label="다음 적중">${I('down')}</button><button class="icon-btn" aria-label="닫기">${I('close')}</button></div>
+  <div style="display:flex;gap:6px;margin-top:8px"><button class="chip" aria-pressed="true">이 회차</button><button class="chip">작품 전체</button></div></div>
+  <div class="kbd">${['ㅂㅈㄷㄱㅅㅛㅕㅑㅐㅔ', 'ㅁㄴㅇㄹㅎㅗㅓㅏㅣ', '⇧ㅋㅌㅊㅍㅠㅜㅡ⌫'].map((r) => `<div>${[...r].map((c) => `<span>${c}</span>`).join('')}</div>`).join('')}<div><span>?123</span><span>,</span><span class="w">스페이스</span><span>.</span><span>검색</span></div></div>`, { reader: 1, key: 'novel:1001' }),
+phone('M14', '문장 선택 · 표시한 문장', '선택 메뉴(Floating UI inline, 선택 아래) · 표시 문장 ribbon-soft · 메모 popover', `<div class="scroll rs">${PROSE('prose-sel')}</div><div class="r-progress" style="width:38%"></div>${RBAR()}
+  <div class="selmenu" style="left:12px;top:716px"><button>${I('mark', 'width:15px;height:15px;vertical-align:-3px')} 표시</button><button>메모</button><button>복사</button><button>작품에서 찾기</button><button>공유</button></div>
+  <div class="popover" style="left:62px;top:220px"><p class="caption" style="margin-bottom:4px">내 메모 · 9월 18일</p><p>3부 복선 — 118화 대사와 연결</p><div style="display:flex;gap:6px;margin-top:10px"><button class="chip">편집</button><button class="chip">표시 지우기</button><button class="chip">${I('share')}공유</button></div></div>${DOCK()}`, { reader: 1, key: 'novel:1001' }),
+phone('M15', '발췌 카드 공유', 'modern-screenshot로 1080×1350 카드 → Web Share(files)', `<div class="scroll rs">${PROSE()}</div><div class="scrim"></div><section class="sheet"><div class="grab"></div><h2>발췌 카드</h2>
+  <div class="grp" data-key="novel:1001"><div class="sharecard"><div class="band"></div><div class="in"><q>약속은 지키는 쪽이 먼저 잊지 않는 법이야.</q><div><p class="src"><b>달그림자 서고의 마술사</b>117화 · 한여름</p><p class="wm" style="margin-top:14px"><span class="logo" style="width:18px;height:18px;font-size:9px">Re</span>ReDSTM</p></div></div></div></div>
+  <div class="grp"><div class="seg"><button aria-pressed="true">작품색</button><button>밝게</button><button>어둡게</button></div></div>
+  <div class="grp" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn btn-secondary">${I('copy', 'width:18px;height:18px')}텍스트 복사</button><button class="btn btn-primary">${I('share', 'width:18px;height:18px')}이미지 공유</button></div></section>`, { reader: 1 }),
+phone('M20', '작품 안 찾기 (KWIC)', '읽은 회차까지(스포일러 보호) · 분포 띠 · 문맥 줄 → 원문 이동', `<div class="scroll">${SB()}
+  <div class="m-head glass"><button class="btn btn-quiet">${I('prev')}작품</button><span class="meta">달그림자 서고의 마술사</span><span style="width:44px"></span></div>
+  <div class="pad"><div class="field filled">${I('search')}정원</div>
+  <div style="display:flex;gap:6px;margin-top:10px;overflow-x:auto"><button class="chip" aria-pressed="true">읽은 회차까지</button><button class="chip">작품 전체</button><button class="chip">단어 시작만</button></div>
+  <div class="card" style="margin-top:12px;padding:14px"><p style="font-size:14px;font-weight:650" class="num">23화에 걸쳐 61곳 <span class="meta">· 119화까지</span></p><svg id="dist" style="display:block;width:100%;margin-top:10px" height="30"></svg><svg class="barcode big" height="8" style="margin-top:4px"></svg></div>
+  <div class="kwic" style="margin-top:8px">${[['3화', '…문을 열자 서고의 ', '정원', '이 눈에 들어왔다. 오래된…'], ['3화', '…그렇게 말하며 ', '정원', ' 벤치에 앉았다…'], ['17화', '…"', '정원', '에 가자, 오늘은." 대답은…'], ['58화', '…겨울이 오면 ', '정원', '은 늘 조용했다…'], ['117화', '…할머니의 ', '정원', '에서 약속을…'], ['119화', '…서고의 ', '정원', '은 이미 하얗게…']].map(([n, l, k, r]) => `<div class="line"><span class="no num">${n}</span><span>${l}<mark>${k}</mark>${r}</span></div>`).join('')}</div>
+  <div style="height:40px"></div></div></div>`),
+].join('');
+
+$('#f4').innerHTML = [
+phone('M16', 'AA 뷰어 — 세로', 'AA 도구줄 sticky · 가장자리 fade + 첫 진입 힌트 · 가로 미니맵. 핀치 = transform 후 배율 확정', `<div class="scroll rs">${SB()}
+  <div class="r-bar glass" style="position:sticky;height:48px;padding:0 4px"><button class="icon-btn">${I('prev')}</button><div class="ctx"><i class="dot"></i><span>[AA] 성배전쟁 뒷이야기</span><span class="num">30/31</span></div><button class="icon-btn">${I('find')}</button><button class="icon-btn">${I('record')}</button></div>
+  <div class="aa-bar glass"><button>맞춤</button><button>−</button><output class="num">100%</output><button>+</button><span style="flex:1"></span><button aria-label="가로 전체화면">${I('rotate', 'width:18px;height:18px')}</button><button>색</button></div>
+  <div style="padding:16px 16px 0"><p class="kicker">[AA] 성배전쟁 뒷이야기 · 제7장</p></div>
+  <div class="aa-stage-wrap" style="margin-top:10px"><div class="aa-stage"><pre class="aa">${AA_ART}</pre></div><span class="hint">← 가로로 더 있어요</span></div>
+  <div class="minimap"><i></i></div><p class="caption" style="margin:6px 12px">두 손가락으로 확대 · 두 번 탭하면 맞춤 ↔ 100%</p>
+  <div class="aa-stage-wrap" style="margin-top:14px"><div class="aa-stage" style="mask-image:none"><pre class="aa">　　　　 ∧∧
+　　　　(,,ﾟДﾟ)　＜ 장면 3/12
+　　　 ⊂　　つ
+　　　 ～|　 |
+　　　　 し\`J</pre></div></div>
+  <div style="height:120px"></div></div>${DOCK()}`, { reader: 1, key: 'arcalive:aa:31' }),
+phone('M17', 'AA 가로 전체화면', 'Fullscreen + orientation lock(landscape). 탭하면 얇은 막대 3초', `<div class="aa-stage" style="position:absolute;inset:0;display:grid;place-items:center;mask-image:none"><pre class="aa" style="font-size:18px">${AA_ART}</pre></div>
+  <div class="fs-top"><button>${I('close', 'width:16px;height:16px')}</button><span>장면 3/12</span><span style="flex:1"></span><button>맞춤</button><button class="num">112%</button><button>‹</button><button>›</button></div>`, { land: 1 }),
+phone('M18', '이미지 갤러리', 'PhotoSwipe: 핀치·더블탭·좌우 넘김·아래로 끌어 닫기 · Back = 닫기', `<div class="gallery"><div class="top"><button class="icon-btn" style="color:#fff">${I('close')}</button><span class="num">2 / 5</span><button class="icon-btn" style="color:#fff">${I('more')}</button></div>
+  <svg class="img" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b3a55"/><stop offset="1" stop-color="#c9a58a"/></linearGradient></defs><rect width="400" height="300" fill="url(#sky)"/><circle cx="300" cy="80" r="26" fill="#f4e7c8"/><path d="M0 230 L80 170 L150 215 L230 150 L320 210 L400 175 V300 H0Z" fill="#1f2a3b"/><path d="M0 260 L400 250 V300 H0Z" fill="#141b26"/></svg>
+  <div class="bot"><button>${I('source', 'width:16px;height:16px;vertical-align:-3px')} 원본 열기</button><button>${I('share', 'width:16px;height:16px;vertical-align:-3px')} 공유</button></div></div>`),
+phone('M19', '듣기 (TTS)', '문장 단위(Intl.Segmenter) · 현재 문장 강조 · Media Session · 타이머', `<div class="scroll rs">${PROSE('prose-tts')}</div><div class="r-progress" style="width:44%"></div>${RBAR()}
+  <div class="player glass"><div style="display:flex;justify-content:space-between;align-items:center"><span class="caption">119화 · 문장 14/86</span><span class="caption">${I('timer', 'width:14px;height:14px;vertical-align:-2px')} 30분 남음</span></div>
+  <div class="progress" style="margin:8px 0 6px"><span style="width:16%;background:var(--accent)"></span></div>
+  <div class="ctl"><button class="chip">1.2×</button><button class="icon-btn">${I('skipb')}</button><button class="play">${I('pause')}</button><button class="icon-btn">${I('skipf')}</button><button class="icon-btn">${I('close')}</button></div></div>`, { reader: 1, key: 'novel:1001' }),
+].join('');
+
+$('#f5').innerHTML = [
+phone('M21', '설정', '그룹 순서(DESIGN §10) · 서체 카드 미리보기 · 효과·기록·저장 공간·동기화', `<div class="scroll">${SB()}
+  <div class="m-head glass"><h1>설정</h1><button class="icon-btn">${I('close')}</button></div>
+  <div class="pad"><div class="field on-2" style="height:44px">${I('search')}설정 찾기</div>
+  <div class="grp"><p class="caption">화면</p><div class="seg"><button>시스템</button><button aria-pressed="true">밝게</button><button>어둡게</button></div><div class="seg" style="margin-top:8px"><button aria-pressed="true">기본</button><button>종이</button><button>먹</button></div></div>
+  <div class="grp"><p class="caption">본문 서체 — 이 글의 첫 문단</p><div style="display:grid;gap:8px"><button class="font-card" aria-checked="true"><small>마루부리 · 기본</small><span style="font:16px/1.6 var(--font-reading)">창밖으로 눈이 내리고 있었다.</span></button><button class="font-card" aria-checked="false"><small>고운바탕</small><span style="font:16px/1.6 'Gowun Batang',serif">창밖으로 눈이 내리고 있었다.</span></button><button class="font-card" aria-checked="false"><small>프리텐다드</small><span style="font:16px/1.6 var(--font-ui)">창밖으로 눈이 내리고 있었다.</span></button></div></div>
+  <div class="grp"><p class="caption">글자</p><div class="set-row" style="border-top:0"><span>문단 간격</span><span class="meta num">0.9em</span></div><div class="set-row"><span>들여쓰기</span><span class="toggle"></span></div><div class="set-row"><span>굵기<small>프리텐다드에서 가변</small></span><span class="meta">보통</span></div></div>
+  <div class="grp"><p class="caption">읽기 방식</p><div class="seg"><button aria-pressed="true">스크롤</button><button>페이지</button><button>이어 스크롤</button></div><div class="set-row" style="margin-top:6px;border-top:0"><span>탭 영역</span><span class="meta">오른손</span></div><div class="set-row"><span>끝에서 당겨 다음 화</span><span class="toggle on"></span></div></div>
+  <div class="grp"><p class="caption">효과</p><div class="set-row" style="border-top:0"><span>반투명 효과</span><span class="toggle on"></span></div><div class="set-row"><span>진동 피드백</span><span class="toggle on"></span></div></div>
+  <div class="grp"><p class="caption">기록</p><div class="set-row" style="border-top:0"><span>이 기기 저장 공간<small>오프라인 12작품 · 184MB / 사용 가능 9.2GB</small></span><span style="color:var(--accent);font-size:14px;font-weight:600">관리</span></div><div class="set-row"><span>동기화<small>마지막 성공 2분 전 · 대기 0건</small></span><span class="toggle on"></span></div><div class="set-row"><span>기록 내보내기 (.json.gz)</span><span>›</span></div></div>
+  <div style="height:30px"></div></div></div>`),
+phone('M22', '오프라인', '배너 + 이 기기에 저장한 작품만 선명, 나머지는 흐리게', `<div class="scroll">${SB()}
+  <div class="m-head"><span class="wordmark"><span class="logo">Re</span>ReDSTM</span><button class="icon-btn">${I('settings')}</button></div>
+  <div class="banner">${I('wifi-off')}<span><b>오프라인이에요</b><br><span class="meta">이 기기에 저장한 12작품을 읽을 수 있어요</span></span></div>
+  <div class="pad"><div class="sec"><h2>이 기기에 저장됨</h2><button>관리</button></div>
+  <div class="rows">${works.slice(0, 2).map((w) => workRow(w, `<svg class="i" style="color:var(--success-text)"><use href="#i-check"/></svg>`)).join('')}</div>
+  <div class="sec"><h2>읽던 작품</h2></div>
+  <div class="rows">${works.slice(2, 5).map((w) => workRow(w, '<span class="caption">연결 필요</span>', 'dim')).join('')}</div>
+  <div class="spacer-bottom"></div></div></div>${TAB('library')}`),
+phone('M23', '인증 만료', 'Access 로그인 만료 — 캐시하지 않고 다시 로그인 안내', `<div class="scroll">${SB()}<div class="m-head"><span class="wordmark"><span class="logo">Re</span>ReDSTM</span></div><div class="pad"><div class="continue" style="opacity:.5"><div class="continue-top">${cover('novel:1001', '달그림자 서고의 마술사', '소설')}<div><p class="work">달그림자 서고의 마술사</p></div></div></div></div></div><div class="scrim"></div>
+  <section class="sheet"><div class="grab"></div><div style="display:grid;justify-items:center;text-align:center;gap:10px;padding:10px 0 4px">${I('lock', 'width:32px;height:32px;color:var(--ink-2)')}<h2>로그인이 만료됐어요</h2><p class="meta">읽던 위치와 기록은 이 기기에 그대로 있어요.<br>다시 로그인하면 이어서 볼 수 있어요.</p></div>
+  <div class="grp" style="display:grid;gap:8px"><button class="btn btn-primary">다시 로그인</button><button class="btn btn-secondary">이 기기에 저장한 작품 보기</button></div></section>`),
+phone('M24', '빈 서재 (첫 사용)', '기록이 없을 때 검색·출처 3곳·기록 가져오기', `<div class="scroll">${SB()}<div class="m-head"><span class="wordmark"><span class="logo">Re</span>ReDSTM</span><button class="icon-btn">${I('settings')}</button></div>
+  <div class="onb"><h1>무엇부터 읽을까요?</h1><p class="meta" style="margin-top:8px">보존된 330,760편에서 찾아보세요</p><div class="field" style="margin-top:18px;text-align:left">${I('search')}작품·글·작가 검색</div>
+  <div class="src-cards"><div class="src-card hue-0"><span class="ic">${I('layers')}</span><div><b>타입문넷</b><p class="meta">게시판 46 · 작품 2,140</p></div></div><div class="src-card hue-2"><span class="ic">${I('browse')}</span><div><b>소설</b><p class="meta">작품 128 · 북토끼·블랙툰</p></div></div><div class="src-card hue-7"><span class="ic">${I('image')}</span><div><b>아카라이브</b><p class="meta">AA·이미지 게시판 12</p></div></div></div>
+  <button class="btn btn-quiet" style="margin-top:14px;color:var(--accent)">다른 기기의 기록 가져오기</button></div></div>${TAB('library')}`),
+].join('');
+
+const RAIL = (a) => `<nav class="rail"><span class="logo">Re</span>${[['library', '서재'], ['browse', '둘러보기'], ['search', '검색'], ['record', '기록']].map(([i, l]) => `<button ${a === i ? 'aria-current="page"' : ''}>${I(i)}${l}</button>`).join('')}<span class="grow"></span><button>${I('settings')}설정</button><button>${I('ops')}운영</button><button>${I('moon')}테마</button></nav>`;
+const DHOME = `<div class="d-home"><div class="d-inner"><div class="d-top"><div><h1 style="font-size:28px;font-weight:700">서재 <span class="meta num" style="font-size:13px">보존 330,760편</span></h1>
+  <article class="continue" style="display:flex;gap:20px;padding:20px">${cover('novel:1001', '달그림자 서고의 마술사', '소설 · 한여름', 'l')}<div style="flex:1;display:flex;flex-direction:column"><p class="label">이어 읽기 · 3분 전</p><p class="work" style="font-size:22px">달그림자 서고의 마술사</p><p class="ch" style="font-size:18px">119화 · 겨울 정원의 약속</p><p class="excerpt" style="font-size:15px">그녀는 오래된 책을 덮고 천천히 고개를 들었다. 서고의 정원은 이미 하얗게 덮여 있었고, 약속한 사람은 아직 오지 않았다.</p><div style="margin-top:auto;display:flex;align-items:center;gap:14px"><div class="progress" style="flex:1"><span style="width:38%"></span></div><span class="caption num" style="color:var(--ribbon-text);font-weight:650">38%</span><button class="btn btn-secondary">목차</button><button class="btn btn-primary">이어 읽기</button></div></div></article></div>
+  <div><div class="field" style="margin-top:44px">${I('search')}작품·글·작가 검색<span class="kbdk">Ctrl K</span></div><div class="sec"><h2>스마트 서재</h2></div><div style="display:flex;flex-wrap:wrap;gap:8px"><button class="chip">${I('flame')}새 화 있음 4</button><button class="chip">읽는 중 12</button><button class="chip">AA 모음 9</button><button class="chip">완독 31</button></div><div class="sec"><h2>이번 주</h2><span class="meta">3시간 12분 · 12일 연속</span></div><div class="week" style="height:56px;margin:0">${[40, 20, 65, 10, 48, 3, 30].map((h, i) => `<div class="${i === 6 ? 'today' : ''}"><i style="height:${h * .8}px"></i></div>`).join('')}</div></div></div>
+  <div class="sec"><h2>읽던 작품</h2><button>모두 보기</button></div><div class="d-grid">${works.map((w) => shelfItem(w, { bar: 1 })).join('')}</div>
+  <div class="sec"><h2>오늘의 발견</h2><button>다른 추천</button></div><div class="d3"><div class="rows">${[['novel:5501', '안개 도시의 계약 마술사'], ['typemoon:collection:301', '영령 도서관 사서의 하루']].map(([k, t]) => `<div class="row">${cover(k, t, '', 's')}<div class="body"><p class="title">${t}</p><p class="meta">추천 · 아직 안 읽음</p></div></div>`).join('')}</div><div class="rows"><div class="row"><div class="body"><p class="title">설정 정리: 마술 회로와 각인</p><p class="meta">요즘 화제 · 댓글 212</p></div></div><div class="row"><div class="body"><p class="title">[AA] 성배전쟁 뒷이야기 7장</p><p class="meta">요즘 화제 · 댓글 96</p></div></div></div><div class="excerpt-card"><q>약속은 지키는 쪽이 먼저 잊지 않는 법이야.</q><p class="caption"><span>오늘의 발췌 · 117화</span></p></div></div></div></div>`;
+$('#f6').innerHTML = [
+`<div class="fw"><p class="fl">D1 서재</p><div class="dsk"><div class="desk">${RAIL('library')}${DHOME}</div></div></div>`,
+`<div class="fw"><p class="fl">D2 Reader · 목록 · 찾기/발췌/목차 패널</p><div class="dsk"><div class="desk">${RAIL('browse')}<div class="d-reader"><aside class="d-cat"><div style="padding:20px 20px 12px"><div class="seg"><button>타입문넷</button><button aria-pressed="true">소설</button><button>아카라이브</button></div><p class="meta" style="margin-top:12px">달그림자 서고의 마술사 · 340화</p><svg class="barcode big" height="10" style="margin-top:8px"></svg></div><div class="rows toc">${tocRows(110, 128)}</div></aside>
+  <section class="d-main rs" data-key="novel:1001"><div class="r-progress" style="width:38%"></div><div class="d-tool glass"><button class="t">${I('prev')}목록</button><span class="sep"></span><button class="t" disabled>${I('prev')}이전 화</button><button class="t next">다음 화${I('next')}</button><span class="g"></span><button class="t">${I('find')}<span class="lbl">찾기</span></button><button class="t on-ribbon">${I('record', 'fill:currentColor')}<span class="lbl">저장됨</span></button><button class="t">${I('source')}<span class="lbl">원문</span></button><button class="t">${I('headphones')}<span class="lbl">듣기</span></button><button class="t" style="font-weight:700">Aa</button><button class="t">${I('more')}</button></div>
+  <div class="d-prose"><p class="kicker">달그림자 서고의 마술사 · 119화</p><h1>겨울 정원의 약속</h1><p class="rmeta">한여름 · 2026. 9. 20 · 약 12분</p><div class="text" id="prose-d">${PARAS.map((p) => `<p>${p}</p>`).join('')}</div></div></section>
+  <aside class="d-panel"><div class="tabs"><button aria-selected="true">찾기</button><button>발췌</button><button>목차</button></div><div style="padding:16px 20px;overflow:hidden"><div class="findrow"><div class="field filled on-2" style="height:40px">정원</div><span class="count num">2/5</span></div><div style="display:flex;gap:6px;margin:10px 0 4px"><button class="chip" aria-pressed="true">이 회차</button><button class="chip">작품 전체</button></div><div id="hits-d"></div><p class="caption" style="margin:18px 0 8px">최근 발췌</p><div class="excerpt-card"><q>약속은 지키는 쪽이 먼저 잊지 않는 법이야.</q><p class="caption"><span>117화</span><span>위치 정확</span></p></div></div></aside></div></div></div></div>`,
+`<div class="fw"><p class="fl">D3 명령 팔레트 (Ctrl/⌘+K, 초성 ㄷㄱㄹ)</p><div class="dsk"><div class="desk">${RAIL('library')}${DHOME}<div class="scrim"></div><div class="palette"><div class="in">${I('cmd', 'color:var(--ink-2)')}ㄷㄱㄹ<span class="caret" style="margin-left:-6px"></span><span class="kbdk">Esc</span></div>
+  <div class="pg"><p>작품 · 초성</p><div class="it sel">${cover('novel:1001', '달그림자 서고의 마술사', '', 's')}<span>달그림자 서고의 마술사</span><span class="kbdk">Enter 이어 읽기</span></div><div class="it">${cover('novel:9911', '다가라의 레시피', '', 's')}<span>다가라의 레시피 <span class="meta">· 초성 일치</span></span></div></div>
+  <div class="pg"><p>명령</p><div class="it">${I('moon')}설정: 먹 면으로</div><div class="it">${I('record')}이동: 기록 › 발췌</div><div class="it">${I('download')}이 작품을 기기에 저장</div></div></div></div></div></div>`,
+].join('');
+
+function applyHues() { document.querySelectorAll('[data-key]').forEach((el) => { [...el.classList].forEach((c) => c.startsWith('hue-') && el.classList.remove(c)); el.classList.add('hue-' + hueIndex(el.dataset.key)); }); }
+function drawBarcode(svg, n, r, h, full) {
+  const w = (svg.getBoundingClientRect().width / (svg.closest('.dsk') ? .62 : 1)) || 300; const cw = w / n; let out = '';
+  for (let i = 1; i <= n; i++) {
+    const s = full ? st(i) : (i <= r ? 'read' : i === r + 1 ? 'current' : 'unread'); const x = (i - 1) * cw, ww = Math.max(cw - (cw > 3 ? 1 : 0), .6);
+    if (s === 'missing') out += `<rect x="${x + .3}" y=".5" width="${Math.max(ww - .6, .4)}" height="${h - 1}" fill="none" stroke="var(--ink-3)" stroke-width=".6" stroke-dasharray="2 1.5"/>`;
+    else out += `<rect x="${x}" y="${h > 6 ? 3 : 0}" width="${ww}" height="${h > 6 ? h - 3 : h}" fill="${s === 'read' ? 'color-mix(in oklab, var(--ink) 45%, transparent)' : s === 'current' ? 'var(--ribbon)' : 'var(--line-strong)'}"/>`;
+    if (full && NEW.has(i) && h > 6) out += `<rect x="${x}" y="0" width="${ww}" height="2" fill="var(--accent)"/>`;
+  }
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`); svg.innerHTML = out;
+}
+function drawAll() {
+  document.querySelectorAll('svg.barcode.big').forEach((s) => drawBarcode(s, N, READ, +s.getAttribute('height'), true));
+  document.querySelectorAll('svg.barcode.mini').forEach((s) => drawBarcode(s, +s.dataset.n, +s.dataset.r, +s.getAttribute('height'), false));
+  const d = $('#dist'); if (d) { const w = d.getBoundingClientRect().width || 300; const cut = 119 / N * w; let o = ''; const hits = { 3: 2, 17: 1, 22: 3, 40: 1, 58: 2, 61: 4, 75: 2, 90: 1, 101: 3, 117: 2, 119: 5 }; for (const [c, k] of Object.entries(hits)) o += `<rect x="${(c - 1) / N * w}" y="${30 - k * 5.5}" width="3" height="${k * 5.5}" fill="var(--hl-current)"/>`; o += `<rect x="${cut}" y="0" width="${w - cut}" height="30" fill="var(--surface-2)"/><text x="${cut + 6}" y="19" font-size="11" fill="var(--ink-2)">안 읽은 회차는 집계하지 않음</text>`; d.setAttribute('viewBox', `0 0 ${w} 30`); d.innerHTML = o; }
+  const heat = $('#heat'); if (heat) { const v = [0, 1, 2, 2, 3, 0, 1, 2, 4, 3, 1, 0, 2, 2, 3, 4, 2, 1, 0, 1, 3, 2, 4, 3, 2, 1, 2, 3, 0, 2]; heat.innerHTML = v.map((x, i) => `<i title="9월 ${i + 1}일" style="background:var(--heat-${x})"></i>`).join(''); }
+}
+function ranges(root, q) { const out = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { let i = n.data.indexOf(q); while (i !== -1) { const r = new Range(); r.setStart(n, i); r.setEnd(n, i + q.length); out.push(r); i = n.data.indexOf(q, i + q.length); } } return out; }
+let cur = 1;
+function paint() {
+  if (!('highlights' in CSS)) return;
+  const f = $('#prose-f'), d = $('#prose-d'); const fr = ranges(f, '정원'), dr = ranges(d, '정원');
+  CSS.highlights.set('redstm-find', new Highlight(...fr, ...dr)); CSS.highlights.set('redstm-find-current', new Highlight(fr[cur], dr[cur]));
+  const p = $('#prose-sel').querySelectorAll('p'); const m = new Range(); m.setStart(p[1].firstChild, 1); m.setEnd(p[1].firstChild, 22);
+  const s = new Range(); s.setStart(p[3].firstChild, 7); s.setEnd(p[3].firstChild, 30);
+  const tp = $('#prose-tts').querySelectorAll('p')[2].firstChild; const t = new Range(); t.setStart(tp, 0); t.setEnd(tp, 14);
+  CSS.highlights.set('redstm-mark', new Highlight(m)); CSS.highlights.set('redstm-sel', new Highlight(s)); CSS.highlights.set('redstm-tts', new Highlight(t));
+  $('#fcount').textContent = `${cur + 1}/${fr.length}`;
+  const total = f.textContent.length; let acc = 0; const offs = []; f.querySelectorAll('p').forEach((pp) => { let i = pp.textContent.indexOf('정원'); while (i !== -1) { offs.push(acc + i); i = pp.textContent.indexOf('정원', i + 2); } acc += pp.textContent.length; });
+  $('#ticks').innerHTML = offs.map((o, k) => `<i class="${k === cur ? 'cur' : ''}" style="left:${(o / total * 100).toFixed(1)}%"></i>`).join('');
+  const txt = d.textContent; let h = '', i = txt.indexOf('정원'), k = 0; while (i !== -1) { h += `<div class="hit ${k === cur ? 'cur' : ''}"><small>문단 ${k + 1}</small>…${txt.slice(Math.max(0, i - 18), i)}<mark>정원</mark>${txt.slice(i + 2, i + 20)}…</div>`; i = txt.indexOf('정원', i + 2); k++; } $('#hits-d').innerHTML = h;
+  const fs = $('#find-scroll'); fs.scrollTop = Math.max(0, fr[cur].getBoundingClientRect().top - fs.getBoundingClientRect().top + fs.scrollTop - 150);
+}
+$('#fnext').addEventListener('click', () => { cur = (cur + 1) % 5; paint(); });
+$('#fprev').addEventListener('click', () => { cur = (cur + 4) % 5; paint(); });
+document.querySelectorAll('.controls .seg').forEach((seg) => seg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); document.documentElement.dataset[seg.dataset.ctl] = b.dataset.v; }));
+applyHues(); drawAll(); paint();
+addEventListener('resize', drawAll); document.fonts?.ready.then(() => { drawAll(); paint(); });
+</script>
+</body>
+</html>

@@ -1,458 +1,529 @@
 ---
-version: 1.0
-name: Signal Archive
-description: A precise private reading archive with a graphite shell, quiet reading surfaces, and one red signal.
+version: 2.1
+name: Ribbon Library
+description: 작품이 주인공인 편집형 개인 서재. 조용한 읽기 면 위에서 청록 잉크는 행동을, 주홍 가름끈은 "내가 읽던 자리"를 표시한다.
+references:
+  main: Apple Books
+  sub: [RIDI, Readwise Reader]
 colors:
-  light-page: "#FFFFFF"
-  light-surface: "#F7F8FA"
-  light-surface-raised: "#FFFFFF"
-  light-reader: "#FBFAF8"
-  light-ink: "#15171A"
-  light-muted: "#4B5565"
-  light-subtle: "#7C8798"
-  light-line: "#E7E9EE"
-  light-line-strong: "#CDD2DA"
-  light-accent: "#D12A3A"
-  light-accent-hover: "#B42332"
-  light-accent-soft: "#FFF1F2"
-  light-focus: "#2E90FA"
-  dark-page: "#0B0D12"
-  dark-surface: "#11141A"
-  dark-surface-raised: "#171B22"
-  dark-reader: "#111318"
-  dark-ink: "#F4F6F8"
-  dark-muted: "#A7AFBE"
-  dark-subtle: "#7E8796"
-  dark-line: "#292E38"
-  dark-line-strong: "#3A414D"
-  dark-accent: "#FF646E"
-  dark-accent-hover: "#FF7C84"
-  dark-accent-soft: "#351A20"
-  dark-focus: "#84CAFF"
-  aa-light-background: "#F5F5F0"
-  aa-light-ink: "#24252A"
-  aa-dark-background: "#0B0D12"
-  aa-dark-ink: "#7BE0A2"
-  success: "#12B76A"
-  warning: "#F79009"
-  danger: "#F04438"
-  light-success-text: "#027A48"
-  light-warning-text: "#B54708"
+  light-bg: "#F7F6F3"
+  light-surface: "#FFFFFF"
+  light-surface-2: "#EFEEEA"
+  light-ink: "#1C1B19"
+  light-ink-2: "#5A5750"
+  light-ink-3: "#8B877E"
+  light-line: "#E4E2DC"
+  light-line-strong: "#CFCCC4"
+  light-accent: "#1E6B5F"
+  light-accent-hover: "#17574D"
+  light-accent-soft: "#E1EFEB"
+  light-on-accent: "#FFFFFF"
+  light-ribbon: "#D2452B"
+  light-ribbon-text: "#B3361F"
+  light-ribbon-soft: "#FBE3DC"
+  light-focus: "#2563EB"
+  light-success-text: "#1F7A3F"
+  light-warning-text: "#9A5B00"
   light-danger-text: "#B42318"
+  dark-bg: "#121413"
+  dark-surface: "#1A1D1C"
+  dark-surface-2: "#222625"
+  dark-ink: "#ECEEEA"
+  dark-ink-2: "#AEB4AF"
+  dark-ink-3: "#7E8580"
+  dark-line: "#2C3130"
+  dark-line-strong: "#3B4240"
+  dark-accent: "#7FD1BE"
+  dark-accent-hover: "#9ADCCB"
+  dark-accent-soft: "#1D3A34"
+  dark-on-accent: "#0E1A17"
+  dark-ribbon: "#FF7A5C"
+  dark-ribbon-text: "#FF8C72"
+  dark-ribbon-soft: "#3A231D"
+  dark-focus: "#8AB4FF"
+  dark-success-text: "#5FD08A"
+  dark-warning-text: "#F2B84B"
+  dark-danger-text: "#FF8A80"
+  reader-light-default: "#FDFCFA"
+  reader-light-paper: "#F5EFE3"
+  reader-dark-default: "#161918"
+  reader-dark-paper: "#1D1A15"
+  reader-dark-ink: "#000000"
+  hl-find-light: "#FFE8A3"
+  hl-find-current-light: "#FFC940"
+  hl-find-dark: "#5A4A12"
+  hl-find-current-dark: "#7A600F"
+  hl-selection-light: "#CDE6E0"
+  hl-selection-dark: "#2A4A43"
+  heat-light: ["#EFEEEA", "#CFE5DF", "#9DCBC0", "#5FA597", "#1E6B5F"]
+  heat-dark: ["#222625", "#1F4A42", "#2E6D61", "#4D9C8C", "#7FD1BE"]
 typography:
-  display:
-    fontFamily: '"SUIT Variable", SUIT, "Malgun Gothic", sans-serif'
-    fontSize: "2rem"
-    fontWeight: 720
-    lineHeight: 1.2
-    letterSpacing: "-0.035em"
-  title:
-    fontFamily: '"SUIT Variable", SUIT, "Malgun Gothic", sans-serif'
-    fontSize: "1.75rem"
-    fontWeight: 700
-    lineHeight: 1.28
-    letterSpacing: "-0.025em"
-  body-reading:
-    fontFamily: 'MaruBuri, "Nanum Myeongjo", Batang, serif'
-    fontSize: "1.125rem"
-    fontWeight: 400
-    lineHeight: 1.8
-    letterSpacing: "0em"
-  body-ui:
-    fontFamily: '"SUIT Variable", SUIT, "Malgun Gothic", sans-serif'
-    fontSize: "0.9375rem"
-    fontWeight: 450
-    lineHeight: 1.5
-    letterSpacing: "-0.012em"
-  metadata:
-    fontFamily: '"SUIT Variable", SUIT, "Malgun Gothic", sans-serif'
-    fontSize: "0.75rem"
-    fontWeight: 500
-    lineHeight: 1.45
-    letterSpacing: "-0.005em"
-  aa:
-    fontFamily: 'Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace'
-    fontSize: "1rem"
-    fontWeight: 400
-    lineHeight: 1.125
-    letterSpacing: "0em"
-rounded:
-  none: "0px"
-  sm: "6px"
-  md: "10px"
-  lg: "14px"
-  full: "9999px"
-spacing:
-  xs: "4px"
-  sm: "8px"
-  md: "12px"
-  lg: "16px"
-  xl: "24px"
-  2xl: "32px"
-  3xl: "48px"
-  4xl: "64px"
+  ui: '"Pretendard Variable", Pretendard, system-ui, "Malgun Gothic", sans-serif'
+  display-serif: 'MaruBuri, "Gowun Batang", "Noto Serif KR", serif'
+  reading-serif: 'MaruBuri, "Gowun Batang", "Noto Serif KR", Batang, serif'
+  reading-serif-alt: '"Gowun Batang", MaruBuri, "Noto Serif KR", serif'
+  reading-sans: '"Pretendard Variable", Pretendard, system-ui, sans-serif'
+  aa: 'Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace'
+  scale: { display: "28/1.25/700", title-lg: "22/1.3/700", title: "18/1.4/650", body: "15/1.55/450", label: "14/1.4/550", meta: "13/1.45/450", caption: "12/1.4/500", serif-xl: "26/1.3/700", serif-md: "15/1.35/700" }
+rounded: { xs: "3px", sm: "6px", md: "10px", lg: "14px", xl: "20px", full: "9999px" }
+spacing: [4, 8, 12, 16, 20, 24, 32, 40, 56, 72]
+motion: { dur-1: "120ms", dur-2: "200ms", dur-3: "280ms", ease-out: "cubic-bezier(.2,.8,.2,1)", ease-in: "cubic-bezier(.4,0,1,1)", ease-in-out: "cubic-bezier(.4,0,.2,1)" }
 ---
 
-# ReDSTM Design System
+# ReDSTM Design System — Ribbon Library
 
-- 상태: Signal Archive/Porcelain visual local 구현; Operations 세부 의미·live/Android acceptance pending
-- 기준일: 2026-07-12
-- 적용 대상: Edge Reader, remote Operations, local fallback console
-- 근거: [viewer design](docs/05_viewer_design.md)
+- 상태: **규범(목표 상태)**, 구현 전. 기능·순서·티켓은 [`docs/24_frontend_redesign_spec.md`](docs/24_frontend_redesign_spec.md).
+- 시안: [`docs/assets/2026-09-30-redesign/prototype.html`](docs/assets/2026-09-30-redesign/prototype.html)
+- 대체한 문서: v1 Signal Archive → [`docs/archive/2026-09-30/`](docs/archive/2026-09-30/README.md)
+- 적용: Edge Reader 전체. `/ops`는 §14.
 
-이 파일은 mood board가 아니라 색·서체·공간·responsive behavior의 normative contract다. 이전
-warm paper + violet + crescent 방향은 사용자 검토에서 거절됐고, 2026-07-12 authenticated 검토에서는
-Operations의 넓은 회색 면적, 과대 상태 장식, 옅은 설명과 빈 telemetry의 모호성이 다시 거절됐다.
-아래 Porcelain visual 계약은 Reader·검색·설정·Operations 전역에 로컬 구현됐고
-1440/768/390/320px self-contained fixture를 통과했다. Operations의 field별 source/as-of,
-active/latest와 command due/last/cooldown은 `docs/04`의 남은 의미 gate다. 시각 gate는 새 bundle의
-authenticated live smoke, 실제 Android와 사용자 acceptance 전까지 열려 있다.
+값(hex, 크기, 시간)은 원칙 아래의 현재 프리셋이다. 바꿀 때는 이 문서를 먼저 고치고 대비를 다시 계산한다
+(`docs/24` 부록 B).
 
-## 1. 방향
+## 1. 지향점
 
-방향명은 Signal Archive다. 개인 장서의 조용함과 운영 시스템의 정확성을 한 제품 안에 두되,
-고서·판타지·faux luxury를 흉내 내지 않는다.
+### 1.1 한 문장
 
-- precise: 상태와 행동이 한눈에 구분된다.
-- contemporary: 한국어 UI가 최신 mobile/web product처럼 보인다.
-- content-first: chrome은 빠르게 사라지고 글과 AA가 남는다.
+**작품을 고르고, 몰입해서 읽고, 기억나는 장면을 다시 찾는 개인 서재.** 서재는 소장감 있게, 본문은 내가 고른
+환경 그대로 조용하게, AA는 원본 그대로.
 
-기억점은 달이나 장식 문양이 아니라 ReD의 red signal, 정확한 타이포그래피, catalog와 reader의
-밀도 대비다. red는 활성·현재·주의가 필요한 한 지점에만 쓴다.
+### 1.2 레퍼런스 (main 1 · sub 2)
 
-Light refinement의 목적은 유행하는 효과를 더하는 것이 아니라 **밝은 흰 캔버스 위에 상태와 근거를
-정확히 배치하는 것**이다. 단순함은 정보 부족이나 큰 빈 공간이 아니다. 흰색을 기본 면으로 쓰고
-near-white는 navigation, filter, grouped control처럼 역할이 있는 영역에만 쓴다.
+| | 서비스 | 가져오는 것 | 가져오지 않는 것 |
+|---|---|---|---|
+| **Main** | **Apple Books** | 표지가 주인공인 서재, "지금 읽는 중" 이어읽기, 읽기 테마를 한 패널에서 바꾸는 방식, 떠 있는 최소 도구, 스크러버(위치 이동), 독서 목표·기록의 부드러운 격려, 명조 제목의 편집 인상 | 가상 책장 질감, 페이지 말림 애니메이션, 스토어 요소 |
+| Sub | **RIDI (리디)** | 한국어 웹소설 뷰어 관례 — 스크롤/페이지 넘김 선택, 회차 목록·다음 화 흐름, 문단 간격·여백·들여쓰기까지 세밀한 뷰어 설정, 밝기, 듣기(TTS) | 구매·이용권·이벤트 UI, 과한 배지 |
+| Sub | **Readwise Reader** | 다시 찾기 — 표시·메모·발췌 모음, 조건으로 만드는 보기(스마트 서재), 본문 찾기, 키보드 중심 데스크톱, 발췌를 다시 떠올리게 하는 카드 | 업무 Inbox 구조, AI 요약 |
 
-## 2. 금지된 이전 방향
+AA 영역은 레퍼런스 서비스가 없다. 2ch 계열 AA 게시판·정리 사이트의 **MS PGothic 격자 보존**이 기준이고,
+그 위에 모바일 확대·가로 전체화면·장면 이동을 ReDSTM이 새로 얹는다.
 
-- 전체 warm ivory 배경, violet accent, crescent 기호
-- PRIVATE ARCHIVE, ARCHIVE INDEX 같은 반복 영문 eyebrow
-- serif wordmark와 serif UI heading
-- 큰 빈 cover card와 중앙 정렬 splash
-- emoji navigation/status, glass card, purple glow
-- Windows의 Batang/Malgun fallback을 완성된 typography로 간주
+### 1.3 기억점
 
-## 3. 색
+1. **가름끈(주홍 ribbon)** — "내 자리"에만 쓰는 색: 진행선, 현재 회차, 이어읽기, 저장 리본, 바코드의 읽는 중 칸.
+2. **청록 잉크(accent)** — 누를 수 있는 것·선택된 것·링크. 한 화면의 주행동은 청록 채움 버튼 하나.
+3. **타이포 표지** — 표지 이미지 없이도 작품명(명조 굵게)과 작품 고유색으로 알아본다.
+4. **회차 바코드** — 장편의 읽음·누락·새 화를 한 줄로.
+5. **이어읽기 미니바** — Reader 밖 어디서든 엄지 한 번으로 읽던 곳으로.
 
-| 역할 | Light | Dark |
+### 1.4 판단 기준 (금지 목록 대신)
+
+1. **식별** — 작품·회차·현재 위치·행동의 차이가 보이는가?
+2. **연속성** — 설정 변경·화면 이동·Back·기기 회전 뒤에도 읽던 문장과 목록 위치가 유지되는가?
+3. **선택권** — 앱 테마, 읽기 프로필, AA 프로필을 서로 독립적으로 고를 수 있는가?
+4. **진실성** — 미열람·보존 누락·색인 없음·원작 미완결·오프라인·인증 만료를 섞지 않는가?
+5. **비용** — 효과·분석·추가 서체를 끄거나 받지 않아도 핵심(찾기·읽기·복귀)이 완전한가?
+6. **한 손** — 휴대폰에서 자주 하는 행동이 화면 아래 절반에서 끝나는가?
+
+### 1.5 화면별 표현 강도
+
+| 면 | 강도 | 쓰는 것 |
 |---|---|---|
-| app canvas | light-page | dark-page |
-| navigation/catalog | light-surface | dark-surface |
-| popover/dialog | light-surface-raised | dark-surface-raised |
-| prose reader | light-reader | dark-reader |
-| primary text | light-ink | dark-ink |
-| secondary text | light-muted | dark-muted |
-| placeholder·disabled·장식 구분 | light-subtle | dark-subtle |
-| boundary | light-line | dark-line |
-| selection/action | light-accent | dark-accent |
-| keyboard focus | light-focus | dark-focus |
+| 서재·작품 상세 | 높음 | 타이포 표지, 작품색, 명조 제목, 카드, e1 그림자, 가로 서가 |
+| 둘러보기·검색·기록 | 중간 | 조밀한 행 + 표지 S, 칩, 미니 바코드 |
+| Reader | 낮음 | 읽기 면, 떠 있는 반투명 도구층, 가름끈 진행선 |
+| AA stage | 없음 | 원본 배치·색. 앱 테마·작품색·반투명이 들어가지 않는다 |
 
-Light는 white canvas, cool near-white chrome과 아주 약한 warm reader surface를 구분한다. 화면의
-70% 이상을 `light-page`가 차지하고 `light-surface`는 navigation·filter·묶음 배경에만 쓴다.
-`light-surface-raised`는 dialog/popover처럼 실제로 위에 뜬 면이다. Dark는 true black이 아니라
-blue-neutral graphite다. 테마는 색상 반전이 아니라 독립 token mapping이다.
+## 2. 색
 
-Light surface 규칙:
+### 2.1 토큰 구조
 
-- 일반 section과 article을 회색 panel이나 card로 감싸지 않는다.
-- 정보 묶음은 흰 면 + spacing + 1px rule로 구분하고, near-white fill은 보조 grouping에만 쓴다.
-- shadow는 dialog/sheet/popover에만 쓴다. base/raised 차이를 모든 block에 적용하지 않는다.
-- 의미 있는 caption과 timestamp는 `light-muted` 이상을 사용한다. `light-subtle`은 placeholder,
-  disabled, 비필수 장식에만 쓴다.
-- red·green dot만으로 상태를 전달하지 않는다. label, 시각, 이유와 다음 행동이 항상 함께 온다.
+primitive(front-matter hex) → semantic → component. 컴포넌트는 semantic만 참조한다.
+`:root { color-scheme: light dark }` + `light-dark()`로 한 선언에 두 값, 명시 테마는
+`:root[data-theme]`의 `color-scheme`으로 고정. 파생색은 `color-mix(in oklab, …)`.
 
-Red 규칙:
+semantic: `--bg --surface --surface-2 --ink --ink-2 --ink-3 --line --line-strong --accent --accent-hover
+--accent-soft --on-accent --ribbon --ribbon-text --ribbon-soft --focus --success-text --warning-text
+--danger-text`, 읽기 면 `--reader-bg --reader-ink --reader-ink-2 --reader-line`, 강조 `--hl-*`, 기록 `--heat-0…4`.
 
-- 전체 화면 면적의 약 5% 이하
-- active navigation, primary action, current progress, critical failure에만 사용
-- body link는 red 또는 underline 중 하나로 충분함
-- success/warning/danger는 semantic state에만 사용
-- gradient, glow, red shadow, decorative red background 금지
+### 2.2 역할
 
-Red 사용 지도(화면당 신호 한 곳 원칙의 구체화):
-
-- Home: active navigation 하나와 이어읽기 progress 조각
-- Catalog: selected row의 3px rail + accent-soft fill
-- Reader: 상단 2px progress line, bookmark active 상태
-- Settings: active segment 표시
-- Operations: critical failure에만; 일반 상태는 semantic token
-
-대비 규칙(2026-07-12 실측 검증):
-
-- light-subtle은 흰 canvas에서 3.64:1로 일반 텍스트 AA에 미달한다. placeholder, disabled,
-  비필수 장식에만 쓰고 날짜·작성자 같은 실제 metadata 텍스트는 muted(7.54:1)를 쓴다.
-- success/warning/danger 원색은 light 배경 텍스트로 AA에 미달한다(2.4~3.8:1). light에서
-  상태 텍스트는 light-success-text/light-warning-text/light-danger-text(5.4~6.6:1)를 쓰고,
-  원색은 badge fill, icon, 2px status line에만 쓴다. dark에서는 원색 텍스트가 통과한다(5.2~8.3:1).
-- focus token은 텍스트가 아니라 focus indicator 전용이다(light 3.2:1은 non-text 3:1만 통과).
-- 텍스트 선택 배경은 accent-soft, 글자색은 ink를 유지한다.
-
-본문 면 `종이`(설정 → 배경)는 Reader(`.reader`, 하단 읽기 도구, 진행 표시)에만 적용하는 따뜻한 읽기
-면이다. app chrome, catalog, dialog는 위 token을 그대로 쓴다. 같은 token 이름을 Reader 범위에서 다시
-정의하며, light는 red를 `#C42534`(hover `#A51F2C`)로 한 단계 낮춰 작은 red label이 종이 면에서도
-4.5:1 이상을 유지한다. 밝은 테마 accent는 2026-09-30 axe 검사(`edge/e2e/a11y.spec.js`)에서 accent-soft 위 4.35:1로 나와 `#D12A3A`로 조정했다(앱 아이콘·manifest 색은 글자가 아니라 그대로).
-
-| token | 종이 light | 종이 dark |
+| 역할 | 토큰 | 규칙 |
 |---|---|---|
-| reader | `#F6F0E4` | `#1C1914` |
-| page (Reader 안 버튼·목록 면) | `#FBF7EF` | `#211D17` |
-| surface | `#EFE7D7` | `#26211B` |
-| ink / muted / subtle | `#2B2520` / `#5C5247` / `#8A7F70` | `#EBE3D5` / `#B8AD9B` / `#8C8272` |
-| line / line-strong | `#E4DAC7` / `#D2C5AD` | `#3A3329` / `#4B4336` |
-| accent-soft | `#F8E4DC` | `#3B2420` |
+| canvas | `--bg` | 서재·목록 바탕. 옅은 warm neutral |
+| 떠 있는 면 | `--surface` | 카드, 시트, 대화상자, 행 묶음 |
+| 묶음 면 | `--surface-2` | 칩, segmented 트랙, 입력 바탕 |
+| 본문 텍스트 | `--ink` | |
+| 보조 텍스트 | `--ink-2` | 메타·설명·timestamp·**placeholder**. 의미 있는 텍스트의 최저 단계 |
+| 비텍스트 보조 | `--ink-3` | 비활성 아이콘, 구분 점. **텍스트 금지** |
+| 경계 | `--line` / `--line-strong` | 1px rule / 입력 테두리·바코드 안 읽음 칸 |
+| 행동·선택 | `--accent` | 주행동, 선택 탭·칩, 링크, 토글 on |
+| 내 자리 | `--ribbon` | 진행선, 현재 회차 rail, 이어읽기, 저장 리본, 바코드 읽는 중. **비텍스트** |
+| 내 자리 텍스트 | `--ribbon-text` | `38%`, `이어 읽기` 같은 짧은 라벨 |
+| 초점 | `--focus` | focus ring 전용 |
+| 상태 | `--*-text` | 아이콘 + 라벨 + 이유 + 다음 행동과 함께만 |
 
-AA background는 content-mode setting이며 app theme token과 독립적이다. aa-light/aa-dark token은
-`단색` 정규화 mode의 기본값이고, `보존` mode는 사용자 aaBackground와 sanitizer를 통과한 원본색을
-쓰며 app theme 전환이 AA stage 색을 바꾸지 않는다.
+### 2.3 검증된 대비 (sRGB 상대 휘도, 불투명 단색, 2026-09-30)
 
-## 4. 서체
+| 조합 | 비 | 기준 |
+|---|---:|---|
+| light ink / bg · surface | 15.92 · 17.21 | 4.5 |
+| light ink-2 / bg · surface · surface-2 | 6.67 · 7.21 · 6.21 | 4.5 |
+| light accent / bg · accent-soft | 5.85 · 5.34 | 4.5 |
+| on-accent / accent · accent-hover (light) | 6.32 · 8.38 | 4.5 |
+| light ribbon(비텍스트) / bg · surface | 4.20 · 4.54 | 3 |
+| light ribbon-text / surface · ribbon-soft | 6.06 · 4.94 | 4.5 |
+| light focus / bg | 4.78 | 3 |
+| light ink-3(비텍스트) / bg | 3.31 | 3 |
+| dark ink / bg | 15.84 | 4.5 |
+| dark ink-2 / bg · surface-2 | 8.76 · 7.25 | 4.5 |
+| dark accent / bg · accent-soft | 10.36 · 6.89 | 4.5 |
+| dark ribbon / bg | 7.21 | 3 |
+| dark ribbon-text · success · warning · danger / surface | 7.48 · 8.80 · 9.49 · 7.44 | 4.5 |
+| 종이 light ink · ink-2 · accent | 13.10 · 6.38 · 5.52 | 4.5 |
+| 종이 dark ink · ink-2 · accent | 12.87 · 7.57 · 9.72 | 4.5 |
+| 먹(OLED) ink · ink-2 / #000 | 14.63 · 8.21 | 4.5 |
+| ink / find · find-current · selection (light) | 14.20 · 11.21 · 13.11 | 4.5 |
+| ink / find-current · selection · ribbon-soft (dark) | 5.13 · 8.33 · 12.51 | 4.5 |
 
-세 family만 허용한다.
+### 2.4 읽기 면 (Reader 전용, 앱 테마와 독립)
 
-1. SUIT Variable: wordmark, navigation, heading, metadata, control
-2. MaruBuri Regular: prose body와 사용자가 명조를 선택한 장문
-3. Saitamaar: AA only
+| 면 | light | dark |
+|---|---|---|
+| 기본 | bg `#FDFCFA` ink `#1C1B19` ink-2 `#5A5750` | bg `#161918` ink `#E3E6E2` ink-2 `#AEB4AF` |
+| 종이 | bg `#F5EFE3` ink `#2B261F` ink-2 `#5E554A` line `#E4DAC7` | bg `#1D1A15` ink `#E6DDCC` ink-2 `#B5AA97` line `#3A3329` |
+| 먹 | (light에서는 기본으로 보정) | bg `#000000` ink `#D6D8D4` ink-2 `#9FA39E` line `#1F2221` |
 
-SUIT는 SIL OFL 1.1이며 WOFF2 variable asset을 self-host한다. MaruBuri와 Saitamaar도 asset 옆에
-license를 둔다. font CDN은 금지한다.
+- `.reader` 범위(본문·Reader 도구층·진행 표시)에서만 재정의. 앱 chrome·시트는 앱 테마.
+- **밝기**: 읽기 면 위 고정 overlay `rgb(0 0 0 / 0–60%)`(시스템 최저 밝기보다 더 어둡게). **따뜻하게**: overlay
+  `#FF9E4A` 0–25% `mix-blend-mode: multiply`. 둘 다 `pointer-events: none`, AA stage에도 적용(원본색 보존 원칙의 예외 —
+  사용자가 켠 경우만).
+- `theme-color` meta는 Reader가 열린 동안 읽기 면 bg를 따른다.
 
-배포 gate:
+### 2.5 작품 고유색 (타이포 표지 10색)
 
-- 실제 asset이 bundle에 없으면 해당 family를 CSS 첫 항목으로 선언하지 않는다.
-- font-display: swap
-- SUIT variable 1개, MaruBuri regular 1개, Saitamaar 1개로 시작
-- font swap 뒤 scroll restore를 한 차례만 보정
-- UI 400 미만 weight 금지
+안정 키(`typemoon:collection:<id>`, `novel:<work_id>`, `arcalive:<board>:<work>`)의 FNV-1a 32bit hash `% 10`.
+사용자 지정(`workStyle.hue`)이 우선. OKLCH(bg L0.935 C0.035, mark L0.52 C0.11, dark bg L0.285 C0.035, dark mark L0.78 C0.10).
 
-Article title은 SUIT다. MaruBuri는 긴 본문에서만 개성을 낸다. 이것이 현재 화면의 Batang 기반
-old-document 인상을 끊는 핵심이다.
+| # | 이름 | light bg | light mark | dark bg | dark mark |
+|---|---|---|---|---|---|
+| 0 | 쪽 | `#D9ECFF` | `#316CA5` | `#1D2B3B` | `#85BCF5` |
+| 1 | 청 | `#D0F0F8` | `#007890` | `#132F35` | `#62C8DF` |
+| 2 | 녹 | `#D6F1E2` | `#177C52` | `#1A3024` | `#7BCBA1` |
+| 3 | 올리브 | `#E6EDD4` | `#61721C` | `#282D19` | `#AFC177` |
+| 4 | 황토 | `#F6E8D0` | `#8A6000` | `#332815` | `#D9B06B` |
+| 5 | 주 | `#FFE3D7` | `#9C522E` | `#39251B` | `#EDA382` |
+| 6 | 자 | `#FDE1ED` | `#974C72` | `#37232C` | `#E89DC0` |
+| 7 | 보 | `#F1E4FC` | `#7C5598` | `#2F2537` | `#CBA6E8` |
+| 8 | 남 | `#E2E8FF` | `#5762A8` | `#25293C` | `#A4B3F8` |
+| 9 | 먹 | `#E9E9E9` | `#696969` | `#2A2A2A` | `#B7B7B7` |
 
-Wordmark는 SUIT 700 ink 단색이다. wordmark에 red를 쓰지 않는다. red는 상태 신호 전용이다.
+표지 위 글자는 항상 `--ink`(12.1–14.4:1). mark는 비텍스트(책등·점) 전용. 작품색은 서재·작품·목록 표지와
+Reader context bar의 8px 점에만 쓴다.
 
-한국어 조판 규칙:
+### 2.6 본문 강조 (CSS Custom Highlight)
 
-- 제목·label·row title은 `word-break: keep-all`, 본문은 기본 줄바꿈 + `overflow-wrap: break-word`
-- 숫자가 정렬되는 곳(count, 시각, Operations 표)은 `font-variant-numeric: tabular-nums`
-- 제목 `text-wrap: balance`, 본문 문단 `text-wrap: pretty`는 progressive enhancement로만 쓰고
-  미지원 브라우저를 보정하지 않는다
-- 본문 안 h1–h4는 선택된 reading font를 따르고 크기는 em 기반(약 1.5/1.3/1.15/1.0 bold)으로
-  사용자 글자 크기 설정에 비례한다
-- control·active navigation·row title은 SUIT 550–650, 보조 UI 텍스트는 450–500
+| 이름 | 용도 | 표현 |
+|---|---|---|
+| `redstm-find` | 찾기 전체 적중 | bg `--hl-find` |
+| `redstm-find-current` | 현재 적중 | bg `--hl-find-current` + underline 2px |
+| `redstm-query` | 검색에서 넘어온 검색어 | underline 2px `--accent` |
+| `redstm-mark` | 표시한 문장 | bg `--ribbon-soft` |
+| `redstm-note` | 메모 달린 문장 | underline 1px dotted `--ribbon` |
+| `redstm-tts` | 지금 읽어 주는 문장 | bg `--accent-soft` |
+| `::selection` | 선택 | bg `--hl-selection`, 글자 `--ink` |
 
-## 5. Responsive shell
+칠할 수 있는 속성은 color·background-color·text-decoration·text-shadow뿐이다. 레이아웃을 바꾸지 않는다.
 
-Wide, 1200px 이상:
+### 2.7 기록 히트맵
 
-    navigation rail 72px | catalog 360px | reader minmax(0, 1fr)
+하루 읽은 분: 0 / 1–10 / 11–30 / 31–60 / 61+ → `--heat-0…4`. 색만으로 전달하지 않도록 칸 `title`/목록 대체와
+범례(`적게 ■■■■■ 많이`)를 둔다.
 
-- rail: Home, Search, Saved, Settings, Operations
-- Operations는 `/ops`로 이동하고 Reader의 현재 route/state와 분리한다.
-- catalog와 reader는 독립 scroll context
-- reader content max 900px, prose measure 기본 760px
+## 3. 서체
 
-Medium, 760~1199px:
+### 3.1 역할과 자산 (모두 self-host, `edge/public/fonts/`)
 
-- rail을 top app bar/menu로 합침
-- catalog 340px + reader
-- Operations는 별도 route
+| 역할 | family | 자산 | 로드 |
+|---|---|---|---|
+| UI 전반 | Pretendard Variable (OFL) | `pretendard/` 동적 서브셋 92 WOFF2 + `pretendard.css` | 화면에 나온 글자 조각만 |
+| 작품명·서재 제목 | MaruBuri 700 (OFL) | `maruburi/` 93 조각 | 표지·작품 머리 렌더 시 |
+| 본문 명조(기본) | MaruBuri 400 | `maruburi/` 93 조각 | Reader 산문 |
+| 본문 명조(선택) | Gowun Batang 400/700 (OFL) | `gowun-batang/` 190 조각 | 설정에서 고른 때만 |
+| 본문 고딕(선택) | Pretendard Variable | UI와 공유 | — |
+| AA | Saitamaar (MIT) | `Saitamaar-Regular.woff2`(무손실, 407KB) | AA 렌더 시 |
+| AA 한글 대체(실험) | Gulim 한글 subset (OFL) | 실험 통과 후 추가 | — |
 
-Narrow, 759px 이하:
+- Pretendard: 한글 11,172·가나 184·한자 0, `wght 45–930`. 한자는 시스템 CJK fallback.
+- SUIT·단일 파일 MaruBuri·Saitamaar TTF는 새 자산 연결 뒤 다음 릴리스에서 제거한다.
+- 배포 gate: CSS가 선언한 family는 WOFF2·LICENSE가 번들에 있어야 한다(`check-assets.mjs`). font CDN 금지.
+  `font-display: swap`, swap 뒤 읽기 위치 보정은 한 번.
 
-- 한 번에 한 plane만 표시: Home/Library/Search/Saved 또는 Reader
-- top-level bottom navigation 4개: 장서, 검색, 저장, 설정
-- Reader 진입 시 global bottom navigation 숨김
-- Reader bottom bar는 목록, 이전, 저장, 다음, 설정 5개
-- 원문, mode, 몰입은 article chrome 또는 Settings sheet
-- browser Back이 query/filter/list scroll 위치로 복귀
-- 100dvh, viewport-fit=cover, safe-area inset 적용
-- AA stage 외 page-level horizontal scroll 금지
+### 3.2 크기·굵기
 
-320px에서도 search와 board filter를 제거하지 않는다. 공간이 부족하면 filter button이 sheet를 연다.
+| 토큰 | 크기/행간/굵기 | 쓰는 곳 |
+|---|---|---|
+| display | 28/1.25/700 −0.02em | 데스크톱 화면 제목 |
+| title-lg | 22/1.3/700 | 모바일 화면 제목, 시트 제목 |
+| title | 18/1.4/650 | 섹션 제목, 회차명 |
+| body | 15/1.55/450 | 일반 UI, 행 제목(600) |
+| label | 14/1.4/550 | 버튼, 탭, 칩 |
+| meta | 13/1.45/450 | 작가·출처·날짜·수(`tabular-nums`) |
+| caption | 12/1.4/500 | 범례, 배지, 하단 탭 라벨. **12px 미만 금지** |
+| serif-xl | MaruBuri 700 26/1.3 (모바일 24) | 작품 상세 제목 |
+| serif-md | MaruBuri 700 15/1.35 | 표지 안 작품명, 이어읽기 작품명(18) |
 
-Android Chrome 동작 규칙:
+- UI 굵기 400–700. 작품명만 명조 display, 나머지 UI는 Pretendard. Reader 회차 제목은 선택된 읽기 서체.
+- 숫자: `font-variant-numeric: tabular-nums`(목록 수·진행·시간).
+- 버튼·칩·제목은 `text-box: trim-both cap alphabetic`(지원 브라우저에서 수직 중앙 정확, 미지원 무해).
 
-- 텍스트 입력 포커스(가상 키보드 열림) 중에는 global bottom navigation을 숨기고, 키보드가 결과
-  목록의 현재 focus row를 가리지 않게 한다.
-- 세로 scroll은 catalog/reader 내부 scroll container가 담당하고 `html/body`와 container에
-  `overscroll-behavior-y: contain`을 적용해 의도치 않은 pull-to-refresh와 scroll chaining을 막는다.
-- sheet/dialog는 history entry를 추가하지 않는다. native `dialog.showModal()`은 Chromium close
-  request로 Android Back에서 닫히므로 별도 hack을 만들지 않는다.
-- Reader bottom bar는 진입 시 표시하고, 아래로 스크롤하면 숨기며 위로 스크롤 또는 중앙 tap으로
-  복귀한다. keyboard focus, screen reader 사용, reduced-motion에서는 상시 표시한다.
-- 몰입은 history entry를 만들지 않는다. Back은 몰입 해제가 아니라 목록 복귀이며, 몰입 해제는
-  화면 tap으로 드러나는 종료 control과 Escape로만 한다.
-- `:root`는 `color-scheme: light dark`를 선언하고 `data-theme`와 동기화해 native
-  dialog/select/scrollbar가 테마를 따르게 한다.
+### 3.3 한국어 조판
 
-Chrome 치수:
+- 제목·라벨: `word-break: keep-all; overflow-wrap: anywhere`. 본문: `word-break: normal; overflow-wrap: break-word`.
+- `text-wrap: balance`(제목), `text-wrap: pretty`(본문).
+- `text-autospace`는 한국어 본문에 켜지 않는다(한글–한자 간격 문제 논의 중). `:lang(ja)` 블록만 실험.
+- 일본어 줄: `:lang(ja) { word-break: auto-phrase }`(지원 브라우저). 원문 ruby·드러냄표(`text-emphasis`)는 보존.
+- 기본 읽기: 18px · 행간 1.8 · 문단 간격 0.9em · 들여쓰기 0 · 폭 720px(데스크톱) / 좌우 여백 20px(모바일).
 
-- bottom navigation: 높이 56px + safe-area, icon 20px + label 11px/500, active만 red
-- Reader bottom bar: 높이 52px + safe-area, 5개 action 등분, label nowrap
-- medium top app bar 56px, rail 폭 72px(icon 20px + label 10px 또는 tooltip)
-- `<meta name="theme-color">`는 theme별 page token(light `#FFFFFF`, dark `#0B0D12`)을 따른다.
-  `시스템`에서는 media별 두 meta가 각자 scheme 색을 유지하고, 명시한 `밝게/어둡게`는 두 meta를 모두
-  그 색으로 덮는다(OS와 달라도 브라우저 바가 앱을 따른다). 종이 면 본문을 여는 동안은 Reader 색
-  (`#F6F0E4`/`#1C1914`)을 따른다
+## 4. 레이아웃·셸
 
-## 6. 공간·형태·깊이
+### 4.1 기준 기기
 
-- chrome: 8/12/16px
-- section: 24/32px
-- reader: 32/48/64px
-- control radius 6px, grouped surface 10px, dialog/sheet 14px
-- pill은 status/filter chip에만
-- shadow는 dialog, mobile sheet, true overlay에만
-- overlay shadow 값: light `0 8px 24px rgb(16 24 40 / 16%)`, dark `0 8px 24px rgb(0 0 0 / 48%)`
-- dialog/sheet backdrop: light `rgb(11 13 18 / 40%)`, dark `rgb(0 0 0 / 60%)`
-- 층 순서는 content < sticky chrome < bottom navigation < sheet/dialog < zoom feedback 하나뿐이다
-- catalog row, reader article, KPI/status block에 lift/scale shadow 금지
-- divider보다 surface contrast와 spacing을 먼저 사용
+- 기준: **Galaxy S22+** — Chrome CSS viewport 약 384×(주소창 포함 ~740, 설치 앱 ~800)px, DPR 2.81, 120Hz OLED,
+  제스처 내비게이션(좌우 가장자리 스와이프 = Back).
+- 범용 범위: 폭 360–430(모바일) · 600–959(폴드·태블릿 세로) · 960+(데스크톱). 가로(landscape) 높이 360–430.
+- 모든 화면은 **320px**에서도 기능을 잃지 않는다(재배치만).
 
-## 7. Icon과 motion
+### 4.2 엄지 영역 (모바일)
 
-- emoji와 text glyph를 icon으로 사용하지 않는다.
-- 필요한 12~16개 20px inline SVG만 source에 둔다.
-- 한 벌의 1.75px round stroke, currentColor, visible label/tooltip
-- 전체 icon package/runtime dependency는 추가하지 않는다.
+- 화면 아래 45%: 자주 하는 행동(이어 읽기, 다음, 탭 이동, 도크, 시트 버튼).
+- 가운데: 콘텐츠.
+- 위쪽 15%: 표시 전용(제목·문맥) + 드문 행동(설정 아이콘). 위쪽에 필수 행동을 두지 않는다.
+- 좌우 가장자리 24px: **스와이프 제스처를 받지 않는다**(시스템 Back). 탭은 허용.
 
-Icon 목록은 다음 18개로 고정한다: 장서, 검색, 저장(외곽), 저장(채움), 설정, 운영, 목록,
-이전 chevron, 다음 chevron, 닫기, 원문(external), 몰입, 테마 해, 테마 달, 경고, 새로고침,
-링크(더보기 `링크 복사`), 화면 켜짐(더보기 `화면 켜 두기`).
-이 목록 밖 icon이 필요하면 이 문서를 먼저 바꾼다. 조건 해제 chip과 검색어 지우기도 `×` 문자 대신 닫기
-icon을 쓴다.
+### 4.3 목적지 (1차 4개)
 
-Motion:
+`서재` · `둘러보기`(출처 전환: 타입문넷 · 소설 · 아카라이브) · `검색` · `기록`. 보조: `설정`, `운영(/ops)`.
 
-- hover/focus 100–140ms
-- route/sheet 160–220ms
-- easing은 entrance `ease-out`, exit `ease-in`, 이동 `ease-in-out` 세 가지만
-- mobile library→reader는 opacity + 8px 이하 translate
-- loading은 skeleton 또는 indeterminate 2px line
-- skeleton은 opacity pulse(약 1.2s)만 쓰고 gradient shimmer는 쓰지 않는다
-- touch `:active`는 지연 없이 표시하고 tap-highlight 기본색 대신 자체 `:active` surface를 쓴다
-- prefers-reduced-motion에서 transform/reveal/pulse 제거
-- parallax, looping ambient animation, cursor effect 금지
+### 4.4 폭별 셸
+
+| 폭 | 구조 |
+|---|---|
+| < 600 | 한 번에 한 면. 하단 탭 4 (높이 56 + safe-area). Reader 밖에서는 탭 위에 **이어읽기 미니바**(48px). Reader에서는 하단 탭 대신 Reader 도크 |
+| 600–959 | 하단 탭 유지 + 콘텐츠 최대 640px 가운데, 서재 서가 3–4열. 가로 폴드는 목록+본문 두 면 |
+| 960–1199 | 상단 앱 바 56(목적지 4 + 검색 + 설정) · 목록 340 · 콘텐츠 |
+| ≥ 1200 | 레일 72 · 목록 380(필요한 목적지만) · 콘텐츠 · Reader 보조 패널 340(열렸을 때). 읽기 폭 < 560이면 목록부터 접는다 |
+
+- `100dvh`, `viewport-fit=cover`, safe-area inset, `interactive-widget=resizes-content`(키보드가 레이아웃을 줄여
+  고정 하단 요소가 키보드 위에 남음). 스크롤 컨테이너 `overscroll-behavior-y: contain`.
+- AA stage·가로 서가 밖 가로 스크롤 금지.
+
+### 4.5 층 (z-index 토큰)
+
+content 0 < sticky 헤더 10 < 미니바·하단 탭·도크 20 < 찾기 바·듣기 플레이어 30 < popover·선택 메뉴 40 <
+sheet/dialog 50 < 이미지·AA 전체화면 60 < toast 70.
+
+## 5. 공간·형태·깊이·재질
+
+- 간격 4 기준. 화면 가장자리 16(모바일) / 24(태블릿) / 32(데스크톱).
+- 반경: 컨트롤 10, 칩 full, 카드 14, 시트 상단 20, 표지 3(책 모서리), 도크 18.
+- 그림자: e1 카드 `0 1px 2px rgb(28 27 25/6%), 0 0 0 1px var(--line)` · e2 떠 있는 도구 `0 8px 24px rgb(28 27 25/14%)` ·
+  e3 대화상자 `0 16px 48px rgb(28 27 25/20%)`. dark는 같은 좌표 `rgb(0 0 0/40–60%)` + 1px line.
+- 목록 행·본문에는 그림자·lift·scale 없음.
+- **반투명(glass)**: 본문 위에 떠 있는 층만 — 도크, 스크롤된 헤더, 하단 탭, 미니바, 찾기 바, 듣기 플레이어.
+  `color-mix(in oklab, var(--surface) 82%, transparent)` + `backdrop-filter: blur(16px) saturate(1.4)`.
+  `prefers-reduced-transparency`, `@supports not (backdrop-filter…)`, 설정 `반투명 끄기`에서 불투명.
+- **그라데이션**: 기능적인 것만 — 가로 스크롤 가장자리 fade mask, AA stage 넘침 mask, 표지 책등 2-stop.
+
+## 6. 아이콘·햅틱·모션
+
+### 6.1 아이콘
+
+- 24 viewBox, 1.75 round stroke, `currentColor`, 표시 20px(도크 22px). 원천은 Lucide(ISC) path를 복사해
+  `index.html` 상단 `<svg><symbol id="i-…">` sprite 하나로. 런타임 아이콘 패키지 없음.
+- 주요 행동(하단 탭·도크·시트 버튼)은 항상 한국어 라벨. 아이콘만인 버튼은 `aria-label` + tooltip.
+- 사용자 분류·태그 이름의 이모지는 허용, 시스템 아이콘으로는 쓰지 않는다.
+
+### 6.2 햅틱 (Android, 설정 `진동 피드백` 기본 켜짐)
+
+`navigator.vibrate`: 페이지 넘김·다음 화 8ms, 저장·표시 12ms, 끝에서 당겨 다음 화 확정 15ms, 오류 없음.
+`prefers-reduced-motion`이나 설정 끔이면 호출하지 않는다.
+
+### 6.3 모션
+
+| 종류 | 시간 | easing |
+|---|---|---|
+| press·토글 | 120ms | ease-out |
+| 탭 밑줄·칩·popover | 200ms | ease-in-out / 진입 ease-out |
+| 시트·도크·면 전환 | 280ms | 진입 ease-out · 퇴장 ease-in |
+
+- 전환은 CSS transition + `@starting-style`, same-document View Transitions(`types`: forward/back/page),
+  목록 재배치는 `view-transition-name: match-element`. 표지 → 작품 머리 공유 요소 하나.
+- 시트 끌어 내리기·페이지 넘김은 **네이티브 scroll-snap**(compositor에서 60–120fps). 스크롤 가로채기 없음.
+- 이동량 ≤ 8px + opacity. `prefers-reduced-motion`에서 transform·전환·pulse 제거.
+- 로딩: 실제 행 높이 skeleton(opacity 1.2s) 또는 2px indeterminate 선.
+
+## 7. 컴포넌트
+
+### 7.1 컨트롤
+
+| 종류 | 모양 |
+|---|---|
+| primary | accent 채움, on-accent 15/600, 높이 48(모바일)/44, radius 10. 화면당 하나 |
+| secondary | surface + 1px line-strong |
+| quiet | 배경 없음, ink-2 → hover surface-2 |
+| disabled | 배경·테두리 line, 글자 ink-3. 강조색을 흐리게 남기지 않는다 |
+| 칩 | 32 높이(터치 44 확보), off surface-2/ink-2, on accent-soft/accent + 체크 |
+| segmented | 트랙 surface-2, 선택 surface + e1, ink 650 |
+| 탭 | ink-2, 선택 ink 650 + 2px accent 밑줄 |
+| 입력 | 48(모바일)/44, surface, 1px line-strong, focus 2px focus ring |
+| 슬라이더 | 트랙 4px line-strong, 채움 accent, thumb 24 surface + e2 |
+| 토글 | 트랙 surface-2 → accent, thumb surface |
+
+터치 44×44 이상 목표, 24×24 절대 최소. focus: `outline 2px var(--focus); outline-offset 2px`.
+
+### 7.2 타이포 표지 (TypeCover)
+
+S 32×44(목록) · M 104×148(서가) · L 128×182(작품 머리). 작품색 bg + 왼쪽 책등(mark 3–4px) + 작품명 serif-md(최대 4줄)
++ 아래 출처 caption. 새 화: 오른쪽 위 ribbon 삼각 14px + `새 N화` 배지(ribbon-soft/ribbon-text). 읽는 중: 아래 2px 진행.
+오프라인 저장됨: 오른쪽 아래 12px 다운로드 체크 아이콘(ink-2). 원본 표지처럼 위장하지 않는다.
+
+### 7.3 이어읽기 카드 · 미니바
+
+- 카드(서재 첫 블록): 표지 M · `이어 읽기` ribbon-text 라벨 · 작품명 serif 18 · `119화 · 제목` · **직전에 본 원문 두 줄**
+  (reading 서체 14, ink-2, 설정으로 끔) · 진행 + `38% · 3분 전` · `이어 읽기`(primary) · `목차`(secondary).
+- 미니바(Reader 밖 모든 모바일 화면, 하단 탭 위): 높이 48, glass, 작품 점 + `작품명 · 119화` + 오른쪽 `이어 읽기 ›`,
+  위쪽 2px 진행 ribbon. 탭 = 이어 읽기. 아래로 스와이프 = 이번 세션 숨김. 기록이 없거나 서재 카드가 보이는 동안 숨김.
+
+### 7.4 회차 바코드
+
+1회차 = 1칸(폭 = `char_count` 비례, 없으면 균등). 높이 L 16 / 미니 4. 읽음 ink 45% · 읽는 중 ribbon · 안 읽음 line-strong ·
+보존 누락 점선 빈칸 · 새 화 위 2px accent · (찾기 모드) 적중 막대 hl-find-current · (메모 모드) 표시 있는 칸 위 점.
+요약 문장 + 범례 + 같은 `aria-label`. 모바일: 탭 = 칸 선택 + tooltip + `이 회차로`(두 단계), 끌기 = 스크럽 미리보기.
+2,000칸 초과는 구간 확대(100화 단위 → 세부).
+
+### 7.5 목록 행
+
+작품 행: 표지 S · 제목 2줄(600) · `작가 · 출처` · 오른쪽 `x/N`(tabular) + 다음 행동 칩 · 미니 바코드(데스크톱)/진행 2px(모바일).
+글·회차 행: 56–72px, 읽음 제목 ink-2, 현재 3px ribbon rail + ribbon-soft, 선택 accent-soft.
+행 1px line, 카드·그림자 없음, `content-visibility: auto; contain-intrinsic-size: auto 64px`.
+
+### 7.6 시트 (bottom sheet)
+
+- `<dialog>` + 내부 **scroll-snap 컨테이너**: snap 지점 `닫힘 · 절반 · 전체`. 끌어 내려 닫힘 snap에 멈추면(`scrollend`) 닫는다.
+  backdrop 투명도는 scroll-driven animation으로 시트 위치에 연동. grabber 36×4.
+- `closedby="any"`(바깥 탭 닫기, 지원 브라우저), Android Back·Esc는 native close request. history를 쌓지 않는다.
+- 데스크톱은 같은 DOM을 가운데 대화상자(최대 560) 또는 오른쪽 패널로.
+
+### 7.7 퀵 설정 패널 · 스크러버
+
+- 퀵 설정(도크 `Aa`): 도크 위에 뜨는 패널(높이 ≤ 320) — 글자 크기 −/+ · 읽기 면 3 · 밝기 슬라이더 · 따뜻하게 ·
+  읽기 방식(스크롤/페이지) · `모든 설정 ›`. 바꾸는 즉시 본문 반영, 맨 위 문장 유지.
+- 스크러버(진행 배지·도크 길게 누르기·더보기 `위치 이동`): 회차 안 위치 슬라이더(찾기 적중·표시 눈금 포함) +
+  작품 바코드 L + `몇 화?` 입력 + `돌아가기`(이동 전 위치).
+
+### 7.8 찾기 바 · 선택 메뉴 · 발췌 카드
+
+- 찾기 바: 도크 자리를 대신하는 glass 바(`입력 · 3/17 · ↑ ↓ · ✕`), 위 4px 위치 띠, 범위 칩 `이 회차 · 작품 전체`.
+  키보드가 열려도 키보드 바로 위에 붙는다.
+- 선택 메뉴(산문): 짙은 pill(ink 배경) `표시 · 메모 · 복사 · 작품에서 찾기 · 공유`, 선택 아래 8px.
+- 발췌 카드: surface, 왼쪽 3px ribbon, 인용(reading 15/1.7) · 메모 · `작품 › 12화 · 날짜 · 위치 상태`.
+  공유 이미지: 1080×1350 카드(작품색 띠, 인용 명조 44px, 작품명·회차, 워터마크 `ReDSTM`).
+
+### 7.9 듣기 플레이어
+
+찾기 바와 같은 자리의 glass 바: `⏮ 문장 · ▶/⏸ · 문장 ⏭ · 1.0× · 타이머 · ✕`, 읽는 문장은 `redstm-tts` 강조 +
+자동 스크롤. 잠금화면·알림 제어는 Media Session.
+
+### 7.10 상태 표현
+
+`불러오는 중` · `결과 없음(현재 범위)` · `보존 안 됨` · `색인 준비 중` · `인증 만료` · `오프라인` · `이 기기에 저장됨` ·
+`이미지 링크 만료` · `기록 저장 실패` · `동기화 대기` — 각각 다른 문장·아이콘·다음 행동. 0을 합성하지 않는다.
+토스트: 도크/미니바 위 16px, 4초, `role="status"`, 실패는 닫을 때까지.
 
 ## 8. Reader
 
-### 8.1 Home
+### 8.1 원칙
 
-큰 빈 표지가 아니다. 첫 viewport에서 다음 순서로 실제 데이터를 보여준다.
+- 산문·AA·혼합·미디어는 한 Reader DOM(`#reader`)을 공유. 본문 DOM은 Reader만 소유.
+- 찾기·표시·메모·듣기는 **DOM을 바꾸지 않는** Custom Highlight와 overlay로만. 본문에 `<mark>`/`<span>` 삽입 금지.
+- 산문 스타일은 `@scope (.archive-body) to (.aa-canvas, .media-figure)`로 쓴다 — 산문 규칙이 AA·미디어에 새지 않는다.
 
-1. 검색
-2. 이어읽기 한 건
-3. 읽던 작품(`새 편` 표시 우선), 자주 보는 게시판(게시판 선택 시트의 즐겨찾기 → 최근 순, 최대 8개 chip)
-4. 오늘의 발견: 오늘의 추천 작품 3, 요즘 화제 4, 이날의 기록 3(각각 비면 숨김; 데스크톱 900px 이상 3열)
-5. 새로 보존된 글 최대 6건
-6. 최근 읽은 글 최대 6건
-7. 마지막 게시 시각의 quiet freshness label
+### 8.2 읽기 방식
 
-자주 보는 게시판은 즐겨찾기나 최근 기록이 있을 때만 보이며, 누르면 형식·검색 조건 없이 그 게시판
-전체를 둘러보기로 연다.
+| 방식 | 동작 | 대상 |
+|---|---|---|
+| 스크롤(기본) | 세로 스크롤. `화면 탭 넘기기` 켜면 탭 영역으로 한 화면씩 | 모든 글 |
+| 페이지 | CSS multi-column + 가로 scroll-snap, 한 쪽 = 화면. 탭 영역·스와이프로 넘김, `12 / 48쪽` | 산문만. AA·혼합 글은 자동으로 스크롤(안내 1회) |
+| 이어 스크롤 | 회차 끝에서 다음 화가 아래로 이어짐(DOM 최대 3화) | 연재 산문 |
 
-history가 없으면 이어읽기 영역을 숨기고 검색을 primary로 둔다. crawler queue/disk/error는 Home에
-표시하지 않는다.
+- 탭 영역(페이지·탭 넘기기): `오른손`(왼쪽 30% 이전 · 가운데 20% 도구 · 오른쪽 50% 다음, 기본), `왼손`(대칭),
+  `전체 다음`(가운데 도구 외 모두 다음). 가장자리 24px 스와이프는 받지 않는다.
+- 끝에서 당겨 다음 화: 본문 끝 카드 아래로 96px 더 당기면 링이 차고, 놓으면 다음 화(햅틱 15ms).
+- 자동 스크롤: 속도 1–10, 터치하면 멈춤, 도크 자리에 `⏸ 속도 −/+`.
 
-### 8.2 Catalog
+### 8.3 도구층 (모바일)
 
-- row 68~76px
-- title 2줄, board/author/date 1줄(수가 있는 release는 `조회 · 댓글`을 줄인 숫자로 덧붙임)
-- 결과 건수 줄 오른쪽에 정렬 pill(36px, 필터 시트 밖)
-- selected state: 3px red rail + accent-soft fill
-- 0건은 query/filter를 유지하고 각각 해제 가능
-- skeleton은 실제 row 높이와 일치
+- 상단 context bar 48: `‹ 목록` · 작품 점 + `작품명 119/340` · `찾기` · `저장`.
+- 하단 도크(떠 있는 pill, 좌우 12·아래 8 + safe-area): `목록 · 이전 · 다음 화 · Aa · 더보기`. `다음 화`는 1.3fr, accent.
+- 진행: 상단 2px ribbon(`animation-timeline: scroll()`), 접힌 동안 오른쪽 아래 `38%` 배지(탭 = 스크러버).
+- 도구 접기·다시 보이기는 `docs/19 §4.3` 유지. 찾기·선택·설정·듣기 중에는 접지 않는다.
+- 더보기 시트 섹션: **이 화**(본문 찾기, 표시 목록, 원문, 링크 복사, QR로 다른 기기에서, 공유) · **보기**(AA/소설, 집중,
+  AA 가로 전체화면, 자동 스크롤, 듣기) · **작품**(목차, 작품에서 찾기, 이 기기에 저장, 분류) · **기기**(화면 켜 두기).
 
-### 8.3 Article
+### 8.4 AA 뷰어
 
-- article 자체를 떠 있는 card로 만들지 않는다.
-- title/meta는 SUIT, prose body는 선택된 reading font
-- body 기본 18px/1.8/760px
-- progress 2px, red는 현재 위치에만
-- 본문 image는 원본 비율, 최대 폭 100%, 최대 높이 80vh, 장식 radius/shadow 없음
-- dark theme에서 image 밝기/채도 필터를 적용하지 않는다(보존 우선)
-- comments는 chat bubble이 아니라 본문 뒤 annotation section
-- end matter는 previous/next/collection 복귀를 명확히 표시
+- parity: 9–24px, line-height 정확히 1.125, zoom 10–300% 25% step, 프리셋 16/auto · 11/800 · 9/680, 원본색/단색,
+  배경 아이보리·흰색·직접, 글마다 배율·가로 위치 기억.
+- 두 손가락: 제스처 중에는 stage에 CSS `transform: scale()`만(60fps), 손을 떼면 가장 가까운 25% 단계 배율로 확정해
+  다시 그린다(글자 선명). 두 번 탭 = `맞춤 ↔ 100%`.
+- 도구줄(AA 전용, 본문 위 sticky): `맞춤 · − · 100% · + · ⟲ 가로 전체화면 · 색`.
+- **가로 전체화면**: Fullscreen API + `screen.orientation.lock('landscape')`(Android). 도구는 탭으로 보였다 숨김,
+  Back/Esc로 해제. 잠금 불가 기기는 전체화면만.
+- 미니맵: stage가 화면보다 넓으면 아래에 48px 폭 비례 막대(현재 보이는 가로 구간 표시, 끌어서 이동).
+- 장면 이동: 원본에 명확한 블록 경계가 있으면 `‹ 장면 3/12 ›`.
+- AA stage는 앱 테마·작품색·반투명·산문 설정의 영향을 받지 않는다. 밝기·따뜻하게 overlay만 예외.
+- AA 이미지로 저장·공유(원 배경·색 그대로 PNG), 원문 텍스트 복사(공백·전각 보존).
 
-### 8.4 AA
+## 9. 서재·기록 특화 패턴
 
-기존 DSOTM parity를 변경하지 않는다.
+- 서가: 모바일 가로 스크롤(scroll-snap, 양끝 fade) · 태블릿 이상 grid. 보기 전환 `표지 / 목록`.
+- 스마트 서재: 조건 칩 조합을 이름 붙여 저장(예: `새 화 있는 작품`, `다 못 읽은 짧은 작품`, `AA 모음`).
+- 기록 › 통계: 오늘 읽은 분 링(`@property` 애니메이션), 연속 일수, 월 히트맵, 완독 작품, 읽은 글자 수. 목표는 선택.
+- 오늘의 발췌: 서재 아래 카드 한 장(저장한 발췌 중 하루 하나), `다른 발췌` 버튼.
 
-- fallback: Saitamaar, Stmr, MS PGothic, ＭＳ Ｐゴシック, IPAMonaPGothic, monospace
-- 9–24px, line-height 정확히 1.125
-- zoom 10–300%, 25% step
-- preset 16/auto, 11/800, 9/680
-- source color on/off, ivory/white/custom background
-- stage-only horizontal scroll, native selection/touch 유지
+## 10. 설정
 
-Mobile compact AA bar는 A− / 현재값 / A+ / 맞춤 / zoom / 설정만 둔다. `맞춤`은 가장 넓은 줄이 가로 스크롤
-없이 들어오는 zoom으로 줄이며 100%를 넘겨 키우지 않는다(이미 들어오면 100%). preset, source color, background,
-canvas width는 settings sheet로 이동한다.
+순서: 화면(테마 · 읽기 면 · 밝기 · 따뜻하게) → 글자(크기 15–28 · 행간 · 문단 간격 · 들여쓰기 · 여백/폭 · 서체 카드 3 ·
+굵기 · 정렬) → 읽기 방식(스크롤/페이지/이어 스크롤 · 탭 영역 · 끝에서 당겨 다음 화 · 자동 스크롤 속도) → AA → 듣기(음성 ·
+속도) → 서재(마지막 문장 보이기 · 미니바) → 효과(반투명 · 진동) → 기록(백업·가져오기 · 이 기기 저장 공간 · 동기화) →
+운영 → 단축키.
 
-## 9. Settings
+- 서체는 이름이 아니라 현재 본문 한 문단으로 미리보기. 고르지 않은 서체는 받지 않는다.
+- 읽기 프로필: 현재 설정을 `낮` `밤` 같은 이름으로 저장하고 퀵 설정에서 한 번에 전환. 작품별 예외(`이 작품만`) 가능.
 
-- theme: system/light/dark 3-state, 본문 면 기본/종이
-- prose: size, line height, width(데스크톱)/좌우 여백(모바일), serif/sans, 문단 정렬 왼쪽/양쪽(AA에는
-  적용하지 않음)
-- 읽기 동작: 화면 탭으로 넘기기 끄기/켜기. 소설 본문의 두 손가락 조작은 페이지 확대 대신 글자 크기를
-  바꾼다(15–28px). OS 글꼴 배율과 데스크톱 브라우저 확대는 그대로 동작한다
-- AA: preset, size, zoom, canvas, source color, background
-- data: state export/import/reset
-- control 변경은 즉시 preview하며 일반 설정에 Save button 없음
-- import는 summary preview와 replace confirmation 뒤 적용
-- mobile은 같은 native dialog DOM을 bottom sheet로 표현
+## 11. 접근성·품질 gate
 
-## 10. Operations
+- WCAG 2.2 AA 대비(§2.3 + axe). 색만으로 상태 전달 금지.
+- keyboard-only 전 기능. 모달 focus trap, popover는 trap 없음. 200% 확대·320px reflow.
+- 단축키: `/` 검색 · `Ctrl/⌘+K` 명령 · `←→ [ ]` 이전·다음 · `↑↓` 목록 · `Space/Shift+Space` 페이지 · `b` 저장 ·
+  `f` 집중 · `g` 본문 찾기 · `h` 표시 · `t` 듣기 · `Esc` 닫기 · `?` 목록. IME 조합·입력 중 비활성, Ctrl/⌘+F는 브라우저 몫.
+- 스크린샷 gate: light/dark × 384/768/1440 × 서재·둘러보기·검색·기록·작품·Reader(스크롤·페이지·AA)·설정·찾기.
+- 실기기 gate(S22+ Chrome·Samsung Internet): safe-area, 도크 no-wrap, Back 우선순위(§12.3), 선택 핸들 vs 선택 메뉴,
+  키보드 위 찾기 바, pinch, 가로 전체화면, 글꼴 swap 후 위치, 120Hz 스크롤 끊김 없음.
 
-Operations는 Reader와 token을 공유하지만 더 조밀하다. 표·목록은 13~14px, row 최소 40px,
-숫자 열은 tabular-nums로 정렬한다.
+## 12. 기능 불변식
 
-- 상단은 160~200px의 compact operational brief다. 28~34px action verdict와 8px status mark를 쓰고,
-  58px 상태 제목과 96px 장식 원은 금지한다.
-- 첫 질문은 `지금 내가 해야 할 일이 있는가?`이고, 다음 줄에 독립적인 Reader/R2 지속 가능 여부를
-  둔다. runner stale과 현재 release readable은 동시에 참일 수 있다.
-- 순서는 action verdict → Reader continuity/current release → active 또는 latest run → warnings와
-  board/queue exception → release provenance → manual controls다. 자동화가 정상 경로이므로 control을
-  화면 전반부의 주인공으로 만들지 않는다.
-- heartbeat가 stale이면 `현재 단계/다음 실행/남은 디스크`라 쓰지 않고 `마지막 보고 단계/마지막으로
-  보고된 다음 실행/마지막 보고 디스크`와 age를 표시한다.
-- D1 run/board telemetry가 없으면 `0`을 합성하지 않는다. `—`와 `아직 보고되지 않음`, 가능한 원인과
-  다음 확인 행동을 쓴다. release의 46 boards와 board telemetry 0 rows는 모순이 아니다.
-- active run과 latest terminal run은 다른 block이다. 실행 기록은 source, step, outcome, safe reason,
-  report ID를 disclosure로 제공한다.
-- board count는 `최근 실행 발견/변경`, `현재 대기`, `재시도 예정`, `수동 확인`처럼 범위와 의미를
-  이름에 포함한다. mobile 8열 표 대신 vertical disclosure ledger를 쓴다.
-- release는 hash보다 `Reader 사용 가능`, activation/publish 시각과 post/comment/byte 근거를 먼저
-  보여준다. previous 없음은 rollback 불가가 아니라 D1 previous metadata가 없다는 뜻이다.
-- control은 effect, eligibility, disabled reason, due count, last outcome, cooldown을 함께 보여준다.
-  pause/resume은 상호 배타적이고 stale runner가 claim해야 하는 action은 이유와 함께 disable한다.
-- color만으로 상태를 표시하지 않고 icon + label + timestamp + reason 사용
-- raw log보다 structured step과 safe tail을 우선
-- destructive command, secret input, arbitrary argument field 없음
-- mobile은 상태 읽기 우선; bounded command는 명확한 confirmation 후 요청
+1. AA 격자: 본문 DOM 삽입 금지, AA 글꼴·자간·공백 변경 금지.
+2. 읽기 위치: `scrollTop` + 문장 anchor 복원, 읽기 방식·서체·회전 변경 뒤 같은 문장.
+3. 한 독서 세션 = history entry 하나. 시트·도구·찾기·전체화면은 history를 쌓지 않는다.
+4. 외부 CDN에서 script·font를 받지 않는다. 외부 JS는 `edge/public/vendor/`(고정 버전·SHA·LICENSE).
+5. 사용자 기록(메모·발췌·분류·통계)은 캐시 정리·플래그 끄기·원문 개정에도 지워지지 않는다.
+6. 원문을 제3자 서비스로 보내지 않는다(별도 결정 없이).
+7. 효과(반투명·전환·햅틱)를 모두 꺼도 기능이 완전하다.
+8. 미래 회차 정보는 사용자가 범위를 넓히기 전에는 집계 전에 걸러낸다.
 
-## 11. Accessibility·quality gate
+### 12.3 Back 우선순위 (Android)
 
-- WCAG 2.2 AA contrast
-- focus outline 2px 이상 + offset
-- interactive target 44×44px, 절대 최소 24×24px
-- 200% browser zoom과 320px reflow
-- Korean label을 장식 목적으로 uppercase 영문으로 대체하지 않음
-- loading/empty/error/unavailable/stale를 서로 다른 text state로 표현
-- keyboard: /, arrows, Enter, Escape, [, ], b, f, ?(760px 이상에서 설정의 단축키 목록). Ctrl/⌘/Alt와
-  함께 누른 키는 브라우저 몫이다
-- Light/Dark 각각 Home, catalog, prose, AA, settings, Operations screenshot
-- actual Android: safe-area, toolbar no-wrap, Back, Saitamaar, pinch, tab restore
-- actual Android 추가 gate: 가상 키보드와 bottom navigation 겹침 없음, 열린 dialog/sheet가
-  Back으로 닫힘(route 이동 없음), pull-to-refresh 오발동 없음, 탭 kill 후 복귀 시 route/scroll
-  복원, OS 접근성 페이지 줌 200%, search index 첫 로드 크기·시간 기록
+열린 순서의 역순으로 하나씩 닫는다: 선택 메뉴 → popover·퀵 설정 → 시트/대화상자 → 찾기 바·듣기 바 → 가로 전체화면 →
+스크러버 → (없으면) 목록 복귀. dialog·popover는 native close request, 그 외는 `CloseWatcher`(미지원 시 Esc만).
 
-## 12. 구현 금지
+## 13. 금지하지 않지만 쓰지 않는 것 (이유가 기능에 있는 것만)
 
-- frontend framework, UI kit, icon runtime, font CDN
-- faux-book cover, moon/star ornament, violet brand accent
-- global glassmorphism, gradient mesh, floating card grid
-- 5개 초과 mobile bottom navigation
-- reader 화면에서 Operations 상태나 crawler action 노출
-- Operations에서 token/password/path/raw CLI 입력
-- AA fidelity를 visual consistency 때문에 변경
+- 스크롤 가로채기(smooth scroll 라이브러리): 위치 복원·AA 가로 스크롤·Back과 충돌.
+- 본문 위 움직이는 배경·광원·타이핑 효과: 읽기 방해.
+- 가장자리 24px 스와이프 제스처: 시스템 Back과 충돌.
+
+## 14. Operations(`/ops`)
+
+이번 개편 범위 밖. `ops.css` 토큰 유지. 옮길 때는 같은 semantic 이름 매핑만 바꾸고 밀도·구조(`docs/08`)는 유지.

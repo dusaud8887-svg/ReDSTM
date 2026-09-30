@@ -31,9 +31,7 @@
 | [`13`](13_crawler_comparison_and_adoption.md) | crawler 선택 근거 |
 | [`15`](15_reader_navigation_refresh.md), [`19`](19_mobile_reader_redesign.md) | Reader 탐색과 모바일 구현 계약. 이동·Back 동작은 `19`가 우선 |
 | [`18`](18_text_archive_predeploy.md), [`20`](20_arcalive_media_archive.md) | 별도 텍스트 장서와 이미지 보관 계약 |
-| [`21`](21_frontend_enhancement_research.md) | Reader 고도화 제안: 외부 라이브러리 판정, 본문 찾기·회차 바코드·작품 안 KWIC 설계(미구현) |
-| [`22`](22_broad_library_survey.md) | 한국어·AA·개인 보존 장서 관점의 라이브러리·플랫폼 기능 폭넓은 조사(미구현) |
-| [`23`](23_frontend_research_register.md) | 21·22 종합: ID 붙은 결정 레지스터, 디자인 목업, 실측 크기·글꼴 metric, 병합 규칙(미구현) |
+| [`24`](24_frontend_redesign_spec.md), [`DESIGN.md`](../DESIGN.md) v2.1 | 프론트 개편(Ribbon Library) 확정 설계·기능 카탈로그·Phase 티켓(구현 전, 의존성·vendor·글꼴 자산 설치 완료). 근거 조사 [`디자인 개편/`](디자인%20개편/), 시안 [`assets/2026-09-30-redesign/`](assets/2026-09-30-redesign/prototype.html) |
 
 `00`과 `04`의 오래된 수치·계획 문단은 작성 당시 기록이다. 현재 배포 판정에는 위 날짜별
 체크포인트와 최신 검증 report를 사용한다. 공개 동작, schema, API, 설정, 권한이 바뀌면 해당 계약을
@@ -44,6 +42,7 @@
 - [`done/2026-07-11`](done/2026-07-11/README.md): 초기 단계의 완료 증거
 - [`archive/2026-07-12`](archive/2026-07-12/README.md): 당시 운영 검증과 미완료 관문
 - [`archive/2026-09-29`](archive/2026-09-29/README.md): 9월 장애·작품·텍스트 연동 검토 및 스냅샷
+- [`archive/2026-09-30`](archive/2026-09-30/README.md): 대체된 DESIGN v1(Signal Archive)과 v2 초안에서 뺀 항목
 
 보관된 문서는 작성 시점의 증거다. 이후 구현과 운영 상태를 판정할 때 현재 계약과 새 검증 결과를
 우선한다.
