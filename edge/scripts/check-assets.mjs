@@ -6,6 +6,13 @@ const assets = [
   ["SUIT-Variable.woff2", "SUIT-LICENSE.txt", true],
   ["MaruBuri-Regular.woff2", "MaruBuri-LICENSE.txt", true],
   ["Saitamaar-Regular.ttf", "Saitamaar-LICENSE.txt", false],
+  ["Saitamaar-Regular.woff2", "Saitamaar-LICENSE.txt", true],
+];
+// Split web fonts built by scripts/build-fonts.py: every url() in the family CSS must be a real WOFF2.
+const splitFamilies = [
+  ["pretendard/", "pretendard.css"],
+  ["maruburi/", "maruburi.css"],
+  ["gowun-batang/", "gowun-batang.css"],
 ];
 
 try {
@@ -18,6 +25,20 @@ try {
     if (license.trim().length === 0) throw new Error(`${licenseName} is empty`);
     if (isWoff2 && font.subarray(0, 4).toString("ascii") !== "wOF2") {
       throw new Error(`${fontName} is not WOFF2`);
+    }
+  }
+  for (const [dir, cssName] of splitFamilies) {
+    const base = new URL(dir, fonts);
+    const [css, license] = await Promise.all([
+      readFile(new URL(cssName, base), "utf8"),
+      readFile(new URL("LICENSE.txt", base), "utf8"),
+    ]);
+    if (license.trim().length === 0) throw new Error(`${dir}LICENSE.txt is empty`);
+    const urls = [...css.matchAll(/url\(([^)]+)\)/g)].map((match) => match[1].replace(/["']/g, ""));
+    if (urls.length === 0) throw new Error(`${dir}${cssName} declares no fonts`);
+    for (const url of urls) {
+      const font = await readFile(new URL(url.slice(1), publicRoot));
+      if (font.subarray(0, 4).toString("ascii") !== "wOF2") throw new Error(`${url} is not WOFF2`);
     }
   }
   const manifest = JSON.parse(await readFile(new URL("manifest.webmanifest", publicRoot), "utf8"));
@@ -33,7 +54,7 @@ try {
       throw new Error(`${icon.src} is not a ${size}x${size} PNG`);
     }
   }
-  console.log("Font, manifest, and icon assets are valid.");
+  console.log("Font, split font, manifest, and icon assets are valid.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

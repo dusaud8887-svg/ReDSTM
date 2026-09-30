@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "wrangler types --check --include-runtime false && node scripts/check-assets.mjs && node --check src/index.js && node --check src/text-archive.js && node --check src/text-media.js && node --check src/control-api.js && node --check src/control-common.js && node --check src/control-read.js && node --check backup/src/index.js && node --check public/app.js && node --check public/text-library.js && node --check public/text-work.js && node --check public/text-shelves.js && node --check public/ops.js && node --check public/search-core.js && node --check public/search-worker.js && node --check public/user-state.js && node --check public/reading-model.js && node --check public/sequence.js && node --check public/list-anchor.js && node --check public/text-anchor.js && node --check public/board-navigator.js && node --check public/media.js && node --check public/arca-media.js && node --check scripts/benchmark-search.mjs && node --check scripts/check-d1-migrations.mjs && node --check scripts/check-d1-remote-integrity.mjs && node --check test/index.test.js && node --check test/control-api.test.js && node --check test/ops.test.js && node --check test/search.test.js && node --check test/user-state.test.js && node --check test/reading-model.test.js && node --check test/sequence.test.js && node --check test/media.test.js && node --check test/text-work.test.js && node --check test/text-shelves.test.js &&node --check test/text-media.test.js && node --check playwright.config.js && node --check e2e/ops.spec.js && node --check e2e/viewer.spec.js && node --check e2e/reader-flow.spec.js && node --check e2e/a11y.spec.js && node --check e2e/text-fixture.js && node --check e2e/typemoon-fixture.js",
+    "check": "wrangler types --check --include-runtime false && node scripts/check-assets.mjs && node scripts/vendor.mjs --check && node --check scripts/vendor.mjs && node --check src/index.js && node --check src/text-archive.js && node --check src/text-media.js && node --check src/control-api.js && node --check src/control-common.js && node --check src/control-read.js && node --check backup/src/index.js && node --check public/app.js && node --check public/text-library.js && node --check public/text-work.js && node --check public/text-shelves.js && node --check public/ops.js && node --check public/search-core.js && node --check public/search-worker.js && node --check public/user-state.js && node --check public/reading-model.js && node --check public/sequence.js && node --check public/list-anchor.js && node --check public/text-anchor.js && node --check public/board-navigator.js && node --check public/media.js && node --check public/arca-media.js && node --check scripts/benchmark-search.mjs && node --check scripts/check-d1-migrations.mjs && node --check scripts/check-d1-remote-integrity.mjs && node --check test/index.test.js && node --check test/control-api.test.js && node --check test/ops.test.js && node --check test/search.test.js && node --check test/user-state.test.js && node --check test/reading-model.test.js && node --check test/sequence.test.js && node --check test/media.test.js && node --check test/text-work.test.js && node --check test/text-shelves.test.js &&node --check test/text-media.test.js && node --check playwright.config.js && node --check e2e/ops.spec.js && node --check e2e/viewer.spec.js && node --check e2e/reader-flow.spec.js && node --check e2e/a11y.spec.js && node --check e2e/text-fixture.js && node --check e2e/typemoon-fixture.js",
     "deploy:backup": "wrangler deploy --config backup/wrangler.jsonc",
     "deploy": "cd .. && uv run python -m scripts.release deploy-cloudflare",
     "dev": "wrangler dev",
@@ -14,11 +14,36 @@
     "test": "node --test",
     "test:e2e": "playwright test",
     "test:d1": "node scripts/check-d1-migrations.mjs",
-    "check:d1-remote": "node scripts/check-d1-remote-integrity.mjs"
+    "check:d1-remote": "node scripts/check-d1-remote-integrity.mjs",
+    "lint": "biome lint",
+    "vendor": "node scripts/vendor.mjs",
+    "fonts": "cd .. && uv run --with fonttools --with brotli python edge/scripts/build-fonts.py"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
+    "@biomejs/biome": "2.5.14",
+    "@floating-ui/dom": "1.8.0",
+    "@fontsource/gowun-batang": "5.3.0",
+    "@kfonts/maruburi": "0.1.0",
+    "@leeoniya/ufuzzy": "1.0.19",
     "@playwright/test": "1.62.1",
+    "@use-gesture/vanilla": "10.3.1",
+    "diff": "9.0.0",
+    "es-hangul": "2.4.0",
+    "esbuild": "0.28.2",
+    "idb": "8.0.3",
+    "lucide-static": "1.49.0",
+    "modern-screenshot": "4.7.0",
+    "photoswipe": "5.4.4",
+    "pretendard": "1.3.9",
+    "uqr": "0.1.3",
+    "web-vitals": "6.2.2",
+    "workbox-cacheable-response": "7.4.1",
+    "workbox-expiration": "7.4.1",
+    "workbox-precaching": "7.4.1",
+    "workbox-range-requests": "7.4.1",
+    "workbox-routing": "7.4.1",
+    "workbox-strategies": "7.4.1",
     "wrangler": "4.136.3"
   },
   "dependencies": {

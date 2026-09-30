@@ -1,0 +1,109 @@
+{
+  "generatedBy": "edge/scripts/vendor.mjs",
+  "files": [
+    {
+      "name": "es-hangul",
+      "version": "2.4.0",
+      "path": "/vendor/es-hangul@2.4.0/es-hangul.js",
+      "bytes": 7605,
+      "gzip": 2951,
+      "sha256": "0697707c66fd7dc5e6ae55d665c74313b95b0a22f2a971878af978b596b2366d"
+    },
+    {
+      "name": "@leeoniya/ufuzzy",
+      "version": "1.0.19",
+      "path": "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js",
+      "bytes": 8876,
+      "gzip": 4282,
+      "sha256": "d428f89fd52c8b379181147b25cd1ad058b0e9974c146ce8592fddfbf2a6d023"
+    },
+    {
+      "name": "idb",
+      "version": "8.0.3",
+      "path": "/vendor/idb@8.0.3/idb.js",
+      "bytes": 3491,
+      "gzip": 1412,
+      "sha256": "55a912bbe356a1e05147c43cd09a067e3ef335ae644a376a77b58641900bc7aa"
+    },
+    {
+      "name": "@floating-ui/dom",
+      "version": "1.8.0",
+      "path": "/vendor/floating-ui-dom@1.8.0/floating-ui.js",
+      "bytes": 19660,
+      "gzip": 7810,
+      "sha256": "9f96bdc0bdf6a084d45eada2159ec3ca6574496e408c5d86d8171b69756d35e5"
+    },
+    {
+      "name": "@use-gesture/vanilla",
+      "version": "10.3.1",
+      "path": "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js",
+      "bytes": 29801,
+      "gzip": 8973,
+      "sha256": "56907aeccf8fd02ee165e8f7b3d09b57122c3e5b2b4eeb9a675a6dc18e159983"
+    },
+    {
+      "name": "modern-screenshot",
+      "version": "4.7.0",
+      "path": "/vendor/modern-screenshot@4.7.0/modern-screenshot.js",
+      "bytes": 24937,
+      "gzip": 9891,
+      "sha256": "be5c5e39f744e5e7c5b5fc2f9f1794cee2309c65984ca94813b800e8faa19f70"
+    },
+    {
+      "name": "uqr",
+      "version": "0.1.3",
+      "path": "/vendor/uqr@0.1.3/uqr.js",
+      "bytes": 10732,
+      "gzip": 4179,
+      "sha256": "fc03ef22b9e6feb8b01f913110f4298188882d90750441a511d15a9949c844a0"
+    },
+    {
+      "name": "diff",
+      "version": "9.0.0",
+      "path": "/vendor/diff@9.0.0/diff.js",
+      "bytes": 7072,
+      "gzip": 2735,
+      "sha256": "6ede55bfed4e6c3336c50acb44f565e24ffd71738fbfad1760f1e7e88a9191b1"
+    },
+    {
+      "name": "web-vitals",
+      "version": "6.2.2",
+      "path": "/vendor/web-vitals@6.2.2/web-vitals.js",
+      "bytes": 8644,
+      "gzip": 3276,
+      "sha256": "0b3935abefd67eaad5ea4778df3ed3091bb2fdca4a75ab110052197b7fc7d59e"
+    },
+    {
+      "name": "workbox-routing",
+      "version": "7.4.1",
+      "path": "/vendor/workbox@7.4.1/workbox.js",
+      "bytes": 27214,
+      "gzip": 8855,
+      "sha256": "9049b1028067f3d7b42d5766152dd844560f58b85c903dcde7926ebb0443e0c7"
+    },
+    {
+      "name": "photoswipe",
+      "version": "5.4.4",
+      "path": "/vendor/photoswipe@5.4.4/photoswipe-lightbox.esm.min.js",
+      "bytes": 14338,
+      "gzip": 4467,
+      "sha256": "b82c385604f90cc77082d8e1bd4f5ef7c9d3da62d95dcc3ff1691a4eb0dddd12"
+    },
+    {
+      "name": "photoswipe",
+      "version": "5.4.4",
+      "path": "/vendor/photoswipe@5.4.4/photoswipe.esm.min.js",
+      "bytes": 54270,
+      "gzip": 16447,
+      "sha256": "542069771beb34dc461cdb9374da8af643c591ebf65d8ec36331dd9a0681ebd4"
+    },
+    {
+      "name": "photoswipe",
+      "version": "5.4.4",
+      "path": "/vendor/photoswipe@5.4.4/photoswipe.css",
+      "bytes": 7423,
+      "gzip": 2338,
+      "sha256": "b0eaaae0b9de064d25e2f18517b9011a526d9b2142376e1c0febd096cebab9f3"
+    }
+  ]
+}

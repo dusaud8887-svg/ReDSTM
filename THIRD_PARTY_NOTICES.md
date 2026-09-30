@@ -79,6 +79,38 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
   [transTemple/aaFont](https://github.com/transtemple/aaFont)다. SHA-256은
   `64fed56dcd5a1c64b5e35c92e06b422b71821205e23efd14c8b1772a43a9d7c5`이고
   license 전문은 `edge/public/fonts/Saitamaar-LICENSE.txt`에 포함한다.
+- 2026-09-30 프론트 개편 준비(`docs/24_frontend_redesign_spec.md`)로 추가한 자산. 아직 `index.html`에서
+  참조하지 않으며 구현 Phase에서 연결한다. 버전은 `edge/package.json` devDependencies(정확 고정)와
+  `edge/package-lock.json`이 source of truth다.
+  - `edge/public/vendor/<name>@<version>/`: `edge/scripts/vendor.mjs`가 npm 패키지를 esbuild로 한 파일
+    ESM으로 묶은 결과와 각 패키지 LICENSE. 파일별 SHA-256·크기는 `edge/public/vendor/manifest.json`,
+    검증은 `npm run check`(`vendor.mjs --check`).
+
+    | Package | Version | License | Upstream |
+    |---|---:|---|---|
+    | es-hangul | 2.4.0 | MIT | [toss/es-hangul](https://github.com/toss/es-hangul) |
+    | @leeoniya/ufuzzy | 1.0.19 | MIT | [leeoniya/uFuzzy](https://github.com/leeoniya/uFuzzy) |
+    | idb | 8.0.3 | ISC | [jakearchibald/idb](https://github.com/jakearchibald/idb) |
+    | @floating-ui/dom | 1.8.0 | MIT | [floating-ui/floating-ui](https://github.com/floating-ui/floating-ui) |
+    | @use-gesture/vanilla | 10.3.1 | MIT | [pmndrs/use-gesture](https://github.com/pmndrs/use-gesture) |
+    | modern-screenshot | 4.7.0 | MIT | [qq15725/modern-screenshot](https://github.com/qq15725/modern-screenshot) |
+    | web-vitals | 6.2.2 | Apache-2.0 | [GoogleChrome/web-vitals](https://github.com/GoogleChrome/web-vitals) |
+    | uqr | 0.1.3 | MIT | [unjs/uqr](https://github.com/unjs/uqr) |
+    | diff (jsdiff) | 9.0.0 | BSD-3-Clause | [kpdecker/jsdiff](https://github.com/kpdecker/jsdiff) |
+    | workbox-routing/strategies/expiration/cacheable-response/range-requests/precaching | 7.4.1 | MIT | [GoogleChrome/workbox](https://github.com/GoogleChrome/workbox) |
+    | photoswipe (배포 ESM·CSS 그대로 복사) | 5.4.4 | MIT | [dimsemenov/PhotoSwipe](https://github.com/dimsemenov/PhotoSwipe) |
+
+  - `edge/public/fonts/pretendard/`: Pretendard Variable 1.3.9 동적 서브셋 92개 WOFF2(npm `pretendard`
+    `dist/web/variable/woff2-dynamic-subset`), SIL OFL 1.1, [orioncactus/pretendard](https://github.com/orioncactus/pretendard).
+    `LICENSE.txt` 동봉.
+  - `edge/public/fonts/maruburi/`: MaruBuri Regular·Bold(npm `@kfonts/maruburi` 0.1.0의 원본 TTF, NAVER, OFL 1.1)를
+    `edge/scripts/build-fonts.py`가 Pretendard의 unicode-range 묶음대로 나눈 WOFF2. 글리프 변형 없음(subset만).
+  - `edge/public/fonts/gowun-batang/`: Gowun Batang 400·700 unicode-range 조각(npm `@fontsource/gowun-batang` 5.3.0),
+    SIL OFL 1.1, [yangheeryu/Gowun-Batang](https://github.com/yangheeryu/Gowun-Batang).
+  - `edge/public/fonts/Saitamaar-Regular.woff2`: 위 Saitamaar TTF의 무손실 WOFF2 재포장(subset 없음). 빌드 스크립트가
+    cmap과 advance width가 원본과 같은지 검사한다.
+  - 개발 도구: esbuild 0.28.2(MIT), @biomejs/biome 2.5.14(MIT OR Apache-2.0), lucide-static 1.49.0(ISC, 아이콘
+    path 원천 — 필요한 아이콘만 sprite로 복사할 때 출처 표기).
 - TypeMoon category/views/restricted 판정 동작은 DSOTM commit
   `c3e0c24e136d791f206d288adc4891874cbb6bdf`의
   `src/crawler/rebuild/sources/typemoon/parser.py`를 교차 검증해 독립 구현했다. legacy의
