@@ -126,6 +126,11 @@ function objectHeaders(object, key) {
 async function staticAssetResponse(request, env) {
   const asset = await env.ASSETS.fetch(request);
   const secured = new Response(asset.body, asset);
+  const versioned = /^\/(?:vendor|fonts)\/[a-z0-9-]+@\d+(?:\.\d+){0,2}\//.test(new URL(request.url).pathname);
+  if (versioned && [200, 304].includes(asset.status) &&
+      !asset.headers.get("Content-Type")?.toLowerCase().includes("text/html")) {
+    secured.headers.set("Cache-Control", `public, max-age=${IMMUTABLE_CACHE_SECONDS}, immutable`);
+  }
   secured.headers.set("Content-Security-Policy", contentSecurityPolicy);
   secured.headers.set("Referrer-Policy", "no-referrer");
   secured.headers.set("X-Content-Type-Options", "nosniff");
@@ -191,6 +196,13 @@ export default {
         accessMode ? 403 : 401,
         accessMode ? {} : { "WWW-Authenticate": 'Basic realm="ReDSTM", charset="UTF-8"' },
       );
+    }
+    if (url.pathname === "/api/v1/me") {
+      if (!env.TEAM_DOMAIN || !env.POLICY_AUD) return response("Access user required", 403);
+      if (request.method !== "GET") return response("Method not allowed", 405, { Allow: "GET" });
+      const ownerHash = Array.from(await digest(isAuthorized.subject), (byte) => byte.toString(16).padStart(2, "0"))
+        .join("").slice(0, 16);
+      return Response.json({ ownerHash }, { headers: { "Cache-Control": "private, no-store" } });
     }
     if (url.pathname.startsWith("/api/v1/text/")) {
       return textArchiveResponse(request, env);

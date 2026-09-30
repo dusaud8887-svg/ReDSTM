@@ -128,6 +128,23 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     );
     assert.equal(valid.status, 200);
 
+    const meRequest = (method = "GET", assertion = token) => new Request("https://archive.example/api/v1/me", {
+      method, headers: { "Cf-Access-Jwt-Assertion": assertion },
+    });
+    const me = await workerFetch(meRequest(), accessEnvironment);
+    assert.equal(me.status, 200);
+    const emailHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("reader@example.test")));
+    const expectedOwner = Array.from(emailHash, (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+    assert.deepEqual(await me.json(), { ownerHash: expectedOwner });
+    assert.equal(me.headers.get("Cache-Control"), "private, no-store");
+    assert.equal((await workerFetch(meRequest("POST"), accessEnvironment)).status, 405);
+    assert.equal((await workerFetch(meRequest("GET", runnerToken), accessEnvironment)).status, 403);
+    assert.equal((await workerFetch(new Request("https://archive.example/api/v1/me"), accessEnvironment)).status, 403);
+    const secondUser = await new SignJWT({ email: "other@example.test" })
+      .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+      .setIssuer(issuer).setAudience(audience).setIssuedAt().setExpirationTime("5m").sign(privateKey);
+    assert.notEqual((await (await workerFetch(meRequest("GET", secondUser), accessEnvironment)).json()).ownerHash, expectedOwner);
+
     const runnerHeaders = {
       "X-Request-Id": "018f47a8-7a2d-7c11-8f44-89d95775c6ea",
       "X-ReDSTM-Protocol": "1",
@@ -334,6 +351,26 @@ test("serves authenticated static assets with security headers", async () => {
   assert.equal(operations.status, 200);
   assert.equal(new URL(received.url).pathname, "/ops");
   assert.match(operations.headers.get("Content-Security-Policy"), /connect-src 'self'/);
+});
+
+test("caches only successful versioned assets immutably and keeps me Access-only", async () => {
+  const env = environment({
+    ASSETS: { async fetch() { return new Response("asset", { headers: { "Content-Type": "application/octet-stream" } }); } },
+  });
+  for (const path of ["/fonts/pretendard@1.3.9/core.woff2", "/fonts/maruburi@1.000/maruburi.css", "/vendor/idb@8.0.3/idb.js"]) {
+    const result = await workerFetch(request(path), env);
+    assert.equal(result.headers.get("Cache-Control"), "public, max-age=31536000, immutable");
+    assert.match(result.headers.get("Content-Security-Policy"), /script-src 'self'/);
+  }
+  for (const path of ["/app.js", "/fonts/MaruBuri-Regular.woff2", "/vendor/unversioned/file.js", "/fonts/name@not-a-version/file"]) {
+    assert.equal((await workerFetch(request(path), env)).headers.get("Cache-Control"), null);
+  }
+  for (const [status, contentType] of [[404, "text/plain"], [200, "text/html; charset=utf-8"]]) {
+    const missing = environment({ ASSETS: { async fetch() { return new Response("missing", { status, headers: { "Content-Type": contentType } }); } } });
+    assert.equal((await workerFetch(request("/fonts/pretendard@1.3.9/missing"), missing)).headers.get("Cache-Control"), null);
+  }
+  assert.equal((await workerFetch(request("/api/v1/me"), env)).status, 403);
+  assert.equal((await workerFetch(new Request("https://archive.example/fonts/pretendard@1.3.9/core.woff2"), env)).status, 401);
 });
 
 test("text library shares the authenticated ReDSTM shell", async () => {

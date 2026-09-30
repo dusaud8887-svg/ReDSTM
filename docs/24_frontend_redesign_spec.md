@@ -1187,7 +1187,7 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - P0-1 검증: `npm test` 108/108, `npm run check` 통과, `npm run lint` 0 error(기존 warning 7/info 2), Playwright 전체 510 pass/14 skip, axe 4폭 통과. 공개 동작·저장 스키마 변화 없음.
 - P0-2a: 시각 fixture 48개(light/dark × 384/768/1440 × 8화면), Linux CI 초기 기준 생성·비교·artifact 업로드, CI lint gate 연결. `check`에 새 spec 포함. 로컬 공통 검증은 108 unit/510 E2E/14 기존 skip·axe·check·lint 통과. Linux 생성 기준선은 P0-2b에서 가져와 커밋 후 다시 비교한다(Windows 기준 생성 없음). 편집 5파일.
 - P0-2b: [Linux CI 36698362728](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36698362728) 성공. 생성 48개(46.2초), 전체 558 pass/14 기존 skip(8.2분), axe·unit·check·lint 및 python/text-edge job 통과. 해당 artifact의 PNG 48개를 그대로 커밋. M0 시각 변화 없음 기준선으로 사용하며, 이후 시각 개편 티켓은 Linux에서 새 기준 생성·시안 대조 후 비교한다.
-- P0-3 구현: 버전 글꼴·vendor의 성공 응답에 public 1년 immutable(HTML fallback/실패 응답 제외). Access JWT 검증을 통과한 email로만 `GET /api/v1/me`의 SHA-256 앞 16자리 ownerHash를 계산하며 응답은 private/no-store. Basic·서비스 토큰·미인증 거절, 다른 계정 hash 분리 테스트 추가. 문서 3개 포함 편집 5파일. 검증 결과는 완료 후 아래에 기록한다.
+- P0-3: 버전 글꼴·vendor의 성공 응답에 public 1년 immutable(HTML fallback/실패 응답 제외). Access JWT 검증을 통과한 email로만 `GET /api/v1/me`의 SHA-256 앞 16자리 ownerHash를 계산하며 응답은 private/no-store. Basic·서비스 토큰·미인증 거절, 다른 계정 hash 분리 테스트 추가. 문서 3개 포함 편집 5파일. `npm test` 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(4.1분), axe 4폭 통과.
 - 실기기 확인 대기(M0): Back·시트·popover 중첩(T03/T04), 글꼴 도착 후 위치(T20), 키보드(T34), Playwright `_android` 연결 여부. F0 연결 뒤 확인.
 
 | 날짜 | 내용 |

@@ -13,6 +13,8 @@
 
 ## 1. 한 번의 독서 세션 = history entry 하나
 
+개편 M0의 저장소 계정 경계: `GET /api/v1/me`는 서버가 검증한 Access 사용자 email의 SHA-256 앞 16자리 `{ownerHash}`만 반환하며 `private, no-store`다. Basic 로컬 인증과 서비스 토큰에는 제공하지 않는다. 버전 디렉터리 `/fonts/<name>@<version>/`·`/vendor/<name>@<version>/`의 성공한 자산 응답은 public 1년 immutable이며, 기존 경로와 인증 요구는 유지한다.
+
 | 행동 | history |
 |---|---|
 | 목록·홈·목차에서 본문 열기 | push 1회 (`redstmReader`, `redstmParent=<열었던 목록 경로>`) |
