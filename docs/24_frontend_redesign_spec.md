@@ -1252,6 +1252,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-1: `app.css`를 `styles/{tokens,base,shell,components,library,reader,aa}.css` 7파일로 값 불변 분할(`@layer` 없음 — layer는 특이도보다 우선해 값이 바뀐다). 파일 사이 순서가 바뀌며 생긴 차이(카탈로그 배치·하단 탭 표시 규칙)는 해당 배치 규칙을 shell로 옮겨 해소. 검증: 10화면×5폭(320/384/768/1100/1440)×light/dark = 100상태의 모든 요소·가상 요소 computed style 분할 전후 동일(도구 `.wrangler/cssdiff`, 커밋 안 함), AA 인벤토리 속성 포함(T06 분할 부분). unit 126, check·lint 0 error, 전체 E2E 530 pass/14 기존 skip(4.7분).
 
+- P1-2: `tokens.css`를 DESIGN §2 semantic 토큰(`light-dark()`, `:root[data-theme]`의 color-scheme)·작품색 10·e1–e3·모션으로 교체하고 v1 이름은 별칭(`--page`→`--bg`, `--muted`→`--ink-2` 등, M6 끝 제거). 사용자 정의 속성은 치환된 값이 상속되므로 Reader 범위에서 읽기 면 토큰과 그 별칭을 다시 지정한다. accent 판정(§13): 이어 읽기 카드·진행선·현재 회차/행·Reader 목록 현재 행·저장 리본 → ribbon, 분류 라벨 → ink-2, 저장 취소·분류 삭제·가져오기 오류 → danger-text, 채운 accent 위 글자 → on-accent, 검색 일치 mark → hl-find. 나머지 누름·선택은 accent.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

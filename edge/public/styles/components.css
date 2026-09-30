@@ -7,7 +7,7 @@
 .icon-button { width: 44px; height: 44px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
 .icon-button:hover { background: var(--surface); color: var(--ink); }
 .icon-button:disabled { opacity: .35; cursor: default; }
-.bookmark[aria-pressed="true"] { color: var(--accent); }
+.bookmark[aria-pressed="true"] { color: var(--ribbon); }
 .bookmark[aria-pressed="true"] svg { fill: currentColor; }
 .toolbar-spacer { flex: 1; }
 .text-command { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; border: 0; background: transparent; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap; cursor: pointer; }
@@ -75,11 +75,11 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .settings-ops:hover { border-color: var(--accent); color: var(--accent); }
 .reset-settings { margin-right: auto; }
 .import-review { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--page); }
-.import-review[data-state="error"] { border-color: var(--accent); }
+.import-review[data-state="error"] { border-color: var(--danger-text); }
 .import-review p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
 .import-review > div { display: flex; justify-content: flex-end; gap: 8px; }
 .import-review button { min-height: 44px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 650; cursor: pointer; }
-.import-review #import-merge { border-color: var(--accent); background: var(--accent); color: #fff; }
+.import-review #import-merge { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .import-review button:disabled { opacity: .45; cursor: default; }
 
 @media (max-width: 759px) {
