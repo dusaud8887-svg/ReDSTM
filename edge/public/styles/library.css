@@ -437,3 +437,7 @@ body.reading .home { display: none; }
 .active-filters { flex-wrap: nowrap; width: auto; }
 /* Chips stay 32px tall; the row gives each a 44px touch height. */
 .catalog-toolbar, .text-sort-chips { min-height: 44px; align-items: center; }
+/* The text work header stays above its list, so it keeps a small cover and, beside an open
+   chapter, leaves the narrow list its whole height (the barcode waits on the work screen). */
+.text-work-summary .work-head { align-items: start; gap: 12px; }
+body.reading-context .text-work-summary :is(.work-cover, .work-barcode) { display: none; }

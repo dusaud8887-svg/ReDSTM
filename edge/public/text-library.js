@@ -484,7 +484,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     fillWorkCover(cover, {
       title: work.title || "작품", source: lane === "novel" ? sourceLabel(work.source_site) : "아카라이브",
       hueKey: lane === "novel" ? workKey({ source: "novel", id: work.work_id }) : workKey({ source: "arcalive", board: work.board ?? "", id: work.work_id }),
-      progress: total ? finished / total : null,
+      progress: total ? finished / total : null, size: "s",
     });
     // Shelf and 몇 화? share one row under the title.
     const actions = document.createElement("div");

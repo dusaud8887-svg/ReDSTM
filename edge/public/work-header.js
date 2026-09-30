@@ -5,9 +5,10 @@
 import { createBarcode } from "/barcode.js";
 import { createTypeCover, workHue } from "/type-cover.js";
 
-export function fillWorkCover(host, { title, source, hueKey, progress = null }) {
+// size: "s" where the header stays fixed above a list (the text library), else M on phones, L wider.
+export function fillWorkCover(host, { title, source, hueKey, progress = null, size = null }) {
   host.replaceChildren(createTypeCover({
-    title, source, size: matchMedia("(max-width: 759px)").matches ? "m" : "l", hue: workHue(hueKey), progress, mine: true,
+    title, source, size: size ?? (matchMedia("(max-width: 759px)").matches ? "m" : "l"), hue: workHue(hueKey), progress, mine: true,
   }));
 }
 
