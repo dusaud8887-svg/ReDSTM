@@ -38,7 +38,9 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .archive-body:not(.aa) { touch-action: pan-x pan-y; }
 .setting-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 @media (hover: hover) and (pointer: fine) { .touch-hint { display: none; } }
-.archive-body p { margin: 0 0 .95em; }
+.archive-body p { margin: 0 0 var(--prose-paragraph, .95em); }
+/* New prose settings never reach an AA picture (docs/24 §8.16). */
+.archive-body:not(.aa) p { text-indent: var(--prose-indent, 0); }
 .archive-body :is(h1, h2, h3, h4) { font-family: inherit; line-height: 1.4; }
 .archive-body blockquote { margin: 1.5em 0; padding-left: 1.25em; border-left: 3px solid var(--line-strong); color: var(--muted); }
 .archive-body img { max-width: 100%; max-height: 80vh; height: auto; }
@@ -212,3 +214,15 @@ body.find-open .reader-bottom { visibility: hidden; }
 .quick-range input { width: 100%; accent-color: var(--accent); }
 .quick-all { justify-self: end; min-height: 40px; padding: 0 8px; border: 0; background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; }
 @media (min-width: 760px) { .quick-panel { inset: 64px 24px auto auto; width: 360px; margin: 0; } }
+
+/* The folded progress badge opens the scrubber (docs/24 §8.7/8.9). */
+.reader-status { min-height: 28px; padding: 4px 10px; border: 0; font: inherit; font-size: 12px; cursor: pointer; }
+body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { pointer-events: auto; }
+.scrub-position { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.scrub-track { position: relative; grid-column: 1 / -1; display: block; }
+.scrub-track input { width: 100%; }
+.scrub-ticks { position: absolute; right: 8px; bottom: -2px; left: 8px; height: 6px; pointer-events: none; }
+.scrub-ticks i { position: absolute; top: 0; width: 2px; height: 6px; margin-left: -1px; background: var(--hl-find-current); }
+.scrub-ticks i.current { background: var(--ink); }
+.scrub-return { min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-weight: 600; cursor: pointer; }
+.font-preview { grid-column: 1 / -1; padding: 10px 12px; border-radius: var(--radius-control); background: var(--surface-2); color: var(--ink); font-size: 16px; line-height: 1.7; }

@@ -50,7 +50,7 @@ function sanitizeSettings(value, defaults = {}) {
   for (const [key, minimum, maximum] of [
     ["proseSize", 15, 28], ["lineHeight", 1.4, 2.2],
     ["proseWidth", 560, 960], ["proseMargin", 12, 32], ["aaSize", 9, 24], ["aaZoom", 0.1, 3],
-    ["readerDim", 0, 60], ["readerWarm", 0, 25],
+    ["readerDim", 0, 60], ["readerWarm", 0, 25], ["paragraphSpacing", 0, 2], ["textIndent", 0, 2],
   ]) {
     pick(key, (value) => Number.isFinite(value) && value >= minimum && value <= maximum);
   }
@@ -58,6 +58,7 @@ function sanitizeSettings(value, defaults = {}) {
   pick("proseAlign", (value) => proseAlignments.has(value));
   pick("readerSurface", (value) => readerSurfaces.has(value));
   pick("tapPaging", (value) => toggles.has(value));
+  pick("homeQuote", (value) => toggles.has(value));
   pick("aaAutoFit", (value) => toggles.has(value));
   pick("aaCanvasWidth", (value) => [null, 680, 800].includes(value));
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),

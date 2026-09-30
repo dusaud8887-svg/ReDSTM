@@ -61,13 +61,13 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
   proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
@@ -80,6 +80,7 @@ const elements = Object.fromEntries(
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
     "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
+    "paragraph-spacing", "paragraph-spacing-output", "text-indent", "text-indent-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
@@ -262,6 +263,7 @@ function openFind() {
   find.open((anchor) => {
     if (!anchor) return;
     findReturnAnchor = anchor;
+    rememberReturn(anchor, "검색 전 위치");
     const toast = document.querySelector("#find-return");
     overlays.showToast(toast);
     clearTimeout(findReturnTimer);
@@ -563,6 +565,8 @@ function applySettings() {
   root.style.setProperty("--prose-line", settings.lineHeight);
   root.style.setProperty("--prose-width", `${settings.proseWidth}px`);
   root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
+  root.style.setProperty("--prose-paragraph", `${settings.paragraphSpacing}em`);
+  root.style.setProperty("--prose-indent", `${settings.textIndent}em`);
   root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
   const aaZoom = effectiveAaZoom();
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * aaZoom}px`);
@@ -577,6 +581,7 @@ function applySettings() {
     ["[data-prose-align]", "proseAlign", settings.proseAlign],
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
     ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
+    ["[data-home-quote]", "homeQuote", settings.homeQuote],
   ]) {
     for (const choice of document.querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
@@ -591,12 +596,18 @@ function applySettings() {
     ["aa-size", settings.aaSize, "px"],
     ["reader-dim", settings.readerDim, "%"],
     ["reader-warm", settings.readerWarm, "%"],
+    ["paragraph-spacing", settings.paragraphSpacing, "em"],
+    ["text-indent", settings.textIndent, "em"],
   ]) {
     for (const quick of document.querySelectorAll(`[data-quick-setting="${id === "reader-dim" ? "readerDim" : id === "reader-warm" ? "readerWarm" : ""}"]`)) quick.value = value;
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
+  // The font is judged on the reader's own text: the first lines of the open chapter, if any.
+  const preview = document.querySelector("#font-preview");
+  preview.textContent = elements["archive-body"].textContent.replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
+  preview.style.fontFamily = settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)";
   document.querySelector("#quick-size-output").value = String(settings.proseSize);
   elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
@@ -911,7 +922,7 @@ function renderTextContinue(text) {
   setContinueProgress(finished ? 0 : text.progress);
   fillContinueCard(continueCardParts(), {
     title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("novel:") ? "소설" : "아카라이브",
-    hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
+    hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished || settings.homeQuote === "off" ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
   });
 }
 
@@ -1017,7 +1028,7 @@ async function renderContinueCard() {
   }
   fillContinueCard(continueCardParts(), {
     title: membership?.collection.title || summary.title || "제목 없음", source: "타입문넷",
-    hueKey: postHueKey(summary, membership?.collection.id), progress, sentence: lastSentenceQuote(shownEntry?.loc),
+    hueKey: postHueKey(summary, membership?.collection.id), progress, sentence: settings.homeQuote === "off" ? "" : lastSentenceQuote(shownEntry?.loc),
     readAt: shownEntry?.readAt ?? latestEntry.readAt,
   });
 }
@@ -1365,7 +1376,50 @@ function updateReaderLength() {
 
 function renderRemainingTime(progress) {
   elements["more-remaining"].textContent = remainingTimeLabel(readerMinutes, progress);
+  document.querySelector("#scrubber-remaining").textContent = elements["more-remaining"].textContent;
 }
+
+// Moves the body to a share of the chapter; the far end lands on the 다음 화 card rather than the
+// last line behind the tools.
+function scrubTo(ratio) {
+  readerSession.markUserScroll();
+  const pane = elements["reader-pane"];
+  const body = elements["archive-body"];
+  const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
+  const chapterEnd = document.getElementById("chapter-end");
+  pane.scrollTop = ratio >= 1
+    ? chapterEnd.offsetTop - pane.clientHeight / 3
+    : ratio * (span > 0 ? span : pane.scrollHeight - pane.clientHeight);
+  syncScrollBaseline();
+  renderRemainingTime(ratio);
+}
+
+// Scrubber (docs/24 §8.9). The place before the reader's last explicit jump (a scrub or a find
+// move) stays offered for this document until another jump replaces it.
+const scrubber = document.querySelector("#scrubber");
+let readerReturn = null;
+function rememberReturn(anchor, label) {
+  if (anchor) readerReturn = { anchor, label, generation: readerSession.generation };
+}
+function openScrubber() {
+  if (!readerSource) return;
+  const progress = bodyProgress();
+  document.querySelector("#scrubber-position").value = String(Math.round(progress * 1000));
+  document.querySelector("#scrubber-output").value = `${Math.round(progress * 100)}%`;
+  document.querySelector("#scrubber-context").textContent = elements["reader-more-context"].textContent;
+  renderRemainingTime(progress);
+  renderChapterRun(document.querySelector("#scrubber-run"), document.querySelector("#scrubber-run-label"), readerNavigation?.run ?? null);
+  const ticks = document.querySelector("#find-band").cloneNode(true).children;
+  document.querySelector("#scrubber-ticks").replaceChildren(...ticks);
+  const back = document.querySelector("#scrubber-return");
+  const live = readerReturn && readerReturn.generation === readerSession.generation ? readerReturn : null;
+  back.hidden = !live;
+  if (live) back.textContent = `${live.label}로`;
+  scrubAnchor = null;
+  if (!scrubber.open) scrubber.showModal();
+}
+let scrubAnchor = null;
+let scrubFrame = 0;
 
 function subjectParticle(word) {
   const code = String(word).trim().at(-1)?.charCodeAt(0) - 0xac00;
@@ -4080,20 +4134,30 @@ for (const [id, delta] of [["reader-list-previous", -1], ["reader-list-next", 1]
 elements["reader-list-all"].addEventListener("click", () => readerCommand("list"));
 // Jump within a long body (the inverse of bodyProgress).
 elements["more-position"].addEventListener("input", () => {
-  readerSession.markUserScroll();
-  const pane = elements["reader-pane"];
-  const body = elements["archive-body"];
   const ratio = Number(elements["more-position"].value) / 100;
-  const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
-  const chapterEnd = document.getElementById("chapter-end");
-  // The far end lands on the 다음 화 card rather than the last line behind the toolbar.
-  pane.scrollTop = ratio >= 1
-    ? chapterEnd.offsetTop - pane.clientHeight / 3
-    : ratio * (span > 0 ? span : pane.scrollHeight - pane.clientHeight);
-  syncScrollBaseline();
+  scrubTo(ratio);
   elements["more-position-output"].value = `${Math.round(ratio * 100)}%`;
-  renderRemainingTime(ratio);
 });
+// The body follows the slider once per frame; the first move keeps the place it left.
+document.querySelector("#scrubber-position").addEventListener("input", (event) => {
+  if (!scrubAnchor) {
+    scrubAnchor = readerSession.adapter?.captureVisiblePosition() ?? null;
+    rememberReturn(scrubAnchor, "이동 전 위치");
+  }
+  const ratio = Number(event.target.value) / 1000;
+  document.querySelector("#scrubber-output").value = `${Math.round(ratio * 100)}%`;
+  cancelAnimationFrame(scrubFrame);
+  scrubFrame = requestAnimationFrame(() => scrubTo(ratio));
+});
+document.querySelector("#scrubber-return").addEventListener("click", () => {
+  const target = readerReturn;
+  scrubber.close();
+  if (target && readerSession.restore(target.anchor)) syncScrollBaseline();
+  readerReturn = null;
+});
+// Focusing the badge would unfold the tools and take it away from under the finger mid-tap.
+elements["reader-status"].addEventListener("pointerdown", (event) => event.preventDefault());
+elements["reader-status"].addEventListener("click", openScrubber);
 elements["more-mode"].addEventListener("click", () => {
   closeReaderMore();
   elements["mode-toggle"].click();
@@ -4636,6 +4700,12 @@ for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {
     saveSettings();
   });
 }
+for (const choice of document.querySelectorAll("button[data-home-quote]")) {
+  choice.addEventListener("click", () => {
+    settings.homeQuote = choice.dataset.homeQuote;
+    saveSettings();
+  });
+}
 for (const choice of document.querySelectorAll("button[data-tap-paging]")) {
   choice.addEventListener("click", () => {
     settings.tapPaging = choice.dataset.tapPaging;
@@ -4694,7 +4764,8 @@ function changeTypography(mutate) {
     syncScrollBaseline();
   }
 }
-for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["prose-margin", "proseMargin"], ["aa-size", "aaSize"]]) {
+for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["prose-margin", "proseMargin"], ["aa-size", "aaSize"],
+  ["paragraph-spacing", "paragraphSpacing"], ["text-indent", "textIndent"]]) {
   elements[id].addEventListener("input", () => changeTypography(() => {
     settings[key] = Number(elements[id].value);
   }));

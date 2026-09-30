@@ -1591,3 +1591,60 @@ test("Aa opens quick settings that apply at once and lead to all settings", asyn
   await expect(page.locator("#settings-dialog")).toBeVisible();
   await expect(panel).toBeHidden();
 });
+
+// docs/24 §8.9: the folded badge opens the scrubber; a scrub keeps the place it left.
+test("The scrubber moves through the chapter and offers the place before the move", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const pane = page.locator("#reader-pane");
+  await pane.evaluate((element) => { element.scrollTop = 300; element.dispatchEvent(new Event("scroll")); });
+  await pane.hover();
+  await page.mouse.wheel(0, 400);
+  await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+  const before = await pane.evaluate((element) => element.scrollTop);
+  await page.locator("#reader-status").click();
+  const sheet = page.locator("#scrubber");
+  await expect(sheet).toBeVisible();
+  await expect(page.locator("#scrubber-run-label")).toHaveText("2/3편");
+  await page.locator("#scrubber-position").evaluate((input) => {
+    input.value = "900";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#scrubber-output")).toHaveText("90%");
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(before + 200);
+  await sheet.getByRole("button", { name: "닫기" }).click();
+  await page.locator("#reader-status").evaluate((badge) => badge.click());
+  await expect(sheet.locator("#scrubber-return")).toHaveText("이동 전 위치로");
+  await sheet.locator("#scrubber-return").click();
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(before + 80);
+});
+
+// Fine typography reaches prose only; an AA picture keeps its grid (T06, docs/24 §8.16).
+test("Paragraph spacing and indent change prose but never an AA picture", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/1-*", (request) => {
+    const payload = postPayload(1);
+    payload.post.is_aa = true;
+    payload.post.body_html = '<p>（　´∀｀）</p><div class="AA_Text">　|　　|</div>';
+    return request.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
+  for (const [id, value] of [["#paragraph-spacing", "1.5"], ["#text-indent", "1"]]) {
+    await page.locator(id).evaluate((input, next) => {
+      input.value = next;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, value);
+  }
+  await expect(page.locator("#font-preview")).toContainText("2편 본문 1");
+  const prose = page.locator("#archive-body p").first();
+  await expect(prose).toHaveCSS("text-indent", "18px");
+  await expect(prose).toHaveCSS("margin-bottom", "27px");
+  await page.goto("/read/board_a/1");
+  const aa = page.locator("#archive-body.aa p").first();
+  await expect(aa).toHaveCSS("text-indent", "0px");
+  await expect(aa).toHaveCSS("margin-bottom", "0px");
+});

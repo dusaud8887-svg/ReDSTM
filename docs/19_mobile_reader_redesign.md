@@ -118,6 +118,7 @@
 - 본문 면 `종이`는 Reader에만 적용하는 따뜻한 면이다(색은 `DESIGN.md §3`). 문단 정렬은 소설·일반·텍스트 본문에만 적용하고 AA는 원본 정렬을 유지한다. 정렬을 바꿀 때도 화면 맨 위 문장을 유지한다.
 - 세 값은 user-state v2 `settings.readerSurface`(`default|paper`)·`settings.proseAlign`(`start|justify`)·`settings.tapPaging`(`off|on`)이다.
   - 2026-09-30 개편(P1-4): `readerSurface`에 `ink`(먹, 앱 테마와 무관한 검은 면) 추가, `settings.readerDim`(밝기 낮추기 0–60%)·`settings.readerWarm`(따뜻하게 0–25%) 추가. 둘은 글자를 다시 배치하지 않는 화면 overlay다. 색은 `DESIGN.md §2.4`. 없는 기존 파일은 기본값으로 보정되고 가져오기 미리보기의 `기본값 보정`에 이름이 나온다(스키마 버전 변화 없음).
+  - 2026-10-01 개편(P2-2): `settings.paragraphSpacing`(문단 간격 0–2em, 기본 0.95)·`settings.textIndent`(들여쓰기 0–2em, 기본 0)는 산문에만 적용하고 AA에는 닿지 않는다. `settings.homeQuote`(`on|off`, 기본 on)는 서재 이어 읽기 카드의 마지막 문장 줄. 도크 `Aa`는 퀵 설정 패널을 열고 `모든 설정`에서 이 시트로 온다.
 - 글자 크기·줄 간격·여백·서체를 바꿔도 **화면 맨 위 문장이 그대로** 남는다(`public/text-anchor.js`, 레이아웃 기하 기반이라 시트가 열려 있어도 동작). 텍스트 본문의 읽기 위치도 같은 문자 anchor로 저장한다.
 - 사용자 상태 스키마는 그대로(v2 / text v1). `proseSize` 상한 24→28, `proseMargin` 추가는 범위를 넓히는 변경이라 기존 파일이 그대로 유효하다.
 
