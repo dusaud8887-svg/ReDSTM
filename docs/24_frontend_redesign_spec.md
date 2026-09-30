@@ -1261,6 +1261,10 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-6: 기록 탭 `읽는 중 · 저장 · 최근`(`/saved?view=reading|bookmarks|recent` 불변, `발췌`·`통계`는 M3에서 데이터와 함께 추가 — 빈 탭을 미리 보이지 않음). 저장은 이미 타입문넷+텍스트 병합 목록이므로 텍스트 장서의 `저장함` 레인 버튼을 없애 한 곳으로(옛 `/text?lane=saved` 주소는 그대로 열림). 제목 `내 보관함`→`기록`. `#text-lanes` 제거, 출처 전환이 소설·아카라이브 레인을 대신한다.
 
+- P1-5 전체 E2E(worktree): 535 pass/3 fail/14 skip — mobile·compact 둘러보기 첫 행 위치 기준(240px)이 출처 전환 줄만큼 내려가 300px로 조정(시안 M3과 같은 구성), medium `side list` 1건은 단독 3/3 통과(간헐, P1-6 이후 전체에서 재확인).
+- P1-7a: Lucide(ISC) path를 `index.html` 상단 `<symbol>` sprite로(목적지·설정·운영·테마 아이콘), 하단 탭 glass(반투명 끄기·미지원·`prefers-reduced-transparency`에서 불투명) + 선택 탭 accent-soft pill, 탭 라벨 12px(DESIGN caption 최소).
+- P1-7b: `shell.js` 이어읽기 미니바 — 하단 탭 위 46px 한 덩어리, 위 2px ribbon 진행, 가장 최근 미완료 기록(텍스트/타입문넷), 서재 이어읽기 카드가 보이면 숨김(IntersectionObserver), Reader 밖 모든 스크롤러에서 10px 이상 아래로 접힘/위로 복귀, Reader·키보드·집중·넓은 화면에서 숨김, 목록·서재 하단 여백 확보. T28 E2E(모바일·compact). 작품 점 색은 P1-8 표지 색 연결 후.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

@@ -1396,3 +1396,33 @@ test("Backup v3 carries TypeMoon and text records, and 합쳐서 가져오기 me
   // Merging keeps this browser's settings.
   expect(typemoon.settings.theme).not.toBe("dark");
 });
+
+// T28: the continue-reading mini bar rides on the phone tab bar outside the Reader.
+test("The mini bar continues reading from any list, folds on scroll and steps aside for Home's card", async ({ page }) => {
+  test.skip(!mobileWidth(page), "phone tab bar only");
+  await useLongCollection(page, 40);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const bar = page.locator("#mini-bar");
+  await expect(bar).toBeHidden();
+  await page.locator("#reader-bottom-list").click();
+  await page.locator('.bottom-nav [data-destination="library"]').click();
+  await expect(page.locator("#continue-reading")).toBeVisible();
+  await expect(bar).toBeHidden();
+
+  await page.locator('.bottom-nav [data-destination="browse"]').click();
+  await expect(bar).toBeVisible();
+  await expect(bar).toHaveAccessibleName(/2편 제목/);
+  const list = page.locator("#result-list");
+  await list.evaluate((element) => { element.scrollTop = 600; });
+  await expect(bar).toHaveClass(/folded/);
+  await list.evaluate((element) => { element.scrollTop = 200; });
+  await expect(bar).not.toHaveClass(/folded/);
+  // The list keeps room for the bar and the tabs together.
+  const listBottom = await page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom));
+  expect(listBottom).toBeGreaterThanOrEqual(102);
+
+  await bar.click();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(bar).toBeHidden();
+});

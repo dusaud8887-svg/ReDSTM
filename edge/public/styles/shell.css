@@ -140,5 +140,31 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   body.reader-active .app-bar { display: none; }
 }
 
-@media (prefers-reduced-transparency: reduce) { .bottom-nav { background: var(--surface) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .bottom-nav { background: var(--surface) !important; } }
+@media (prefers-reduced-transparency: reduce) { :is(.bottom-nav, .mini-bar) { background: var(--surface) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { :is(.bottom-nav, .mini-bar) { background: var(--surface) !important; } }
+
+/* Continue-reading mini bar (DESIGN §7.3): one piece with the phone tab bar, never in the Reader. */
+.mini-bar { display: none; }
+@media (max-width: 759px) {
+  .mini-bar:not([hidden]) {
+    position: fixed; right: 0; bottom: calc(56px + env(safe-area-inset-bottom)); left: 0; z-index: 19;
+    height: 46px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px;
+    border: 0; border-radius: 16px 16px 0 0; background: var(--glass); color: var(--ink); text-align: left; cursor: pointer;
+    -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
+    box-shadow: 0 -1px 0 var(--line); transition: transform var(--dur-3) var(--ease-out), opacity var(--dur-3) var(--ease-out);
+  }
+  .mini-bar::before { content: ""; position: absolute; top: 0; right: 16px; left: 16px; height: 2px; border-radius: 2px; background: linear-gradient(to right, var(--ribbon) var(--mini-progress, 0%), var(--line) 0); }
+  .mini-bar.folded { transform: translateY(100%); opacity: 0; pointer-events: none; }
+  .mini-bar-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--c-mark, var(--ribbon)); }
+  .mini-bar-text { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 6px; overflow: hidden; white-space: nowrap; }
+  .mini-bar-text strong { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; }
+  .mini-bar-text small { flex: 0 0 auto; max-width: 40%; overflow: hidden; color: var(--ink-2); font-size: 13px; text-overflow: ellipsis; }
+  .mini-bar-action { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; color: var(--ribbon-text); font-size: 13px; font-weight: 650; }
+  .mini-bar-action svg { width: 16px; height: 16px; }
+  body.reader-active .mini-bar, body.keyboard-open .mini-bar, body.immersive .mini-bar { display: none !important; }
+  body.mini-bar-on:not(.reader-active) .bottom-nav { border-top-color: transparent; }
+  body.mini-bar-on:not(.reader-active) :is(.catalog, body.reading-context .catalog) { padding-bottom: calc(102px + env(safe-area-inset-bottom)); }
+  body.mini-bar-on:not(.reader-active) .home { padding-bottom: calc(126px + env(safe-area-inset-bottom)); }
+  body.mini-bar-on:not(.reader-active) .collection-view { padding-bottom: calc(126px + env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) { .mini-bar { transition: none !important; } }

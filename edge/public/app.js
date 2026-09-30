@@ -37,6 +37,7 @@ import { createTextLibrary } from "/text-library.js";
 import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
 import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
+import { createMiniBar } from "/shell.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -228,6 +229,8 @@ const textLibrary = createTextLibrary({
   },
 });
 
+const miniBar = createMiniBar({ element: document.querySelector("#mini-bar"), homeCard: elements["continue-block"] });
+
 const boardNavigator = createBoardNavigator({
   dialog: elements["board-dialog"],
   panel: elements["board-panel"],
@@ -391,6 +394,21 @@ function updateShellMode() {
   document.body.classList.toggle("browse-open", currentDestination === "browse");
   document.body.classList.toggle("search-open", currentDestination === "search");
   document.body.classList.toggle("saved-open", currentDestination === "bookmarks");
+  miniBar.render(miniBarModel());
+}
+
+// The newest unfinished place to go back to: a text chapter or a TypeMoon post (docs/24 §8.1).
+function miniBarModel() {
+  const text = textLibrary.latestReading();
+  const post = historyEntries.find((entry) => entry.summary?.object_key && postReadingState(entry.progress) !== "finished");
+  if (text && (!post || Date.parse(text.readAt) > Date.parse(post.readAt))) {
+    return { title: text.work || text.title || "텍스트 장서", detail: text.work ? text.title : "", progress: text.progress, open: () => openTextFromHome(text) };
+  }
+  if (!post) return null;
+  return {
+    title: post.summary.title || "제목 없음", detail: boardLabel(post.summary.board_id), progress: post.progress,
+    open: () => loadPost(post.summary, "push", { listHint: "recent" }),
+  };
 }
 
 function rememberQuery(query) {

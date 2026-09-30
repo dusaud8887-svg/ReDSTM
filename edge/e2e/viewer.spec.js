@@ -1690,7 +1690,8 @@ test("uses a full-width discovery canvas and hides the empty reader pane", async
   }
   if (page.viewportSize().width < 760) {
     const firstTop = await page.locator(".result-item").first().evaluate((element) => element.getBoundingClientRect().top);
-    expect(firstTop).toBeLessThan(240);
+    // Heading, source switch (타입문넷 · 소설 · 아카라이브), scope tabs and chips sit above the list.
+    expect(firstTop).toBeLessThan(300);
   }
 
   await page.locator(".result-item").first().click();
