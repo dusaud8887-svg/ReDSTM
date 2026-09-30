@@ -1193,6 +1193,9 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - P0-4 검증: unit 109/109, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(3.6분), axe 4폭 통과. 편집 3파일. P0-3 Linux CI 36700298564도 성공(시각 기준선 비교 포함).
 - P0-5: Python CI job에서 Node 24·`npm ci` 후 SHA 고정 원본과 fonttools 4.66.1/brotli 1.2.0으로 글꼴을 재생성하고 tracked diff·미추적 출력 파일을 검사. 별도 clean checkout `6c99fbe`에서 `npm ci → npm run fonts` 후 diff 0/미추적 출력 0(T14), 작업 checkout 재생성도 diff 0. 원본 유지. 편집 2파일.
 - P0-5 검증: unit 109/109, check·lint 0 error. 재생성과 검사를 겹친 첫 실행은 생성 중 파일 누락/nested Biome 설정/화면 준비 대기 실패가 있어 완료로 세지 않음. clean checkout을 저장소 밖으로 옮기고 생성 종료 후 check·lint 재검사, axe 해당 시나리오 4/4 및 전체 E2E 510 pass/14 기존 skip(3.8분) 통과. timeout 변경 없음. 이후 재생성·파일 검사·E2E는 순차 실행.
+- F0-1: 텍스트 모델 v1(블록 경계·UI/댓글/rt 제외·UTF-16 원문 좌표), NFKC·소문자·공백 검색 대응표, locator v2의 문맥/거리 복원과 모호 상태를 구현. 기존 anchor 경로 유지. 반복 문장·자모·이모지·ruby·정규화 확장 fixture 3개 추가. 편집 5파일(check·기록 포함).
+- F0-1 검증 중 Windows Chrome `reading-model.js` 요청의 `net::ERR_NO_BUFFER_SPACE`를 trace에서 확인. 앱 초기화 전 실패이며 locator 코드까지 도달하지 않음. 자산 생성 종료 후에도 발생했으므로 생성 중 누락과 구분한다. 저장 실패 시나리오 4폭은 workers=2에서 4/4 통과. 공통 E2E 실행을 CI와 동일한 동시 2개로 고정하고 전체 재검증(timeout 불변). 실패 trace는 로컬 `.wrangler/f0-1-storage-failure`에 보관.
+- F0-1 최종 검증: unit 112/112, check·lint 0 error, 전체 E2E 510 pass/14 기존 skip(5.2분, workers=2), axe 4폭 통과. P0-5 Linux CI 36702661741 성공(글꼴 재생성·시각 비교 포함).
 
 | 날짜 | 내용 |
 |---|---|
