@@ -827,7 +827,6 @@ test("pages runs with an opaque keyset cursor and latest event", async () => {
       source: "systemd",
       state: "succeeded",
       started_at: "2026-07-12T03:00:00Z",
-      safe_summary_json: '{"code":"scheduled_succeeded"}',
       event_sequence: 2,
       event_step: "publishing",
       event_state: "succeeded",

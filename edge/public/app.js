@@ -2321,7 +2321,7 @@ async function renderReadingView() {
   elements["result-list"].replaceChildren();
   const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
-  inProgress.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
+  inProgress.forEach((post, index) => { fragment.append(resultItemElement(post, index, lookup)); });
   for (const collection of collections) fragment.append(collectionItemElement(collection));
   for (const work of novels) {
     fragment.append(textResultElement({
@@ -2492,7 +2492,7 @@ function renderResults(posts, status) {
   elements["result-list"].replaceChildren();
   const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
-  posts.forEach((post, index) => fragment.append(resultItemElement(post, index, lookup)));
+  posts.forEach((post, index) => { fragment.append(resultItemElement(post, index, lookup)); });
   elements["result-list"].append(fragment);
   renderWidenActions(!posts.length);
   updateLoadMore();
@@ -2505,7 +2505,7 @@ function appendResults(posts) {
   const lookup = stateLookup();
   const fragment = document.createDocumentFragment();
   const base = renderedResults.length;
-  posts.forEach((post, index) => fragment.append(resultItemElement(post, base + index, lookup)));
+  posts.forEach((post, index) => { fragment.append(resultItemElement(post, base + index, lookup)); });
   elements["result-list"].append(fragment);
   renderedResults = renderedResults.concat(posts);
   resultCountText = `${resultTotal.toLocaleString("ko-KR")}건`;
