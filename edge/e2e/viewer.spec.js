@@ -2019,3 +2019,28 @@ test("lists the keyboard shortcuts on ? at desktop widths", async ({ page }) => 
   await expect(page.locator("#settings-keys")).toContainText("집중 모드");
   await expect(page.locator("#settings-keys")).toBeInViewport();
 });
+
+// docs/24 §8.4 · T19: title suggestions for works and boards, forgiving one-jamo typos and
+// Latin-keyboard input; the archive-wide post search waits for a composed syllable.
+test("search suggests works for partial, typo and Latin-key input and opens one", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/search");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const input = page.locator("#search-input");
+  const panel = page.locator("#search-suggest");
+  await input.fill("연작");
+  await expect(panel.locator(".suggest-row").first()).toContainText("테스트 연작");
+  await expect(panel.locator(".suggest-row mark").first()).toHaveText("연작");
+  // Composition updates only the suggestions.
+  await input.evaluate((element) => {
+    element.value = "테스트 연자";
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+  });
+  await expect(panel.locator("h3").first()).toBeVisible();
+  await input.fill("xptmxm");
+  await expect(panel.locator(".suggest-qwerty")).toHaveText("'테스트'(으)로 찾을까요?");
+  await panel.locator(".suggest-qwerty").click();
+  await expect(input).toHaveValue("테스트");
+  await panel.locator(".suggest-row").first().click();
+  await expect(page).toHaveURL(/\/collections\//);
+});

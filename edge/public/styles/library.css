@@ -408,3 +408,14 @@ body.reading .home { display: none; }
   .work-head { align-items: start; gap: 14px; }
   .collection-view-header h1 { font-size: 24px; }
 }
+
+/* Search suggestions (docs/24 §8.4): matches, then 초성, then similar titles; a Latin-keys hint. */
+.search-suggest { display: grid; gap: 4px; margin: 4px 12px 8px; padding: 8px; border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--e1); }
+.search-suggest h3 { margin: 6px 6px 2px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.search-suggest ul { margin: 0; padding: 0; list-style: none; }
+.suggest-row { width: 100%; min-height: 48px; display: grid; gap: 2px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.suggest-row:hover { background: var(--surface-2); }
+.suggest-row strong { overflow: hidden; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-row mark { padding: 0 1px; border-radius: 2px; background: var(--hl-find); color: inherit; }
+.suggest-row span { color: var(--ink-2); font-size: 13px; }
+.suggest-qwerty { justify-self: start; min-height: 44px; padding: 0 8px; border: 0; background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; }
