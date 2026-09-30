@@ -320,6 +320,7 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   await expect(page.locator("#comments")).toBeHidden();
   const mobileText = page.viewportSize().width < 760;
   await page.locator(mobileText ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
   // A late TypeMoon boot must not reopen the independent text Reader.
   releaseResponse();
@@ -888,6 +889,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator("#reader-kicker")).toContainText("자유게시판");
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.locator('[data-aa-background="#f5f5f0"]')).toHaveText("아이보리");
   await expect(page.locator('[data-aa-background="#ffffff"]')).toHaveText("흰색");
   await expect(page.locator(".aa-color-picker")).toContainText("직접");
@@ -952,6 +954,7 @@ test("applies and persists prose typography over legacy source styles", async ({
   await openPost(page, proseKey);
   await expect(page.locator("#aa-controls")).toBeHidden();
   await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await page.locator('[data-theme-choice="light"]').click();
   await expect(page.locator('[data-theme-choice="light"]')).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(253, 252, 250)");
@@ -1169,6 +1172,7 @@ test("searches and renders a representative AA post", async ({ page }, testInfo)
 
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.locator("#settings-dialog")).toBeVisible();
   await expect(page.locator("#export-state")).toBeVisible();
   await expect(page.locator("#import-state")).toBeVisible();

@@ -199,3 +199,16 @@ body.find-open .reader-bottom { visibility: hidden; }
 .chapter-end-run { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 0 4px; }
 .chapter-end-run[hidden] { display: none; }
 .chapter-end-run small { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Quick settings (docs/24 §8.8): a panel above the dock, top layer, light-dismissed. */
+.quick-panel { position: fixed; inset: auto 12px calc(80px + env(safe-area-inset-bottom)); width: auto; max-width: 420px; margin: 0 auto; display: grid; gap: 14px; padding: 16px; border: 0; border-radius: 18px; background: var(--surface); color: var(--ink); box-shadow: var(--e2), 0 0 0 1px var(--line); }
+.quick-panel:not(:popover-open) { display: none; }
+.quick-size { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; gap: 8px; }
+.quick-size button { height: 44px; border: 0; border-radius: var(--radius-control); background: var(--surface-2); color: var(--ink); font-family: var(--font-reading); cursor: pointer; }
+.quick-size .stepper-large { font-size: 20px; }
+.quick-size output { text-align: center; font-weight: 650; font-variant-numeric: tabular-nums; }
+.quick-size output::before { content: "글자 "; color: var(--ink-2); font-weight: 450; }
+.quick-range { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; }
+.quick-range input { width: 100%; accent-color: var(--accent); }
+.quick-all { justify-self: end; min-height: 40px; padding: 0 8px; border: 0; background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; }
+@media (min-width: 760px) { .quick-panel { inset: 64px 24px auto auto; width: 360px; margin: 0; } }

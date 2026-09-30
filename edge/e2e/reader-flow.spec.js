@@ -102,6 +102,7 @@ for (const closeWatcher of [true, false]) {
     await page.locator("#fixture-open-find").click();
     await expect(page.locator("#fixture-find")).toBeVisible();
     await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+    await page.locator("#quick-all-settings").click();
     await page.locator("#fixture-open-menu").click();
     await expect(page.locator("#fixture-menu")).toBeVisible();
     await page.keyboard.press("Escape");
@@ -337,9 +338,10 @@ test("Reader settings keep the same sentence on screen when the font size change
   await page.waitForFunction(() => document.getAnimations().length === 0);
   const before = await topSentence();
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
-  await page.locator('[data-prose-size-delta="1"]').click();
-  await page.locator('[data-prose-size-delta="1"]').click();
-  await page.locator('[data-prose-size-delta="1"]').click();
+  await page.locator("#quick-all-settings").click();
+  await page.locator('#settings-dialog [data-prose-size-delta="1"]').click();
+  await page.locator('#settings-dialog [data-prose-size-delta="1"]').click();
+  await page.locator('#settings-dialog [data-prose-size-delta="1"]').click();
   await expect(page.locator("#prose-size-output")).toHaveText("21px");
   expect(await topSentence()).toBe(before);
 });
@@ -787,6 +789,7 @@ test("Reading settings opened over a chapter leave the text visible on phones", 
   await useLongCollection(page, 3);
   await page.goto("/read/board_a/2");
   await page.locator("#reader-bottom-settings").click();
+  await page.locator("#quick-all-settings").click();
   const sheetTop = await page.locator("#settings-dialog").evaluate((dialog) => dialog.getBoundingClientRect().top);
   expect(sheetTop).toBeGreaterThan(page.viewportSize().height * 0.35);
 });
@@ -812,8 +815,9 @@ test("종이 surface and 양쪽 맞춤 apply to the Reader and survive a reload"
   const readerBackground = () => page.locator("#reader").evaluate((element) => getComputedStyle(element).backgroundColor);
   const plain = await readerBackground();
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
-  await page.locator('[data-reader-surface="paper"]').click();
-  await expect(page.locator('[data-reader-surface="paper"]')).toHaveAttribute("aria-checked", "true");
+  await page.locator("#quick-all-settings").click();
+  await page.locator('#settings-dialog [data-reader-surface="paper"]').click();
+  await expect(page.locator('#settings-dialog [data-reader-surface="paper"]')).toHaveAttribute("aria-checked", "true");
   await expect.poll(readerBackground).not.toBe(plain);
   await expect(page.locator("#archive-body")).toHaveCSS("text-align", "start");
   await page.locator('[data-prose-align="justify"]').click();
@@ -835,8 +839,9 @@ test("The 먹 surface stays black under a light app theme and dims without touch
   await page.goto("/read/board_a/2");
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await page.locator('[data-theme-choice="light"]').click();
-  await page.locator('[data-reader-surface="ink"]').click();
+  await page.locator('#settings-dialog [data-reader-surface="ink"]').click();
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
   await expect(page.locator("#archive-body p").first()).toHaveCSS("color", "rgb(214, 216, 212)");
   await expect(page.locator("#reader")).toHaveCSS("color-scheme", "dark");
@@ -1276,6 +1281,7 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
 
   // 넓은 AA 화면에 맞추기 fits a picture with no zoom of its own, without remembering it.
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await page.locator('[data-aa-auto-fit="on"]').click();
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await page.goto("/read/board_a/2");
@@ -1560,4 +1566,28 @@ test("The chapter end shows where the episode sits in its work", async ({ page }
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await expect(page.locator("#end-run-label")).toHaveText("2/12편");
   await expect(page.locator("#end-run .barcode-mini .bin.reading")).toHaveCount(1);
+});
+
+// docs/24 §8.8: Aa opens the quick panel; changes apply at once and keep the top sentence.
+test("Aa opens quick settings that apply at once and lead to all settings", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  const panel = page.locator("#quick-settings");
+  await expect(panel).toBeVisible();
+  await expect(page.locator("#quick-size-output")).toHaveText("18");
+  await panel.getByRole("button", { name: "글자 크게" }).click();
+  await expect(page.locator("#quick-size-output")).toHaveText("19");
+  await expect(page.locator("#archive-body")).toHaveCSS("font-size", "19px");
+  await panel.getByRole("radio", { name: "먹" }).click();
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  await expect(panel).toHaveCSS("color-scheme", "dark");
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(page.locator("#reader")).toBeVisible();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
+  await expect(page.locator("#settings-dialog")).toBeVisible();
+  await expect(panel).toBeHidden();
 });

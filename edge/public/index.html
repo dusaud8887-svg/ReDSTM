@@ -396,6 +396,21 @@
       <button id="reader-bottom-more" type="button" aria-label="더보기" aria-haspopup="dialog"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg><span>더보기</span></button>
     </nav>
 
+    <div class="quick-panel" id="quick-settings" popover="auto" role="dialog" aria-label="빠른 읽기 설정">
+      <div class="quick-size" role="group" aria-label="글자 크기">
+        <button type="button" class="stepper-small" data-prose-size-delta="-1" aria-label="글자 작게">가</button>
+        <output id="quick-size-output">18</output>
+        <button type="button" class="stepper-large" data-prose-size-delta="1" aria-label="글자 크게">가</button>
+      </div>
+      <div class="segmented" role="radiogroup" aria-label="읽기 면">
+        <button type="button" role="radio" data-reader-surface="default" aria-checked="false">기본</button>
+        <button type="button" role="radio" data-reader-surface="paper" aria-checked="false">종이</button>
+        <button type="button" role="radio" data-reader-surface="ink" aria-checked="false">먹</button>
+      </div>
+      <label class="quick-range">밝기 낮추기<input type="range" data-quick-setting="readerDim" min="0" max="60" step="5"></label>
+      <label class="quick-range">따뜻하게<input type="range" data-quick-setting="readerWarm" min="0" max="25" step="5"></label>
+      <button class="quick-all" id="quick-all-settings" type="button">모든 설정 <span aria-hidden="true">›</span></button>
+    </div>
     <div class="find-bar" id="find-bar" role="search" aria-label="본문 찾기" hidden>
       <div class="find-band" id="find-band" aria-hidden="true"></div>
       <label class="find-field"><span class="sr-only">이 회차에서 찾을 말</span><svg aria-hidden="true"><use href="#i-search"/></svg><input id="find-input" type="text" enterkeyhint="search" autocomplete="off" placeholder="이 회차에서 찾기"></label>

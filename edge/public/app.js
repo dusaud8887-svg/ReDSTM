@@ -578,7 +578,7 @@ function applySettings() {
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
     ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
   ]) {
-    for (const choice of elements["settings-dialog"].querySelectorAll(selector)) {
+    for (const choice of document.querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
     }
   }
@@ -592,10 +592,12 @@ function applySettings() {
     ["reader-dim", settings.readerDim, "%"],
     ["reader-warm", settings.readerWarm, "%"],
   ]) {
+    for (const quick of document.querySelectorAll(`[data-quick-setting="${id === "reader-dim" ? "readerDim" : id === "reader-warm" ? "readerWarm" : ""}"]`)) quick.value = value;
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
+  document.querySelector("#quick-size-output").value = String(settings.proseSize);
   elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
@@ -1451,7 +1453,7 @@ function renderBookmarkState(active, { notes = false } = {}) {
 
 function readerCommand(name) {
   if (!readerSource) return;
-  if (name === "settings") return openSettings();
+  if (name === "settings") return openQuickSettings();
   if (name === "more") return openReaderMore();
   if (readerSource === "text") return textLibrary.command(name);
   if (name === "previous") return typeMoonStep(-1);
@@ -1939,6 +1941,29 @@ function closeFilterSheet() {
   const opener = filterOpener;
   filterOpener = null;
   if (opener?.isConnected) opener.focus({ preventScroll: true });
+}
+
+// Aa (docs/24 §8.8): the most used reading controls above the dock; 모든 설정 opens the sheet.
+const quickSettings = document.querySelector("#quick-settings");
+overlays.watch(quickSettings, "popover");
+function openQuickSettings() {
+  document.querySelector("#quick-size-output").value = String(settings.proseSize);
+  quickSettings.showPopover();
+}
+document.querySelector("#quick-all-settings").addEventListener("click", () => {
+  quickSettings.hidePopover();
+  openSettings();
+});
+for (const input of quickSettings.querySelectorAll("[data-quick-setting]")) {
+  input.addEventListener("input", () => {
+    settings[input.dataset.quickSetting] = Number(input.value);
+    applySettings();
+    clearTimeout(typographyPersistTimer);
+    typographyPersistTimer = setTimeout(() => {
+      typographyPersistTimer = null;
+      persistUserState();
+    }, 250);
+  });
 }
 
 function openSettings() {
