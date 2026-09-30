@@ -194,6 +194,11 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
             timed_out = _timed_out(crawler)
             if timed_out:
                 failures = sorted({*failures, "recovery_time_budget"})
+            if (
+                crawler.stats is not None
+                and crawler.stats.get_value("finish_reason") == "memusage_exceeded"
+            ):
+                failures = sorted({*failures, "memory_limit"})
         breaker_codes = sorted(spider_failures)
 
         outcomes = _capture_summary(archive, run_id)

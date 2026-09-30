@@ -71,6 +71,7 @@ _SUCCESS_CODES = {
     "publish-if-changed": "publish_succeeded",
 }
 _WARNING_CODES = {
+    "memory_limit": "memory_limit",
     "recovery_time_budget": "recovery_time_budget",
     "auth_required": "auth_failed",
     "listing_parse_failed": "parse_drift",
@@ -100,6 +101,8 @@ _INVENTORY_COMPLETED = "inventory.completed"
 _LIVE_INVENTORY = "inventory.live"
 _FULL_CONTENT_STARTED = "full-content.started"
 _CURRENT_RUN_PAUSED = "current-run.paused"
+_KILLED_BATCH_RETRIES = 2
+_KILLED_BATCH_BACKOFF_SECONDS = 60
 # The legacy import is the baseline catalog. Source boards added after that snapshot are
 # registered explicitly once a baseline-only board proves this is a TypeMoon archive.
 _SOURCE_BOARD_ADDITIONS = (("write_drawing", "창작그림", "creation", "write_nirvana"),)
@@ -1006,6 +1009,7 @@ class ControlRunner:
             reports = []
             auth_retried = False
             outage_retries = 0
+            killed_retries = 0
             previous_remaining: int | None = None
             recovery_step = (
                 "full-content"
@@ -1031,6 +1035,17 @@ class ControlRunner:
                 report = self._execute_report(
                     cycle_command, report_path, run_id, recovery_step, command_id=command_id
                 )
+                # A killed batch keeps the posts it stored; its leased ones return to the queue
+                # when the lease expires. Try again a couple of times before giving up.
+                if (
+                    report.get("safe_code") == "runner_killed"
+                    and killed_retries < _KILLED_BATCH_RETRIES
+                ):
+                    killed_retries += 1
+                    self._backoff(
+                        _KILLED_BATCH_BACKOFF_SECONDS, run_id, recovery_step, command_id, pause_file
+                    )
+                    continue
                 reports.append(report)
                 if len(reports) > 16:
                     reports[:] = [self._combined_collection_report(reports)]
@@ -1059,6 +1074,7 @@ class ControlRunner:
                     continue
                 if status in {"runner_failed", "failed"}:
                     return self._combined_collection_report(reports)
+                killed_retries = 0
                 breaker_codes = report.get("breaker_codes")
                 network_outage = (
                     isinstance(breaker_codes, list) and "network_error" in breaker_codes
@@ -1726,6 +1742,15 @@ class ControlRunner:
         try:
             report = self._read_report(report_path)
         except OSError, ValueError:
+            # A child ended by a signal (the 1 GB host's OOM killer, a cgroup MemoryMax) leaves
+            # no report; say so instead of the generic runner failure.
+            if return_code < 0:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "safe_code": "runner_killed",
+                    "signal": -return_code,
+                }
             return {"ok": False, "status": "failed", "safe_code": "runner_failed"}
         if return_code not in (0, 2) and report.get("ok") is not True:
             if report.get("safe_code") == "archive_locked":

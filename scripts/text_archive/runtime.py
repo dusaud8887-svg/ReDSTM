@@ -11,6 +11,8 @@ from filelock import FileLock, Timeout
 
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
+_MEMORY_FLOOR = 350 * _MIB
+_COMMAND_MEMORY_FLOOR = 600 * _MIB
 
 
 class RuntimeWindowError(RuntimeError):
@@ -67,6 +69,20 @@ def operation_window(
             raise RuntimeWindowError("typemoon_schedule_active")
         if result.returncode != 3:
             raise RuntimeWindowError("typemoon_schedule_state_unknown")
+        # A TypeMoon command (redstm-control.service: 본문 채우기, 전체 목차…) may run for hours,
+        # so text work continues beside it, but only with room for the crawl's peak on the
+        # 1 GB host; an OOM kill there ends the command as runner_failed.
+        try:
+            command = runner(
+                ["systemctl", "is-active", "--quiet", "redstm-control.service"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeWindowError("systemd_check_unavailable") from exc
+        floor = _COMMAND_MEMORY_FLOOR if command.returncode == 0 else _MEMORY_FLOOR
 
         try:
             available = _available_memory(meminfo_path.read_text(encoding="ascii"))
@@ -75,8 +91,11 @@ def operation_window(
             raise RuntimeWindowError("memory_metrics_unavailable") from exc
         # /proc/meminfo already excludes this process; add it back to estimate
         # host headroom before the bounded text service started.
-        if available + resident < 350 * _MIB:
-            raise RuntimeWindowError("memory_below_floor")
+        if available + resident < floor:
+            below_command = floor == _COMMAND_MEMORY_FLOOR
+            raise RuntimeWindowError(
+                "memory_below_command_floor" if below_command else "memory_below_floor"
+            )
         try:
             free = shutil.disk_usage(root_path).free
         except OSError as exc:

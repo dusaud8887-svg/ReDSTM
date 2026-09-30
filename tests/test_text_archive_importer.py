@@ -848,6 +848,41 @@ def test_operation_window_defers_below_resource_floors(
             pytest.fail("resource limits must defer the text operation")
 
 
+def test_operation_window_needs_more_memory_beside_a_typemoon_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish_lock = tmp_path / "static" / ".publish.lock"
+    publish_lock.parent.mkdir()
+    meminfo = tmp_path / "meminfo"
+    status = _process_status(tmp_path)
+    monkeypatch.setattr(runtime.shutil, "disk_usage", lambda _: SimpleNamespace(free=100 * 1024**3))
+
+    def command_running(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 0 if "redstm-control.service" in command else 3)
+
+    meminfo.write_text("MemAvailable: 400000 kB\n")
+    with pytest.raises(runtime.RuntimeWindowError, match="memory_below_command_floor"):
+        with runtime.operation_window(
+            publish_lock=publish_lock,
+            meminfo_path=meminfo,
+            status_path=status,
+            root_path=tmp_path,
+            run=command_running,
+        ):
+            pytest.fail("a TypeMoon command with little headroom must defer the text operation")
+    meminfo.write_text("MemAvailable: 700000 kB\n")
+    with runtime.operation_window(
+        publish_lock=publish_lock,
+        meminfo_path=meminfo,
+        status_path=status,
+        root_path=tmp_path,
+        run=command_running,
+    ):
+        pass
+
+
 def test_operation_window_defers_only_for_typemoon_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

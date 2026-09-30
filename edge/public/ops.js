@@ -31,6 +31,8 @@ export const safeCodeLabels = {
   scheduled_succeeded: "예약 실행 완료", scheduled_partial: "예약 실행 일부 완료",
   scheduled_failed: "예약 실행 실패", run_partial: "일부 항목 미완료",
   run_failed: "실행 실패", run_stale: "실행 종료 신호 누락", runner_failed: "수집기 내부 실패",
+  runner_killed: "수집 프로세스 강제 종료 · 메모리 부족 가능, 두 번 재시도 후 중단",
+  memory_limit: "메모리 한도에 닿아 배치를 먼저 끝냄 · 남은 글은 다음 배치로",
   runner_interrupted: "수집기 프로세스 중단 · 진행분은 보존됨",
   recovery_time_budget: "실행 시간 상한 도달 · 진행분과 재시도 큐는 보존됨",
   archive_locked: "보관소 파일이 다른 작업에 잠김 · 이전 수집/백업 프로세스 종료 후 재시도",

@@ -122,7 +122,10 @@ def test_publish_validates_objects_before_writing_pointer(
     assert smoke_marker["previous_release_key"] is None
 
 
-def test_publish_refuses_a_second_local_writer(tmp_path: Path) -> None:
+def test_publish_refuses_a_second_local_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("scripts.publish_static._PUBLISH_LOCK_WAIT_SECONDS", 0.2)
     _release(tmp_path)
     lock = FileLock(str(tmp_path / ".publish.lock"), timeout=0)
 

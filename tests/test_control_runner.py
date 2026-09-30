@@ -1720,6 +1720,50 @@ def test_fill_missing_content_keeps_full_batches_after_isolated_failure(
     ]
 
 
+def test_fill_missing_content_retries_a_killed_batch_then_names_the_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    killed = {"ok": False, "status": "failed", "safe_code": "runner_killed", "signal": 9}
+    reports = iter(
+        [
+            {"ok": True, "status": "succeeded", "selected_posts": 3, "outcomes": {"stored": 3}},
+            killed,
+            {"ok": True, "status": "succeeded", "selected_posts": 0, "outcomes": {}},
+        ]
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(runner, "_execute_report", lambda *_a, **_k: next(reports))
+    monkeypatch.setattr("scripts.control_runner.time.sleep", lambda value: sleeps.append(value))
+
+    report = runner._execute_action(
+        "fill-missing-content", "fill-kill", "fill-kill", command_id="m"
+    )
+
+    assert report["status"] == "succeeded"
+    assert report["safe_code"] == "missing_content_succeeded"
+    assert sum(sleeps) == 60
+
+    always_killed = iter([killed, killed, killed])
+    monkeypatch.setattr(runner, "_execute_report", lambda *_a, **_k: next(always_killed))
+    report = runner._execute_action(
+        "fill-missing-content", "fill-kill2", "fill-kill2", command_id="m"
+    )
+    assert report["status"] == "failed"
+    assert report["safe_code"] == "runner_killed"
+
+
+def test_a_child_killed_by_a_signal_reports_runner_killed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    monkeypatch.setattr(runner, "_wait", lambda *_a, **_k: -9)
+
+    report = runner._execute_report(["true"], tmp_path / "missing.json", "run", "step")
+
+    assert report == {"ok": False, "status": "failed", "safe_code": "runner_killed", "signal": 9}
+
+
 def test_recovery_returns_to_normal_chunk_after_successful_canary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

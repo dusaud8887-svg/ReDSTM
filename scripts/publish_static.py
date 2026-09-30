@@ -94,6 +94,10 @@ def _pending_smoke_path(root: Path) -> Path:
 # of the same release the automatic path stops flipping the pointer to it. A new export (another
 # release key) or an explicit operator publish is not held back.
 _MAX_SMOKE_ROLLBACKS = 3
+# TypeMoon publishing is serialized by the control lock; the only other holders of the publish
+# lock are the text archive's bounded operations (docs/18), which yield to TypeMoon by checking
+# it. Waiting for one of those to finish beats failing the whole publish run.
+_PUBLISH_LOCK_WAIT_SECONDS = 10 * 60
 
 
 def _smoke_rollbacks_path(root: Path) -> Path:
@@ -681,7 +685,7 @@ def reconcile_pending_smoke(
     if not resolved.is_dir():
         raise ValueError("static root must be a directory")
     try:
-        with FileLock(str(resolved / ".publish.lock"), timeout=0):
+        with FileLock(str(resolved / ".publish.lock"), timeout=_PUBLISH_LOCK_WAIT_SECONDS):
             return _reconcile_pending_smoke_locked(resolved, remote, runner=runner)
     except Timeout as error:
         raise RuntimeError("another static publish or activation is active") from error
@@ -849,7 +853,7 @@ def publish_static(
     if not resolved.is_dir():
         raise ValueError("static root must be a directory")
     try:
-        with FileLock(str(resolved / ".publish.lock"), timeout=0):
+        with FileLock(str(resolved / ".publish.lock"), timeout=_PUBLISH_LOCK_WAIT_SECONDS):
             return _publish_static_locked(
                 resolved,
                 remote,
@@ -1141,7 +1145,7 @@ def activate_remote_release(
     if not resolved.is_dir():
         raise ValueError("static root must be a directory")
     try:
-        with FileLock(str(resolved / ".publish.lock"), timeout=0):
+        with FileLock(str(resolved / ".publish.lock"), timeout=_PUBLISH_LOCK_WAIT_SECONDS):
             return _activate_remote_release_locked(
                 resolved,
                 remote,

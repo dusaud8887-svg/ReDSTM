@@ -405,3 +405,21 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
 텍스트·이미지 배치와 거절 배치, PC/Oracle 충돌 보류 수, 보관 이미지 수·용량, Oracle 수집 큐 상태별 수, 소설 회차
 상태별 수, 출처 host, 요청 그룹 냉각(마지막 상태·오류 160자). 본문·제목·경로·자격은 넣지 않는다. 상태 게시 실패는
 게시 자체를 실패시키지 않는다. 게시기 timer(15분) 간격이 상태의 신선도다.
+
+## 2026-09-30 TypeMoon 명령과 텍스트 작업의 동시 실행
+
+`본문 없는 글만 채우기` 같은 수동 TypeMoon 명령(`redstm-control.service`)이 실패로 끝나는 원인을
+점검하며 두 쪽이 같은 1 GB 호스트에서 서로 막는 지점을 정리했다.
+
+- **메모리**: 텍스트 작업은 예약 실행(`redstm-schedule.service`) 중에만 쉬고 수동 명령 중에는 계속
+  돌았다. TypeMoon 명령 한도 700 MiB와 텍스트 서비스 150 MiB×4가 겹치면 수집 자식 프로세스가
+  OOM으로 죽고, 보고서가 없어 명령은 `runner_failed`로 끝난다. 이제 수동 명령이 돌면 텍스트 작업은
+  MemAvailable+자기 RSS가 600 MiB 이상일 때만 시작한다(평소 350 MiB, `memory_below_command_floor`).
+  수동 명령 중에도 텍스트 수집은 멈추지 않는다.
+- **수집 쪽 방어**: Scrapy `MEMUSAGE_LIMIT_MB=560`으로 한도 전에 배치를 부분 완료로 닫는다
+  (`memory_limit`). 신호로 죽은 자식은 `runner_killed`로 따로 보고하고, 본문 채우기·재시도·전체 본문
+  루프는 60초 뒤 두 번까지 다시 시도한다.
+- **게시 잠금**: 텍스트 작업은 TypeMoon 게시와 겹치지 않도록 `/srv/redstm/static/.publish.lock`을
+  짧게 잡는다. TypeMoon 게시는 이 잠금을 즉시(0초) 요구해 텍스트 수집기(5초 간격)가 잡고 있던
+  순간 게시 전체가 `another static publish`로 실패할 수 있었다. TypeMoon 쪽은 이제 최대 10분
+  기다린다(텍스트 작업은 배치·단계 단위로 짧게 잡는다).
