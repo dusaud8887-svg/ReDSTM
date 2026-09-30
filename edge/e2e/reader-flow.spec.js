@@ -856,7 +856,7 @@ test("The 먹 surface stays black under a light app theme and dims without touch
   expect(await page.locator("#archive-body").evaluate((element) => element.getBoundingClientRect().height)).toBe(before);
   await page.reload();
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
-  expect(await page.locator(".reader-shade").evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("0.4");
+  await expect.poll(() => page.locator(".reader-shade").evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("0.4");
 });
 
 test("The browser bar follows the chosen theme even when the OS theme differs", async ({ page }) => {

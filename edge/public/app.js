@@ -64,7 +64,7 @@ const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "text-lanes", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
+    "scope-tabs", "text-lanes", "source-switch", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
@@ -1421,12 +1421,40 @@ async function copyReaderLink() {
   }
 }
 
+// The text library is a source inside 둘러보기, so its screens keep that tab lit.
 function updateDestinationButtons() {
+  const tab = currentDestination === "text" ? "browse" : currentDestination;
   for (const button of document.querySelectorAll("[data-destination]")) {
-    const active = button.dataset.destination === currentDestination;
+    const active = button.dataset.destination === tab;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active);
   }
+}
+
+const browseSourceKey = "redstm.browseSource";
+function rememberedBrowseSource() {
+  try {
+    const source = localStorage.getItem(browseSourceKey);
+    return ["novel", "arcalive"].includes(source) ? source : "typemoon";
+  } catch {
+    return "typemoon";
+  }
+}
+
+function openBrowseSource(source) {
+  try { localStorage.setItem(browseSourceKey, source); } catch { /* the choice is a convenience */ }
+  if (source === "typemoon") {
+    if (currentDestination === "browse") return;
+    setScope("posts");
+    showDestination("browse");
+    return;
+  }
+  if (currentDestination === "text") {
+    textLibrary.changeLane(source);
+    return;
+  }
+  history.pushState(null, "", `/text?lane=${source}`);
+  showDestination("text", false);
 }
 
 function setScope(scope) {
@@ -1586,6 +1614,12 @@ function updateDestinationLayout() {
   updateShellMode();
   elements["scope-tabs"].hidden = !browsing && !searching;
   elements["text-lanes"].hidden = !text;
+  elements["source-switch"].hidden = !browsing && !text;
+  if (browsing) {
+    for (const button of elements["source-switch"].querySelectorAll("[data-source]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.source === "typemoon"));
+    }
+  }
   document.querySelector(".saved-tabs").hidden = !saved;
   elements["catalog-search-row"].hidden = !searching && !saved && !text;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
@@ -4024,17 +4058,27 @@ for (const button of document.querySelectorAll("[data-destination]")) {
   button.addEventListener("click", () => {
     // Tapping the tab you are on first returns a scrolled list to its top; at the top it
     // does what it always did.
-    if (button.dataset.destination === currentDestination && !readerSource) {
+    const tab = currentDestination === "text" ? "browse" : currentDestination;
+    if (button.dataset.destination === tab && !readerSource) {
       const scroller = document.body.classList.contains("collection-detail-open") ? elements["reader-pane"] : elements["result-list"];
       if (scroller.scrollTop > 0) {
         scroller.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
         return;
       }
     }
+    // 둘러보기 returns to the source chosen last (DESIGN §8.3).
+    if (button.dataset.destination === "browse" && tab !== "browse" && rememberedBrowseSource() !== "typemoon") {
+      openBrowseSource(rememberedBrowseSource());
+      return;
+    }
     if (["browse", "search"].includes(button.dataset.destination)) setScope("posts");
-    showDestination(button.dataset.destination);
+    showDestination(button.dataset.destination === "browse" && currentDestination === "text" ? "text" : button.dataset.destination);
   });
 }
+elements["source-switch"].addEventListener("click", (event) => {
+  const button = event.target.closest("[data-source]");
+  if (button) openBrowseSource(button.dataset.source);
+});
 elements["collection-entry-list"].addEventListener("click", async (event) => {
   const button = event.target.closest(".collection-entry");
   if (!button || button.disabled) return;

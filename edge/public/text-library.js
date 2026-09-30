@@ -931,6 +931,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     }
+    // Browse's source switch names the two text lanes next to TypeMoon.
+    for (const button of document.querySelectorAll("#source-switch [data-source]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.source === lane));
+    }
     const novelViews = document.querySelector("#novel-views");
     novelViews.hidden = lane !== "novel";
     for (const button of novelViews.querySelectorAll("[data-novel-view]")) {

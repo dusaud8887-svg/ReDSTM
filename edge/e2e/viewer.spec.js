@@ -305,7 +305,8 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   });
 
   await page.goto("/");
-  await page.locator('button[data-destination="text"]:visible').first().click();
+  await page.locator('button[data-destination="browse"]:visible').first().click();
+  await page.locator('#source-switch [data-source="novel"]').click();
   await expect(page).toHaveURL(/\/text(?:\?|$)/);
   await expect(page.locator("#text-lanes")).toBeVisible();
   await expect(page.locator("#result-list .result-title").first()).toHaveText("통합 테스트 작품");
@@ -337,9 +338,8 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   // A saved chapter still knows its work's order.
   await expect(page.locator("#next-post")).toBeEnabled();
   await page.locator("#end-list").click();
-  const browseButton = page.locator('button[data-destination="browse"]:visible').first();
-  if (await browseButton.count()) await browseButton.click();
-  else await page.locator(".bottom-nav button[data-destination='browse']").click();
+  // 둘러보기 keeps the text source; TypeMoon is one tap away on the source switch.
+  await page.locator('#source-switch [data-source="typemoon"]').click();
   await expect(page).toHaveURL(/\/browse(?:\?|$)/);
   await expect(page.locator("#reader")).toBeHidden();
 
@@ -404,15 +404,16 @@ test("opens the published text lane and keeps a late response out of TypeMoon br
   });
 
   await page.goto("/");
-  await page.locator('button[data-destination="text"]:visible').first().click();
-  await requestStarted;
   await page.locator('button[data-destination="browse"]:visible').first().click();
+  await page.locator('#source-switch [data-source="novel"]').click();
+  await requestStarted;
+  await page.locator('#source-switch [data-source="typemoon"]').click();
   releaseNovel();
   await expect(page).toHaveURL(/\/browse$/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("비소속");
   await expect(page.locator("#text-lanes")).toBeHidden();
 
-  await page.locator('button[data-destination="text"]:visible').first().click();
+  await page.locator('#source-switch [data-source="arcalive"]').click();
   await expect(page).toHaveURL(/\/text\?lane=arcalive$/);
   await expect(page.locator("#result-list .result-title").first()).toHaveText("0765");
   await page.locator('[data-text-lane="novel"]').click();
@@ -547,11 +548,16 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   for (const destination of ["library", "browse", "search", "bookmarks"]) {
     await expect(page.locator(`${navigation} [data-destination="${destination}"]`)).toBeVisible();
   }
-  const textLibrary = page.locator(`${navigation} [data-destination="text"]`);
-  await expect(textLibrary).toBeVisible();
-  await expect(textLibrary).toHaveAccessibleName(/텍스트/);
-  await textLibrary.click();
-  await expect(page).toHaveURL(/\/text(?:\?lane=(?:novel|arcalive))?$/);
+  // Four destinations; the text library is a 둘러보기 source, not a fifth tab.
+  await expect(page.locator(`${navigation} [data-destination]`)).toHaveCount(4);
+  await page.locator(`${navigation} [data-destination="browse"]`).click();
+  await page.locator('#source-switch [data-source="novel"]').click();
+  await expect(page).toHaveURL(/\/text\?lane=novel$/);
+  await expect(page.locator(`${navigation} [data-destination="browse"]`)).toHaveAttribute("aria-pressed", "true");
+  await page.locator(`${navigation} [data-destination="library"]`).click();
+  await page.locator(`${navigation} [data-destination="browse"]`).click();
+  await expect(page).toHaveURL(/\/text\?lane=novel$/);
+  await page.locator('#source-switch [data-source="typemoon"]').click();
   const settings = page.locator(width >= 1200 ? ".rail-secondary [data-destination='settings']" : ".app-settings");
   await expect(settings).toBeVisible();
   await expect(page.locator(width >= 1200 ? ".wordmark" : ".app-home")).toBeVisible();
