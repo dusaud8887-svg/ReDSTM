@@ -62,3 +62,31 @@ test("tracked animation frames are removed when the document changes", (context)
   lateCallback();
   assert.equal(called, false);
 });
+
+test("only the app's restored scroll may be corrected after a late layout", () => {
+  const session = createDocumentSession();
+  let top = 0;
+  let restores = 0;
+  const adapter = {
+    captureVisiblePosition: () => ({ top }),
+    scrollTop: () => top,
+    scrollToRange: (anchor) => { top = anchor.top; restores += 1; return true; },
+  };
+  session.begin({ documentKey: "text:1", adapter });
+  session.capture();
+  session.restore();
+  session.observeScroll(1);
+  assert.equal(session.userScrolled, false);
+  assert.equal(session.afterLayout(session.generation), true);
+  top = 999;
+  session.observeScroll(top);
+  assert.equal(session.userScrolled, true);
+  assert.equal(session.afterLayout(session.generation), false);
+  assert.equal(top, 999);
+  assert.equal(restores, 2);
+  session.begin({ documentKey: "text:2", adapter });
+  assert.equal(session.expectedTop, null);
+  assert.equal(session.userScrolled, false);
+  session.observeScroll(300);
+  assert.equal(session.userScrolled, true);
+});

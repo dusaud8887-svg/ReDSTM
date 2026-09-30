@@ -1,4 +1,5 @@
 import { mergeShelfState, sanitizeShelfState } from "./text-shelves.js";
+import { sanitizeLocator } from "./text-model.js";
 
 export const STATE_KEY = "redstm.userState.v2";
 
@@ -64,6 +65,20 @@ function sanitizeSettings(value, defaults = {}) {
   return settings;
 }
 
+export function readingLocationFields(value) {
+  const fields = {};
+  if (Number.isInteger(value?.offset) && value.offset >= 0) fields.offset = value.offset;
+  if (Number.isFinite(value?.anchorTop)) fields.anchorTop = value.anchorTop;
+  if (typeof value?.anchor === "string") fields.anchor = value.anchor.slice(0, 500);
+  if (typeof value?.revision === "string" && /^[a-f0-9]{64}$/.test(value.revision)) fields.revision = value.revision;
+  for (const key of ["documentId", "workId"]) {
+    if (typeof value?.[key] === "string") fields[key] = value[key].slice(0, 300);
+  }
+  const loc = sanitizeLocator(value?.loc);
+  if (loc) fields.loc = loc;
+  return fields;
+}
+
 function timestampMap(value, timestampKey) {
   if (!isRecord(value)) return {};
   const result = {};
@@ -74,6 +89,7 @@ function timestampMap(value, timestampKey) {
     if (timestampKey === "readAt" && Number.isFinite(entry.progress) && entry.progress >= 0 && entry.progress <= 1) {
       result[identity].progress = entry.progress;
     }
+    if (timestampKey === "readAt") Object.assign(result[identity], readingLocationFields(entry));
   }
   return result;
 }
@@ -222,17 +238,13 @@ export function sanitizeTextState(value) {
   const history = {};
   for (const [identity, record] of Object.entries(isRecord(source.history) ? source.history : {})) {
     if (!textIdentityPattern.test(identity) || !isRecord(record) || !validTimestamp(record.readAt)) continue;
-    const kept = { readAt: record.readAt };
+    const kept = { readAt: record.readAt, ...readingLocationFields(record) };
     if (Number.isFinite(record.progress) && record.progress >= 0 && record.progress <= 1) kept.progress = record.progress;
     if (Number.isFinite(record.scroll) && record.scroll >= 0) kept.scroll = record.scroll;
-    if (Number.isInteger(record.offset) && record.offset >= 0) kept.offset = record.offset;
-    if (Number.isFinite(record.anchorTop)) kept.anchorTop = record.anchorTop;
     if (Number.isInteger(record.total) && record.total >= 0) kept.total = record.total;
     for (const key of ["title", "work", "workId", "chapterId"]) {
       if (typeof record[key] === "string") kept[key] = record[key].slice(0, 300);
     }
-    if (typeof record.anchor === "string") kept.anchor = record.anchor.slice(0, 500);
-    if (typeof record.revision === "string" && textHashPattern.test(record.revision)) kept.revision = record.revision;
     for (const key of ["route", "listRoute"]) {
       if (typeof record[key] === "string" && record[key].startsWith("/text?")) kept[key] = record[key].slice(0, 2000);
     }

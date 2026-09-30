@@ -1,12 +1,20 @@
 import { captureTextAnchor, restoreTextAnchor } from "./text-anchor.js";
 
 export function createScrollAdapter({ body, scroller, topInset = () => 0, revision = () => "", progress, mode = "scroll" }) {
+  const restore = (anchor) => {
+    if (anchor.atStart) { scroller.scrollTop = 0; return true; }
+    return restoreTextAnchor(body, scroller, anchor, topInset(), revision());
+  };
   return {
     mode,
-    captureVisiblePosition: () => captureTextAnchor(body, scroller, topInset(), revision()),
-    scrollToRange: (anchor) => restoreTextAnchor(body, scroller, anchor, topInset(), revision()),
+    captureVisiblePosition: () => {
+      const anchor = captureTextAnchor(body, scroller, topInset(), revision());
+      return anchor ? { ...anchor, atStart: scroller.scrollTop === 0 } : null;
+    },
+    scrollToRange: restore,
+    scrollTop: () => scroller.scrollTop,
     measureProgress: progress,
-    onViewportChanged: (anchor) => restoreTextAnchor(body, scroller, anchor, topInset(), revision()),
+    onViewportChanged: restore,
   };
 }
 
@@ -15,14 +23,14 @@ export function createDocumentSession() {
   const pending = new Set();
   const session = {
     generation: 0, documentKey: "", workId: "", rev: "", adapter: null,
-    saved: null, userScrolled: false, keyboardOpen: false,
+    saved: null, userScrolled: false, keyboardOpen: false, expectedTop: null,
     get signal() { return controller.signal; },
     get canSave() { return !session.keyboardOpen && !controller.signal.aborted; },
     begin({ documentKey, workId = "", rev = "", adapter = null }) {
       session.cancelPendingWork();
       controller = new AbortController();
       session.generation += 1;
-      Object.assign(session, { documentKey, workId, rev, adapter, saved: null, userScrolled: false });
+      Object.assign(session, { documentKey, workId, rev, adapter, saved: null, userScrolled: false, expectedTop: null });
       return session.generation;
     },
     cancelPendingWork() {
@@ -58,7 +66,12 @@ export function createDocumentSession() {
       if (!anchor || controller.signal.aborted || !session.adapter) return false;
       const restored = session.adapter.scrollToRange(anchor, policy);
       if (restored) session.saved = anchor;
+      session.expectedTop = session.adapter.scrollTop?.() ?? null;
       return restored;
+    },
+    observeScroll(top) {
+      if (session.expectedTop === null || Math.abs(top - session.expectedTop) > 2) session.userScrolled = true;
+      session.expectedTop = null;
     },
     afterLayout(generation) {
       if (generation !== session.generation || session.userScrolled || session.keyboardOpen) return false;

@@ -1172,8 +1172,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const itemWork = viewLane === "saved" ? sourceWork : work;
     const hash = entry.sha256;
     if (!HASH.test(hash || "")) throw new Error("object_hash_invalid");
+    shell.cancelPendingWork();
+    const bodyController = new AbortController();
+    shell.trackPendingWork(() => bodyController.abort());
     const [response, chapters] = await Promise.all([
-      fetch(`/api/v1/text/object/${hash}`, { credentials: "same-origin", redirect: "error" }),
+      fetch(`/api/v1/text/object/${hash}`, { credentials: "same-origin", redirect: "error", signal: bodyController.signal }),
       viewLane === "saved" && itemWork ? savedWorkChapters(itemWork).catch(() => []) : chapterSource,
     ]);
     if (activeRequest !== requestId) return;
@@ -1207,6 +1210,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         ? [itemWork?.author || "작가 미상", chapterKind(entry.kind)].filter(Boolean).join(" · ")
         : [entry.author, entry.category || "미분류", entry.post_id ? `#${entry.post_id}` : ""].filter(Boolean).join(" · "),
       text: parsed.text,
+      documentId: isNovel ? `novel:${entry.source_site || ""}:${entry.chapter_id}` : identity(entry, currentLane),
+      workId: itemWork?.work_id || "",
+      revision: hash,
       sourceUrl: parsed.sourceUrl || (isNovel ? entry.source_url : "") || "",
     });
     shell.setNavigation(navigation());
@@ -1220,13 +1226,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function restorePosition(record, hash) {
-    readerPane.scrollTop = record.scroll || 0;
+    readerPane.scrollTop = record.loc ? 0 : record.scroll || 0;
     shell.syncScroll();
-    const anchor = record.anchor ? { offset: record.offset, quote: record.anchor, viewportOffset: record.anchorTop ?? 0 } : null;
+    const anchor = record.anchor || record.loc ? { offset: record.offset, quote: record.anchor, viewportOffset: record.anchorTop ?? 0, atStart: record.scroll === 0, ...(record.loc ? { loc: record.loc } : {}) } : null;
     // Offset-based anchors are exact; legacy quote-only anchors are used only for a new revision.
-    if (anchor && (Number.isInteger(record.offset) || (record.revision && record.revision !== hash))) {
-      requestAnimationFrame(() => shell.restoreAnchor(anchor));
-    }
+    shell.scheduleFrame(() => {
+      if (anchor && (anchor.loc || Number.isInteger(record.offset) || (record.revision && record.revision !== hash))) shell.restoreAnchor(anchor);
+      shell.captureAnchor();
+    });
   }
 
   function listHeading() {
@@ -1440,7 +1447,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function savePosition() {
-    if (!current) return;
+    if (!current || !shell.canSavePosition()) return;
     const old = history.history[current.identity] || {};
     const measured = shell.progress();
     const anchor = shell.captureAnchor();
@@ -1451,7 +1458,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       progress: (old.progress ?? 0) >= FINISHED ? Math.max(old.progress, measured) : measured,
       chapterId: current.entry.chapter_id || current.entry.source_chapter_id || "",
       revision: current.entry.sha256 || "",
-      ...(anchor ? { anchor: anchor.quote, offset: anchor.offset, anchorTop: Math.round(anchor.viewportOffset) } : {}),
+      ...(anchor ? { anchor: anchor.quote, offset: anchor.offset, anchorTop: Math.round(anchor.viewportOffset), loc: anchor.loc } : {}),
+      documentId: current.lane === "novel" ? `novel:${current.entry.source_site || ""}:${current.entry.chapter_id}` : identity(current.entry, current.lane),
     };
     persist();
   }
@@ -1753,7 +1761,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   if (shelvesAdded) persist();
 
   readerPane.addEventListener("scroll", () => {
-    if (!current) return;
+    if (!current || !shell.canSavePosition()) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(savePosition, 400);
   }, { passive: true });
@@ -1916,6 +1924,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   return {
+    cancelPendingPosition: () => clearTimeout(saveTimer),
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
