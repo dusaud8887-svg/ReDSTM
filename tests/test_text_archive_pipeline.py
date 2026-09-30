@@ -317,6 +317,7 @@ def test_arcalive_publisher_emits_work_view_without_changing_file_catalog(tmp_pa
     )
     work = work_page["items"][0]
     assert work["chapter_count"] == 2
+    assert work["post_ids"] == [108, 109]
     detail = json.loads((tmp_path / "build" / work["detail_key"]).read_text(encoding="utf-8"))
     assert [chapter["identity"] for chapter in detail["chapters"]] == [
         "arcalive:novel:108:text",

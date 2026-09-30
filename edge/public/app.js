@@ -44,12 +44,12 @@ const storageKeys = {
 };
 const defaultSettings = {
   theme: "system", readerSurface: "default", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
-  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
+  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
@@ -62,7 +62,7 @@ const elements = Object.fromEntries(
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
-    "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls", "aa-inline-size",
+    "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
@@ -98,6 +98,10 @@ let userState = loadUserState();
 let lastStoredState = null;
 let settings;
 let historyEntries;
+// Per-post AA zoom and sideways position (see effectiveAaZoom).
+let aaViews = {};
+let aaAutoZoom = null;
+let aaLeftTimer;
 let bookmarks;
 applyUserState(userState);
 let renderedResults = [];
@@ -266,6 +270,7 @@ function applyUserState(state) {
   };
   historyEntries = entriesFromState(state.history, "readAt");
   bookmarks = entriesFromState(state.bookmarks, "savedAt");
+  aaViews = { ...(state.aaViews ?? {}) };
 }
 
 // The idle archive label; a failing local save stays visible over later "loaded" updates.
@@ -292,6 +297,7 @@ function persistUserState() {
       postIdentity(entry.summary), entry.scroll ?? 0,
     ]).filter(([identity]) => identity)),
     viewModes,
+    aaViews,
     lastCatalogState: userState.lastCatalogState,
   };
   try {
@@ -463,8 +469,9 @@ function applySettings() {
   root.style.setProperty("--prose-width", `${settings.proseWidth}px`);
   root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
   root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
-  root.style.setProperty("--aa-effective-size", `${settings.aaSize * settings.aaZoom}px`);
-  root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * settings.aaZoom}px`);
+  const aaZoom = effectiveAaZoom();
+  root.style.setProperty("--aa-effective-size", `${settings.aaSize * aaZoom}px`);
+  root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * aaZoom}px`);
   root.style.setProperty("--aa-background", settings.aaBackground);
   root.style.setProperty("--aa-ink", readableAaInk(settings.aaBackground));
   elements["theme-toggle"].ariaLabel = dark ? "밝은 테마로 전환" : "어두운 테마로 전환";
@@ -474,6 +481,7 @@ function applySettings() {
     ["[data-reader-surface]", "readerSurface", settings.readerSurface],
     ["[data-prose-align]", "proseAlign", settings.proseAlign],
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
+    ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
   ]) {
     for (const choice of elements["settings-dialog"].querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
@@ -491,8 +499,7 @@ function applySettings() {
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
-  elements["aa-inline-size"].value = `${settings.aaSize}px`;
-  elements["aa-zoom-output"].value = `${Math.round(settings.aaZoom * 100)}%`;
+  elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
@@ -504,7 +511,7 @@ function applySettings() {
   for (const button of document.querySelectorAll("[data-aa-preset]")) {
     const [size, width] = button.dataset.aaPreset.split(":");
     button.classList.toggle("active", settings.aaSize === Number(size) &&
-      settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && settings.aaZoom === 1);
+      settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && aaZoom === 1);
   }
   let backgroundPresetSelected = false;
   for (const button of document.querySelectorAll("[data-aa-background]")) {
@@ -556,7 +563,40 @@ function showReaderFeedback(text, duration = 1200) {
 }
 
 function showZoomFeedback() {
-  showReaderFeedback(`${Math.round(settings.aaZoom * 100)}%`);
+  showReaderFeedback(`${Math.round(effectiveAaZoom() * 100)}%`);
+}
+
+// AA zoom is kept per picture (aaViews): the zoom chosen for this post, else an automatic fit
+// for this visit (넓은 AA 화면에 맞추기), else the default zoom.
+function currentAaKey() {
+  return currentSummary && currentMode === "aa" ? postIdentity(currentSummary) : "";
+}
+
+function effectiveAaZoom() {
+  const key = currentAaKey();
+  return (key && aaViews[key]?.zoom) || (key && aaAutoZoom) || settings.aaZoom;
+}
+
+function rememberAaView(change) {
+  const key = currentAaKey();
+  if (!key) return;
+  const next = { ...aaViews[key], ...change, at: Date.now() };
+  if (next.zoom == null) delete next.zoom;
+  aaViews[key] = next;
+}
+
+// Restores the zoom and sideways position of an AA post as it opens.
+function restoreAaView() {
+  const key = currentAaKey();
+  aaAutoZoom = null;
+  if (!key) return;
+  const saved = aaViews[key];
+  requestAnimationFrame(() => {
+    if (currentAaKey() !== key) return;
+    if (!saved?.zoom && settings.aaAutoFit === "on") fitAaZoom({ remember: false });
+    elements["archive-body"].scrollLeft = saved?.left ?? 0;
+    updateAaOverflowCue(true);
+  });
 }
 
 function updateAaOverflowCue(showHint = false) {
@@ -570,8 +610,11 @@ function updateAaOverflowCue(showHint = false) {
   }
 }
 
-function setAaZoom(value, debounce = false) {
-  settings.aaZoom = Math.max(0.1, Math.min(3, value));
+function setAaZoom(value, debounce = false, { remember = true } = {}) {
+  const zoom = Math.round(Math.max(0.1, Math.min(3, value)) * 1000) / 1000;
+  if (!currentAaKey()) settings.aaZoom = zoom;
+  else if (remember) rememberAaView({ zoom });
+  else aaAutoZoom = zoom;
   applySettings();
   showZoomFeedback();
   clearTimeout(zoomPersistTimer);
@@ -582,7 +625,7 @@ function setAaZoom(value, debounce = false) {
 // 맞춤: the zoom at which the widest AA line fits the stage without horizontal scrolling. The
 // picture's width scales with the zoom, so one measurement at the current zoom is enough. It
 // only shrinks; a picture that already fits returns to 100%.
-function fitAaZoom() {
+function fitAaZoom({ remember = true } = {}) {
   const body = elements["archive-body"];
   const canvas = body.querySelector(".aa-canvas");
   if (currentMode !== "aa" || !canvas) return;
@@ -599,7 +642,7 @@ function fitAaZoom() {
   const style = getComputedStyle(body);
   const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
   if (!(content > 0) || !(available > 0)) return;
-  setAaZoom(Math.min(1, Math.floor(settings.aaZoom * (available / content) * 100) / 100));
+  setAaZoom(Math.min(1, Math.floor(effectiveAaZoom() * (available / content) * 100) / 100), false, { remember });
   body.scrollLeft = 0;
 }
 
@@ -3166,7 +3209,8 @@ function renderPostBody() {
   decorateImages(elements["archive-body"]);
   if (!isAa) enhanceHtmlMedia(elements["archive-body"]);
   updateReaderLength();
-  requestAnimationFrame(() => updateAaOverflowCue(true));
+  if (isAa) restoreAaView();
+  else requestAnimationFrame(() => updateAaOverflowCue(true));
 }
 
 function normalizeReaderTypography(container) {
@@ -4188,6 +4232,12 @@ for (const choice of document.querySelectorAll("button[data-reader-surface]")) {
     saveSettings();
   });
 }
+for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {
+  choice.addEventListener("click", () => {
+    settings.aaAutoFit = choice.dataset.aaAutoFit;
+    saveSettings();
+  });
+}
 for (const choice of document.querySelectorAll("button[data-tap-paging]")) {
   choice.addEventListener("click", () => {
     settings.tapPaging = choice.dataset.tapPaging;
@@ -4266,16 +4316,13 @@ for (const choice of document.querySelectorAll("button[data-prose-align]")) {
     settings.proseAlign = choice.dataset.proseAlign;
   }));
 }
-for (const button of document.querySelectorAll("[data-aa-size-delta]")) {
-  button.addEventListener("click", () => {
-    settings.aaSize = Math.max(9, Math.min(24, settings.aaSize + Number(button.dataset.aaSizeDelta)));
-    saveSettings();
-  });
-}
 for (const button of document.querySelectorAll("[data-aa-preset]")) {
   button.addEventListener("click", () => {
     const [size, width] = button.dataset.aaPreset.split(":");
     settings = { ...settings, aaSize: Number(size), aaCanvasWidth: width === "auto" ? null : Number(width), aaZoom: 1 };
+    // A preset is a fresh start for the open picture too.
+    rememberAaView({ zoom: null });
+    aaAutoZoom = null;
     saveSettings();
     showZoomFeedback();
   });
@@ -4320,8 +4367,9 @@ elements["archive-body"].addEventListener("touchmove", (event) => {
   }
   if (currentMode !== "aa" || !pinchDistance) return;
   const distance = touchDistance(event);
-  const next = settings.aaZoom + (distance - pinchDistance) * 0.003;
-  if (Math.abs(next - settings.aaZoom) > 0.002) setAaZoom(next, true);
+  const zoom = effectiveAaZoom();
+  const next = zoom + (distance - pinchDistance) * 0.003;
+  if (Math.abs(next - zoom) > 0.002) setAaZoom(next, true);
   pinchDistance = distance;
 }, { passive: true });
 elements["archive-body"].addEventListener("touchend", () => {
@@ -4330,9 +4378,19 @@ elements["archive-body"].addEventListener("touchend", () => {
 }, { passive: true });
 elements["archive-body"].addEventListener("dblclick", () => {
   if (currentMode !== "aa") return;
-  setAaZoom(settings.aaZoom < 1.25 ? 1.5 : settings.aaZoom < 1.75 ? 2 : 1);
+  const zoom = effectiveAaZoom();
+  setAaZoom(zoom < 1.25 ? 1.5 : zoom < 1.75 ? 2 : 1);
 });
-elements["archive-body"].addEventListener("scroll", () => updateAaOverflowCue(), { passive: true });
+elements["archive-body"].addEventListener("scroll", () => {
+  updateAaOverflowCue();
+  // The sideways position of a wide AA is kept with its zoom.
+  if (!currentAaKey()) return;
+  clearTimeout(aaLeftTimer);
+  aaLeftTimer = setTimeout(() => {
+    rememberAaView({ left: elements["archive-body"].scrollLeft });
+    persistUserState();
+  }, 300);
+}, { passive: true });
 function touchDistance(event) {
   return Math.hypot(
     event.touches[0].clientX - event.touches[1].clientX,

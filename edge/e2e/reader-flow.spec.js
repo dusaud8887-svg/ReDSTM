@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { arcalivePost, arcaliveWork, novelWork, useTextArchive } from "./text-fixture.js";
+
 // Reading-flow contracts from docs/19: one history entry per reading session, Back returns to
 // the list viewport the session started from, and reading order never follows the list sort.
 
@@ -521,7 +523,8 @@ test("Text parity: sort chips, reading progress, memo·tags, and Home 읽던 작
   await expect(page.locator("#result-list .result-item").first()).toContainText("#명장면");
   await expect(page.locator("#result-list .result-item").first()).toContainText("다시 볼 장면");
   await page.goto("/text?lane=novel");
-  await expect(page.locator("#result-list .result-item").first()).toContainText("읽음 1/40");
+  await expect(page.locator("#result-list .result-item").first()).toContainText("1/40화");
+  await expect(page.locator("#result-list .result-item").first().locator(".result-action")).toHaveText("이어 읽기");
   await expect(page.locator("#result-list .result-item").first()).toContainText("최근 4화");
   await page.goto("/");
   const works = page.locator("#reading-works");
@@ -1045,4 +1048,103 @@ test("보관함 lists novels being read and saved text items next to TypeMoon on
   await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(/\/saved$/);
+});
+
+test("Text works list like TypeMoon collections: source, progress, header, jump, filters", async ({ page }) => {
+  const posts = [101, 102, 103].map((id, index) => arcalivePost({ id, title: `긴 연재 ${index + 1}화` }));
+  await useTextArchive(page, {
+    novels: [
+      novelWork({ id: 1, title: "오래된 소설", chapters: 30, site: "toki", updated: "2026-08-01T00:00:00Z", latest: "31화" }),
+      novelWork({ id: 2, title: "새 소설", chapters: 3, site: "blacktoon", updated: "2026-09-10T00:00:00Z" }),
+    ],
+    posts: [...posts, arcalivePost({ id: 200, board: "free", category: "잡담", title: "다른 글" })],
+    works: [arcaliveWork({ key: "long", title: "긴 연재", posts })],
+  });
+  await page.goto("/text?lane=novel");
+  const rows = page.locator("#result-list .result-item[data-key]");
+  // Most recently updated first, like TypeMoon's 최근 글순.
+  await expect(rows.locator(".result-title")).toHaveText(["새 소설", "오래된 소설"]);
+  await expect(page.locator('#text-sort-chips [data-text-sort="updated"]')).toHaveText("최근 갱신순");
+  await expect(rows.first()).toContainText("블랙툰");
+  await expect(rows.first().locator(".result-action")).toHaveText("시작하기");
+  await expect(rows.nth(1)).toContainText("최신 31화");
+  await expect(page.locator("#result-status")).toHaveText("2개 작품");
+  await page.locator("#text-source-filter").selectOption("toki");
+  await expect(page).toHaveURL(/source=toki/);
+  await expect(rows.locator(".result-title")).toHaveText(["오래된 소설"]);
+  await page.locator("#search-input").fill("오래");
+  await expect(rows.first().locator("mark")).toHaveText("오래");
+  await page.locator("#search-input").fill("");
+
+  await rows.first().click();
+  const summary = page.locator("#result-list .text-work-summary");
+  await expect(summary.locator("h2")).toHaveText("오래된 소설");
+  await expect(summary).toContainText("북토끼");
+  await expect(summary).toContainText("읽음 0/30");
+  await summary.locator("input").fill("25");
+  await summary.locator("input").press("Enter");
+  await expect(page.locator('#result-list [data-key="chapter:1-25"]')).toBeFocused();
+
+  // Arcalive works count posts read from the board folders too.
+  await page.goto("/text?lane=arcalive&board=novel&category=%EC%86%8C%EC%84%A4");
+  await page.locator("#result-list .result-item", { hasText: "긴 연재 1화" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("긴 연재 1화");
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = pane.scrollHeight; });
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem("redstm.textState.v1")).history["arcalive:novel:101:text"]?.progress ?? 0)).toBeGreaterThan(0.9);
+  await page.goto("/text?lane=arcalive&view=works");
+  await expect(page.locator("#text-read-chips")).toBeVisible();
+  await expect(page.locator("#result-list .result-item[data-key]").first()).toContainText("1/3편");
+  await page.locator('#text-read-chips [data-text-read="finished"]').isDisabled();
+
+  // A search above a category lists the posts themselves.
+  await page.goto("/text?lane=arcalive");
+  await page.locator("#search-input").fill("다른");
+  await expect(page.locator("#result-list .result-item[data-key] .result-title")).toHaveText(["다른 글"]);
+  await expect(page.locator("#result-list .result-item[data-key]").first()).toContainText("free · 잡담");
+  await page.locator("#result-list .result-item[data-key]").first().click();
+  await expect(page.locator("#reader-title")).toHaveText("다른 글");
+});
+
+test("AA keeps each picture's zoom and sideways position, and can fit wide pictures on open", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const wide = (id) => ({
+    schema_version: 1,
+    post: {
+      board_id: "board_a", external_post_id: id, canonical_url: `https://example.test/${id}`, title: `${id}편 제목`,
+      author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: true,
+      body_html: `<div class="AA_Text">${Array.from({ length: 30 }, () => `<p>${"＿".repeat(160)}</p>`).join("")}</div>`,
+    },
+    comments: [],
+  });
+  await page.route(/\/archive\/posts\/board_a\/[12]-/, (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify(wide(Number(/board_a\/(\d+)-/.exec(route.request().url())[1]))),
+  }));
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#aa-controls")).toBeVisible();
+  // One scale control in the body toolbar.
+  await expect(page.locator("#aa-controls [data-aa-size-delta]")).toHaveCount(0);
+  await page.locator('[data-aa-zoom-delta="0.25"]').click();
+  await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
+  await page.locator("#archive-body").evaluate((body) => { body.scrollLeft = 300; body.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews?.["board_a:1"]?.left)).toBe(300);
+
+  // Another picture keeps its own default zoom.
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#aa-zoom-output")).toHaveText("100%");
+
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
+  await expect.poll(() => page.locator("#archive-body").evaluate((body) => body.scrollLeft)).toBe(300);
+
+  // 넓은 AA 화면에 맞추기 fits a picture with no zoom of its own, without remembering it.
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator('[data-aa-auto-fit="on"]').click();
+  await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#aa-zoom-output")).not.toHaveText("100%");
+  await expect.poll(() => page.locator("#archive-body").evaluate((body) => body.scrollWidth - body.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews?.["board_a:2"]?.zoom)).toBeUndefined();
 });

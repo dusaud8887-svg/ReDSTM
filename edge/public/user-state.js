@@ -54,6 +54,7 @@ function sanitizeSettings(value, defaults = {}) {
   pick("proseAlign", (value) => proseAlignments.has(value));
   pick("readerSurface", (value) => readerSurfaces.has(value));
   pick("tapPaging", (value) => toggles.has(value));
+  pick("aaAutoFit", (value) => toggles.has(value));
   pick("aaCanvasWidth", (value) => [null, 680, 800].includes(value));
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),
     (value) => value.toLowerCase());
@@ -113,6 +114,24 @@ function viewModeMap(value) {
     validStablePostId(identity) && (mode === "aa" || mode === "prose")));
 }
 
+// Per-post AA view: the zoom chosen for that picture and how far it was moved sideways.
+const AA_VIEW_LIMIT = 300;
+function aaViewMap(value) {
+  if (!isRecord(value)) return {};
+  const views = [];
+  for (const [identity, view] of Object.entries(value)) {
+    if (!validStablePostId(identity) || !isRecord(view)) continue;
+    const kept = {};
+    if (Number.isFinite(view.zoom) && view.zoom >= 0.1 && view.zoom <= 3) kept.zoom = view.zoom;
+    if (Number.isFinite(view.left) && view.left >= 0) kept.left = Math.round(view.left);
+    if (!Object.keys(kept).length) continue;
+    kept.at = Number.isFinite(view.at) && view.at > 0 ? Math.round(view.at) : 0;
+    views.push([identity, kept]);
+  }
+  views.sort((left, right) => right[1].at - left[1].at);
+  return Object.fromEntries(views.slice(0, AA_VIEW_LIMIT));
+}
+
 function safeCatalogState(value) {
   if (!isRecord(value)) return null;
   const copy = (item) => {
@@ -136,6 +155,7 @@ export function defaultUserState(defaultSettings = {}) {
     bookmarks: {},
     scroll: {},
     viewModes: {},
+    aaViews: {},
     lastCatalogState: null,
   };
 }
@@ -180,6 +200,7 @@ function normalizeV2State(value, defaultSettings = {}) {
     bookmarks: bookmarkMap(value.bookmarks),
     scroll: scrollMap(value.scroll),
     viewModes: viewModeMap(value.viewModes),
+    aaViews: aaViewMap(value.aaViews),
     lastCatalogState: safeCatalogState(value.lastCatalogState),
   };
 }

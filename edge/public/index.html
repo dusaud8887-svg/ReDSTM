@@ -282,10 +282,7 @@
           </div>
 
           <div class="aa-controls" id="aa-controls" aria-label="AA 보기 설정" hidden>
-            <div class="aa-control-group" aria-label="AA 글자 크기">
-              <button type="button" data-aa-size-delta="-2" aria-label="AA 글자 크기 줄이기">A−</button><output id="aa-inline-size">16px</output><button type="button" data-aa-size-delta="2" aria-label="AA 글자 크기 키우기">A+</button>
-            </div>
-            <div class="aa-control-group" aria-label="AA 확대/축소">
+            <div class="aa-control-group" aria-label="AA 배율 · 이 글에만 기억됩니다">
               <button type="button" id="aa-fit" title="화면 너비에 맞추기" aria-label="AA를 화면 너비에 맞추기">맞춤</button>
               <button type="button" data-aa-zoom-delta="-0.25" aria-label="AA 축소">−</button><button class="aa-zoom-reset" id="aa-zoom-reset" type="button" title="100%로 초기화"><output id="aa-zoom-output">100%</output></button><button type="button" data-aa-zoom-delta="0.25" aria-label="AA 확대">+</button>
             </div>
@@ -438,7 +435,15 @@
         </fieldset>
         <fieldset class="settings-group aa-settings">
           <legend>AA 화면</legend>
-          <label>AA 크기 <output id="aa-size-output"></output><input id="aa-size" type="range" min="9" max="24" step="1"></label>
+          <label>AA 기본 크기 <output id="aa-size-output"></output><input id="aa-size" type="range" min="9" max="24" step="1"></label>
+          <div class="setting-row">
+            <span class="setting-label" id="aa-auto-fit-label">넓은 AA 화면에 맞추기</span>
+            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="aa-auto-fit-label">
+              <button type="button" role="radio" data-aa-auto-fit="off" aria-checked="false">끄기</button>
+              <button type="button" role="radio" data-aa-auto-fit="on" aria-checked="false">켜기</button>
+            </div>
+            <p class="setting-hint">본문 도구줄의 배율(맞춤·−·+)은 글마다 기억하고, 가로로 옮긴 위치도 다시 열 때 이어집니다.</p>
+          </div>
           <div class="aa-control-group aa-presets" aria-label="AA 화면 프리셋">
             <button type="button" data-aa-preset="16:auto">기본 16</button><button type="button" data-aa-preset="11:800">11 / 800</button><button type="button" data-aa-preset="9:680">9 / 680</button>
           </div>

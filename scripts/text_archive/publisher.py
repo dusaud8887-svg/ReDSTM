@@ -251,6 +251,9 @@ def _arcalive_works(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], di
             "category": category,
             "chapter_count": len(chapters),
             "last_imported_at": max(str(row["imported_at"]) for row in chapters),
+            # Reading order; the Reader counts read chapters per work from these
+            # (identity = arcalive:<board>:<post_id>:text) without loading every detail.
+            "post_ids": [int(row["source_post_id"]) for row in chapters],
         }
         detail = {
             "schema": 1,

@@ -32,6 +32,7 @@ test("default state follows the v2 stable identity schema", () => {
     bookmarks: {},
     scroll: {},
     viewModes: {},
+    aaViews: {},
     lastCatalogState: null,
   });
   assert.equal(postIdentity(summary()), "write_free21:62068");
@@ -192,4 +193,20 @@ test("keeps setting ranges and rejects unknown schemas", () => {
   assert.deepEqual(unknown.summary.defaultedSettings, ["proseAlign", "readerSurface"]);
   assert.throws(() => planImport(JSON.stringify({ schema_version: 3 }), defaults),
     /지원하지 않는 상태 파일 형식/);
+});
+
+test("keeps each AA picture's zoom and sideways position, newest 300", () => {
+  const state = defaultUserState(defaults);
+  state.aaViews = {
+    "aa_19:12": { zoom: 0.75, left: 120.4, at: 5 },
+    "aa_19:13": { zoom: 9, left: -1, at: 6 },
+    "../bad": { zoom: 1, at: 7 },
+  };
+  for (let index = 0; index < 305; index += 1) state.aaViews[`aa_19:${1000 + index}`] = { left: index, at: 100 + index };
+  const plan = planImport(exportUserState(state), defaults);
+  assert.deepEqual(plan.state.aaViews["aa_19:12"], undefined);
+  assert.equal(Object.keys(plan.state.aaViews).length, 300);
+  assert.deepEqual(plan.state.aaViews["aa_19:1304"], { left: 304, at: 404 });
+  const small = planImport(exportUserState({ ...defaultUserState(defaults), aaViews: state.aaViews && { "aa_19:12": { zoom: 0.75, left: 120.4, at: 5 } } }), defaults);
+  assert.deepEqual(small.state.aaViews, { "aa_19:12": { zoom: 0.75, left: 120, at: 5 } });
 });

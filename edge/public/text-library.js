@@ -12,12 +12,33 @@ const FINISHED = 0.95;
 const HISTORY_LIMIT = 10_000;
 const ROW_SELECTOR = ".result-item[data-key]";
 const LIST_PAGE = 10;
+// Long lists (thousands of chapters or posts) render this many rows at a time: the first batch at
+// once, the next when the end of the rendered rows scrolls near.
+const RENDER_CHUNK = 400;
 const SORT_LABELS = {
-  oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최신 화순", recent: "최근 읽은순",
+  oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최근 갱신순", recent: "최근 읽은순",
 };
 // Novel work list filter by this browser's reading records.
 const READ_FILTERS = [["all", "전체"], ["reading", "읽는 중"], ["new", "새 회차"], ["unread", "안 읽음"], ["finished", "다 읽음"]];
 const READ_FILTER_VALUES = new Set(READ_FILTERS.map(([value]) => value));
+const SOURCE_LABELS = {
+  toki: "북토끼", newtoki: "뉴토끼", blacktoon: "블랙툰", marumaru: "마루마루", ondobook: "온도북", bookkor: "북코",
+  sbxh: "SBXH",
+};
+const dateLabel = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" });
+const yearDateLabel = new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "numeric", day: "numeric" });
+
+function sourceLabel(site) {
+  return SOURCE_LABELS[site] ?? (site ? String(site) : "");
+}
+
+// "9. 1." this year, "25. 9. 1." before it.
+function shortDate(value) {
+  const time = Date.parse(value ?? "");
+  if (!Number.isFinite(time)) return "";
+  const date = new Date(time);
+  return (date.getFullYear() === new Date().getFullYear() ? dateLabel : yearDateLabel).format(date);
+}
 
 function readState() {
   try {
@@ -52,6 +73,15 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let chapterSource = [];
   let sortMode = "title";
   let readFilter = "all";
+  let sourceFilter = "";
+  let listKind = "works";
+  // Incremental rendering of the shared result list (renderMore).
+  let rowWindow = null;
+  let rendered = 0;
+  let rowObserver = null;
+  const rowSentinel = document.createElement("li");
+  rowSentinel.className = "list-sentinel";
+  rowSentinel.setAttribute("aria-hidden", "true");
   let folderBoard = null;
   let folderCategory = null;
   // current: the open body. sequence: its reading order, frozen when the body opened.
@@ -123,14 +153,22 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (lane === "arcalive" && arcaliveView === "files" && folderBoard) params.set("board", folderBoard);
     if (lane === "arcalive" && arcaliveView === "files" && folderCategory) params.set("category", folderCategory);
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
-    if (readFiltering() && readFilter !== "all") params.set("read", readFilter);
+    if (worksView() && readFilter !== "all") params.set("read", readFilter);
+    if (worksView() && lane === "novel" && sourceFilter) params.set("source", sourceFilter);
     return params;
   }
 
   function defaultSort() {
     if (work) return "oldest";
-    // Posts in an Arcalive category read like a board: newest first.
-    return postsView() ? "latest" : "title";
+    // Posts in an Arcalive category read like a board: newest first. Works, like TypeMoon's
+    // collections, start with the ones updated most recently.
+    if (postsView()) return "latest";
+    return worksView() ? "updated" : "title";
+  }
+
+  // Search text typed above an Arcalive category: the matching posts are listed directly.
+  function flatSearch() {
+    return lane === "arcalive" && arcaliveView === "files" && !folderCategory && !work && Boolean(search.value.trim());
   }
 
   function postsView() {
@@ -141,10 +179,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const requested = params.get("sort");
     sortMode = SORT_LABELS[requested] ? requested : defaultSort();
     readFilter = READ_FILTER_VALUES.has(params.get("read")) ? params.get("read") : "all";
-  }
-
-  function readFiltering() {
-    return lane === "novel" && !work;
+    sourceFilter = /^[a-z0-9_-]{1,32}$/.test(params.get("source") || "") ? params.get("source") : "";
   }
 
   function listRoute() {
@@ -175,29 +210,64 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return String(entry.identity ?? entry.post_id ?? entry.title);
   }
 
-  // { finished, reading, lastReadAt } per novel work, from local reading records.
+  function addProgress(progress, workId, record) {
+    const item = progress.get(workId) ?? { finished: 0, reading: 0, lastReadAt: "", record: null, seenTotal: 0 };
+    const value = record.progress ?? 0;
+    // chapter_count when a chapter of the work was last opened: later chapters are new.
+    if (Number.isInteger(record.total) && record.total > item.seenTotal) item.seenTotal = record.total;
+    if (value >= FINISHED) item.finished += 1;
+    else if (value > 0) item.reading += 1;
+    if (String(record.readAt || "") > item.lastReadAt) {
+      item.lastReadAt = String(record.readAt || "");
+      item.record = record;
+    }
+    progress.set(workId, item);
+  }
+
+  // { finished, reading, lastReadAt, record, seenTotal } per novel work, from local reading records.
   function workProgress() {
     const knownWorkIds = new Set((catalogs.get("novel")?.items ?? []).map((item) => item.work_id));
     const progress = new Map();
     for (const [key, record] of Object.entries(history.history)) {
       const workId = record ? novelRecordWorkId(key, record, knownWorkIds) : null;
-      if (!workId) continue;
-      const item = progress.get(workId) ?? { finished: 0, reading: 0, lastReadAt: "", record: null, seenTotal: 0 };
-      const value = record.progress ?? 0;
-      // chapter_count when a chapter of the work was last opened: later chapters are new.
-      if (Number.isInteger(record.total) && record.total > item.seenTotal) item.seenTotal = record.total;
-      if (value >= FINISHED) item.finished += 1;
-      else if (value > 0) item.reading += 1;
-      if (String(record.readAt || "") > item.lastReadAt) {
-        item.lastReadAt = String(record.readAt || "");
-        item.record = record;
-      }
-      progress.set(workId, item);
+      if (workId) addProgress(progress, workId, record);
     }
     return progress;
   }
 
-  // Reading state of one novel work: new chapters since it was last read, and where it stands.
+  // The same per Arcalive work. Works list their posts (post_ids), so posts read from the board
+  // folders count too; releases before post_ids fall back to records opened inside the work.
+  function arcaliveWorkProgress() {
+    const progress = new Map();
+    const withPosts = arcaliveWorks.filter((item) => Array.isArray(item.post_ids));
+    for (const item of withPosts) {
+      for (const postId of item.post_ids) {
+        const record = history.history[`arcalive:${item.board}:${postId}:text`];
+        if (record) addProgress(progress, item.work_id, record);
+      }
+    }
+    if (!withPosts.length) {
+      for (const record of Object.values(history.history)) {
+        if (typeof record?.workId === "string" && record.workId.startsWith("arcalive:")) addProgress(progress, record.workId, record);
+      }
+    }
+    return progress;
+  }
+
+  // Work lists (novel works, Arcalive 작품별) share read-state chips, sorts, and row copy.
+  function worksView() {
+    return !work && (lane === "novel" || lane === "arcalive" && arcaliveView === "works");
+  }
+
+  function currentWorks() {
+    return lane === "novel" ? catalog : arcaliveWorks;
+  }
+
+  function progressForLane() {
+    return lane === "novel" ? workProgress() : arcaliveWorkProgress();
+  }
+
+  // Reading state of one work: new chapters since it was last read, and where it stands.
   function workState(entry, progress) {
     const total = entry.chapter_count ?? 0;
     const newCount = progress?.seenTotal ? Math.max(0, total - progress.seenTotal) : 0;
@@ -211,18 +281,23 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return state.state === readFilter;
   }
 
+  function sourcesOf(works) {
+    return [...new Set(works.map((item) => item.source_site).filter(Boolean))].sort();
+  }
+
   function renderReadChips(progress) {
     const chips = document.querySelector("#text-read-chips");
     if (!chips) return;
     chips.hidden = !active || !progress;
     if (chips.hidden) return;
-    const counts = { all: catalog.length, reading: 0, new: 0, unread: 0, finished: 0 };
-    for (const item of catalog) {
+    const works = currentWorks();
+    const counts = { all: works.length, reading: 0, new: 0, unread: 0, finished: 0 };
+    for (const item of works) {
       const state = workState(item, progress.get(item.work_id));
       counts[state.state] += 1;
       if (state.newCount) counts.new += 1;
     }
-    chips.replaceChildren(...READ_FILTERS.map(([value, label]) => {
+    const nodes = READ_FILTERS.map(([value, label]) => {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.dataset.textRead = value;
@@ -230,7 +305,23 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       chip.setAttribute("aria-pressed", String(value === readFilter));
       chip.disabled = value !== "all" && value !== readFilter && counts[value] === 0;
       return chip;
-    }));
+    });
+    // 출처: the novel counterpart of TypeMoon's board filter, when more than one site is present.
+    const sources = lane === "novel" ? sourcesOf(works) : [];
+    if (sources.length > 1) {
+      const label = document.createElement("label");
+      label.className = "text-source-field";
+      const caption = document.createElement("span");
+      caption.className = "sr-only";
+      caption.textContent = "출처";
+      const select = document.createElement("select");
+      select.id = "text-source-filter";
+      select.append(new Option("모든 출처", ""), ...sources.map((site) => new Option(sourceLabel(site), site)));
+      select.value = sources.includes(sourceFilter) ? sourceFilter : "";
+      label.append(caption, select);
+      nodes.push(label);
+    }
+    chips.replaceChildren(...nodes);
   }
 
   function lastReadChapter() {
@@ -243,14 +334,187 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return latest;
   }
 
-  function renderRows(rows, { chaptersMode = false, folderMode = null } = {}) {
+  // Title text with the searched words marked, like TypeMoon search results.
+  function highlighted(text, query) {
+    const node = document.createElement("span");
+    node.className = "result-title";
+    const words = query.trim().split(/\s+/).filter(Boolean).map((word) => word.toLocaleLowerCase("ko-KR"));
+    const lower = text.toLocaleLowerCase("ko-KR");
+    const ranges = [];
+    for (const word of words) {
+      for (let at = lower.indexOf(word); at >= 0; at = lower.indexOf(word, at + word.length)) ranges.push([at, at + word.length]);
+    }
+    ranges.sort((left, right) => left[0] - right[0]);
+    let cursor = 0;
+    for (const [from, to] of ranges) {
+      if (from < cursor) continue;
+      node.append(text.slice(cursor, from));
+      const mark = document.createElement("mark");
+      mark.textContent = text.slice(from, to);
+      node.append(mark);
+      cursor = to;
+    }
+    node.append(text.slice(cursor));
+    return node;
+  }
+
+  function metaElement(parts) {
+    const meta = document.createElement("span");
+    meta.className = "result-meta";
+    for (const part of parts) {
+      if (!part) continue;
+      const [text, className] = Array.isArray(part) ? part : [part, ""];
+      if (!text) continue;
+      const span = document.createElement("span");
+      if (className) span.className = className;
+      span.textContent = text;
+      meta.append(span);
+    }
+    return meta;
+  }
+
+  function badgeElement(labels) {
+    const shown = labels.filter(Boolean);
+    if (!shown.length) return null;
+    const badges = document.createElement("span");
+    badges.className = "result-badges";
+    for (const label of shown) {
+      const badge = document.createElement("span");
+      badge.textContent = label;
+      badges.append(badge);
+    }
+    return badges;
+  }
+
+  // Row copy for a work, in the shape TypeMoon uses for its collections.
+  function workRowParts(entry, progress) {
+    const total = entry.chapter_count ?? 0;
+    const { state } = workState(entry, progress);
+    const unit = lane === "novel" ? "화" : "편";
+    const count = state === "unread" ? `${total.toLocaleString("ko-KR")}${unit}`
+      : `${(progress?.finished ?? 0).toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}${unit}`;
+    const action = state === "unread" ? "시작하기" : state === "finished" ? "다시 보기" : "이어 읽기";
+    const latest = entry.latest_label && entry.latest_label !== `${total}화` ? `최신 ${entry.latest_label}` : "";
+    const updated = shortDate(entry.last_imported_at);
+    return [
+      [lane === "novel" ? sourceLabel(entry.source_site) : entry.board, "result-board"],
+      entry.author || "작가 미상",
+      count,
+      [action, "result-action"],
+      latest,
+      updated ? `${updated} 갱신` : "",
+      progress?.record?.title && state === "reading" ? `최근 ${progress.record.title}` : "",
+    ];
+  }
+
+  function workSummary(rows) {
+    const item = document.createElement("li");
+    item.className = "text-work-summary";
+    const heading = document.createElement("h2");
+    heading.textContent = work.title || "작품";
+    const total = chapterSource.length;
+    let finished = 0;
+    for (const chapter of chapterSource) {
+      if ((history.history[identity(chapter, lane, work)]?.progress ?? 0) >= FINISHED) finished += 1;
+    }
+    const meta = metaElement([
+      [lane === "novel" ? sourceLabel(work.source_site) : [work.board, work.category].filter(Boolean).join(" · "), "result-board"],
+      work.author || "작가 미상",
+      `${total.toLocaleString("ko-KR")}${lane === "novel" ? "화" : "편"}`,
+      work.latest_label && work.latest_label !== `${total}화` ? `최신 ${work.latest_label}` : "",
+      shortDate(work.last_imported_at) ? `${shortDate(work.last_imported_at)} 갱신` : "",
+      [`읽음 ${finished.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}`, finished ? "result-action" : ""],
+    ]);
+    item.append(heading, meta);
+    if (total > LIST_PAGE) {
+      const form = document.createElement("form");
+      form.className = "toc-jump text-toc-jump";
+      form.setAttribute("role", "search");
+      form.ariaLabel = "회차로 이동";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.inputMode = "numeric";
+      input.min = "1";
+      input.placeholder = "몇 화?";
+      input.enterKeyHint = "go";
+      input.ariaLabel = "이동할 회차 번호";
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.textContent = "찾기";
+      form.append(input, button);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        jumpToChapter(Number(input.value), rows);
+        input.blur();
+      });
+      item.append(form);
+    }
+    return item;
+  }
+
+  // Appends the next rows of `visible` (see RENDER_CHUNK). The sentinel after the last rendered
+  // row asks for more as it nears the viewport; observing it again reports whether it still is.
+  function renderMore(count = RENDER_CHUNK) {
+    // The result list is shared with TypeMoon screens: never append once they own it.
+    if (!rowWindow || !active) return;
+    rowObserver?.unobserve(rowSentinel);
+    const end = Math.min(visible.length, rendered + count);
+    const fragment = document.createDocumentFragment();
+    for (let index = rendered; index < end; index += 1) fragment.append(rowWindow.build(visible[index], index));
+    rendered = end;
+    if (rowSentinel.parentNode === list) rowSentinel.before(fragment);
+    else list.append(fragment);
+    if (rendered >= visible.length) {
+      rowSentinel.remove();
+      return;
+    }
+    list.append(rowSentinel);
+    rowObserver ??= "IntersectionObserver" in window
+      ? new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) renderMore();
+      }, { rootMargin: "1200px 0px" })
+      : null;
+    if (rowObserver) rowObserver.observe(rowSentinel);
+    else renderMore(visible.length);
+  }
+
+  // Makes sure the row with this data-key is in the DOM (anchors, jumps, the current row).
+  function renderThroughKey(key) {
+    if (!rowWindow || key == null) return;
+    const index = visible.findIndex((entry) => rowWindow.key(entry) === String(key));
+    if (index >= rendered) renderMore(index - rendered + 1 + LIST_PAGE);
+  }
+
+  // "몇 화?": the chapter whose label carries that number, else the Nth in reading order.
+  function jumpToChapter(number, rows) {
+    if (!Number.isInteger(number) || number < 1) return;
+    const byLabel = rows.find((chapter) => Number(/(\d+)\s*(?:화|편|장)?/.exec(String(chapter.label || ""))?.[1]) === number);
+    const target = byLabel ?? canonicalChapters(chapterSource)[number - 1];
+    if (!target) {
+      status.textContent = `${number}화를 찾지 못했습니다`;
+      return;
+    }
+    const key = rowKey(target, { chaptersMode: true });
+    renderThroughKey(key);
+    const button = list.querySelector(`${ROW_SELECTOR}[data-key="${CSS.escape(key)}"]`);
+    if (!button) return;
+    list.scrollTop += button.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientHeight / 3;
+    button.focus({ preventScroll: true });
+  }
+
+  // listKind: "works", "chapters", "boards", "categories", "posts", "saved".
+  function renderRows(rows, { kind }) {
+    listKind = kind;
     visible = rows;
     list.replaceChildren();
     const fragment = document.createDocumentFragment();
+    const chaptersMode = kind === "chapters";
+    const query = search.value.trim();
     const resume = chaptersMode ? lastReadChapter() : null;
-    const works = !chaptersMode && !folderMode && lane === "novel" ? workProgress() : null;
+    const progress = kind === "works" ? progressForLane() : null;
     // A work not started yet offers its first chapter the same way (not while searching).
-    const start = chaptersMode && !resume && !search.value.trim() ? canonicalChapters(chapterSource)[0] : null;
+    const start = chaptersMode && !resume && !query ? canonicalChapters(chapterSource)[0] : null;
+    if (chaptersMode) fragment.append(workSummary(rows));
     if (resume || start) {
       const button = document.createElement("button");
       button.type = "button";
@@ -273,94 +537,88 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       row.append(button);
       fragment.append(row);
     }
-    rows.forEach((entry, index) => {
+    const buildRow = (entry, index) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "result-item";
       button.dataset.index = String(index);
-      button.dataset.key = rowKey(entry, { chaptersMode, folderMode });
+      button.dataset.key = rowKey(entry, { chaptersMode, folderMode: kind === "boards" || kind === "categories" });
       const line = document.createElement("span");
       line.className = "result-title-line";
-      const name = document.createElement("span");
-      name.className = "result-title";
-      name.textContent = folderMode ? entry.folder_label
+      const titleText = kind === "boards" || kind === "categories" ? entry.folder_label
         : chaptersMode ? (entry.label || "회차")
         : entry.work_id ? (entry.title || entry.work_id)
-          : lane === "saved" ? (entry.title || entry.entry?.label || entry.identity)
+          : kind === "saved" ? (entry.title || entry.entry?.label || entry.identity)
             : (entry.title || entry.category || entry.identity);
-      line.append(name);
-      const meta = document.createElement("span");
-      meta.className = "result-meta";
+      line.append(query && kind !== "chapters" ? highlighted(titleText, query) : highlighted(titleText, ""));
+      let parts;
+      let badges = [];
       if (chaptersMode) {
         const key = identity(entry, lane, work);
         const saved = history.history[key];
-        const progress = saved?.progress ?? 0;
-        const parts = [
+        const value = saved?.progress ?? 0;
+        parts = [
           chapterKind(entry.kind),
-          progress >= FINISHED ? "다 읽음" : progress > 0 ? `${Math.round(progress * 100)}%` : saved ? "열어 봄" : "",
+          value >= FINISHED ? "다 읽음" : value > 0 ? `${Math.round(value * 100)}%` : saved ? "열어 봄" : "",
           history.bookmarks[key] ? "저장됨" : "",
-        ].filter(Boolean);
-        meta.textContent = parts.join(" · ");
-        button.classList.toggle("read", progress >= FINISHED);
+        ];
+        button.classList.toggle("read", value >= FINISHED);
         if (resume?.chapter === entry) {
           button.classList.add("current");
           button.setAttribute("aria-current", "true");
         }
+      } else if (kind === "boards" || kind === "categories") {
+        parts = [kind === "boards" ? "게시판" : entry.board, `${entry.folder_count.toLocaleString("ko-KR")}개 글`];
+      } else if (kind === "works") {
+        const workProgressEntry = progress.get(entry.work_id);
+        const { newCount } = workState(entry, workProgressEntry);
+        parts = workRowParts(entry, workProgressEntry);
+        badges = [newCount ? `새 ${newCount}화` : ""];
+      } else if (kind === "saved") {
+        parts = [entry.lane === "novel" ? `${entry.entry?.label || "회차"}` : entry.entry?.board || "아카라이브",
+          ...(entry.tags ?? []).map((tag) => `#${tag}`), entry.note || ""];
       } else {
-        meta.textContent = folderMode
-          ? `${folderMode === "board" ? "게시판" : entry.board} · ${entry.folder_count.toLocaleString("ko-KR")}개 글`
-          : entry.work_id
-          ? workRowMeta(entry, works?.get(entry.work_id))
-          : lane === "saved"
-            ? [entry.lane === "novel" ? `${entry.entry?.label || "회차"}` : entry.entry?.board || "아카라이브",
-              ...(entry.tags ?? []).map((tag) => `#${tag}`), entry.note || ""].filter(Boolean).join(" · ")
-            : [entry.author, entry.category, entry.board].filter(Boolean).join(" · ") || "아카라이브";
+        const record = history.history[identity(entry, "arcalive", null)];
+        const value = record?.progress ?? 0;
+        parts = [
+          flatSearch() ? [[entry.board, entry.category].filter(Boolean).join(" · "), "result-board"] : "",
+          entry.author, flatSearch() ? "" : entry.category,
+          value >= FINISHED ? "다 읽음" : value > 0 ? `${Math.round(value * 100)}%` : record ? "열어 봄" : "",
+        ];
+        badges = [history.bookmarks[identity(entry, "arcalive", null)] ? "저장" : ""];
+        button.classList.toggle("read", value >= FINISHED);
       }
-      if (meta.textContent) button.append(line, meta);
+      const badgeNode = badgeElement(badges);
+      if (badgeNode) line.append(badgeNode);
+      const meta = metaElement(parts);
+      if (meta.childElementCount) button.append(line, meta);
       else button.append(line);
       const row = document.createElement("li");
       row.append(button);
-      fragment.append(row);
-    });
+      return row;
+    };
+    rowWindow = { build: buildRow, key: (entry) => rowKey(entry, { chaptersMode, folderMode: kind === "boards" || kind === "categories" }) };
+    rendered = 0;
     list.append(fragment);
+    renderMore(RENDER_CHUNK);
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
-    status.textContent = chaptersMode
-      ? chapterStatus(rows.length)
-      : `${rows.length.toLocaleString("ko-KR")}개 ${folderMode === "board" ? "게시판" : folderMode === "category" ? "분류" : arcaliveView === "works" && lane === "arcalive" && !work ? "작품" : lane === "arcalive" ? "글" : "자료"}`;
+    const noun = { works: "작품", boards: "게시판", categories: "분류", posts: "글", saved: "자료" }[kind] ?? "자료";
+    status.textContent = chaptersMode ? chapterStatus(rows.length) : `${rows.length.toLocaleString("ko-KR")}개 ${noun}`;
     if (!rows.length) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
-      empty.textContent = !catalog.length ? "아직 게시된 자료가 없습니다."
-        : readFiltering() && readFilter !== "all" && !search.value.trim() ? "이 읽기 상태의 작품이 없습니다."
+      empty.textContent = !(kind === "works" ? currentWorks() : catalog).length ? "아직 게시된 자료가 없습니다."
+        : kind === "works" && (readFilter !== "all" || sourceFilter) && !query ? "이 조건의 작품이 없습니다."
           : "검색 결과가 없습니다.";
       list.append(empty);
     }
   }
 
+  // The work header above the rows carries title, author, and reading progress.
   function chapterStatus(shown) {
     const total = chapterSource.length;
-    let finished = 0;
-    for (const chapter of chapterSource) {
-      if ((history.history[identity(chapter, lane, work)]?.progress ?? 0) >= FINISHED) finished += 1;
-    }
-    return [
-      work?.title || "작품",
-      work?.author || "",
-      shown === total ? `${total.toLocaleString("ko-KR")}화` : `${shown.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}화`,
-      `읽음 ${finished.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}`,
-    ].filter(Boolean).join(" · ");
-  }
-
-  function workRowMeta(entry, progress) {
-    const total = entry.chapter_count ?? 0;
-    const { newCount } = workState(entry, progress);
-    const parts = [...(newCount ? [`새 ${newCount}화`] : []), entry.author || "작가 미상", `${total}화`];
-    if (progress) {
-      parts.push(`읽음 ${progress.finished}/${total}`);
-      if (progress.record?.title) parts.push(`최근 ${progress.record.title}`);
-    }
-    return parts.join(" · ");
+    return shown === total ? `${total.toLocaleString("ko-KR")}화` : `${shown.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}화 표시`;
   }
 
   function sameChapter(chapter, entry) {
@@ -401,41 +659,47 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function renderCatalog() {
     const query = normalize(search.value.trim());
-    const progress = readFiltering() ? workProgress() : null;
+    const progress = worksView() ? progressForLane() : null;
     renderReadChips(progress);
     if (work) {
       const displayed = orderChapters(chapterSource, sortMode);
       renderRows(displayed.filter((chapter) => normalize(`${chapter.label || ""} ${chapterKind(chapter.kind)}`).includes(query)),
-        { chaptersMode: true });
+        { kind: "chapters" });
       return;
     }
-    if (lane === "arcalive" && arcaliveView === "works") {
-      return renderRows(orderedWorks(arcaliveWorks.filter((item) =>
-        normalize(`${item.title} ${item.author} ${item.board} ${item.category}`).includes(query))));
+    if (progress) {
+      const matchesWork = (item) => normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query)
+        && (!sourceFilter || lane !== "novel" || item.source_site === sourceFilter)
+        && matchesReadFilter(workState(item, progress.get(item.work_id)));
+      renderRows(orderedWorks(currentWorks().filter(matchesWork), progress), { kind: "works" });
+      return;
     }
-    const matching = orderedWorks(catalog.filter((item) =>
-      normalize(`${item.title || item.category || ""} ${item.author || ""} ${item.board || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query)
-      && (!progress || matchesReadFilter(workState(item, progress.get(item.work_id))))), progress);
-    if (lane === "arcalive") {
-      const group = (items, key) => {
-        const grouped = new Map();
-        for (const item of items) {
-          const label = String(item[key] || "미분류");
-          const entry = grouped.get(label) || { folder_label: label, folder_count: 0, board: folderBoard || "" };
-          entry.folder_count += 1;
-          grouped.set(label, entry);
-        }
-        return [...grouped.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR"));
-      };
-      if (!folderBoard) return renderRows(group(matching, "board"), { folderMode: "board" });
-      const boardItems = catalog.filter((item) => String(item.board || "미분류") === folderBoard);
-      const visibleBoard = query
-        ? boardItems.filter((item) => normalize(`${item.title || ""} ${item.author || ""} ${item.category || ""}`).includes(query))
-        : boardItems;
-      if (!folderCategory) return renderRows(group(visibleBoard, "category"), { folderMode: "category" });
-      return renderRows(orderedWorks(visibleBoard.filter((item) => String(item.category || "미분류") === folderCategory)));
+    if (lane === "saved") {
+      renderRows(orderedWorks(catalog.filter((item) =>
+        normalize(`${item.title || ""} ${item.entry?.label || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query))), { kind: "saved" });
+      return;
     }
-    renderRows(matching);
+    const group = (items, key) => {
+      const grouped = new Map();
+      for (const item of items) {
+        const label = String(item[key] || "미분류");
+        const entry = grouped.get(label) || { folder_label: label, folder_count: 0, board: folderBoard || "" };
+        entry.folder_count += 1;
+        grouped.set(label, entry);
+      }
+      return [...grouped.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR"));
+    };
+    const scope = folderBoard ? catalog.filter((item) => String(item.board || "미분류") === folderBoard) : catalog;
+    const matching = query
+      ? scope.filter((item) => normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query))
+      : scope;
+    // Searching above a category lists the matching posts themselves, newest first.
+    if (flatSearch()) {
+      return renderRows(matching.slice().sort((left, right) => (Number(right.post_id) || 0) - (Number(left.post_id) || 0)), { kind: "posts" });
+    }
+    if (!folderBoard) return renderRows(group(matching, "board"), { kind: "boards" });
+    if (!folderCategory) return renderRows(group(matching, "category"), { kind: "categories" });
+    return renderRows(orderedWorks(matching.filter((item) => String(item.category || "미분류") === folderCategory)), { kind: "posts" });
   }
 
   function rememberListPosition() {
@@ -445,8 +709,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function restoreListPosition() {
     const snapshot = loadListPosition(listRoute());
     requestAnimationFrame(() => {
-      if (snapshot) restoreListAnchor(list, snapshot, ROW_SELECTOR);
-      else list.scrollTop = 0;
+      if (snapshot) {
+        renderThroughKey(snapshot.key);
+        restoreListAnchor(list, snapshot, ROW_SELECTOR);
+      } else list.scrollTop = 0;
     });
   }
 
@@ -735,7 +1001,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const entries = canonicalChapters(chapters);
       return { unit: "화", entries, index: entries.findIndex((chapter) => sameChapter(chapter, entry)), toc: true };
     }
-    if (lane === "arcalive" && folderCategory) {
+    if (lane === "arcalive" && listKind === "posts") {
       // The posts shown, in posting order: the list sort never changes 이전/다음 글.
       const entries = visible.slice().sort((left, right) => (Number(left.post_id) || 0) - (Number(right.post_id) || 0));
       return { unit: "글", entries, index: entries.findIndex((item) => sameChapter(item, entry)), toc: false };
@@ -806,7 +1072,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       readAt: new Date().toISOString(),
       title: isNovel ? (entry.label || "") : (entry.title || ""),
       work: itemWork?.title || "",
-      ...(isNovel && itemWork?.work_id ? { workId: itemWork.work_id } : {}),
+      ...(itemWork?.work_id ? { workId: itemWork.work_id } : {}),
       total: itemWork?.chapter_count ?? 0,
       route: route(),
       listRoute: itemWork
@@ -998,7 +1264,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!Number.isInteger(index) || index < 0 || index >= visible.length) return;
     const selected = visible[index];
     rememberListPosition();
-    if (lane === "arcalive" && arcaliveView === "files" && !folderBoard) {
+    if (listKind === "boards") {
       folderBoard = selected.folder_label;
       syncBackButton();
       onChange();
@@ -1007,7 +1273,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       list.scrollTop = 0;
       return;
     }
-    if (lane === "arcalive" && arcaliveView === "files" && !folderCategory) {
+    if (listKind === "categories") {
       folderCategory = selected.folder_label;
       sortMode = defaultSort();
       syncBackButton();
@@ -1021,7 +1287,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const navigation = current ? "replace" : "push";
     const action = lane === "saved"
       ? openBody(selected.entry, { navigation, sourceLane: selected.lane, sourceWork: selected.work, savedIdentity: selected.identity })
-      : work || (lane === "arcalive" && arcaliveView === "files") ? openBody(selected, { navigation }) : openWork(selected);
+      : listKind === "works" ? openWork(selected) : openBody(selected, { navigation });
     void action.catch((error) => { status.textContent = `본문을 열지 못했습니다 · ${error.message}`; });
   }
 
@@ -1188,6 +1454,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     void open(next);
     window.history.pushState({ redstmText: true }, "", `/text?${next}`);
   });
+  document.querySelector("#text-read-chips")?.addEventListener("change", (event) => {
+    if (event.target.id !== "text-source-filter" || !worksView()) return;
+    sourceFilter = event.target.value;
+    renderCatalog();
+    list.scrollTop = 0;
+    if (!current) window.history.replaceState(window.history.state, "", listRoute());
+  });
   document.querySelector("#text-read-chips")?.addEventListener("click", (event) => {
     const chip = event.target.closest("[data-text-read]");
     if (chip) setReadFilter(chip.dataset.textRead);
@@ -1221,7 +1494,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function setReadFilter(value) {
     const next = READ_FILTER_VALUES.has(value) ? value : "all";
-    if (next === readFilter || !readFiltering()) return;
+    if (next === readFilter || !worksView()) return;
     readFilter = next;
     renderCatalog();
     list.scrollTop = 0;
@@ -1261,8 +1534,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return context === "chapters"
       ? [["오래된순", "oldest"], ["최신순", "latest"], ["이름순", "title"]]
       : context === "works"
-        ? [["가나다순", "title"], ["편수 많은순", "longest"], ["최신 화순", "updated"],
-          ...(lane === "novel" ? [["최근 읽은순", "recent"]] : [])]
+        ? [["최근 갱신순", "updated"], ["가나다순", "title"], ["편수 많은순", "longest"], ["최근 읽은순", "recent"]]
         : [];
   }
 
@@ -1342,6 +1614,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     folderCategory = null;
     syncBackButton();
     renderReadChips(null);
+    rowObserver?.unobserve(rowSentinel);
+    rowSentinel.remove();
+    rowWindow = null;
     shell.close();
   }
 

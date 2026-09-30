@@ -884,7 +884,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator("#archive-body")).toHaveCSS("background-color", "rgb(245, 245, 240)");
   await page.locator('[data-aa-preset="11:800"]').click();
   await expect(page.locator(".aa-canvas")).toHaveAttribute("data-width", "800");
-  await expect(page.locator("#aa-inline-size")).toHaveText("11px");
+  await expect(page.locator("#aa-size-output")).toHaveText("11px");
   await expect(page.locator("#archive-body font")).toHaveCSS("font-size", "11px");
   await expect(page.locator("#archive-body font")).toHaveCSS("font-weight", "700");
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("font-size", "11px");
