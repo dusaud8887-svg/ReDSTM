@@ -35,6 +35,7 @@ import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPositio
 import { adjacentInSequence } from "/sequence.js";
 import { createTextLibrary } from "/text-library.js";
 import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
+import { createOverlayManager } from "/overlay-manager.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -96,6 +97,9 @@ const elements = Object.fromEntries(
   ].map((id) => [id, document.getElementById(id)]),
 );
 elements["result-list"].classList.add("loading");
+const overlays = createOverlayManager();
+for (const dialog of document.querySelectorAll("dialog")) overlays.watch(dialog);
+overlays.watchFullscreen(document);
 
 const RESULT_PAGE_SIZE = 100;
 
@@ -568,8 +572,8 @@ function readableAaInk(background) {
 function showReaderFeedback(text, duration = 1200) {
   clearTimeout(zoomFeedbackTimer);
   elements["aa-zoom-indicator"].textContent = text;
-  elements["aa-zoom-indicator"].hidden = false;
-  zoomFeedbackTimer = setTimeout(() => { elements["aa-zoom-indicator"].hidden = true; }, duration);
+  overlays.showToast(elements["aa-zoom-indicator"]);
+  zoomFeedbackTimer = setTimeout(() => overlays.hideToast(elements["aa-zoom-indicator"]), duration);
 }
 
 function showZoomFeedback() {
@@ -1099,7 +1103,7 @@ function beginReaderDocument(documentKey, workId, rev) {
     progressFrame = 0;
     pagingScroll = false;
     textLibrary.cancelPendingPosition();
-    elements["aa-zoom-indicator"].hidden = true;
+    overlays.hideToast(elements["aa-zoom-indicator"]);
   });
   readerSession.adapter = createScrollAdapter({
     body: elements["archive-body"], scroller: elements["reader-pane"], topInset: readerTopInset,
@@ -1856,6 +1860,7 @@ function restoreCatalogPosition() {
 }
 
 function cancelReaderSelection() {
+  overlays.closeAll("navigate");
   readerViewId += 1;
   postController?.abort();
   readerSession.cancelPendingWork();
@@ -4543,6 +4548,7 @@ elements["import-apply"].addEventListener("click", () => void applyImport(false)
 elements["import-merge"].addEventListener("click", () => void applyImport(true));
 
 document.addEventListener("keydown", (event) => {
+  if (overlays.handleEscape(event)) return;
   const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");
   if (catalogArrow && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
     event.preventDefault();
