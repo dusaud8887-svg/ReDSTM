@@ -479,9 +479,12 @@ Reader context bar의 8px 점에만 쓴다.
 - 산문 선택자는 `@scope (.archive-body) to (.aa-canvas, .media-figure)`로 제한한다. 단 `@scope`는 **선택자 범위만** 막고
   상속은 막지 않는다. 그래서 AA root(`.aa-canvas`)는 앱이 조절하는 산문 속성을 **명시적으로 다시 지정**한다:
   `font-family`(AA 스택) `font-size`·`line-height`(AA 배율 계산값) `letter-spacing: 0` `word-spacing: 0` `text-indent: 0`
-  `text-align: left` `white-space: pre` `word-break: normal` `overflow-wrap: normal` `font-weight: 400` `font-style: normal`
+  `text-align: start` `word-break: normal` `font-weight: 400` `font-style: normal` `text-wrap: wrap` `hyphens: manual`
   `text-transform: none` `font-feature-settings: normal` `text-autospace: no-autospace`. 원문 인라인 색·span 스타일은
   건드리지 않는다(`all: initial` 금지).
+  **기존 AA 보존 규칙은 값 그대로 유지한다** — 루트 `white-space: pre-wrap`·`overflow-wrap: normal`·`text-size-adjust: 100%`(Android 글자
+  자동 확대 차단), 원문 `pre`/`.AA_Text`/`div[style*="font-family"]`의 `white-space: nowrap !important`와 글꼴·크기·행간
+  `inherit !important`. 전체 목록은 `docs/24` §8.16 인벤토리. 위 재지정 목록에서 `white-space`·`overflow-wrap`은 이 기존 값을 따른다.
 
 ### 8.2 읽기 방식
 
@@ -509,10 +512,10 @@ Reader context bar의 8px 점에만 쓴다.
 
 ### 8.4 AA 뷰어
 
-- parity: 9–24px, line-height 정확히 1.125, zoom 10–300% 25% step, 프리셋 16/auto · 11/800 · 9/680, 원본색/단색,
+- parity: 9–24px, line-height 정확히 1.125, zoom 10–300%(버튼 ±25%, 핀치·맞춤은 연속값), 프리셋 16/auto · 11/800 · 9/680, 원본색/단색,
   배경 아이보리·흰색·직접, 글마다 배율·가로 위치 기억.
-- 두 손가락: 제스처 중에는 stage에 CSS `transform: scale()`만(60fps), 손을 떼면 **허용 단계 [10, 25, 50, 75, … 300]% 중
-  가장 가까운 값**으로 확정해 다시 그린다(10% 아래·300% 위로 가지 않음). 기준점은 두 손가락 중점이며, 확정 후 가로·세로 스크롤을
+- 두 손가락: 제스처 중에는 stage에 CSS `transform: scale()`만(60fps), 손을 떼면 **기존과 같은 연속 배율**(10–300%, 소수 셋째 자리)로
+  확정해 다시 그린다(글자 선명). 25% 단위는 버튼(−/+)에만 쓴다. 기준점은 두 손가락 중점이며, 확정 후 가로·세로 스크롤을
   그 점이 같은 화면 위치에 오도록 보정. `맞춤`(자동 배율)과 수동 배율은 구분해 저장한다.
 - 탭: 한 번 탭 = 도구 토글(**지연 없음**). 300ms 안의 두 번째 탭이면 토글을 되돌리고 `맞춤 ↔ 100%`(체감 지연 없이 구분).
 - 도구줄(AA 전용, 본문 위 sticky): `맞춤 · − · 100% · + · ⟲ 가로 전체화면 · 색`.
