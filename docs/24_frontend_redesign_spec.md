@@ -1247,6 +1247,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 ```
 
 - S4 검증: unit 126/126, check·lint 0 error, 관련 Reader E2E desktop/mobile 93 pass/7 기존 skip(54.0초). 편집 1파일(결과와 실기기 방법만). M0 최종 전체/axe/Linux visual은 branch 및 main CI로 확인한다.
+- M0 마감: P0-1~5, F0-1~4와 S1·S3·S4 기록 완료. F0-2는 5파일 제한과 추가 회귀 때문에 a/b/c/d로 분할했다. [최종 코드 Linux CI 36718168285](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36718168285): unit 126, 전체 E2E 578 pass/14 기존 skip(7.7분, visual 48개 포함), axe·check·lint·글꼴 재현·D1 migration·Worker dry-run·python/text-edge 모두 통과. main의 AA 보존 문서 변경도 병합했다. S4 미확인으로 P6-1 보류, cancelPendingWork/canSave 결합과 실제 기기 동작은 남은 위험이다. main 병합 이후 CI 결과는 다음 기록에서 확정한다.
+- 실기기 확인 대기(M0 확정): T03/T04 — 바→시트→popover를 연 뒤 시스템 Back으로 한 층씩 닫히며 Reader/history 유지; T20 — 작품 진입 직후 플릭하고 늦은 글꼴/이미지 도착에도 위치가 되돌아가지 않음; T34 — 찾기/메모 키보드 표시·회전·주소창 변화 중 저장/도구가 오작동하지 않음. S4 방법은 위 probe, S1/T02와 S3/T07은 해당 마일스톤의 실기기 대기에 이어 기록한다.
 
 | 날짜 | 내용 |
 |---|---|
