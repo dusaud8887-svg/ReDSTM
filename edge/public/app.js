@@ -2126,6 +2126,8 @@ async function hydrateSavedEntries() {
       });
     }
   }
+  // Records only know where they point once the index resolves them; the mini bar can now show.
+  miniBar.render(miniBarModel());
 }
 
 function routeSummary() {

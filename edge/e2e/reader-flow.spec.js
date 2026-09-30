@@ -1541,3 +1541,15 @@ test("Find in the chapter counts hits, moves to them, and offers the place it st
     await expect(page.locator("#reader")).toBeVisible();
   }
 });
+
+test("The mini bar appears on a list opened directly once saved records resolve", async ({ page }) => {
+  test.skip(!mobileWidth(page), "phone tab bar only");
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    history: { "board_a:3": { readAt: "2026-09-30T02:57:00Z", progress: 0.38 } },
+  })));
+  await useLongCollection(page, 12);
+  await page.goto("/browse");
+  await expect(page.locator("#mini-bar")).toBeVisible();
+  await expect(page.locator("#mini-bar")).toHaveAccessibleName(/3편 제목/);
+});
