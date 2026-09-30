@@ -1,0 +1,101 @@
+@font-face {
+  font-family: "SUIT Variable";
+  src: url("/fonts/SUIT-Variable.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 100 900;
+}
+
+@font-face {
+  font-family: MaruBuri;
+  src: url("/fonts/MaruBuri-Regular.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: Saitamaar;
+  src: url("/fonts/Saitamaar-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --page: #ffffff;
+  --surface: #f7f8fa;
+  --surface-raised: #ffffff;
+  --reader: #fbfaf8;
+  --ink: #15171a;
+  --muted: #4b5565;
+  --subtle: #7c8798;
+  --line: #e7e9ee;
+  --line-strong: #cdd2da;
+  --accent: #d12a3a;
+  --accent-hover: #b42332;
+  --accent-soft: #fff1f2;
+  --focus: #2e90fa;
+  --overlay: rgb(11 13 18 / 40%);
+  --shadow: 0 8px 24px rgb(16 24 40 / 16%);
+  --font-ui: "SUIT Variable", SUIT, "Malgun Gothic", sans-serif;
+  --font-reading: MaruBuri, "Nanum Myeongjo", Batang, serif;
+  --prose-size: 18px;
+  --prose-line: 1.8;
+  --prose-width: 760px;
+  --prose-margin: 20px;
+  --prose-font: var(--font-reading);
+  --aa-effective-size: 16px;
+  --aa-effective-line: 18px;
+  --aa-background: #f5f5f0;
+  --aa-ink: #24252a;
+  font-family: var(--font-ui);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0b0d12;
+  --surface: #11141a;
+  --surface-raised: #171b22;
+  --reader: #111318;
+  --ink: #f4f6f8;
+  --muted: #a7afbe;
+  --subtle: #7e8796;
+  --line: #292e38;
+  --line-strong: #3a414d;
+  --accent: #ff646e;
+  --accent-hover: #ff7c84;
+  --accent-soft: #351a20;
+  --focus: #84caff;
+  --overlay: rgb(0 0 0 / 60%);
+  --shadow: 0 8px 24px rgb(0 0 0 / 48%);
+}
+
+/* 본문 면 종이: a warm reading surface for the Reader only (body, its bars, and the tools under
+   it). The app chrome keeps the Signal Archive tokens. The red is deepened so small red labels
+   stay above 4.5:1 on the warmer ground. */
+:root[data-surface="paper"]:not([data-theme="dark"]) :is(.reader, .reader-bottom, .reader-status) {
+  --page: #fbf7ef;
+  --surface: #efe7d7;
+  --surface-raised: #fbf7ef;
+  --reader: #f6f0e4;
+  --ink: #2b2520;
+  --muted: #5c5247;
+  --subtle: #8a7f70;
+  --line: #e4dac7;
+  --line-strong: #d2c5ad;
+  --accent: #c42534;
+  --accent-hover: #a51f2c;
+  --accent-soft: #f8e4dc;
+}
+:root[data-surface="paper"][data-theme="dark"] :is(.reader, .reader-bottom, .reader-status) {
+  --page: #211d17;
+  --surface: #26211b;
+  --surface-raised: #2b261f;
+  --reader: #1c1914;
+  --ink: #ebe3d5;
+  --muted: #b8ad9b;
+  --subtle: #8c8272;
+  --line: #3a3329;
+  --line-strong: #4b4336;
+  --accent-soft: #3b2420;
+}

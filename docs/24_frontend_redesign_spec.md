@@ -1250,6 +1250,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - M0 마감: P0-1~5, F0-1~4와 S1·S3·S4 기록 완료. F0-2는 5파일 제한과 추가 회귀 때문에 a/b/c/d로 분할했다. [최종 코드 Linux CI 36718168285](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36718168285): unit 126, 전체 E2E 578 pass/14 기존 skip(7.7분, visual 48개 포함), axe·check·lint·글꼴 재현·D1 migration·Worker dry-run·python/text-edge 모두 통과. main의 AA 보존 문서 변경도 병합했다. S4 미확인으로 P6-1 보류, cancelPendingWork/canSave 결합과 실제 기기 동작은 남은 위험이다. main 병합 이후 CI 결과는 다음 기록에서 확정한다.
 - 실기기 확인 대기(M0 확정): T03/T04 — 바→시트→popover를 연 뒤 시스템 Back으로 한 층씩 닫히며 Reader/history 유지; T20 — 작품 진입 직후 플릭하고 늦은 글꼴/이미지 도착에도 위치가 되돌아가지 않음; T34 — 찾기/메모 키보드 표시·회전·주소창 변화 중 저장/도구가 오작동하지 않음. S4 방법은 위 probe, S1/T02와 S3/T07은 해당 마일스톤의 실기기 대기에 이어 기록한다.
 
+- P1-1: `app.css`를 `styles/{tokens,base,shell,components,library,reader,aa}.css` 7파일로 값 불변 분할(`@layer` 없음 — layer는 특이도보다 우선해 값이 바뀐다). 파일 사이 순서가 바뀌며 생긴 차이(카탈로그 배치·하단 탭 표시 규칙)는 해당 배치 규칙을 shell로 옮겨 해소. 검증: 10화면×5폭(320/384/768/1100/1440)×light/dark = 100상태의 모든 요소·가상 요소 computed style 분할 전후 동일(도구 `.wrangler/cssdiff`, 커밋 안 함), AA 인벤토리 속성 포함(T06 분할 부분). unit 126, check·lint 0 error, 전체 E2E 530 pass/14 기존 skip(4.7분).
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

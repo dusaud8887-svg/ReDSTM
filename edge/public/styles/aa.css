@@ -1,0 +1,38 @@
+.aa-controls { position: sticky; top: 56px; z-index: 6; min-height: 52px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.aa-control-group { display: inline-flex; align-items: center; gap: 4px; }
+.aa-control-group button, .aa-color-picker { min-width: 44px; min-height: 44px; display: inline-grid; place-items: center; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); color: var(--ink); cursor: pointer; }
+.aa-control-group button:hover, .aa-control-group button.active, .aa-color-picker:hover, .aa-color-picker.active { border-color: var(--accent); color: var(--accent); }
+.aa-control-group output { min-width: 44px; color: var(--muted); text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+.aa-presets button { font-size: 11px; }
+.aa-control-label { margin-right: 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.aa-color-choice { width: auto; grid-auto-flow: column; gap: 6px; font-size: 12px; }
+.aa-color-choice::before { content: ""; width: 18px; height: 18px; border: 1px solid #c7c2b8; border-radius: 3px; background: #f5f5f0; }
+.aa-color-choice.white::before { background: #fff; }
+.aa-color-picker { width: auto; grid-template-columns: auto auto; grid-auto-flow: column; gap: 6px; padding: 0 9px; font-size: 12px; }
+.aa-color-picker input { position: static; grid-column: auto; width: 20px; height: 20px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.aa-zoom-reset { min-width: 62px !important; }
+.aa-zoom-indicator { position: fixed; top: 50%; left: calc(50% + 216px); z-index: 40; transform: translate(-50%, -50%); padding: 13px 18px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
+
+.archive-body.aa { width: 100%; max-width: none; padding: 42px 24px 72px; text-align: start; overflow-x: auto; overflow-y: hidden; overflow-wrap: normal; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre-wrap; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x pan-y; text-size-adjust: 100%; }
+.archive-body.aa.aa-can-scroll { box-shadow: inset -26px 0 22px -22px rgb(11 13 18 / 58%); }
+.aa-canvas { width: fit-content; min-width: 100%; }
+.aa-canvas[data-width="680"] { width: 680px; min-width: 680px; }
+.aa-canvas[data-width="800"] { width: 800px; min-width: 800px; }
+.archive-body.aa p { margin: 0; }
+.archive-body.aa :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; display: block; margin: 0; padding: 0; white-space: nowrap !important; font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; background: transparent !important; }
+.archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
+
+.comment-body.aa-comment { overflow-x: auto; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; }
+.comment-body.aa-comment :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; min-width: 100%; margin: 0; padding: 0; white-space: pre !important; font: inherit !important; background: transparent !important; }
+.comment-body.aa-comment.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
+
+@media (max-width: 1199px) {
+  .aa-zoom-indicator { left: calc(50% + 170px); }
+}
+
+@media (max-width: 759px) {
+  .aa-controls { top: 0; flex-wrap: nowrap; overflow-x: auto; padding-inline: 8px; }
+  .aa-control-group { flex: 0 0 auto; }
+  .aa-zoom-indicator { left: 50%; }
+  .archive-body.aa { width: 100%; padding: 28px 8px 52px; }
+}
