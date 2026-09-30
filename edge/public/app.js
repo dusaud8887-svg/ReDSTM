@@ -26,6 +26,7 @@ import {
   readingTimeLabel,
   remainingTimeLabel,
   weightedPicks,
+  lastSentenceQuote,
 } from "/reading-model.js";
 import { createBoardNavigator } from "/board-navigator.js";
 import {
@@ -36,6 +37,10 @@ import { adjacentInSequence } from "/sequence.js";
 import { createTextLibrary } from "/text-library.js";
 import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
+import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
+import { createMiniBar } from "/shell.js";
+import { fillContinueCard, shelfCard } from "/home.js";
+import { workHue, workKey } from "/type-cover.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -50,26 +55,27 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", readerSurface: "default", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
   proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "text-lanes", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
+    "scope-tabs", "source-switch", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
     "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
+    "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
-    "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls",
+    "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
@@ -225,6 +231,8 @@ const textLibrary = createTextLibrary({
     if (currentDestination === "text") applyTextSortOptions();
   },
 });
+
+const miniBar = createMiniBar({ element: document.querySelector("#mini-bar"), homeCard: elements["continue-block"] });
 
 const boardNavigator = createBoardNavigator({
   dialog: elements["board-dialog"],
@@ -389,6 +397,25 @@ function updateShellMode() {
   document.body.classList.toggle("browse-open", currentDestination === "browse");
   document.body.classList.toggle("search-open", currentDestination === "search");
   document.body.classList.toggle("saved-open", currentDestination === "bookmarks");
+  miniBar.render(miniBarModel());
+}
+
+// The newest unfinished place to go back to: a text chapter or a TypeMoon post (docs/24 §8.1).
+function miniBarModel() {
+  const text = textLibrary.latestReading();
+  const post = historyEntries.find((entry) => entry.summary?.object_key && postReadingState(entry.progress) !== "finished");
+  if (text && (!post || Date.parse(text.readAt) > Date.parse(post.readAt))) {
+    return {
+      title: text.work || text.title || "텍스트 장서", detail: text.work ? text.title : "", progress: text.progress,
+      hue: workHue(textHueKey(text)), open: () => openTextFromHome(text),
+    };
+  }
+  if (!post) return null;
+  return {
+    title: post.summary.title || "제목 없음", detail: boardLabel(post.summary.board_id), progress: post.progress,
+    hue: workHue(postHueKey(post.summary)),
+    open: () => loadPost(post.summary, "push", { listHint: "recent" }),
+  };
 }
 
 function rememberQuery(query) {
@@ -473,10 +500,7 @@ function applyBoardFilterOptions() {
 
 function applySettings() {
   const root = document.documentElement;
-  const dark = settings.theme === "dark" ||
-    (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  root.dataset.theme = dark ? "dark" : "light";
-  root.dataset.surface = settings.readerSurface;
+  const dark = applyAppearance(settings);
   root.style.setProperty("--prose-align", settings.proseAlign === "justify" ? "justify" : "start");
   root.style.setProperty("--prose-size", `${settings.proseSize}px`);
   root.style.setProperty("--prose-line", settings.lineHeight);
@@ -508,6 +532,8 @@ function applySettings() {
     ["prose-width", settings.proseWidth, "px"],
     ["prose-margin", settings.proseMargin, "px"],
     ["aa-size", settings.aaSize, "px"],
+    ["reader-dim", settings.readerDim, "%"],
+    ["reader-warm", settings.readerWarm, "%"],
   ]) {
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
@@ -537,15 +563,8 @@ function applySettings() {
   requestAnimationFrame(() => updateAaOverflowCue());
 }
 
-// Browser bar colour. Under 시스템 each media-scoped meta keeps its own scheme's colour and the
-// browser picks; an explicit 밝게/어둡게 overrides both, whatever the OS says. While a
-// paper-surface body is open the bar matches the Reader instead of the page.
 function syncThemeColor() {
-  const paper = Boolean(readerSource) && settings.readerSurface === "paper";
-  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
-    const dark = settings.theme === "system" ? meta.media.includes("dark") : settings.theme === "dark";
-    meta.content = paper ? (dark ? "#1c1914" : "#f6f0e4") : dark ? "#0b0d12" : "#ffffff";
-  }
+  syncBrowserThemeColor(settings, Boolean(readerSource));
 }
 
 function relativeLuminance(hex) {
@@ -727,6 +746,11 @@ function renderCover(
   else elements["continue-block"].hidden = true;
   renderHomeList(elements["latest-list"], latestPosts, "최근 게시된 글이 없습니다.", 6);
   renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.", 4, "recent");
+  // Empty modules hide whole (docs/24 §8.2); a first visit gets one block of ways in instead.
+  elements["recent-list"].closest("section").hidden = !historyEntries.length;
+  const firstVisit = !historyEntries.length && !bookmarks.length && !textLibrary.latestReading();
+  elements["home-onboarding"].hidden = !showContinue || !firstVisit;
+  elements["empty-reader"].classList.toggle("home-alert", Boolean(actionLabel) || title !== "내 장서");
   renderHomeBoards();
   void renderReadingWorks();
   void renderDiscovery();
@@ -826,6 +850,24 @@ function renderTextContinue(text) {
   ].filter(Boolean).join(" · ");
   elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
   setContinueProgress(finished ? 0 : text.progress);
+  fillContinueCard(continueCardParts(), {
+    title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
+  });
+}
+
+function continueCardParts() {
+  return { cover: elements["continue-cover"], quote: elements["continue-quote"], when: elements["continue-when"] };
+}
+
+// Stable cover keys (DESIGN §2.5) for records that only know an identity.
+function textHueKey(text) {
+  if (text.identity?.startsWith("novel:")) return workKey({ source: "novel", id: text.workId || text.work || text.identity });
+  return workKey({ source: "arcalive", board: text.board || "", id: text.workId || text.work || text.identity });
+}
+function postHueKey(summary, collectionId = null) {
+  return collectionId ? workKey({ source: "typemoon", id: collectionId })
+    : workKey({ source: "typemoon-post", board: summary.board_id, id: summary.external_post_id });
 }
 
 // The red progress piece along the bottom of the 이어서 읽기 card (DESIGN §3).
@@ -849,6 +891,7 @@ async function renderContinueCard() {
   }
   let summary = latestEntry.summary;
   let progress = latestEntry.progress;
+  let shownEntry = latestEntry;
   let membership = null;
   try {
     membership = await findCollection(summary);
@@ -859,6 +902,7 @@ async function renderContinueCard() {
     const target = collectionContinueTarget(membership.collection.entries, historyByIdentityMap());
     if (target.kind === "next" || target.kind === "resume") {
       summary = target.entry;
+      shownEntry = historyEntries.find((entry) => samePost(entry.summary, target.entry)) ?? null;
       progress = target.kind === "resume"
         ? historyByIdentityMap().get(postIdentity(target.entry))?.progress ?? 0
         : 0;
@@ -872,6 +916,7 @@ async function renderContinueCard() {
       }
       summary = fallback.summary;
       progress = fallback.progress;
+      shownEntry = fallback;
       try {
         membership = await findCollection(summary);
       } catch {
@@ -888,6 +933,7 @@ async function renderContinueCard() {
     }
     summary = fallback.summary;
     progress = fallback.progress;
+    shownEntry = fallback;
   }
   if (currentDestination !== "library") return;
   continueTargetPost = summary;
@@ -910,6 +956,11 @@ async function renderContinueCard() {
     elements["continue-work"].hidden = true;
     elements["continue-toc"].hidden = true;
   }
+  fillContinueCard(continueCardParts(), {
+    title: membership?.collection.title || summary.title || "제목 없음", source: "타입문넷",
+    hueKey: postHueKey(summary, membership?.collection.id), progress, sentence: lastSentenceQuote(shownEntry?.loc),
+    readAt: shownEntry?.readAt ?? latestEntry.readAt,
+  });
 }
 
 async function renderReadingWorks() {
@@ -942,7 +993,10 @@ async function renderReadingWorks() {
       });
       items.push({
         title: collection.title,
-        meta: [boardLabel(collection.board_id), copy.progress, copy.action],
+        source: "타입문넷",
+        hueKey: workKey({ source: "typemoon", id: collection.id }),
+        progress: collectionAvailableCount(collection) ? (state?.finished ?? 0) / collectionAvailableCount(collection) : null,
+        meta: [copy.progress, copy.action],
         readAt: state?.lastReadAt ?? "",
         fresh: hasNewEpisodes(collection, state),
         open: () => void openCollectionDetail(collection.id),
@@ -957,7 +1011,11 @@ async function renderReadingWorks() {
   for (const work of textWorks) {
     items.push({
       title: work.title,
-      meta: ["소설", work.meta],
+      source: "소설",
+      hueKey: workKey({ source: "novel", id: work.workId }),
+      progress: work.progress,
+      newCount: work.newCount,
+      meta: [work.meta],
       readAt: work.readAt,
       fresh: work.newCount > 0,
       badge: work.newCount > 0 ? `새 ${work.newCount}화` : "",
@@ -967,7 +1025,7 @@ async function renderReadingWorks() {
   // Works with episodes added since they were last read come first.
   items.sort((left, right) => Number(right.fresh) - Number(left.fresh) ||
     (Date.parse(right.readAt) || 0) - (Date.parse(left.readAt) || 0));
-  const shown = items.slice(0, 3);
+  const shown = items.slice(0, 8);
   section.hidden = shown.length === 0 && failedBoards.size === 0;
   list.replaceChildren();
   if ((failedBoards.size || typeMoonFailed) && shown.length === 0) {
@@ -978,7 +1036,7 @@ async function renderReadingWorks() {
     list.append(empty);
   }
   for (const item of shown) {
-    list.append(homeRow(item.title, item.meta, item.open, { badge: item.badge || (item.fresh ? "새 편" : "") }));
+    list.append(shelfCard({ ...item, badge: item.badge || (item.fresh ? "새 편" : ""), newCount: item.newCount ?? (item.fresh ? 1 : 0) }));
   }
   if (failedBoards.size && shown.length) {
     const note = document.createElement("li");
@@ -1427,12 +1485,40 @@ async function copyReaderLink() {
   }
 }
 
+// The text library is a source inside 둘러보기, so its screens keep that tab lit.
 function updateDestinationButtons() {
+  const tab = currentDestination === "text" ? "browse" : currentDestination;
   for (const button of document.querySelectorAll("[data-destination]")) {
-    const active = button.dataset.destination === currentDestination;
+    const active = button.dataset.destination === tab;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active);
   }
+}
+
+const browseSourceKey = "redstm.browseSource";
+function rememberedBrowseSource() {
+  try {
+    const source = localStorage.getItem(browseSourceKey);
+    return ["novel", "arcalive"].includes(source) ? source : "typemoon";
+  } catch {
+    return "typemoon";
+  }
+}
+
+function openBrowseSource(source) {
+  try { localStorage.setItem(browseSourceKey, source); } catch { /* the choice is a convenience */ }
+  if (source === "typemoon") {
+    if (currentDestination === "browse") return;
+    setScope("posts");
+    showDestination("browse");
+    return;
+  }
+  if (currentDestination === "text") {
+    textLibrary.changeLane(source);
+    return;
+  }
+  history.pushState(null, "", `/text?lane=${source}`);
+  showDestination("text", false);
 }
 
 function setScope(scope) {
@@ -1591,7 +1677,12 @@ function updateDestinationLayout() {
   const collections = currentScope === "collections";
   updateShellMode();
   elements["scope-tabs"].hidden = !browsing && !searching;
-  elements["text-lanes"].hidden = !text;
+  elements["source-switch"].hidden = !browsing && !text;
+  if (browsing) {
+    for (const button of elements["source-switch"].querySelectorAll("[data-source]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.source === "typemoon"));
+    }
+  }
   document.querySelector(".saved-tabs").hidden = !saved;
   elements["catalog-search-row"].hidden = !searching && !saved && !text;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
@@ -1609,7 +1700,7 @@ function updateDestinationLayout() {
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
     : text ? textLibrary.searchPlaceholder()
     : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
-  elements["catalog-title"].textContent = saved ? "내 보관함"
+  elements["catalog-title"].textContent = saved ? "기록"
     : text ? "텍스트 장서"
     : collections ? (browsing ? "작품 둘러보기" : "작품 검색")
     : browsing ? "게시판 둘러보기" : "글 검색";
@@ -1895,7 +1986,7 @@ function showDestination(destination, navigate = true, view = destination === "b
   currentDestination = destination;
   currentView = view;
   const catalogLabel = currentScope === "collections" ? "작품" : "글";
-  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : destination === "text" ? "텍스트 장서" : "내 보관함"} — ReDSTM`;
+  document.title = `${destination === "library" ? "홈" : destination === "browse" ? `${catalogLabel} 둘러보기` : destination === "search" ? `${catalogLabel} 검색` : destination === "text" ? "텍스트 장서" : "기록"} — ReDSTM`;
   currentSummary = null;
   currentPayload = null;
   document.body.classList.remove("catalog-collapsed", "reader-controls-hidden");
@@ -3799,6 +3890,17 @@ elements["continue-toc"].addEventListener("click", () => {
   if (continueCollectionId) void openCollectionDetail(continueCollectionId);
 });
 elements["browse-all"].addEventListener("click", () => showDestination("browse"));
+elements["home-onboarding"].addEventListener("click", (event) => {
+  const source = event.target.closest("[data-home-source]")?.dataset.homeSource;
+  if (source) {
+    openBrowseSource(source);
+    return;
+  }
+  if (event.target.closest("#home-onboarding-import")) {
+    showDestination("settings");
+    elements["import-state"].focus();
+  }
+});
 elements["discover-shuffle"].addEventListener("click", () => {
   discoverShuffle += 1;
   void renderDiscovery();
@@ -4030,17 +4132,27 @@ for (const button of document.querySelectorAll("[data-destination]")) {
   button.addEventListener("click", () => {
     // Tapping the tab you are on first returns a scrolled list to its top; at the top it
     // does what it always did.
-    if (button.dataset.destination === currentDestination && !readerSource) {
+    const tab = currentDestination === "text" ? "browse" : currentDestination;
+    if (button.dataset.destination === tab && !readerSource) {
       const scroller = document.body.classList.contains("collection-detail-open") ? elements["reader-pane"] : elements["result-list"];
       if (scroller.scrollTop > 0) {
         scroller.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
         return;
       }
     }
+    // 둘러보기 returns to the source chosen last (DESIGN §8.3).
+    if (button.dataset.destination === "browse" && tab !== "browse" && rememberedBrowseSource() !== "typemoon") {
+      openBrowseSource(rememberedBrowseSource());
+      return;
+    }
     if (["browse", "search"].includes(button.dataset.destination)) setScope("posts");
-    showDestination(button.dataset.destination);
+    showDestination(button.dataset.destination === "browse" && currentDestination === "text" ? "text" : button.dataset.destination);
   });
 }
+elements["source-switch"].addEventListener("click", (event) => {
+  const button = event.target.closest("[data-source]");
+  if (button) openBrowseSource(button.dataset.source);
+});
 elements["collection-entry-list"].addEventListener("click", async (event) => {
   const button = event.target.closest(".collection-entry");
   if (!button || button.disabled) return;
@@ -4283,6 +4395,18 @@ for (const choice of document.querySelectorAll("button[data-reader-surface]")) {
   choice.addEventListener("click", () => {
     settings.readerSurface = choice.dataset.readerSurface;
     saveSettings();
+  });
+}
+// Brightness and warmth are overlays: they never reflow the text, so no anchor is needed.
+for (const [id, key] of [["reader-dim", "readerDim"], ["reader-warm", "readerWarm"]]) {
+  elements[id].addEventListener("input", () => {
+    settings[key] = Number(elements[id].value);
+    applySettings();
+    clearTimeout(typographyPersistTimer);
+    typographyPersistTimer = setTimeout(() => {
+      typographyPersistTimer = null;
+      persistUserState();
+    }, 250);
   });
 }
 for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {

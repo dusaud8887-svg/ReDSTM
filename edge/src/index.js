@@ -124,9 +124,16 @@ function objectHeaders(object, key) {
 }
 
 async function staticAssetResponse(request, env) {
-  const asset = await env.ASSETS.fetch(request);
+  // Workers Assets answers a literal "@" with a 307 to "%40". Versioned directories
+  // (vendor/name@1.2.3/, fonts/name@1.0/) are fetched under the encoded name so a font or module
+  // load costs one request and keeps its immutable headers.
+  const url = new URL(request.url);
+  const pathname = url.pathname.replaceAll("%40", "@");
+  const assetUrl = new URL(url);
+  assetUrl.pathname = pathname.replaceAll("@", "%40");
+  const asset = await env.ASSETS.fetch(pathname.includes("@") ? new Request(assetUrl, request) : request);
   const secured = new Response(asset.body, asset);
-  const versioned = /^\/(?:vendor|fonts)\/[a-z0-9-]+@\d+(?:\.\d+){0,2}\//.test(new URL(request.url).pathname);
+  const versioned = /^\/(?:vendor|fonts)\/[a-z0-9-]+@\d+(?:\.\d+){0,2}\//.test(pathname);
   if (versioned && [200, 304].includes(asset.status) &&
       !asset.headers.get("Content-Type")?.toLowerCase().includes("text/html")) {
     secured.headers.set("Cache-Control", `public, max-age=${IMMUTABLE_CACHE_SECONDS}, immutable`);

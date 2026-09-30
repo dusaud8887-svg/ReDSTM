@@ -195,3 +195,15 @@ test("describes collection occupancy for list rows", () => {
     occupancy: "unknown", progress: "48편", action: "읽기 상태 미확인", gap: "",
   });
 });
+
+test("the Home quote starts at the sentence holding the saved place and adds nothing", async () => {
+  const { lastSentenceQuote } = await import("../public/reading-model.js");
+  assert.equal(lastSentenceQuote(null), "");
+  // The saved start is mid-sentence; the sentence began inside the saved context.
+  assert.equal(lastSentenceQuote({ prefix: "문이 열렸다. 그녀는 오래된 ", exact: "책을 덮고 천천히 고개를", suffix: " 들었다.\n다음 줄" }),
+    "그녀는 오래된 책을 덮고 천천히 고개를 들었다. 다음 줄");
+  // The context starts mid-sentence: show from the saved start rather than a broken fragment.
+  assert.equal(lastSentenceQuote({ prefix: "게 덮여 있었고", exact: " 약속한 사람은", suffix: " 오지 않았다." }), "약속한 사람은 오지 않았다.");
+  assert.equal(lastSentenceQuote({ prefix: "", exact: "알겠어.", suffix: "" }), "알겠어.");
+  assert.equal(lastSentenceQuote({ prefix: "", exact: "가".repeat(200), suffix: "" }).length, 120);
+});

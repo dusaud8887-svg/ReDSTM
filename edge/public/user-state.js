@@ -8,7 +8,7 @@ const stablePostIdPattern = /^([a-z0-9_]+):([1-9]\d*)$/;
 const objectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
 const themes = new Set(["system", "light", "dark"]);
 const proseFonts = new Set(["serif", "sans"]);
-const readerSurfaces = new Set(["default", "paper"]);
+const readerSurfaces = new Set(["default", "paper", "ink"]);
 const proseAlignments = new Set(["start", "justify"]);
 const toggles = new Set(["off", "on"]);
 const aaBackgroundPattern = /^#[0-9a-f]{6}$/i;
@@ -50,6 +50,7 @@ function sanitizeSettings(value, defaults = {}) {
   for (const [key, minimum, maximum] of [
     ["proseSize", 15, 28], ["lineHeight", 1.4, 2.2],
     ["proseWidth", 560, 960], ["proseMargin", 12, 32], ["aaSize", 9, 24], ["aaZoom", 0.1, 3],
+    ["readerDim", 0, 60], ["readerWarm", 0, 25],
   ]) {
     pick(key, (value) => Number.isFinite(value) && value >= minimum && value <= maximum);
   }

@@ -1250,6 +1250,27 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - M0 마감: P0-1~5, F0-1~4와 S1·S3·S4 기록 완료. F0-2는 5파일 제한과 추가 회귀 때문에 a/b/c/d로 분할했다. [최종 코드 Linux CI 36718168285](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36718168285): unit 126, 전체 E2E 578 pass/14 기존 skip(7.7분, visual 48개 포함), axe·check·lint·글꼴 재현·D1 migration·Worker dry-run·python/text-edge 모두 통과. main의 AA 보존 문서 변경도 병합했다. S4 미확인으로 P6-1 보류, cancelPendingWork/canSave 결합과 실제 기기 동작은 남은 위험이다. main 병합 이후 CI 결과는 다음 기록에서 확정한다.
 - 실기기 확인 대기(M0 확정): T03/T04 — 바→시트→popover를 연 뒤 시스템 Back으로 한 층씩 닫히며 Reader/history 유지; T20 — 작품 진입 직후 플릭하고 늦은 글꼴/이미지 도착에도 위치가 되돌아가지 않음; T34 — 찾기/메모 키보드 표시·회전·주소창 변화 중 저장/도구가 오작동하지 않음. S4 방법은 위 probe, S1/T02와 S3/T07은 해당 마일스톤의 실기기 대기에 이어 기록한다.
 
+- P1-1: `app.css`를 `styles/{tokens,base,shell,components,library,reader,aa}.css` 7파일로 값 불변 분할(`@layer` 없음 — layer는 특이도보다 우선해 값이 바뀐다). 파일 사이 순서가 바뀌며 생긴 차이(카탈로그 배치·하단 탭 표시 규칙)는 해당 배치 규칙을 shell로 옮겨 해소. 검증: 10화면×5폭(320/384/768/1100/1440)×light/dark = 100상태의 모든 요소·가상 요소 computed style 분할 전후 동일(도구 `.wrangler/cssdiff`, 커밋 안 함), AA 인벤토리 속성 포함(T06 분할 부분). unit 126, check·lint 0 error, 전체 E2E 530 pass/14 기존 skip(4.7분).
+
+- P1-2: `tokens.css`를 DESIGN §2 semantic 토큰(`light-dark()`, `:root[data-theme]`의 color-scheme)·작품색 10·e1–e3·모션으로 교체하고 v1 이름은 별칭(`--page`→`--bg`, `--muted`→`--ink-2` 등, M6 끝 제거). 사용자 정의 속성은 치환된 값이 상속되므로 Reader 범위에서 읽기 면 토큰과 그 별칭을 다시 지정한다. accent 판정(§13): 이어 읽기 카드·진행선·현재 회차/행·Reader 목록 현재 행·저장 리본 → ribbon, 분류 라벨 → ink-2, 저장 취소·분류 삭제·가져오기 오류 → danger-text, 채운 accent 위 글자 → on-accent, 검색 일치 mark → hl-find. 나머지 누름·선택은 accent.
+
+- P1-3·P1-4(한 커밋 — index.html·tokens.css를 함께 고쳐 분리 불가): 글꼴 CSS 3개(`pretendard@1.3.9`·`maruburi@1.000`·`saitamaar@1.0`) link + Pretendard core preload, 옛 `@font-face` 3개 삭제(파일 삭제는 P7-2, `/ops`는 SUIT 유지), `--font-ui/display/reading`을 DESIGN §3.1 스택으로. **발견·수정**: Workers Assets가 경로의 `@`를 `%40`으로 307 리다이렉트해 글꼴 로드가 페이지 load를 막았다(E2E goto timeout). Worker가 버전 디렉터리 자산을 인코딩된 이름으로 직접 가져오게 고치고(immutable 헤더 유지) 단위 테스트 추가. T25: 새 MaruBuri 400 조각과 기존 단일 파일의 글자별 advance가 표본 전체에서 동일(E2E). T06: AA 무대 10상태(5폭×2테마) 인벤토리 속성 분할 전 기준과 동일. P1-4: `theme.js`(테마·읽기 면·밝기/따뜻하게 overlay·`theme-color`), 읽기 면 `먹` 추가(Reader 범위 `color-scheme: dark`, 위 시트 포함 — T32 E2E), `readerDim` 0–60·`readerWarm` 0–25 설정(docs/19 갱신), `theme-color`는 앱 밖 `--bg`, Reader 안 읽기 면 색. `.reader`가 읽기 면 `--ink`를 직접 쓰도록 color 지정.
+
+- P1-3/P1-4 전체 E2E(worktree, workers=2): 537 pass/1 fail/14 기존 skip — compact에서 새로고침 직후 밝기 overlay를 가상 요소 스타일 적용 전에 읽은 테스트 경합, poll로 수정(설정 지연 저장은 pagehide에서 이미 flush됨).
+- P1-5: 목적지를 `서재 · 둘러보기 · 검색 · 기록` 4개로(레일·상단 내비·하단 탭, `텍스트` 탭 제거). 텍스트 장서는 둘러보기 안 출처 전환 `타입문넷 · 소설 · 아카라이브`(segmented, `#source-switch`)로 들어가고, `/text` 화면에서도 둘러보기 탭이 켜진다. 둘러보기 탭은 마지막 출처를 기억(`localStorage redstm.browseSource`, 실패 무시), 텍스트 화면에서 둘러보기 탭은 텍스트 목록으로. URL·`/text?lane=` 계약 불변. 폭 경계는 기존 760/1200 유지(DESIGN §4.4의 600/960 경계로 옮기면 E2E 폭별 계약 전체가 바뀌므로 M7에서 판단 — 차이로 기록). E2E의 텍스트 버튼 흐름을 출처 전환으로 교체.
+
+- P1-6: 기록 탭 `읽는 중 · 저장 · 최근`(`/saved?view=reading|bookmarks|recent` 불변, `발췌`·`통계`는 M3에서 데이터와 함께 추가 — 빈 탭을 미리 보이지 않음). 저장은 이미 타입문넷+텍스트 병합 목록이므로 텍스트 장서의 `저장함` 레인 버튼을 없애 한 곳으로(옛 `/text?lane=saved` 주소는 그대로 열림). 제목 `내 보관함`→`기록`. `#text-lanes` 제거, 출처 전환이 소설·아카라이브 레인을 대신한다.
+
+- P1-5 전체 E2E(worktree): 535 pass/3 fail/14 skip — mobile·compact 둘러보기 첫 행 위치 기준(240px)이 출처 전환 줄만큼 내려가 300px로 조정(시안 M3과 같은 구성), medium `side list` 1건은 단독 3/3 통과(간헐, P1-6 이후 전체에서 재확인).
+- P1-7a: Lucide(ISC) path를 `index.html` 상단 `<symbol>` sprite로(목적지·설정·운영·테마 아이콘), 하단 탭 glass(반투명 끄기·미지원·`prefers-reduced-transparency`에서 불투명) + 선택 탭 accent-soft pill, 탭 라벨 12px(DESIGN caption 최소).
+- P1-7b: `shell.js` 이어읽기 미니바 — 하단 탭 위 46px 한 덩어리, 위 2px ribbon 진행, 가장 최근 미완료 기록(텍스트/타입문넷), 서재 이어읽기 카드가 보이면 숨김(IntersectionObserver), Reader 밖 모든 스크롤러에서 10px 이상 아래로 접힘/위로 복귀, Reader·키보드·집중·넓은 화면에서 숨김, 목록·서재 하단 여백 확보. T28 E2E(모바일·compact). 작품 점 색은 P1-8 표지 색 연결 후.
+
+- P1-8: `type-cover.js` — FNV-1a 32bit(UTF-16 코드 단위, 참조값 테스트) `% 10` 작품색, 사용자 지정 hue 우선, 안정 키(`typemoon:collection:<id>` · `novel:<work_id>` · `arcalive:<board>:<work>` · 컬렉션 밖 글 `typemoon:post:<board>:<id>`), S 표지 첫 글자(꺾쇠·괄호 태그와 앞 구두점 건너뜀, grapheme 단위 — 이모지·조합 음절 유지), S/M/L DOM(새 화 삼각·진행선(현재 작품만 ribbon)·오프라인 표시). CSS는 components.css. 화면 연결은 P1-9·P1-11.
+
+- P1-9: `home.js`(서가 카드·이어읽기 카드 표지/문장/상대 시간) + 서재 순서 재구성(검색 → 첫 방문 온보딩 → 이어읽기 카드 → 읽던 작품 서가(표지 M 가로, 넓은 화면 격자, 최대 8) → 자주 보는 게시판 → 오늘의 발견 → 최근 목록 → 제목·신선도 줄). 오류 제목일 때만 머리 문구가 맨 위(`home-alert`). 빈 모듈 숨김(최근 읽은 글 포함). 마지막 문장은 `reading-model.lastSentenceQuote(loc)`: 저장 locator의 prefix+exact+suffix에서 저장 위치를 담은 문장 시작부터(맥락이 문장 중간에서 시작하면 저장 위치부터), 원문 외 문구 없음, 120자·CSS 두 줄. 텍스트 `readingWorks`에 `workId`·`progress` 추가(편집 6파일 — 표지 키에 필요한 한 줄). 설정 `서재에 마지막 문장 보이기`는 설정 재구성(P2-2)에서 추가. 미니바 점은 작품색(컬렉션 밖 글 키 — 카드의 컬렉션 색과 다를 수 있음, P1-11에서 정리). E2E: 온보딩·문장.
+
+- P1-10: `barcode.js` — 순수 `barcodeModel(entries, width, {mode})`(bin 목표 3px, 순서 균등 기본·`분량 보기`는 글자 수 비례이되 bin마다 한 화 이상, 상태 우선순위 읽는 중>누락>안 읽음>읽음, 새 화 윗선), 요약 문장·bin 라벨, SVG 렌더(칸별 버튼 없음), 한 스크럽 영역(pointer capture, 말풍선, 놓으면 확대 띠에서 회차 선택 → `이 회차로`), 키보드 `role=slider` ←→/Home/End/Enter, 비대화형 `miniBarcode`. T27 모델: 10,000화 400 bin < 16ms(단위). 화면 연결은 P1-11.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
