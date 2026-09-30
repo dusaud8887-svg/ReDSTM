@@ -383,7 +383,9 @@ test("caches only successful versioned assets immutably and keeps me Access-only
 
 test("text library shares the authenticated ReDSTM shell", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.equal((html.match(/data-destination="text"/g) || []).length, 3);
+  // The text library is a 둘러보기 source (novels, Arcalive), not a separate destination.
+  assert.equal((html.match(/data-destination="text"/g) || []).length, 0);
+  assert.match(html, /id="source-switch"[\s\S]*data-source="novel"[\s\S]*data-source="arcalive"/);
 
   let assetPath;
   const env = environment({ ASSETS: { async fetch(request) { assetPath = new URL(request.url).pathname; return new Response("shared shell"); } } });
