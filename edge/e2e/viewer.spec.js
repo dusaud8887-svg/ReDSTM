@@ -808,10 +808,10 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   await expect(page.locator("#home-search")).toBeVisible();
   await expect(
     page.locator('meta[name="theme-color"][media="(prefers-color-scheme: light)"]'),
-  ).toHaveAttribute("content", "#ffffff");
+  ).toHaveAttribute("content", "#F7F6F3");
   await expect(
     page.locator('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]'),
-  ).toHaveAttribute("content", "#0b0d12");
+  ).toHaveAttribute("content", "#121413");
 
   if (testInfo.project.name === "desktop") {
     await expect(page.locator('.rail a[href="/ops"]')).toBeVisible();
@@ -822,8 +822,8 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     const themeColors = page.locator('meta[name="theme-color"]');
     await expect(themeColors).toHaveCount(2);
-    await expect(themeColors.first()).toHaveAttribute("content", "#0b0d12");
-    await expect(themeColors.nth(1)).toHaveAttribute("content", "#0b0d12");
+    await expect(themeColors.first()).toHaveAttribute("content", "#121413");
+    await expect(themeColors.nth(1)).toHaveAttribute("content", "#121413");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
   } else {
     await expect(page.locator('.app-bar a[href="/ops"]')).toBeVisible();
@@ -947,11 +947,11 @@ test("applies and persists prose typography over legacy source styles", async ({
   await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
   await page.locator('[data-theme-choice="light"]').click();
   await expect(page.locator('[data-theme-choice="light"]')).toHaveAttribute("aria-checked", "true");
-  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(251, 250, 248)");
-  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(21, 23, 26)");
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(253, 252, 250)");
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(28, 27, 25)");
   await page.locator('[data-theme-choice="dark"]').click();
-  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(17, 19, 24)");
-  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(244, 246, 248)");
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(22, 25, 24)");
+  await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(227, 230, 226)");
   await page.locator('[data-theme-choice="light"]').click();
   await page.locator("#prose-size").evaluate((input) => {
     input.value = "22";
@@ -967,12 +967,35 @@ test("applies and persists prose typography over legacy source styles", async ({
   await expect(legacyProse).toHaveCSS("font-size", "22px");
   await expect(legacyProse).toHaveCSS("line-height", "44px");
   await expect(legacyProse).toHaveCSS("font-style", "italic");
-  expect(await legacyProse.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SUIT");
+  expect(await legacyProse.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Pretendard");
 
   await page.reload();
   await expect(legacyProse).toHaveCSS("font-size", "22px");
   await expect(legacyProse).toHaveCSS("line-height", "44px");
-  expect(await legacyProse.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SUIT");
+  expect(await legacyProse.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Pretendard");
+});
+
+// T25: the split MaruBuri 1.000 faces must lay out exactly like the single file readers had, so
+// saved lines and positions do not move when the new font CSS is linked.
+test("the versioned MaruBuri faces keep the previous body font's advances", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const sample = "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮고 천천히 고개를 들었다. \"약속은 지키는 쪽이 먼저 잊지 않는 법이야.\" 늦었네, 알겠어. 미안해 — 2026년 9월 30일, 119화 · 겨울 정원의 약속! 뜌쉪펲 ABCxyz?";
+  const widths = await page.evaluate(async (text) => {
+    const previous = new FontFace("PreviousMaruBuri", "url(/fonts/MaruBuri-Regular.woff2)");
+    document.fonts.add(await previous.load());
+    await document.fonts.load("18px MaruBuri", text);
+    const context = document.createElement("canvas").getContext("2d");
+    const measure = (family) => [...text].map((character) => {
+      context.font = `18px ${family}`;
+      return context.measureText(character).width;
+    });
+    const loaded = [...document.fonts].some((face) => face.family === "MaruBuri" && face.status === "loaded");
+    return { loaded, previous: measure("PreviousMaruBuri"), current: measure("MaruBuri") };
+  }, sample);
+  expect(widths.loaded).toBe(true);
+  expect(widths.current).toEqual(widths.previous);
 });
 
 test("shows progress while receiving a large post", async ({ page }) => {

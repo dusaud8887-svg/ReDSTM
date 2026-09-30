@@ -1254,6 +1254,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P1-2: `tokens.css`를 DESIGN §2 semantic 토큰(`light-dark()`, `:root[data-theme]`의 color-scheme)·작품색 10·e1–e3·모션으로 교체하고 v1 이름은 별칭(`--page`→`--bg`, `--muted`→`--ink-2` 등, M6 끝 제거). 사용자 정의 속성은 치환된 값이 상속되므로 Reader 범위에서 읽기 면 토큰과 그 별칭을 다시 지정한다. accent 판정(§13): 이어 읽기 카드·진행선·현재 회차/행·Reader 목록 현재 행·저장 리본 → ribbon, 분류 라벨 → ink-2, 저장 취소·분류 삭제·가져오기 오류 → danger-text, 채운 accent 위 글자 → on-accent, 검색 일치 mark → hl-find. 나머지 누름·선택은 accent.
 
+- P1-3·P1-4(한 커밋 — index.html·tokens.css를 함께 고쳐 분리 불가): 글꼴 CSS 3개(`pretendard@1.3.9`·`maruburi@1.000`·`saitamaar@1.0`) link + Pretendard core preload, 옛 `@font-face` 3개 삭제(파일 삭제는 P7-2, `/ops`는 SUIT 유지), `--font-ui/display/reading`을 DESIGN §3.1 스택으로. **발견·수정**: Workers Assets가 경로의 `@`를 `%40`으로 307 리다이렉트해 글꼴 로드가 페이지 load를 막았다(E2E goto timeout). Worker가 버전 디렉터리 자산을 인코딩된 이름으로 직접 가져오게 고치고(immutable 헤더 유지) 단위 테스트 추가. T25: 새 MaruBuri 400 조각과 기존 단일 파일의 글자별 advance가 표본 전체에서 동일(E2E). T06: AA 무대 10상태(5폭×2테마) 인벤토리 속성 분할 전 기준과 동일. P1-4: `theme.js`(테마·읽기 면·밝기/따뜻하게 overlay·`theme-color`), 읽기 면 `먹` 추가(Reader 범위 `color-scheme: dark`, 위 시트 포함 — T32 E2E), `readerDim` 0–60·`readerWarm` 0–25 설정(docs/19 갱신), `theme-color`는 앱 밖 `--bg`, Reader 안 읽기 면 색. `.reader`가 읽기 면 `--ink`를 직접 쓰도록 color 지정.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |

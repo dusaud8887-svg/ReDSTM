@@ -1,25 +1,3 @@
-@font-face {
-  font-family: "SUIT Variable";
-  src: url("/fonts/SUIT-Variable.woff2") format("woff2");
-  font-display: swap;
-  font-style: normal;
-  font-weight: 100 900;
-}
-
-@font-face {
-  font-family: MaruBuri;
-  src: url("/fonts/MaruBuri-Regular.woff2") format("woff2");
-  font-display: swap;
-  font-style: normal;
-  font-weight: 400;
-}
-
-@font-face {
-  font-family: Saitamaar;
-  src: url("/fonts/Saitamaar-Regular.ttf") format("truetype");
-  font-display: swap;
-}
-
 /* Ribbon Library tokens (DESIGN.md §2). Components read the semantic names; the v1 names at the
    bottom are aliases kept until M6 so older rules keep working while screens move over. */
 :root {
@@ -70,9 +48,10 @@
   --ease-out: cubic-bezier(.2, .8, .2, 1);
   --ease-in: cubic-bezier(.4, 0, 1, 1);
   --ease-in-out: cubic-bezier(.4, 0, .2, 1);
-  --font-ui: "SUIT Variable", SUIT, "Malgun Gothic", sans-serif;
+  /* Faces come from the versioned font CSS linked in index.html (DESIGN §3.1). */
+  --font-ui: "Pretendard Variable", Pretendard, system-ui, "Malgun Gothic", sans-serif;
   --font-display: MaruBuri, "Gowun Batang", "Noto Serif KR", serif;
-  --font-reading: MaruBuri, "Nanum Myeongjo", Batang, serif;
+  --font-reading: MaruBuri, "Gowun Batang", "Noto Serif CJK KR", "Noto Serif KR", "Noto Serif CJK JP", "Source Han Serif K", Batang, serif;
   --prose-size: 18px;
   --prose-line: 1.8;
   --prose-width: 760px;
@@ -103,6 +82,16 @@
   --reader-ink-2: light-dark(#5E554A, #B5AA97);
   --reader-line: light-dark(#E4DAC7, #3A3329);
 }
+/* 먹 is black whatever the app theme, and dark-schemes everything inside the Reader so the
+   light-dark() tokens of its bars and tools resolve to their dark values (T32). */
+:root[data-surface="ink"] :is(.reader, .reader-bottom, .reader-status) {
+  color-scheme: dark;
+  --reader-bg: #000000;
+  --reader-ink: #D6D8D4;
+  --reader-ink-2: #9FA39E;
+  --reader-line: #1F2221;
+}
+:root[data-surface="ink"] body.reader-active :is(#settings-dialog, #reader-more) { color-scheme: dark; }
 /* Custom properties inherit substituted values, so the Reader re-derives the names that read
    the surface tokens (the aliases included). */
 :is(.reader, .reader-bottom, .reader-status) {

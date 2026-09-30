@@ -354,14 +354,22 @@ test("serves authenticated static assets with security headers", async () => {
 });
 
 test("caches only successful versioned assets immutably and keeps me Access-only", async () => {
+  const fetched = [];
   const env = environment({
-    ASSETS: { async fetch() { return new Response("asset", { headers: { "Content-Type": "application/octet-stream" } }); } },
+    ASSETS: {
+      async fetch(assetRequest) {
+        fetched.push(new URL(assetRequest.url).pathname);
+        return new Response("asset", { headers: { "Content-Type": "application/octet-stream" } });
+      },
+    },
   });
-  for (const path of ["/fonts/pretendard@1.3.9/core.woff2", "/fonts/maruburi@1.000/maruburi.css", "/vendor/idb@8.0.3/idb.js"]) {
+  for (const path of ["/fonts/pretendard@1.3.9/core.woff2", "/fonts/maruburi@1.000/maruburi.css", "/vendor/idb@8.0.3/idb.js", "/vendor/idb%408.0.3/idb.js"]) {
     const result = await workerFetch(request(path), env);
     assert.equal(result.headers.get("Cache-Control"), "public, max-age=31536000, immutable");
     assert.match(result.headers.get("Content-Security-Policy"), /script-src 'self'/);
   }
+  // Workers Assets would redirect a literal "@"; the Worker asks for the encoded name instead.
+  assert.deepEqual(fetched, ["/fonts/pretendard%401.3.9/core.woff2", "/fonts/maruburi%401.000/maruburi.css", "/vendor/idb%408.0.3/idb.js", "/vendor/idb%408.0.3/idb.js"]);
   for (const path of ["/app.js", "/fonts/MaruBuri-Regular.woff2", "/vendor/unversioned/file.js", "/fonts/name@not-a-version/file"]) {
     assert.equal((await workerFetch(request(path), env)).headers.get("Cache-Control"), null);
   }

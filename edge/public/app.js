@@ -36,6 +36,7 @@ import { adjacentInSequence } from "/sequence.js";
 import { createTextLibrary } from "/text-library.js";
 import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
+import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -50,13 +51,13 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", readerSurface: "default", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
   proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
@@ -68,6 +69,7 @@ const elements = Object.fromEntries(
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
+    "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
@@ -473,10 +475,7 @@ function applyBoardFilterOptions() {
 
 function applySettings() {
   const root = document.documentElement;
-  const dark = settings.theme === "dark" ||
-    (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  root.dataset.theme = dark ? "dark" : "light";
-  root.dataset.surface = settings.readerSurface;
+  const dark = applyAppearance(settings);
   root.style.setProperty("--prose-align", settings.proseAlign === "justify" ? "justify" : "start");
   root.style.setProperty("--prose-size", `${settings.proseSize}px`);
   root.style.setProperty("--prose-line", settings.lineHeight);
@@ -508,6 +507,8 @@ function applySettings() {
     ["prose-width", settings.proseWidth, "px"],
     ["prose-margin", settings.proseMargin, "px"],
     ["aa-size", settings.aaSize, "px"],
+    ["reader-dim", settings.readerDim, "%"],
+    ["reader-warm", settings.readerWarm, "%"],
   ]) {
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
@@ -537,15 +538,8 @@ function applySettings() {
   requestAnimationFrame(() => updateAaOverflowCue());
 }
 
-// Browser bar colour. Under 시스템 each media-scoped meta keeps its own scheme's colour and the
-// browser picks; an explicit 밝게/어둡게 overrides both, whatever the OS says. While a
-// paper-surface body is open the bar matches the Reader instead of the page.
 function syncThemeColor() {
-  const paper = Boolean(readerSource) && settings.readerSurface === "paper";
-  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
-    const dark = settings.theme === "system" ? meta.media.includes("dark") : settings.theme === "dark";
-    meta.content = paper ? (dark ? "#1c1914" : "#f6f0e4") : dark ? "#0b0d12" : "#ffffff";
-  }
+  syncBrowserThemeColor(settings, Boolean(readerSource));
 }
 
 function relativeLuminance(hex) {
@@ -4283,6 +4277,18 @@ for (const choice of document.querySelectorAll("button[data-reader-surface]")) {
   choice.addEventListener("click", () => {
     settings.readerSurface = choice.dataset.readerSurface;
     saveSettings();
+  });
+}
+// Brightness and warmth are overlays: they never reflow the text, so no anchor is needed.
+for (const [id, key] of [["reader-dim", "readerDim"], ["reader-warm", "readerWarm"]]) {
+  elements[id].addEventListener("input", () => {
+    settings[key] = Number(elements[id].value);
+    applySettings();
+    clearTimeout(typographyPersistTimer);
+    typographyPersistTimer = setTimeout(() => {
+      typographyPersistTimer = null;
+      persistUserState();
+    }, 250);
   });
 }
 for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {

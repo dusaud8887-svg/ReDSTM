@@ -823,9 +823,40 @@ test("종이 surface and 양쪽 맞춤 apply to the Reader and survive a reload"
   await expect.poll(readerBackground).not.toBe(plain);
   await expect(page.locator("#archive-body")).toHaveCSS("text-align", "justify");
   // The app chrome keeps its own tokens; the browser bar matches the paper while reading.
-  expect(await page.locator("html").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(255, 255, 255)");
+  expect(await page.locator("html").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(247, 246, 243)");
   const themeColors = () => page.locator('meta[name="theme-color"]').evaluateAll((metas) => metas.map((meta) => meta.content));
-  expect(await themeColors()).toEqual(["#f6f0e4", "#1c1914"]);
+  expect(await themeColors()).toEqual(["#F5EFE3", "#1D1A15"]);
+});
+
+// T32: a light app with an ink-black page. The Reader scope turns dark on its own, the sheet over
+// it follows, and brightness/warmth only lay overlays over the screen.
+test("The 먹 surface stays black under a light app theme and dims without touching the text", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator('[data-theme-choice="light"]').click();
+  await page.locator('[data-reader-surface="ink"]').click();
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  await expect(page.locator("#archive-body p").first()).toHaveCSS("color", "rgb(214, 216, 212)");
+  await expect(page.locator("#reader")).toHaveCSS("color-scheme", "dark");
+  await expect(page.locator("#settings-dialog")).toHaveCSS("color-scheme", "dark");
+  await expect(page.locator("html")).toHaveCSS("background-color", "rgb(247, 246, 243)");
+  const themeColors = () => page.locator('meta[name="theme-color"]').evaluateAll((metas) => metas.map((meta) => meta.content));
+  expect(await themeColors()).toEqual(["#000000", "#000000"]);
+  await page.evaluate(() => document.fonts.ready);
+  const before = await page.locator("#archive-body").evaluate((element) => element.getBoundingClientRect().height);
+  await page.locator("#reader-dim").evaluate((input) => {
+    input.value = "40";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#reader-dim-output")).toHaveText("40%");
+  expect(await page.locator(".reader-shade").evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("0.4");
+  expect(await page.locator(".reader-shade").evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("none");
+  expect(await page.locator("#archive-body").evaluate((element) => element.getBoundingClientRect().height)).toBe(before);
+  await page.reload();
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  expect(await page.locator(".reader-shade").evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("0.4");
 });
 
 test("The browser bar follows the chosen theme even when the OS theme differs", async ({ page }) => {
@@ -834,10 +865,10 @@ test("The browser bar follows the chosen theme even when the OS theme differs", 
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   const themeColors = () => page.locator('meta[name="theme-color"]').evaluateAll((metas) => metas.map((meta) => meta.content));
-  expect(await themeColors()).toEqual(["#ffffff", "#0b0d12"]);
+  expect(await themeColors()).toEqual(["#F7F6F3", "#121413"]);
   await page.goto("/settings");
   await page.locator('[data-theme-choice="light"]').click();
-  expect(await themeColors()).toEqual(["#ffffff", "#ffffff"]);
+  expect(await themeColors()).toEqual(["#F7F6F3", "#F7F6F3"]);
 });
 
 test("더보기 copies a link that reopens the same chapter", async ({ page, context }) => {

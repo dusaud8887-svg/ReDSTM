@@ -2,7 +2,13 @@
 .reader-pane[aria-busy="true"]::before { content: ""; position: sticky; top: 0; z-index: 12; display: block; width: 28%; height: 2px; background: var(--accent); animation: loading-line 1s ease-in-out infinite alternate; }
 @keyframes loading-line { to { transform: translateX(260%); } }
 
-.reader { min-height: 100%; background: var(--reader); scroll-padding-bottom: 72px; }
+/* 밝기 · 따뜻하게: fixed overlays over the reading screen, never touching the text (DESIGN §2.4). */
+.reader-shade { display: none; }
+body.reader-active .reader-shade { position: fixed; inset: 0; z-index: 45; display: block; pointer-events: none; }
+body.reader-active .reader-shade::before, body.reader-active .reader-shade::after { content: ""; position: absolute; inset: 0; }
+body.reader-active .reader-shade::before { background: #000; opacity: var(--reader-dim, 0); }
+body.reader-active .reader-shade::after { background: #FF9E4A; opacity: var(--reader-warm, 0); mix-blend-mode: multiply; }
+.reader { min-height: 100%; background: var(--reader); color: var(--ink); scroll-padding-bottom: 72px; }
 /* The app restores reading anchors itself; native scroll anchoring would double-correct. */
 .reader-pane { scroll-padding-bottom: 72px; overflow-anchor: none; }
 .reader-topbar { display: none; }

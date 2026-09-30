@@ -4,12 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#F7F6F3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#121413" media="(prefers-color-scheme: dark)">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/icons/app-icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icons/app-icon-192.png">
     <title>ReDSTM — 개인 장서</title>
+    <link rel="preload" href="/fonts/pretendard@1.3.9/core.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/fonts/pretendard@1.3.9/pretendard.css">
+    <link rel="stylesheet" href="/fonts/maruburi@1.000/maruburi.css">
+    <link rel="stylesheet" href="/fonts/saitamaar@1.0/saitamaar.css">
     <link rel="stylesheet" href="/styles/tokens.css">
     <link rel="stylesheet" href="/styles/base.css">
     <link rel="stylesheet" href="/styles/shell.css">
@@ -346,6 +350,7 @@
     </nav>
 
     <p class="reader-status" id="reader-status" aria-hidden="true"></p>
+    <div class="reader-shade" aria-hidden="true"></div>
     <nav class="reader-bottom" aria-label="읽기 도구">
       <button id="reader-bottom-list" type="button" aria-label="목록으로 돌아가기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".5"/><circle cx="4" cy="12" r=".5"/><circle cx="4" cy="18" r=".5"/></svg><span>목록</span></button>
       <button id="reader-bottom-previous" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg><span id="reader-bottom-previous-label">이전 글</span></button>
@@ -405,11 +410,15 @@
           </div>
           <div class="setting-row">
             <span class="setting-label" id="reader-surface-label">본문 면</span>
-            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="reader-surface-label">
+            <div class="segmented" role="radiogroup" aria-labelledby="reader-surface-label">
               <button type="button" role="radio" data-reader-surface="default" aria-checked="false">기본</button>
               <button type="button" role="radio" data-reader-surface="paper" aria-checked="false">종이</button>
+              <button type="button" role="radio" data-reader-surface="ink" aria-checked="false">먹</button>
             </div>
           </div>
+          <label>밝기 낮추기 <output id="reader-dim-output"></output><input id="reader-dim" type="range" min="0" max="60" step="5"></label>
+          <label>따뜻하게 <output id="reader-warm-output"></output><input id="reader-warm" type="range" min="0" max="25" step="5"></label>
+          <p class="setting-hint">본문 면·밝기·따뜻하게는 읽는 화면에만 적용됩니다. 먹은 앱 테마와 상관없이 검은 면입니다.</p>
         </fieldset>
         <fieldset class="settings-group prose-settings">
           <legend>소설 본문</legend>
@@ -424,7 +433,7 @@
           <label>줄 간격 <output id="line-height-output"></output><input id="line-height" type="range" min="1.4" max="2.2" step="0.1"></label>
           <label class="margin-setting">좌우 여백 <output id="prose-margin-output"></output><input id="prose-margin" type="range" min="12" max="32" step="2"></label>
           <label class="width-setting">본문 너비 <output id="prose-width-output"></output><input id="prose-width" type="range" min="560" max="960" step="20"></label>
-          <label>본문 서체<select id="prose-font"><option value="serif">마루부리</option><option value="sans">SUIT</option></select></label>
+          <label>본문 서체<select id="prose-font"><option value="serif">마루부리</option><option value="sans">프리텐다드</option></select></label>
           <div class="setting-row">
             <span class="setting-label" id="prose-align-label">문단 정렬</span>
             <div class="segmented segmented-2" role="radiogroup" aria-labelledby="prose-align-label">
