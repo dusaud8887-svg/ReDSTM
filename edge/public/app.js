@@ -1542,17 +1542,10 @@ function applyTextSortOptions() {
   // The text library owns its sort (it travels in the URL); the select only mirrors it.
   select.value = allowed.has(wanted) ? wanted : options[0][1];
   textLibrary.setSort(select.value);
-  // The select is hidden in the text library; these chips are its visible control.
-  const chips = elements["text-sort-chips"];
-  chips.hidden = sortOptions.length < 2;
-  chips.replaceChildren(...sortOptions.map(([label, value]) => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.dataset.textSort = value;
-    chip.textContent = label;
-    chip.setAttribute("aria-pressed", String(value === select.value));
-    return chip;
-  }));
+  // The result bar's sort menu is the control, as on TypeMoon lists; a separate chip row cost a
+  // whole row of the phone screen above the list.
+  elements["text-sort-chips"].hidden = true;
+  document.querySelector(".sort-field").hidden = sortOptions.length < 2;
   elements["search-input"].placeholder = textLibrary.searchPlaceholder();
 }
 

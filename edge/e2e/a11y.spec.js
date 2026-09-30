@@ -69,7 +69,7 @@ test("the text library lists, a work, and a chapter", async ({ page }) => {
   await expect(page.locator("#result-list .result-item[data-key]").first()).toBeVisible();
   await expectAccessible(page, "novel works");
   await page.locator("#result-list .result-item[data-key]", { hasText: "첫 소설" }).click();
-  await expect(page.locator("#result-list .text-work-summary")).toBeVisible();
+  await expect(page.locator("#text-work-summary .text-work-summary")).toBeVisible();
   await expectAccessible(page, "novel chapters");
   await page.locator('#result-list [data-key="chapter:1-2"]').click();
   await expect(page.locator("#reader-title")).toHaveText("2화");

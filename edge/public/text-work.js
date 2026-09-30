@@ -102,3 +102,61 @@ export function arcaliveBody(text) {
   const url = lines.slice(1, separator).map((line) => /^-\s*url:\s*(https?:\/\/\S+)\s*$/i.exec(line)?.[1]).find(Boolean) ?? "";
   return { text: lines.slice(separator + 1).join("\n").replace(/^\n+/, ""), sourceUrl: url };
 }
+
+// Detail only the resume paths read: the latest record of each work (Home 이어서 읽기, 읽던 작품,
+// new-chapter counts) and the most recent reads keep routes, titles, and exact positions. Older
+// records keep when they were read and how far; an unfinished one also keeps its position. A full
+// record is ~800 characters, so 10,000 of them alone would pass the ~5 MB localStorage quota.
+const DETAIL_FIELDS = ["route", "listRoute", "title", "work", "total"];
+const POSITION_FIELDS = ["anchor", "offset", "anchorTop", "scroll", "revision", "chapterId"];
+
+export function compactTextHistory(history, { keepRecent = 50 } = {}) {
+  const entries = Object.entries(history)
+    .filter(([, record]) => record && typeof record === "object")
+    .sort(([, left], [, right]) => String(right.readAt || "").localeCompare(String(left.readAt || "")));
+  const latestPerWork = new Set();
+  const seenWorks = new Set();
+  for (const [key, record] of entries) {
+    const work = typeof record.workId === "string" && record.workId ? record.workId : key;
+    if (seenWorks.has(work)) continue;
+    seenWorks.add(work);
+    latestPerWork.add(key);
+  }
+  let changed = false;
+  entries.forEach(([key, record], index) => {
+    if (typeof record.progress === "number" && record.progress !== Math.round(record.progress * 1000) / 1000) {
+      record.progress = Math.round(record.progress * 1000) / 1000;
+      changed = true;
+    }
+    if (index < keepRecent || latestPerWork.has(key)) return;
+    const finished = (record.progress ?? 0) >= 0.95;
+    for (const field of [...DETAIL_FIELDS, ...(finished ? POSITION_FIELDS : [])]) {
+      if (field in record) {
+        delete record[field];
+        changed = true;
+      }
+    }
+    // The key already starts with its work id; keep workId only where it disagrees (aliases).
+    if (typeof record.workId === "string" && key.startsWith(`novel:${record.workId}:`)) {
+      delete record.workId;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+// Oldest records dropped until the serialized state fits the budget (saved items stay).
+export function trimTextState(state, maxChars) {
+  let size = JSON.stringify(state).length;
+  if (size <= maxChars) return 0;
+  const keys = Object.keys(state.history)
+    .sort((left, right) => String(state.history[left].readAt || "").localeCompare(String(state.history[right].readAt || "")));
+  let removed = 0;
+  for (const key of keys) {
+    if (size <= maxChars) break;
+    size -= JSON.stringify(key).length + JSON.stringify(state.history[key]).length + 2;
+    delete state.history[key];
+    removed += 1;
+  }
+  return removed;
+}

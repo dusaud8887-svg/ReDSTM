@@ -459,8 +459,8 @@ test("Text parity: sort chips, reading progress, memo·tags, and Home 읽던 작
   await expect(page.locator('#result-list [data-key="chapter:1"]')).toBeVisible();
   await expect(page.locator("#search-input")).toHaveAttribute("placeholder", /회차 찾기/);
   // Sorting is a visible control, and it travels in the URL.
-  await page.locator('#text-sort-chips [data-text-sort="latest"]').click();
-  await expect(page.locator('#text-sort-chips [data-text-sort="latest"]')).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#sort-filter").selectOption("latest");
+  await expect(page.locator("#sort-filter")).toHaveValue("latest");
   await expect(page).toHaveURL(/sort=latest/);
   await expect(page.locator("#result-list .result-item[data-key] .result-title").first()).toHaveText("40화");
   await page.locator('#result-list [data-key="chapter:3"]').click();
@@ -887,7 +887,7 @@ test("Text: novels read before show new chapters in the list, the read-state chi
   await chips.locator('[data-text-read="reading"]').click();
   await expect(page).toHaveURL(/read=reading/);
   await expect(page.locator("#result-list .result-item")).toHaveCount(1);
-  await expect(page.locator("#text-sort-chips [data-text-sort=\"recent\"]")).toHaveText("최근 읽은순");
+  await expect(page.locator('#sort-filter option[value="recent"]')).toHaveText("최근 읽은순");
   // Opening the work hides the chips; the chapter list is not filtered by them.
   await page.locator("#result-list .result-item").first().click();
   await expect(chips).toBeHidden();
@@ -945,11 +945,11 @@ test("Arcalive posts in a category list newest first but read in posting order",
   await page.goto("/text?lane=arcalive&board=novel&category=%EC%86%8C%EC%84%A4");
   const titles = page.locator("#result-list .result-item[data-key] .result-title");
   await expect(titles).toHaveText(["30번 글", "20번 글", "10번 글"]);
-  await expect(page.locator('#text-sort-chips [data-text-sort="latest"]')).toHaveAttribute("aria-pressed", "true");
-  await page.locator("#text-sort-chips [data-text-sort=\"oldest\"]").click();
+  await expect(page.locator("#sort-filter")).toHaveValue("latest");
+  await page.locator("#sort-filter").selectOption("oldest");
   await expect(titles).toHaveText(["10번 글", "20번 글", "30번 글"]);
   await expect(page).toHaveURL(/sort=oldest/);
-  await page.locator("#text-sort-chips [data-text-sort=\"latest\"]").click();
+  await page.locator("#sort-filter").selectOption("latest");
   await page.locator("#result-list .result-item", { hasText: "20번 글" }).click();
   await expect(page.locator("#reader-title")).toHaveText("20번 글");
   await page.locator(mobileWidth(page) ? "#reader-bottom-next" : "#next-post").click();
@@ -1020,7 +1020,8 @@ test("Text works list like TypeMoon collections: source, progress, header, jump,
   const rows = page.locator("#result-list .result-item[data-key]");
   // Most recently updated first, like TypeMoon's 최근 글순.
   await expect(rows.locator(".result-title")).toHaveText(["새 소설", "오래된 소설"]);
-  await expect(page.locator('#text-sort-chips [data-text-sort="updated"]')).toHaveText("최근 갱신순");
+  await expect(page.locator("#sort-filter")).toHaveValue("updated");
+  await expect(page.locator('#sort-filter option[value="updated"]')).toHaveText("최근 갱신순");
   await expect(rows.first()).toContainText("블랙툰");
   await expect(rows.first().locator(".result-action")).toHaveText("시작하기");
   await expect(rows.nth(1)).toContainText("최신 31화");
@@ -1033,7 +1034,7 @@ test("Text works list like TypeMoon collections: source, progress, header, jump,
   await page.locator("#search-input").fill("");
 
   await rows.first().click();
-  const summary = page.locator("#result-list .text-work-summary");
+  const summary = page.locator("#text-work-summary .text-work-summary");
   await expect(summary.locator("h2")).toHaveText("오래된 소설");
   await expect(summary).toContainText("북토끼");
   await expect(summary).toContainText("읽음 0/30");

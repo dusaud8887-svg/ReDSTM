@@ -1,7 +1,8 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
 import {
-  arcaliveBody, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId, orderChapters,
+  arcaliveBody, compactTextHistory, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId,
+  orderChapters, trimTextState,
 } from "/text-work.js";
 import {
   UNSORTED, addShelf, ensureShelves, hiddenShelfIds, migrateShelfAliases, moveShelf, removeShelf, renameShelf,
@@ -14,6 +15,8 @@ const VIEWS = new Set([...LANES, "saved"]);
 const HASH = /^[a-f0-9]{64}$/;
 const FINISHED = 0.95;
 const HISTORY_LIMIT = 10_000;
+// About 3 MB of UTF-16: the TypeMoon state (≤ ~1 MB) shares the origin's ~5 MB localStorage.
+const TEXT_STATE_CHARS = 1_500_000;
 const ROW_SELECTOR = ".result-item[data-key]";
 const LIST_PAGE = 10;
 // Long lists (thousands of chapters or posts) render this many rows at a time: the first batch at
@@ -66,7 +69,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   const status = document.querySelector("#result-status");
   const search = document.querySelector("#search-input");
   const history = readState();
-  const shelvesAdded = ensureShelves(history);
+  const shelvesAdded = ensureShelves(history) | compactTextHistory(history.history);
   const catalogs = new Map();
   const details = new Map();
   let lane = "novel";
@@ -84,6 +87,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let sourceFilter = "";
   let listKind = "works";
   let hiddenWorks = 0;
+  let renderedQuery = null;
   // Incremental rendering of the shared result list (renderMore).
   let rowWindow = null;
   let rendered = 0;
@@ -107,6 +111,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   // The whole state is rewritten every few hundred ms while reading, so opened chapters are
   // capped (oldest first) instead of growing until localStorage runs out.
   function pruneHistory() {
+    compactTextHistory(history.history);
     const keys = Object.keys(history.history);
     if (keys.length <= HISTORY_LIMIT) return;
     keys.sort((left, right) => String(history.history[right].readAt || "").localeCompare(String(history.history[left].readAt || "")));
@@ -117,6 +122,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function persist() {
     const archiveState = document.querySelector("#archive-state");
     try {
+      trimTextState(history, TEXT_STATE_CHARS);
       localStorage.setItem(STATE_KEY, JSON.stringify(history));
       if (archiveState) delete archiveState.dataset.storageFailed;
       if (archiveState?.textContent === "로컬 저장 실패") archiveState.textContent = "보존본";
@@ -443,7 +449,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function workSummary(rows) {
-    const item = document.createElement("li");
+    const item = document.createElement("div");
     item.className = "text-work-summary";
     const heading = document.createElement("h2");
     heading.textContent = work.title || "작품";
@@ -461,13 +467,16 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       [`읽음 ${finished.toLocaleString("ko-KR")}/${total.toLocaleString("ko-KR")}`, finished ? "result-action" : ""],
     ]);
     item.append(heading, meta);
+    // Shelf and 몇 화? share one row under the title.
+    const actions = document.createElement("div");
+    actions.className = "text-work-actions";
     if (lane === "novel") {
       const shelf = document.createElement("button");
       shelf.type = "button";
       shelf.className = "shelf-summary";
       shelf.dataset.workId = work.work_id;
       shelf.textContent = `분류: ${shelfName(history, shelfOf(history, work.work_id))}`;
-      item.append(shelf);
+      actions.append(shelf);
     }
     if (total > LIST_PAGE) {
       const form = document.createElement("form");
@@ -490,8 +499,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         jumpToChapter(Number(input.value), rows);
         input.blur();
       });
-      item.append(form);
+      actions.append(form);
     }
+    if (actions.childElementCount) item.append(actions);
     return item;
   }
 
@@ -547,6 +557,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   // listKind: "works", "chapters", "boards", "categories", "posts", "saved".
   function renderRows(rows, { kind }) {
+    // A redraw (a late search update, another tab's save) keeps focus on the same row.
+    const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     listKind = kind;
     visible = rows;
     list.replaceChildren();
@@ -557,7 +569,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const progress = kind === "works" ? progressForLane() : null;
     // A work not started yet offers its first chapter the same way (not while searching).
     const start = chaptersMode && !resume && !query ? canonicalChapters(chapterSource)[0] : null;
-    if (chaptersMode) fragment.append(workSummary(rows));
+    // The work's header sits above the search box (#text-work-summary), not among the rows.
+    const summaryHost = document.querySelector("#text-work-summary");
+    if (chaptersMode) summaryHost.replaceChildren(workSummary(rows));
+    else summaryHost.replaceChildren();
+    summaryHost.hidden = !chaptersMode;
     if (resume || start) {
       const button = document.createElement("button");
       button.type = "button";
@@ -660,6 +676,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     rendered = 0;
     list.append(fragment);
     renderMore(RENDER_CHUNK);
+    if (focusedKey) {
+      renderThroughKey(focusedKey);
+      list.querySelector(`${ROW_SELECTOR}[data-key="${CSS.escape(focusedKey)}"]`)?.focus({ preventScroll: true });
+    }
     document.querySelector("#result-more").hidden = true;
     document.querySelector("#search-empty").hidden = true;
     const noun = { works: "작품", boards: "게시판", categories: "분류", posts: "글", saved: "자료", shelves: "분류" }[kind] ?? "자료";
@@ -721,6 +741,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function renderCatalog() {
+    renderedQuery = search.value;
     const query = normalize(search.value.trim());
     const progress = worksView() ? progressForLane() : null;
     renderReadChips(progress);
@@ -801,6 +822,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function syncBackButton() {
     const button = document.querySelector("#text-work-back");
     const shown = Boolean(work || folderBoard || (lane === "novel" && shelfFilter));
+    // Inside a work the list-level views (전체 목록/분류별/분류 관리) do not apply.
+    document.querySelector("#novel-views").hidden = !active || lane !== "novel" || Boolean(work);
+    if (!work) {
+      const summaryHost = document.querySelector("#text-work-summary");
+      summaryHost.hidden = true;
+      summaryHost.replaceChildren();
+    }
     button.hidden = !shown;
     button.textContent = work ? "← 작품 목록"
       : lane === "novel" ? "← 분류 목록"
@@ -1397,7 +1425,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function searchChanged(query) {
     if (query !== search.value) search.value = query;
-    if (!catalog.length) return;
+    // A late (debounced) notice for the text already shown must not rebuild the list or the
+    // work header someone is typing in.
+    if (!catalog.length || search.value === renderedQuery) return;
     renderCatalog();
     window.history.replaceState(window.history.state, "", current ? route() : listRoute());
   }
@@ -1708,7 +1738,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     event.preventDefault();
     addShelfFromDialog();
   });
-  list.addEventListener("click", (event) => {
+  for (const host of [list, document.querySelector("#text-work-summary")]) host.addEventListener("click", (event) => {
     const button = event.target.closest(".shelf-edit, .shelf-summary");
     if (button && active) openShelfDialog(button.dataset.workId);
   });
