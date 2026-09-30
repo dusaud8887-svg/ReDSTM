@@ -1843,6 +1843,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return {
         title: item?.title || progress.record.work || "소설",
         meta: [total ? `읽음 ${progress.finished}/${total}` : "", progress.record.title ? `최근 ${progress.record.title}` : ""].filter(Boolean).join(" · "),
+        workId,
+        progress: total ? progress.finished / total : null,
         listRoute: progress.record.listRoute,
         readAt: progress.lastReadAt,
         newCount,

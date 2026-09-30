@@ -1426,3 +1426,28 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await expect(bar).toBeHidden();
 });
+
+// docs/24 §8.2: a first visit gets one block of ways in; once there is a record, the continue card
+// shows the sentence the reader last saw, taken only from the original text.
+test("Home greets a first visit with sources and later quotes the last sentence read", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/");
+  const onboarding = page.locator("#home-onboarding");
+  await expect(onboarding).toBeVisible();
+  await expect(page.locator("#continue-block")).toBeHidden();
+  await expect(page.locator("#reading-works")).toBeHidden();
+  await onboarding.locator('[data-home-source="novel"]').click();
+  await expect(page).toHaveURL(/\/text\?lane=novel$/);
+
+  const exact = "2편 본문 5";
+  await page.evaluate((text) => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
+    history: { "board_a:2": { readAt: new Date().toISOString(), progress: 0.3,
+      loc: { v: 2, tm: 1, rev: "", start: 30, end: 30 + text.length, exact: text, prefix: "본문 4. 그리고 ", suffix: "의 끝. 다음 문장" } } },
+  })), exact);
+  await page.goto("/");
+  await expect(page.locator("#continue-title")).toHaveText("2편 제목");
+  await expect(page.locator("#continue-quote")).toHaveText("그리고 2편 본문 5의 끝. 다음 문장");
+  await expect(page.locator("#continue-cover .type-cover")).toBeVisible();
+  await expect(onboarding).toBeHidden();
+});

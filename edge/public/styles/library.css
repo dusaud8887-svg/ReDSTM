@@ -205,11 +205,6 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .continue-reading:hover, .continue-toc:hover { background: var(--accent-soft); }
 .continue-reading { position: relative; overflow: hidden; }
 .continue-reading::after { content: ""; position: absolute; left: 0; bottom: 0; width: var(--continue-progress, 0%); height: 3px; background: var(--ribbon); }
-.continue-reading > span { color: var(--ribbon-text); font-size: 12px; font-weight: 650; }
-.continue-reading > strong, .continue-reading > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.continue-reading > strong { color: var(--muted); font-size: 13px; font-weight: 650; }
-.continue-reading > b { font-size: 16px; font-weight: 680; }
-.continue-reading small { color: var(--muted); font-size: 13px; }
 .continue-toc { min-height: 88px; padding: 0 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--accent); font-weight: 650; cursor: pointer; }
 .reading-works { margin-top: 28px; }
 .discover { margin-top: 32px; }
@@ -355,3 +350,50 @@ body.reading .home { display: none; }
 .source-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; margin: 4px 12px 8px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
 .source-switch button { min-height: 40px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font-size: 14px; font-weight: 550; white-space: nowrap; cursor: pointer; }
 .source-switch button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 650; box-shadow: var(--e1); }
+
+/* 서재 (DESIGN §7.3, §9; docs/24 §8.2). Modules run top to bottom in the order of the markup;
+   the title and freshness close the page, and rise to the top only for an error. */
+.home { display: flex; flex-direction: column; }
+.home > * { flex: 0 0 auto; }
+.home-search { width: min(720px, 100%); min-height: 52px; border: 0; border-radius: 12px; background: var(--surface); box-shadow: var(--e1); }
+.home:not(.home-alert) .home-header { margin-top: 36px; padding: 16px 0 8px; border-top: 1px solid var(--line); border-bottom: 0; }
+.home:not(.home-alert) .home-header h1 { font-size: 18px; letter-spacing: -.01em; }
+.home:not(.home-alert) .home-header > div:first-child > p { margin-bottom: 2px; color: var(--ink-2); }
+.home:not(.home-alert) .home-copy { display: none; }
+.home:not(.home-alert) .home-operations { border-bottom: 0; }
+.home.home-alert .home-header { order: -1; margin: 0 0 20px; }
+
+.home-onboarding { width: min(720px, 100%); display: grid; gap: 10px; margin-top: 16px; padding: 16px; border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--e1); }
+.home-onboarding h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.home-onboarding p { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+.home-onboarding-sources { display: flex; flex-wrap: wrap; gap: 8px; }
+.home-onboarding-sources button { min-height: 44px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-weight: 600; cursor: pointer; }
+.home-onboarding-import { justify-self: start; min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--accent); font-weight: 600; cursor: pointer; }
+
+.continue-block { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.continue-reading { grid-template-columns: 104px minmax(0, 1fr); grid-template-areas: "cover copy" "quote quote"; gap: 12px 16px; align-items: start; min-height: 0; padding: 16px 16px 18px; border: 0; border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--e1); }
+.continue-reading:hover { background: var(--surface); box-shadow: var(--e1), 0 0 0 1px var(--line-strong); }
+.continue-cover { grid-area: cover; display: flex; }
+.continue-copy { grid-area: copy; min-width: 0; display: grid; align-content: start; gap: 4px; }
+.continue-label { color: var(--ribbon-text); font-size: 12px; font-weight: 650; }
+.continue-reading #continue-work { overflow: visible; color: var(--ink); font: 700 18px/1.3 var(--font-display); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
+.continue-reading #continue-title { font-size: 15px; font-weight: 600; }
+.continue-reading:has(#continue-work[hidden]) #continue-title { overflow: visible; font: 700 18px/1.3 var(--font-display); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; }
+.continue-reading #continue-meta { color: var(--ink-2); font-size: 13px; }
+.continue-quote { grid-area: quote; display: -webkit-box; overflow: hidden; color: var(--ink-2); font: 14px/1.7 var(--font-reading); -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.continue-quote[hidden] { display: none; }
+.continue-toc { justify-self: end; min-height: 40px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); }
+
+.reading-works > header, .home-grid section > header { border-bottom: 0; }
+.shelf { display: flex; gap: 12px; margin: 0; padding: 4px 2px 10px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; list-style: none; }
+.shelf::-webkit-scrollbar { display: none; }
+.reading-works .shelf li { flex: 0 0 104px; border: 0; scroll-snap-align: start; }
+.reading-works .shelf li.home-empty { flex-basis: 100%; }
+.shelf-card { width: 104px; min-height: 0; display: grid; gap: 6px; padding: 0; border: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.shelf-card:hover { color: var(--ink); }
+.shelf-card > strong { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.shelf-card > span:not(.type-cover, .home-badge) { overflow: hidden; color: var(--ink-2); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.shelf-card .type-cover-title { color: var(--ink); font-size: 15px; }
+.shelf-card .type-cover-source { color: var(--ink-2); font-size: 12px; }
+.shelf-card .home-badge { justify-self: start; margin: 0; font-size: 12px; }
+@media (min-width: 760px) { .shelf { flex-wrap: wrap; overflow: visible; } }

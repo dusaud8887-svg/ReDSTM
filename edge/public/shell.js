@@ -47,6 +47,7 @@ export function createMiniBar({ element, homeCard }) {
         title.textContent = model.title;
         detail.textContent = model.detail ?? "";
         detail.hidden = !model.detail;
+        element.querySelector(".mini-bar-dot").className = `mini-bar-dot hue-${model.hue ?? 9}`;
         element.style.setProperty("--mini-progress", `${Math.round(Math.min(1, Math.max(0, model.progress || 0)) * 100)}%`);
         element.setAttribute("aria-label", `이어 읽기: ${[model.title, model.detail].filter(Boolean).join(" · ")}`);
       }

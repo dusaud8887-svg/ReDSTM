@@ -197,3 +197,26 @@ export function collectionRowCopy({
     gap,
   };
 }
+
+// The last sentence a reader saw, for the Home continue card (docs/24 §8.2): the saved locator's
+// text with its surrounding context, cut back to the sentence that holds the saved start. Only
+// the original text is used; nothing is added. Returns "" when there is no locator.
+const sentenceSegmenter = typeof Intl !== "undefined" && Intl.Segmenter
+  ? new Intl.Segmenter("ko", { granularity: "sentence" }) : null;
+export function lastSentenceQuote(loc, limit = 120) {
+  if (!loc || typeof loc.exact !== "string" || !loc.exact.trim()) return "";
+  const prefix = typeof loc.prefix === "string" ? loc.prefix : "";
+  const text = `${prefix}${loc.exact}${typeof loc.suffix === "string" ? loc.suffix : ""}`;
+  let start = prefix.length;
+  if (sentenceSegmenter) {
+    for (const { index, segment } of sentenceSegmenter.segment(text)) {
+      if (index <= prefix.length && prefix.length < index + segment.length) {
+        // A sentence that began before the saved context is shown from the saved start.
+        start = index > 0 || prefix.length === 0 ? index : prefix.length;
+        break;
+      }
+    }
+  }
+  const quote = text.slice(start).replace(/\s+/g, " ").trim();
+  return quote.length > limit ? quote.slice(0, limit).trimEnd() : quote;
+}

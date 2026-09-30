@@ -206,28 +206,35 @@
         <section class="home" id="empty-reader" aria-labelledby="home-title">
           <button class="home-search" id="home-search" type="button" data-destination="search">
             <svg aria-hidden="true"><use href="#i-search"/></svg>
-            <span><strong>글 탐색</strong><small>제목, 작성자, 게시판, 소설·AA로 찾기</small></span>
+            <span><strong>작품·글·작가 검색</strong><small>제목, 작성자, 게시판, 소설·AA로 찾기</small></span>
             <kbd aria-hidden="true">/</kbd>
           </button>
+          <section class="home-onboarding" id="home-onboarding" aria-labelledby="home-onboarding-title" hidden>
+            <h2 id="home-onboarding-title">어디서부터 읽을까요</h2>
+            <p>출처를 골라 둘러보거나, 다른 기기에서 내보낸 기록을 가져오세요.</p>
+            <div class="home-onboarding-sources">
+              <button type="button" data-home-source="typemoon">타입문넷</button>
+              <button type="button" data-home-source="novel">소설</button>
+              <button type="button" data-home-source="arcalive">아카라이브</button>
+            </div>
+            <button class="home-onboarding-import" id="home-onboarding-import" type="button">기록 가져오기</button>
+          </section>
           <div class="continue-block" id="continue-block" hidden>
             <button class="continue-reading" id="continue-reading" type="button">
-              <span>이어서 읽기</span>
-              <strong id="continue-work" hidden></strong>
-              <b id="continue-title"></b>
-              <small id="continue-meta"></small>
+              <span class="continue-cover" id="continue-cover" aria-hidden="true"></span>
+              <span class="continue-copy">
+                <span class="continue-label">이어 읽기<span id="continue-when"></span></span>
+                <strong id="continue-work" hidden></strong>
+                <b id="continue-title"></b>
+                <small id="continue-meta"></small>
+              </span>
+              <span class="continue-quote" id="continue-quote" hidden></span>
             </button>
-            <button class="continue-toc" id="continue-toc" type="button" hidden>작품 목차</button>
+            <button class="continue-toc" id="continue-toc" type="button" hidden>목차</button>
           </div>
-          <header class="home-header">
-            <div><p>개인 보존 장서</p><h1 id="home-title">내 장서</h1></div>
-            <div class="home-facts"><strong id="empty-count">—</strong><span>보존된 글</span></div>
-            <p class="home-copy cover-copy">최근 게시된 글과 최근 기록을 확인하세요.</p>
-            <button class="home-action" id="home-action" type="button" hidden>다시 시도</button>
-          </header>
-          <a class="home-operations" href="/ops"><span id="home-freshness">마지막 갱신 확인 중</span><strong>수집 상태 보기 <span aria-hidden="true">→</span></strong></a>
           <section class="reading-works" id="reading-works" hidden>
             <header><h2>읽던 작품</h2><button id="reading-works-all" type="button">모두 보기</button></header>
-            <ol id="reading-works-list"></ol>
+            <ol class="shelf" id="reading-works-list"></ol>
           </section>
           <section class="home-boards" id="home-boards" aria-labelledby="home-boards-title" hidden>
             <h2 id="home-boards-title">자주 보는 게시판</h2>
@@ -250,8 +257,15 @@
           </section>
           <div class="home-grid">
             <section><header><h2>최근 게시된 글</h2><button id="browse-all" type="button">둘러보기</button></header><ol id="latest-list"></ol></section>
-            <section><header><h2>최근 읽은 글</h2><button id="recent-all" type="button">보관함</button></header><ol id="recent-list"></ol></section>
+            <section><header><h2>최근 읽은 글</h2><button id="recent-all" type="button">기록</button></header><ol id="recent-list"></ol></section>
           </div>
+          <header class="home-header">
+            <div><p>개인 보존 장서</p><h1 id="home-title">내 장서</h1></div>
+            <div class="home-facts"><strong id="empty-count">—</strong><span>보존된 글</span></div>
+            <p class="home-copy cover-copy">최근 게시된 글과 최근 기록을 확인하세요.</p>
+            <button class="home-action" id="home-action" type="button" hidden>다시 시도</button>
+          </header>
+          <a class="home-operations" href="/ops"><span id="home-freshness">마지막 갱신 확인 중</span><strong>수집 상태 보기 <span aria-hidden="true">→</span></strong></a>
         </section>
 
         <section class="collection-view" id="collection-view" aria-labelledby="collection-title" hidden>

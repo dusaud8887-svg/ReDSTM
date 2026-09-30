@@ -26,6 +26,7 @@ import {
   readingTimeLabel,
   remainingTimeLabel,
   weightedPicks,
+  lastSentenceQuote,
 } from "/reading-model.js";
 import { createBoardNavigator } from "/board-navigator.js";
 import {
@@ -38,6 +39,8 @@ import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
 import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
 import { createMiniBar } from "/shell.js";
+import { fillContinueCard, shelfCard } from "/home.js";
+import { workHue, workKey } from "/type-cover.js";
 
 const readerSession = createDocumentSession();
 let fontGeneration = 0;
@@ -72,7 +75,7 @@ const elements = Object.fromEntries(
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
     "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
-    "continue-meta", "continue-block", "continue-toc", "catalog-back", "prose-font", "aa-controls",
+    "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
@@ -402,11 +405,15 @@ function miniBarModel() {
   const text = textLibrary.latestReading();
   const post = historyEntries.find((entry) => entry.summary?.object_key && postReadingState(entry.progress) !== "finished");
   if (text && (!post || Date.parse(text.readAt) > Date.parse(post.readAt))) {
-    return { title: text.work || text.title || "텍스트 장서", detail: text.work ? text.title : "", progress: text.progress, open: () => openTextFromHome(text) };
+    return {
+      title: text.work || text.title || "텍스트 장서", detail: text.work ? text.title : "", progress: text.progress,
+      hue: workHue(textHueKey(text)), open: () => openTextFromHome(text),
+    };
   }
   if (!post) return null;
   return {
     title: post.summary.title || "제목 없음", detail: boardLabel(post.summary.board_id), progress: post.progress,
+    hue: workHue(postHueKey(post.summary)),
     open: () => loadPost(post.summary, "push", { listHint: "recent" }),
   };
 }
@@ -739,6 +746,11 @@ function renderCover(
   else elements["continue-block"].hidden = true;
   renderHomeList(elements["latest-list"], latestPosts, "최근 게시된 글이 없습니다.", 6);
   renderHomeList(elements["recent-list"], historyEntries.map((entry) => entry.summary), "아직 읽은 기록이 없습니다.", 4, "recent");
+  // Empty modules hide whole (docs/24 §8.2); a first visit gets one block of ways in instead.
+  elements["recent-list"].closest("section").hidden = !historyEntries.length;
+  const firstVisit = !historyEntries.length && !bookmarks.length && !textLibrary.latestReading();
+  elements["home-onboarding"].hidden = !showContinue || !firstVisit;
+  elements["empty-reader"].classList.toggle("home-alert", Boolean(actionLabel) || title !== "내 장서");
   renderHomeBoards();
   void renderReadingWorks();
   void renderDiscovery();
@@ -838,6 +850,24 @@ function renderTextContinue(text) {
   ].filter(Boolean).join(" · ");
   elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
   setContinueProgress(finished ? 0 : text.progress);
+  fillContinueCard(continueCardParts(), {
+    title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
+  });
+}
+
+function continueCardParts() {
+  return { cover: elements["continue-cover"], quote: elements["continue-quote"], when: elements["continue-when"] };
+}
+
+// Stable cover keys (DESIGN §2.5) for records that only know an identity.
+function textHueKey(text) {
+  if (text.identity?.startsWith("novel:")) return workKey({ source: "novel", id: text.workId || text.work || text.identity });
+  return workKey({ source: "arcalive", board: text.board || "", id: text.workId || text.work || text.identity });
+}
+function postHueKey(summary, collectionId = null) {
+  return collectionId ? workKey({ source: "typemoon", id: collectionId })
+    : workKey({ source: "typemoon-post", board: summary.board_id, id: summary.external_post_id });
 }
 
 // The red progress piece along the bottom of the 이어서 읽기 card (DESIGN §3).
@@ -861,6 +891,7 @@ async function renderContinueCard() {
   }
   let summary = latestEntry.summary;
   let progress = latestEntry.progress;
+  let shownEntry = latestEntry;
   let membership = null;
   try {
     membership = await findCollection(summary);
@@ -871,6 +902,7 @@ async function renderContinueCard() {
     const target = collectionContinueTarget(membership.collection.entries, historyByIdentityMap());
     if (target.kind === "next" || target.kind === "resume") {
       summary = target.entry;
+      shownEntry = historyEntries.find((entry) => samePost(entry.summary, target.entry)) ?? null;
       progress = target.kind === "resume"
         ? historyByIdentityMap().get(postIdentity(target.entry))?.progress ?? 0
         : 0;
@@ -884,6 +916,7 @@ async function renderContinueCard() {
       }
       summary = fallback.summary;
       progress = fallback.progress;
+      shownEntry = fallback;
       try {
         membership = await findCollection(summary);
       } catch {
@@ -900,6 +933,7 @@ async function renderContinueCard() {
     }
     summary = fallback.summary;
     progress = fallback.progress;
+    shownEntry = fallback;
   }
   if (currentDestination !== "library") return;
   continueTargetPost = summary;
@@ -922,6 +956,11 @@ async function renderContinueCard() {
     elements["continue-work"].hidden = true;
     elements["continue-toc"].hidden = true;
   }
+  fillContinueCard(continueCardParts(), {
+    title: membership?.collection.title || summary.title || "제목 없음", source: "타입문넷",
+    hueKey: postHueKey(summary, membership?.collection.id), progress, sentence: lastSentenceQuote(shownEntry?.loc),
+    readAt: shownEntry?.readAt ?? latestEntry.readAt,
+  });
 }
 
 async function renderReadingWorks() {
@@ -954,7 +993,10 @@ async function renderReadingWorks() {
       });
       items.push({
         title: collection.title,
-        meta: [boardLabel(collection.board_id), copy.progress, copy.action],
+        source: "타입문넷",
+        hueKey: workKey({ source: "typemoon", id: collection.id }),
+        progress: collectionAvailableCount(collection) ? (state?.finished ?? 0) / collectionAvailableCount(collection) : null,
+        meta: [copy.progress, copy.action],
         readAt: state?.lastReadAt ?? "",
         fresh: hasNewEpisodes(collection, state),
         open: () => void openCollectionDetail(collection.id),
@@ -969,7 +1011,11 @@ async function renderReadingWorks() {
   for (const work of textWorks) {
     items.push({
       title: work.title,
-      meta: ["소설", work.meta],
+      source: "소설",
+      hueKey: workKey({ source: "novel", id: work.workId }),
+      progress: work.progress,
+      newCount: work.newCount,
+      meta: [work.meta],
       readAt: work.readAt,
       fresh: work.newCount > 0,
       badge: work.newCount > 0 ? `새 ${work.newCount}화` : "",
@@ -979,7 +1025,7 @@ async function renderReadingWorks() {
   // Works with episodes added since they were last read come first.
   items.sort((left, right) => Number(right.fresh) - Number(left.fresh) ||
     (Date.parse(right.readAt) || 0) - (Date.parse(left.readAt) || 0));
-  const shown = items.slice(0, 3);
+  const shown = items.slice(0, 8);
   section.hidden = shown.length === 0 && failedBoards.size === 0;
   list.replaceChildren();
   if ((failedBoards.size || typeMoonFailed) && shown.length === 0) {
@@ -990,7 +1036,7 @@ async function renderReadingWorks() {
     list.append(empty);
   }
   for (const item of shown) {
-    list.append(homeRow(item.title, item.meta, item.open, { badge: item.badge || (item.fresh ? "새 편" : "") }));
+    list.append(shelfCard({ ...item, badge: item.badge || (item.fresh ? "새 편" : ""), newCount: item.newCount ?? (item.fresh ? 1 : 0) }));
   }
   if (failedBoards.size && shown.length) {
     const note = document.createElement("li");
@@ -3844,6 +3890,17 @@ elements["continue-toc"].addEventListener("click", () => {
   if (continueCollectionId) void openCollectionDetail(continueCollectionId);
 });
 elements["browse-all"].addEventListener("click", () => showDestination("browse"));
+elements["home-onboarding"].addEventListener("click", (event) => {
+  const source = event.target.closest("[data-home-source]")?.dataset.homeSource;
+  if (source) {
+    openBrowseSource(source);
+    return;
+  }
+  if (event.target.closest("#home-onboarding-import")) {
+    showDestination("settings");
+    elements["import-state"].focus();
+  }
+});
 elements["discover-shuffle"].addEventListener("click", () => {
   discoverShuffle += 1;
   void renderDiscovery();
