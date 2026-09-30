@@ -125,6 +125,12 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .bottom-nav :is(button, a) span, .reader-bottom button span { font-size: 11px; font-weight: 550; white-space: nowrap; }
   .reader-bottom .aa-label { font-size: 15px; font-weight: 700; line-height: 20px; }
   .bottom-nav button.active { color: var(--accent); }
+  /* Glass tab bar (DESIGN §5, §8.1): the selected tab sits on an accent pill. */
+  .bottom-nav { background: var(--glass); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); }
+  .bottom-nav :is(button, a) span { font-size: 12px; }
+  .bottom-nav :is(button, a) svg { box-sizing: content-box; width: 22px; height: 22px; padding: 3px 16px; border-radius: 999px; transition: background-color var(--dur-2) var(--ease-in-out); }
+  .bottom-nav button.active svg { background: var(--accent-soft); }
+  .bottom-nav button.active span { font-weight: 650; }
   body.reader-open .bottom-nav, body.keyboard-open .bottom-nav { display: none; }
   body.reader-active .reader-bottom { display: grid; }
   body.reader-active.immersive .reader-bottom { display: none; }
@@ -133,3 +139,6 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   body.reader-active { grid-template-rows: minmax(0, 1fr); }
   body.reader-active .app-bar { display: none; }
 }
+
+@media (prefers-reduced-transparency: reduce) { .bottom-nav { background: var(--surface) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .bottom-nav { background: var(--surface) !important; } }

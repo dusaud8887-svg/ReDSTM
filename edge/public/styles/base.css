@@ -29,6 +29,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Headings take focus only so screen readers land on the new page; no box for sighted users. */
 [tabindex="-1"]:focus { outline: none; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) {
