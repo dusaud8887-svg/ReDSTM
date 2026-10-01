@@ -41,3 +41,13 @@ test("resolves a repeated sentence by context, preserves ambiguity and never cho
   assert.equal(sanitizeLocator({ ...loc, end: -1 }), null);
   assert.equal(sanitizeLocator({ ...loc, rev: "invalid" }), null);
 });
+
+test("a locator travels in a link and comes back the same sentence", async () => {
+  const { decodeLocator, encodeLocator } = await import("../public/text-model.js");
+  const loc = { v: 2, tm: 1, rev: "a".repeat(64), start: 100, end: 160, exact: "가".repeat(60), prefix: "앞".repeat(32), suffix: "뒤".repeat(32) };
+  const code = encodeLocator(loc);
+  assert.match(code, /^[A-Za-z0-9_-]+$/);
+  assert.deepEqual(decodeLocator(code), { v: 2, tm: 1, rev: "a".repeat(64), start: 100, end: 132, exact: "가".repeat(32), prefix: "앞".repeat(12), suffix: "뒤".repeat(12) });
+  assert.equal(decodeLocator("not-json"), null);
+  assert.equal(encodeLocator({ v: 1 }), "");
+});
