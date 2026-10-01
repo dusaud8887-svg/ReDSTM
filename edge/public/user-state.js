@@ -89,7 +89,7 @@ function timestampMap(value, timestampKey) {
   for (const [identity, entry] of Object.entries(value)) {
     if (!validStablePostId(identity) || !isRecord(entry) || typeof entry[timestampKey] !== "string" ||
         Number.isNaN(Date.parse(entry[timestampKey]))) continue;
-    result[identity] = { [timestampKey]: entry[timestampKey] };
+    result[identity] = { [timestampKey]: canonicalTime(entry[timestampKey]) };
     if (timestampKey === "readAt" && Number.isFinite(entry.progress) && entry.progress >= 0 && entry.progress <= 1) {
       result[identity].progress = entry.progress;
     }
@@ -237,6 +237,12 @@ function validTimestamp(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
 
+// Imported times written with a zone offset are kept as the same instant in UTC, so every later
+// comparison and sort sees one notation (R01). Times this app wrote (UTC, "Z") stay as they are.
+function canonicalTime(value) {
+  return /Z$/i.test(value) ? value : new Date(value).toISOString();
+}
+
 // The text library's reading records and saved items (redstm.textState.v1). They live in their
 // own localStorage key, so backups carry them as an optional `text` section.
 export function sanitizeTextState(value) {
@@ -244,7 +250,7 @@ export function sanitizeTextState(value) {
   const history = {};
   for (const [identity, record] of Object.entries(isRecord(source.history) ? source.history : {})) {
     if (!textIdentityPattern.test(identity) || !isRecord(record) || !validTimestamp(record.readAt)) continue;
-    const kept = { readAt: record.readAt, ...readingLocationFields(record) };
+    const kept = { readAt: canonicalTime(record.readAt), ...readingLocationFields(record) };
     if (Number.isFinite(record.progress) && record.progress >= 0 && record.progress <= 1) kept.progress = record.progress;
     if (Number.isFinite(record.scroll) && record.scroll >= 0) kept.scroll = record.scroll;
     if (Number.isInteger(record.total) && record.total >= 0) kept.total = record.total;
@@ -262,7 +268,7 @@ export function sanitizeTextState(value) {
       !textIdentityPattern.test(identity) || !isRecord(saved) || !validTimestamp(saved.savedAt) ||
       !textLanes.has(saved.lane) || !isRecord(saved.entry) || !textHashPattern.test(saved.entry.sha256 ?? "")
     ) continue;
-    const kept = { savedAt: saved.savedAt, lane: saved.lane, entry: safeCatalogState(saved.entry) };
+    const kept = { savedAt: canonicalTime(saved.savedAt), lane: saved.lane, entry: safeCatalogState(saved.entry) };
     if (isRecord(saved.work)) kept.work = safeCatalogState(saved.work);
     if (typeof saved.title === "string") kept.title = saved.title.slice(0, 300);
     const metadata = sanitizeBookmarkMetadata(saved.note, saved.tags);
@@ -276,21 +282,98 @@ export function sanitizeTextState(value) {
 
 export const BACKUP_FORMAT = "redstm-backup";
 
-// The backup file people download (schema 3): the TypeMoon reading state and the text library's
-// state (history, bookmarks, shelves) as separate sections, normalized and indented for reading.
-export function exportUserState(state, textState = null, { exportedAt = new Date().toISOString() } = {}) {
+// The backup file people download: the TypeMoon reading state and the text library's state
+// (history, bookmarks, shelves) as separate sections, normalized and indented for reading.
+// Schema 4 adds `records` — the owner's marks and notes (tombstones included) and reading
+// sessions — when this device has them; without them the file stays schema 3.
+export function exportUserState(state, textState = null, { exportedAt = new Date().toISOString(), records = null } = {}) {
   const { schema_version: _version, ...typemoon } = normalizeV2State(state, state?.settings);
   return `${JSON.stringify({
     format: BACKUP_FORMAT,
-    schema_version: 3,
+    schema_version: records ? 4 : 3,
     exported_at: exportedAt,
     typemoon,
     ...(textState ? { text: sanitizeTextState(textState) } : {}),
+    ...(records ? { records: sanitizeRecords(records) } : {}),
   }, null, 2)}\n`;
 }
 
+// Times are compared as instants, not as text: "09:00+09:00" is earlier than "00:30Z" on the same
+// day (R01). An unreadable time loses; an equal time keeps the record already here.
+function instant(value) {
+  const time = Date.parse(value ?? "");
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+}
+
 function newer(left, right, key) {
-  return String(right?.[key] ?? "") > String(left?.[key] ?? "");
+  return instant(right?.[key]) > instant(left?.[key]);
+}
+
+const recordIdPattern = /^[A-Za-z0-9-]{1,100}$/;
+const shortText = (value, limit) => (typeof value === "string" ? value.slice(0, limit) : "");
+
+function sanitizeAnnotation(value) {
+  if (!isRecord(value) || !recordIdPattern.test(value.id ?? "") || typeof value.documentId !== "string" || !value.documentId) return null;
+  const locator = sanitizeLocator(value.locator);
+  if (!locator || !validTimestamp(value.createdAt) || !validTimestamp(value.updatedAt)) return null;
+  const kind = value.kind === "note" ? "note" : "mark";
+  const context = isRecord(value.context) ? value.context : {};
+  return {
+    id: value.id, documentId: value.documentId.slice(0, 300), workId: shortText(value.workId, 300), locator, quote: locator.exact,
+    note: shortText(value.note, BOOKMARK_NOTE_LIMIT), tags: Array.isArray(value.tags) ? value.tags.filter((tag) => typeof tag === "string").slice(0, BOOKMARK_TAG_LIMIT).map((tag) => tag.slice(0, BOOKMARK_TAG_LENGTH)) : [],
+    kind,
+    context: {
+      title: shortText(context.title, 300), work: shortText(context.work, 300),
+      route: typeof context.route === "string" && context.route.startsWith("/") ? context.route.slice(0, 1000) : "",
+    },
+    createdAt: value.createdAt, updatedAt: value.updatedAt,
+    ...(validTimestamp(value.deletedAt) ? { deletedAt: value.deletedAt } : {}),
+  };
+}
+
+function sanitizeSession(value) {
+  if (!isRecord(value) || !recordIdPattern.test(value.id ?? "") || !/^\d{4}-\d{2}-\d{2}$/.test(value.day ?? "")) return null;
+  const spans = Array.isArray(value.spans)
+    ? value.spans.filter((span) => Array.isArray(span) && Number.isFinite(span[0]) && Number.isFinite(span[1]) && span[1] > span[0]).slice(0, 2000)
+      .map(([start, end]) => [start, end])
+    : [];
+  if (!spans.length) return null;
+  return {
+    id: value.id, deviceId: shortText(value.deviceId, 100), workKey: shortText(value.workKey, 300), documentId: shortText(value.documentId, 300),
+    day: value.day, start: spans[0][0], end: spans.at(-1)[1], spans,
+    activeMs: Number.isFinite(value.activeMs) && value.activeMs >= 0 ? value.activeMs : 0,
+    chars: Number.isFinite(value.chars) && value.chars >= 0 ? Math.round(value.chars) : 0, endOfWork: value.endOfWork === true,
+  };
+}
+
+export function sanitizeRecords(value) {
+  const source = isRecord(value) ? value : {};
+  const list = (items, sanitize) => (Array.isArray(items) ? items.map(sanitize).filter(Boolean) : []);
+  return { annotations: list(source.annotations, sanitizeAnnotation), sessions: list(source.sessions, sanitizeSession) };
+}
+
+// Marks and notes from a backup, merged into this device's (T22). A deletion is permanent: once
+// either side has a tombstone the record stays deleted. Otherwise the later edit wins. Returns only
+// the records that change, ready to write in one transaction.
+export function mergeAnnotationRecords(current, incoming) {
+  const mine = new Map(current.map((record) => [record.id, record]));
+  const changes = [];
+  for (const record of incoming) {
+    const here = mine.get(record.id);
+    if (!here) {
+      changes.push(record);
+      continue;
+    }
+    if (here.deletedAt) continue;
+    if (record.deletedAt || newer(here, record, "updatedAt")) changes.push(record.deletedAt ? { ...here, ...record } : record);
+  }
+  return changes;
+}
+
+// Reading sessions: the same session keeps the copy that reaches further.
+export function mergeSessionRecords(current, incoming) {
+  const mine = new Map(current.map((session) => [session.id, session]));
+  return incoming.filter((session) => !mine.has(session.id) || session.end > mine.get(session.id).end);
 }
 
 // 합쳐서 가져오기: each post keeps its most recent reading record (and the furthest progress),
@@ -349,7 +432,7 @@ export function serializeUserState(state) {
 
 export function planImport(text, defaultSettings = {}) {
   const payload = JSON.parse(text);
-  const suppliedSettings = sanitizeSettings(payload?.schema_version === 3 ? payload?.typemoon?.settings : payload?.settings);
+  const suppliedSettings = sanitizeSettings(payload?.schema_version >= 3 ? payload?.typemoon?.settings : payload?.settings);
   const defaultedSettings = Object.keys(sanitizeSettings(defaultSettings))
     .filter((key) => !(key in suppliedSettings));
   let state;
@@ -357,7 +440,7 @@ export function planImport(text, defaultSettings = {}) {
     state = migrateLegacyState(payload, defaultSettings);
   } else if (payload?.schema_version === 2) {
     state = normalizeV2State(payload, defaultSettings);
-  } else if (payload?.schema_version === 3 && payload.format === BACKUP_FORMAT && isRecord(payload.typemoon)) {
+  } else if ((payload?.schema_version === 3 || payload?.schema_version === 4) && payload.format === BACKUP_FORMAT && isRecord(payload.typemoon)) {
     state = normalizeV2State({ ...payload.typemoon, schema_version: 2 }, defaultSettings);
   } else {
     throw new Error("지원하지 않는 상태 파일 형식");
@@ -365,9 +448,11 @@ export function planImport(text, defaultSettings = {}) {
   // Files exported before the text library existed have no `text`; importing them keeps the
   // text reading records already in this browser.
   const textState = payload?.schema_version >= 2 && isRecord(payload.text) ? sanitizeTextState(payload.text) : null;
+  const records = payload?.schema_version === 4 && isRecord(payload.records) ? sanitizeRecords(payload.records) : null;
   return {
     state,
     text: textState,
+    records,
     summary: {
       history: Object.keys(state.history).length,
       bookmarks: Object.keys(state.bookmarks).length,
@@ -376,7 +461,9 @@ export function planImport(text, defaultSettings = {}) {
       textHistory: textState ? Object.keys(textState.history).length : null,
       textBookmarks: textState ? Object.keys(textState.bookmarks).length : null,
       shelves: textState?.shelves ? textState.shelves.length : null,
-      exportedAt: payload?.schema_version === 3 && typeof payload.exported_at === "string" ? payload.exported_at : null,
+      exportedAt: payload?.schema_version >= 3 && typeof payload.exported_at === "string" ? payload.exported_at : null,
+      annotations: records ? records.annotations.filter((record) => !record.deletedAt).length : null,
+      sessions: records ? records.sessions.length : null,
       defaultedSettings,
     },
   };

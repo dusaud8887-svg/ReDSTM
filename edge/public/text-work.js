@@ -20,12 +20,19 @@ export function orderChapters(rows, mode) {
   return ordered;
 }
 
+// Reading times compare as instants: a time written with a zone offset sorts by when it was,
+// not by its text (R01).
+function readTime(record) {
+  const time = Date.parse(record?.readAt ?? "");
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+}
+
 function moveNovelStateKey(state, oldKey, next, work) {
   if (oldKey === next) return false;
   const record = state.history[oldKey];
   if (record) {
     const existing = state.history[next];
-    if (!existing || String(record.readAt || "") > String(existing.readAt || "")) {
+    if (!existing || readTime(record) > readTime(existing)) {
       state.history[next] = record;
     }
     delete state.history[oldKey];
@@ -113,7 +120,7 @@ const POSITION_FIELDS = ["anchor", "offset", "anchorTop", "scroll", "revision", 
 export function compactTextHistory(history, { keepRecent = 50 } = {}) {
   const entries = Object.entries(history)
     .filter(([, record]) => record && typeof record === "object")
-    .sort(([, left], [, right]) => String(right.readAt || "").localeCompare(String(left.readAt || "")));
+    .sort(([, left], [, right]) => readTime(right) - readTime(left) || 0);
   const latestPerWork = new Set();
   const seenWorks = new Set();
   for (const [key, record] of entries) {
@@ -150,7 +157,7 @@ export function trimTextState(state, maxChars) {
   let size = JSON.stringify(state).length;
   if (size <= maxChars) return 0;
   const keys = Object.keys(state.history)
-    .sort((left, right) => String(state.history[left].readAt || "").localeCompare(String(state.history[right].readAt || "")));
+    .sort((left, right) => readTime(state.history[left]) - readTime(state.history[right]) || 0);
   let removed = 0;
   for (const key of keys) {
     if (size <= maxChars) break;
