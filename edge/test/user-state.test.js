@@ -344,11 +344,19 @@ test("merging marks keeps deletions permanent and the later edit (T22)", () => {
     mark("d", "2026-09-01T00:00:00Z"),
   ];
   const changes = mergeAnnotationRecords(current, incoming);
-  assert.deepEqual(changes.map((record) => record.id), ["a", "c", "d"]);
+  // "a" was edited on both sides: the later edit wins and this device's edit stays as a copy.
+  assert.deepEqual(changes.map((record) => record.id), ["a", changes[1].id, "c", "d"]);
   assert.equal(changes[0].note, "백업 쪽 메모");
+  assert.equal(changes[1].conflictOf, "a");
+  assert.equal(changes[1].note, "");
+  changes.splice(1, 1);
   assert.equal(changes[1].deletedAt, "2026-09-03T00:00:00Z");
-  // An older edit does not replace a newer one.
+  // An older copy of the same edit changes nothing; an older different edit is kept as a copy.
   assert.deepEqual(mergeAnnotationRecords([mark("a", "2026-09-05T00:00:00Z")], [mark("a", "2026-09-04T00:00:00Z")]), []);
+  const older = mergeAnnotationRecords([mark("a", "2026-09-05T00:00:00Z")], [mark("a", "2026-09-04T00:00:00Z", { note: "다른 기기 메모" })]);
+  assert.deepEqual(older.map((record) => [record.conflictOf, record.note]), [["a", "다른 기기 메모"]]);
+  // Importing the same backup again adds no second copy.
+  assert.deepEqual(mergeAnnotationRecords([mark("a", "2026-09-05T00:00:00Z"), older[0]], [mark("a", "2026-09-04T00:00:00Z", { note: "다른 기기 메모" })]), []);
   assert.deepEqual(mergeSessionRecords([{ id: "s", end: 10 }], [{ id: "s", end: 5 }, { id: "s", end: 20 }, { id: "t", end: 1 }]).map((session) => session.end), [20, 1]);
 });
 

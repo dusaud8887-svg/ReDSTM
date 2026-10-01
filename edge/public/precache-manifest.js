@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "1bf0b6583568ba55"
+    "revision": "dffaa4ce155d5aaf"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "07137711f9bb54fe"
+    "revision": "bf36b2bad6e9b452"
   },
   {
     "url": "/arca-media.js",
@@ -170,7 +170,7 @@ export default [
   },
   {
     "url": "/styles/reader.css",
-    "revision": "edcb5180c0bc87c7"
+    "revision": "4fa320fa75f62e19"
   },
   {
     "url": "/styles/shell.css",
@@ -190,7 +190,7 @@ export default [
   },
   {
     "url": "/text-model.js",
-    "revision": "f79771ec75ce5e24"
+    "revision": "fa21d3ed59ac7e20"
   },
   {
     "url": "/text-shelves.js",
@@ -210,7 +210,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "3aa2213762a46d92"
+    "revision": "9fc0a0885d2b0c41"
   },
   {
     "url": "/work-header.js",

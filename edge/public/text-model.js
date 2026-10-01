@@ -135,3 +135,28 @@ export function resolveLocator(model, supplied, rev = "") {
   if (!first || (second && first.score === second.score && first.distance === second.distance)) return { status: "unresolved" };
   return { status: "candidate", start: first.start, end: first.start + loc.exact.length };
 }
+
+// A locator short enough for a QR code or a link (docs/24 P5-1): up to 32 characters of the
+// sentence and 12 of context, base64url JSON. Decoding goes back through sanitizeLocator.
+export function encodeLocator(loc) {
+  const clean = sanitizeLocator(loc);
+  if (!clean) return "";
+  const exact = clean.exact.slice(0, 32);
+  const compact = { r: clean.rev, s: clean.start, x: exact, p: clean.prefix.slice(-12), f: clean.suffix.slice(0, 12) };
+  const bytes = new TextEncoder().encode(JSON.stringify(compact));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+export function decodeLocator(value) {
+  try {
+    const binary = atob(String(value).replaceAll("-", "+").replaceAll("_", "/"));
+    const compact = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0))));
+    return sanitizeLocator({
+      v: 2, tm: 1, rev: compact.r, start: compact.s, end: compact.s + String(compact.x ?? "").length, exact: compact.x, prefix: compact.p, suffix: compact.f,
+    });
+  } catch {
+    return null;
+  }
+}

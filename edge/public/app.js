@@ -54,7 +54,8 @@ import { featureEnabled } from "/capabilities.js";
 import { createOffline, deleteNamespace } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
 import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
-import { createTextModel, modelOffset } from "/text-model.js";
+import { createTextModel, decodeLocator, encodeLocator, modelOffset } from "/text-model.js";
+import { renderSVG } from "/vendor/uqr@0.1.3/uqr.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
@@ -1301,6 +1302,7 @@ function beginReaderDocument(documentKey, workId, rev) {
   readerSession.frame(() => void ownerStore().then(() => {
     paintAnnotations();
     jumpToPendingExcerpt();
+    jumpToHandoff();
   }));
 }
 
@@ -5744,7 +5746,8 @@ function excerptElement(record) {
   const meta = document.createElement("span");
   meta.className = "result-meta";
   const where = [record.context?.work, record.context?.title].filter(Boolean).join(" › ");
-  meta.textContent = [where || "제목 없음", formatSourceDate(record.createdAt) || record.createdAt.slice(0, 10), record.kind === "note" ? "메모" : "표시"].join(" · ");
+  meta.textContent = [where || "제목 없음", formatSourceDate(record.createdAt) || record.createdAt.slice(0, 10), record.kind === "note" ? "메모" : "표시",
+    record.conflictOf ? "충돌 사본 · 다른 기기에서 고친 내용" : ""].filter(Boolean).join(" · ");
   button.append(meta);
   item.append(button);
   return item;
@@ -6151,6 +6154,48 @@ document.querySelector("#clear-device").addEventListener("click", async () => {
   void renderOfflineStorage();
 });
 
+// ---- 다른 기기에서 (docs/24 P5-1) ---------------------------------------------------------------
+// The place travels in the address (?at=<short locator>), shown as a QR code: no server is told.
+// The receiving page takes it out of the address before routing and moves to that sentence once
+// the document has restored its own place.
+let pendingHandoff = null;
+{
+  const params = new URLSearchParams(location.search);
+  const at = params.get("at");
+  if (at) {
+    pendingHandoff = decodeLocator(at);
+    params.delete("at");
+    const query = params.toString();
+    history.replaceState(history.state, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+  }
+}
+
+function jumpToHandoff() {
+  const loc = pendingHandoff;
+  if (!loc || !readerSource) return;
+  pendingHandoff = null;
+  readerSession.frame(() => readerSession.frame(() => {
+    if (readerSession.restore({ loc, viewportOffset: Math.round(elements["reader-pane"].clientHeight / 3) })) {
+      syncScrollBaseline();
+      showReaderFeedback("다른 기기에서 읽던 곳이에요", 2400);
+    } else showReaderFeedback("넘겨받은 문장을 이 본문에서 찾지 못했어요", 2400);
+  }));
+}
+
+document.querySelector("#more-handoff").addEventListener("click", () => {
+  closeReaderMore();
+  const anchor = readerSession.capture();
+  const url = new URL(location.href);
+  if (anchor?.loc) url.searchParams.set("at", encodeLocator(anchor.loc));
+  document.querySelector("#handoff-code").innerHTML = renderSVG(url.href, { border: 1 });
+  document.querySelector("#handoff-quote").textContent = anchor?.loc ? `“${anchor.loc.exact.slice(0, 40)}…”` : "이 글의 처음부터 열립니다";
+  document.querySelector("#handoff-url").value = url.href;
+  document.querySelector("#handoff-dialog").showModal();
+});
+document.querySelector("#handoff-copy").addEventListener("click", () => {
+  void navigator.clipboard?.writeText(document.querySelector("#handoff-url").value).then(() => showReaderFeedback("링크를 복사했어요"));
+});
+
 // Leaving search clears its conditions (showDestination), so the words are put back afterwards.
 document.querySelector("[data-records-scope]").addEventListener("click", async () => {
   const query = elements["search-input"].value.trim();
@@ -6316,7 +6361,8 @@ async function importRecords(records) {
   }
   annotationRecords = await store.getAll("annotations");
   paintAnnotations();
-  return ` · 표시·메모 ${annotations.length}건 · 독서 기록 ${sessions.length}건 반영`;
+  const copies = annotations.filter((record) => record.conflictOf).length;
+  return ` · 표시·메모 ${annotations.length - copies}건 · 독서 기록 ${sessions.length}건 반영${copies ? ` · 서로 다르게 고친 ${copies}건은 충돌 사본으로 남김(기록 › 발췌)` : ""}`;
 }
 elements["import-apply"].addEventListener("click", () => void applyImport(false));
 elements["import-merge"].addEventListener("click", () => void applyImport(true));

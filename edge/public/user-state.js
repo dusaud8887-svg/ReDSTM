@@ -328,6 +328,7 @@ function sanitizeAnnotation(value) {
     },
     createdAt: value.createdAt, updatedAt: value.updatedAt,
     ...(validTimestamp(value.deletedAt) ? { deletedAt: value.deletedAt } : {}),
+    ...(recordIdPattern.test(value.conflictOf ?? "") ? { conflictOf: value.conflictOf } : {}),
   };
 }
 
@@ -353,8 +354,13 @@ export function sanitizeRecords(value) {
 }
 
 // Marks and notes from a backup, merged into this device's (T22). A deletion is permanent: once
-// either side has a tombstone the record stays deleted. Otherwise the later edit wins. Returns only
-// the records that change, ready to write in one transaction.
+// either side has a tombstone the record stays deleted. Otherwise the later edit wins, and when the
+// two sides were edited differently the other edit is kept beside it as a 충돌 사본 (P5-2) instead
+// of being lost. Returns only the records that change, ready to write in one transaction.
+const sameEdit = (left, right) => left.note === right.note && left.kind === right.kind &&
+  JSON.stringify(left.tags ?? []) === JSON.stringify(right.tags ?? []);
+const conflictId = (record) => `${record.id.slice(0, 80)}-c${instant(record.updatedAt).toString(36)}`.slice(0, 100);
+
 export function mergeAnnotationRecords(current, incoming) {
   const mine = new Map(current.map((record) => [record.id, record]));
   const changes = [];
@@ -365,7 +371,18 @@ export function mergeAnnotationRecords(current, incoming) {
       continue;
     }
     if (here.deletedAt) continue;
-    if (record.deletedAt || newer(here, record, "updatedAt")) changes.push(record.deletedAt ? { ...here, ...record } : record);
+    if (record.deletedAt) {
+      changes.push({ ...here, ...record });
+      continue;
+    }
+    if (sameEdit(here, record)) {
+      if (newer(here, record, "updatedAt")) changes.push(record);
+      continue;
+    }
+    const [winner, loser] = newer(here, record, "updatedAt") ? [record, here] : [here, record];
+    if (winner === record) changes.push(record);
+    const copy = { ...loser, id: conflictId(loser), conflictOf: loser.id };
+    if (!mine.has(copy.id)) changes.push(copy);
   }
   return changes;
 }
