@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "012b887f8a1b24c1"
+    "revision": "257b5c82c81af335"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "fe3f7088ec276b83"
+    "revision": "f399a39fea041436"
   },
   {
     "url": "/arca-media.js",
@@ -98,7 +98,7 @@ export default [
   },
   {
     "url": "/offline.js",
-    "revision": "954678bd13666dce"
+    "revision": "7cb1d09a9214dc0e"
   },
   {
     "url": "/overlay-manager.js",
@@ -166,7 +166,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "02afc9cff3417faf"
+    "revision": "db94478e5084dc4f"
   },
   {
     "url": "/styles/reader.css",
