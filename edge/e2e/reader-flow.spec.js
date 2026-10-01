@@ -2237,3 +2237,29 @@ test("KWIC worker returns original locators and reports unreadable episodes sepa
   expect(results.at(-1).failed).toBe(1);
   expect(results.find((result) => result.entry.documentId === "missing").error).toBe(true);
 });
+
+test("KWIC sheet filters before counts, widens explicitly and opens an original sentence", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const { createKwic } = await import("/kwic.js");
+    const { createTextModel } = await import("/text-model.js");
+    const { createOverlayManager } = await import("/overlay-manager.js");
+    const kwic = createKwic({
+      overlays: createOverlayManager(),
+      parse: (_entry, raw) => createTextModel(new DOMParser().parseFromString(JSON.parse(raw).post.body_html, "text/html").body).text,
+      async onOpen(hit, parent) { window.kwicOpened = { hit, parent }; },
+    });
+    kwic.open({ title: "긴 연재", from: "/collections/1", current: "1", read: ["1"], entries: [1, 2, 3].map((id) => ({
+      title: `${id}편`, documentId: String(id), type: "typemoon", url: `/archive/posts/board_a/${id}-${id.toString(16).padStart(64, "0")}.json.zst`,
+    })) }, "본문 40");
+  });
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐 1곳");
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐 3곳");
+  await page.locator("#kwic-results button").nth(2).click();
+  const opened = await page.evaluate(() => window.kwicOpened);
+  expect(opened.hit.entry.documentId).toBe("3");
+  expect(opened.hit.locator.exact).toBe("본문 40");
+  expect(opened.parent).toBe("/collections/1?kwic=%EB%B3%B8%EB%AC%B8+40&kwicAll=1");
+});

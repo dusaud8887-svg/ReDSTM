@@ -1,3 +1,17 @@
+/* KWIC results belong to a native sheet, outside the original body DOM. */
+#kwic-dialog { padding: 20px; }
+#kwic-search { display: flex; align-items: end; gap: 8px; }
+#kwic-search label { display: grid; gap: 8px; flex: 1; min-width: 0; }
+#kwic-dialog input[type="text"] { width: 100%; min-width: 0; min-height: 44px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); }
+#kwic-dialog button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.kwic-scope { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.kwic-distribution { display: flex; gap: 1px; height: 20px; }
+.kwic-distribution i { flex: 1; background: var(--line); }
+.kwic-distribution i.hit { background: var(--accent); }
+#kwic-results { padding: 0; list-style: none; display: grid; gap: 8px; }
+#kwic-results button { width: 100%; text-align: start; display: grid; gap: 8px; }
+#kwic-results span { font-family: var(--font-reading); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+#kwic-results mark { background: var(--hl-find); color: var(--ink); }
 .catalog-inner {
   min-width: 0;
   min-height: 0;

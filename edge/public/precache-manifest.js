@@ -93,6 +93,10 @@ export default [
     "revision": "396c5def3c4d182f"
   },
   {
+    "url": "/kwic.js",
+    "revision": "d3384bb2ed491e9c"
+  },
+  {
     "url": "/list-anchor.js",
     "revision": "672aaa0522624719"
   },
@@ -174,7 +178,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "db94478e5084dc4f"
+    "revision": "82f7c2dc8b066189"
   },
   {
     "url": "/styles/reader.css",
