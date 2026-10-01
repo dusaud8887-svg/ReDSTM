@@ -949,6 +949,44 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa-fixture.png` });
 });
 
+// T06 (docs/24 §8.16): every prose setting and the app theme leave an AA picture as it was —
+// the same DOM, the same computed grid and colours, and the same pixels.
+test("prose settings and theme never change an AA picture", async ({ page }) => {
+  await useCollectionFixture(page);
+  const properties = [
+    "font-family", "font-size", "line-height", "white-space", "overflow-wrap", "text-align", "letter-spacing", "word-spacing",
+    "text-indent", "font-weight", "font-style", "text-transform", "font-feature-settings", "font-variant-numeric", "hyphens",
+    "text-wrap-mode", "text-wrap-style", "color", "background-color", "margin", "padding", "width",
+  ];
+  const snapshot = async () => {
+    await openPost(page, aaKey);
+    await page.evaluate(() => document.fonts.ready);
+    const styles = await page.evaluate((names) => {
+      const root = document.getElementById("archive-body");
+      return [root, ...root.querySelectorAll(".aa-canvas, .aa-canvas *")].map((element) => {
+        const style = getComputedStyle(element);
+        return Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name)]));
+      });
+    }, properties);
+    const html = await page.locator("#archive-body").innerHTML();
+    const pixels = await page.locator(".aa-canvas").screenshot({ animations: "disabled", caret: "hide" });
+    return { styles, html, pixels };
+  };
+  const before = await snapshot();
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("redstm.userState.v2"));
+    Object.assign(state.settings, {
+      theme: "dark", proseAlign: "justify", proseFont: "sans", proseSize: 24, lineHeight: 2.2,
+      paragraphSpacing: 2, textIndent: 2, readerSurface: "ink",
+    });
+    localStorage.setItem("redstm.userState.v2", JSON.stringify(state));
+  });
+  const after = await snapshot();
+  expect(after.html).toBe(before.html);
+  expect(after.styles).toEqual(before.styles);
+  expect(after.pixels.equals(before.pixels)).toBe(true);
+});
+
 test("applies and persists prose typography over legacy source styles", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, proseKey);

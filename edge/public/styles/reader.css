@@ -38,9 +38,13 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .archive-body:not(.aa) { touch-action: pan-x pan-y; }
 .setting-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 @media (hover: hover) and (pointer: fine) { .touch-hint { display: none; } }
-.archive-body p { margin: 0 0 var(--prose-paragraph, .95em); }
-/* New prose settings never reach an AA picture (docs/24 §8.16). */
-.archive-body:not(.aa) p { text-indent: var(--prose-indent, 0); }
+/* Prose paragraph settings stop at an AA canvas and a media figure (DESIGN §8.1). `:scope` keeps
+   the old .archive-body specificity. @scope does not stop inheritance — aa.css restates the AA root.
+   Headings, quotes, rules, images and links stay unscoped: AA pictures already render them so. */
+@scope (.archive-body) to (.aa-canvas, .media-figure) {
+  :scope p { margin: 0 0 var(--prose-paragraph, .95em); }
+  :scope:not(.aa) p { text-indent: var(--prose-indent, 0); }
+}
 .archive-body :is(h1, h2, h3, h4) { font-family: inherit; line-height: 1.4; }
 .archive-body blockquote { margin: 1.5em 0; padding-left: 1.25em; border-left: 3px solid var(--line-strong); color: var(--muted); }
 .archive-body img { max-width: 100%; max-height: 80vh; height: auto; }
