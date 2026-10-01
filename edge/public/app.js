@@ -7,6 +7,7 @@ import {
   mergeTextStates,
   mergeUserStates,
   migrateLegacyState,
+  PROFILE_KEYS,
   planImport,
   postIdentity,
   readingLocationFields,
@@ -103,7 +104,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "offline-works", "offline-works-list", "other-account", "auth-dialog", "collection-offline", "offline-save", "offline-state", "offline-delete", "offline-storage", "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
+    "autoscroll-bar", "offline-works", "offline-works-list", "other-account", "auth-dialog", "collection-offline", "offline-save", "offline-state", "offline-delete", "offline-storage", "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
     "home-excerpt", "home-excerpt-list", "home-week", "home-week-total", "home-week-bars", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
@@ -277,6 +278,7 @@ const find = createFind({
 let findReturnTimer = null;
 let findReturnAnchor = null;
 function openFind() {
+  pauseAutoScroll();
   if (!readerSource) return;
   find.open((anchor) => {
     if (!anchor) return;
@@ -378,7 +380,9 @@ function readyLabel() {
 }
 
 function persistUserState() {
-  const { viewModes, ...savedSettings } = settings;
+  const { viewModes, ...current } = settings;
+  // While a work's own profile is on (이 작품만), the user's base reading settings are what is kept.
+  const savedSettings = { ...current, ...(workProfileBase ?? {}) };
   userState = {
     schema_version: 2,
     settings: savedSettings,
@@ -1253,6 +1257,7 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    stopAutoScroll();
     finishReadingSession();
     if (previousSource) readerSession.cancelPendingWork();
     readerNavigation = null;
@@ -1297,7 +1302,9 @@ function beginReaderDocument(documentKey, workId, rev) {
   paged.page = 0;
   paged.anchor = null;
   hideSelectionMenu();
+  stopAutoScroll();
   finishReadingSession();
+  readerSession.frame(applyWorkProfile);
   readerSession.frame(startReadingSession);
   readerSession.frame(() => void ownerStore().then(() => {
     paintAnnotations();
@@ -2247,6 +2254,7 @@ const quickSettings = document.querySelector("#quick-settings");
 overlays.watch(quickSettings, "popover");
 function openQuickSettings() {
   document.querySelector("#quick-size-output").value = String(settings.proseSize);
+  renderProfiles();
   quickSettings.showPopover();
 }
 document.querySelector("#quick-all-settings").addEventListener("click", () => {
@@ -3596,6 +3604,9 @@ async function updateCollection() {
     currentCollection = membership;
     if (membership) {
       readerSession.workId = `typemoon:collection:${membership.collection.id}`;
+      // The session and a work's own profile follow the work once it is known.
+      if (readingSession?.documentId === readerSession.documentKey) readingSession.workKey = readerSession.workId;
+      applyWorkProfile();
       activeCollectionId = membership.collection.id;
       const unavailable = membership.collection.entries.filter((entry) => !entry.object_key).length;
       const label = `${membership.collection.title} · ${membership.index + 1}/${membership.collection.entries.length}` +
@@ -5476,7 +5487,7 @@ function selectionRecord() {
     return annotationRecord({
       model, ...offsets, rev: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
       context: {
-        title: elements["reader-title"].textContent, work: currentCollection?.title || elements["reader-kicker"].textContent,
+        title: elements["reader-title"].textContent, work: currentCollection?.collection?.title || elements["reader-kicker"].textContent,
         route: `${location.pathname}${location.search}`,
       },
     });
@@ -5625,7 +5636,7 @@ function shareText() {
 function excerptShare(quote, record = null) {
   void openShare({
     kind: "excerpt", quote,
-    work: record?.context?.work ?? (currentCollection?.title || elements["reader-kicker"].textContent),
+    work: record?.context?.work ?? (currentCollection?.collection?.title || elements["reader-kicker"].textContent),
     title: record?.context?.title ?? elements["reader-title"].textContent,
     hue: documentHue(record?.workId || record?.documentId),
   });
@@ -5665,7 +5676,7 @@ document.querySelector("#sel-image").addEventListener("click", () => {
   if (!lines) return void showReaderFeedback("이미지로 만들 줄을 골라 주세요", 2200);
   void openShare({
     kind: "aa", lines, background: settings.aaBackground, fontSize: settings.aaSize,
-    work: currentCollection?.title || elements["reader-kicker"].textContent, title: elements["reader-title"].textContent,
+    work: currentCollection?.collection?.title || elements["reader-kicker"].textContent, title: elements["reader-title"].textContent,
   });
 });
 document.querySelector("#selection-share").addEventListener("click", () => {
@@ -5792,8 +5803,9 @@ elements["excerpts-export"].addEventListener("click", () => {
 let readingSession = null;
 let sessionTimer = 0;
 
+// The work a document belongs to: a TypeMoon post's collection arrives a moment after the post
+// (updateCollection sets readerSession.workId), a text chapter knows it from the start.
 function sessionWorkKey() {
-  if (currentCollection?.id) return workKey({ source: "typemoon", id: currentCollection.id });
   return readerSession.workId || readerSession.documentKey;
 }
 
@@ -6195,6 +6207,160 @@ document.querySelector("#more-handoff").addEventListener("click", () => {
 document.querySelector("#handoff-copy").addEventListener("click", () => {
   void navigator.clipboard?.writeText(document.querySelector("#handoff-url").value).then(() => showReaderFeedback("링크를 복사했어요"));
 });
+
+// ---- 읽기 프로필 · 이 작품만 (DESIGN §10, docs/24 P6-2) ------------------------------------------
+// A profile is a named copy of the reading settings. Choosing one applies it to every work; with
+// 이 작품만 a work opens with its profile while the base settings stay as they were (and come back
+// when another work opens). Changes made inside such a work are for that visit only.
+let workProfileBase = null;
+const pickProfile = () => Object.fromEntries(PROFILE_KEYS.filter((key) => key in settings).map((key) => [key, settings[key]]));
+function activeProfileName() {
+  const values = pickProfile();
+  return (settings.readingProfiles ?? []).find((profile) => Object.entries(profile.values).every(([key, value]) => values[key] === value))?.name ?? "";
+}
+function currentWorkKey() {
+  return readerSource ? sessionWorkKey() : "";
+}
+
+function renderProfiles() {
+  const list = document.querySelector("#quick-profile-list");
+  const active = activeProfileName();
+  list.replaceChildren(...(settings.readingProfiles ?? []).map((profile) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = profile.name;
+    button.dataset.profile = profile.name;
+    button.setAttribute("aria-pressed", String(profile.name === active));
+    return button;
+  }));
+  const key = currentWorkKey();
+  const workToggle = document.querySelector("#quick-profile-work");
+  workToggle.hidden = !key || !active;
+  document.querySelector("#quick-profile-work-check").checked = Boolean(key && settings.workProfiles?.[key] === active);
+  document.querySelector("#quick-profile-work-label").textContent = `이 작품만 ‘${active}’`;
+}
+
+function applyProfile(name, { persist = true } = {}) {
+  const profile = (settings.readingProfiles ?? []).find((item) => item.name === name);
+  if (!profile) return;
+  changeTypography(() => Object.assign(settings, profile.values));
+  if (persist) saveSettings();
+  renderProfiles();
+}
+
+// Opening a work with its own profile puts it on; leaving for one without restores the base.
+function applyWorkProfile() {
+  const name = settings.workProfiles?.[currentWorkKey()];
+  if (name && !workProfileBase) {
+    workProfileBase = pickProfile();
+    applyProfile(name, { persist: false });
+  } else if (name) {
+    applyProfile(name, { persist: false });
+  } else if (workProfileBase) {
+    const base = workProfileBase;
+    workProfileBase = null;
+    changeTypography(() => Object.assign(settings, base));
+  }
+}
+
+document.querySelector("#quick-profile-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-profile]");
+  if (!button) return;
+  if (workProfileBase) {
+    // Choosing a profile inside a work with its own one changes the base, not the exception.
+    workProfileBase = null;
+  }
+  applyProfile(button.dataset.profile);
+});
+document.querySelector("#quick-profile-add").addEventListener("click", () => {
+  const name = prompt("프로필 이름 (예: 낮, 밤)", (settings.readingProfiles?.length ?? 0) ? "" : "밤")?.trim().slice(0, 12);
+  if (!name) return;
+  const profiles = (settings.readingProfiles ?? []).filter((profile) => profile.name !== name);
+  if (profiles.length >= 6) return void showReaderFeedback("프로필은 6개까지예요", 2200);
+  settings.readingProfiles = [...profiles, { name, values: pickProfile() }];
+  saveSettings();
+  renderProfiles();
+  showReaderFeedback(`‘${name}’ 프로필을 저장했어요`);
+});
+document.querySelector("#quick-profile-work-check").addEventListener("change", (event) => {
+  const key = currentWorkKey();
+  const active = activeProfileName();
+  if (!key || !active) return;
+  const works = { ...(settings.workProfiles ?? {}) };
+  if (event.target.checked) works[key] = active;
+  else delete works[key];
+  settings.workProfiles = works;
+  if (!event.target.checked) applyWorkProfile();
+  saveSettings();
+  renderProfiles();
+});
+
+// ---- 자동 스크롤 (DESIGN §8.2, docs/24 P6-2) ------------------------------------------------------
+// Speed 1–10 (12–120 px/s). Any touch, wheel or key on the text pauses it; the bar takes the
+// dock's place. Page mode turns pages instead of scrolling, so it is not offered there.
+let autoScroll = null;
+function autoScrollTick(now) {
+  const state = autoScroll;
+  if (!state || state.paused) return;
+  const pane = elements["reader-pane"];
+  state.carry += ((now - state.last) / 1000) * (settings.autoScrollSpeed ?? 3) * 12;
+  state.last = now;
+  const step = Math.floor(state.carry);
+  if (step) {
+    state.carry -= step;
+    pane.scrollTop += step;
+  }
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 2) return void pauseAutoScroll();
+  state.frame = requestAnimationFrame(autoScrollTick);
+}
+function renderAutoScroll() {
+  document.querySelector("#autoscroll-speed").value = String(settings.autoScrollSpeed ?? 3);
+  const toggle = document.querySelector("#autoscroll-toggle");
+  toggle.textContent = autoScroll?.paused ? "▶" : "⏸";
+  toggle.ariaLabel = autoScroll?.paused ? "다시 흐르기" : "멈추기";
+}
+function resumeAutoScroll() {
+  if (!autoScroll) return;
+  autoScroll.paused = false;
+  autoScroll.last = performance.now();
+  renderAutoScroll();
+  autoScroll.frame = requestAnimationFrame(autoScrollTick);
+}
+function pauseAutoScroll() {
+  if (!autoScroll || autoScroll.paused) return;
+  autoScroll.paused = true;
+  cancelAnimationFrame(autoScroll.frame);
+  renderAutoScroll();
+}
+function stopAutoScroll() {
+  if (!autoScroll) return;
+  cancelAnimationFrame(autoScroll.frame);
+  autoScroll = null;
+  elements["autoscroll-bar"].hidden = true;
+  document.body.classList.remove("autoscroll-open");
+}
+document.querySelector("#more-autoscroll").addEventListener("click", () => {
+  closeReaderMore();
+  if (paged.active || currentMode === "aa") return void showReaderFeedback(paged.active ? "페이지 모드에서는 자동 스크롤을 쓰지 않아요" : "AA는 직접 움직여 보세요", 2400);
+  stopAutoScroll();
+  autoScroll = { paused: true, carry: 0, last: 0, frame: 0 };
+  elements["autoscroll-bar"].hidden = false;
+  document.body.classList.add("autoscroll-open");
+  overlays.openBar("autoscroll-bar", stopAutoScroll);
+  resumeAutoScroll();
+});
+document.querySelector("#autoscroll-toggle").addEventListener("click", () => (autoScroll?.paused ? resumeAutoScroll() : pauseAutoScroll()));
+document.querySelector("#autoscroll-close").addEventListener("click", () => overlays.closeLayer("autoscroll-bar"));
+for (const button of document.querySelectorAll("[data-autoscroll-delta]")) {
+  button.addEventListener("click", () => {
+    settings.autoScrollSpeed = Math.max(1, Math.min(10, (settings.autoScrollSpeed ?? 3) + Number(button.dataset.autoscrollDelta)));
+    saveSettings();
+    renderAutoScroll();
+  });
+}
+for (const type of ["pointerdown", "wheel"]) elements["reader-pane"].addEventListener(type, pauseAutoScroll, { passive: true });
+elements["reader-pane"].addEventListener("keydown", pauseAutoScroll);
+document.addEventListener("visibilitychange", () => { if (document.hidden) pauseAutoScroll(); });
 
 // Leaving search clears its conditions (showDestination), so the words are put back afterwards.
 document.querySelector("[data-records-scope]").addEventListener("click", async () => {

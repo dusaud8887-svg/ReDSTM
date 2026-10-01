@@ -461,7 +461,19 @@
       </div>
       <label class="quick-range">밝기 낮추기<input type="range" data-quick-setting="readerDim" min="0" max="60" step="5"></label>
       <label class="quick-range">따뜻하게<input type="range" data-quick-setting="readerWarm" min="0" max="25" step="5"></label>
+      <div class="quick-profiles" role="group" aria-label="읽기 프로필">
+        <div class="quick-profile-list" id="quick-profile-list"></div>
+        <button type="button" class="quick-profile-add" id="quick-profile-add">지금 설정 저장</button>
+        <label class="quick-profile-work" id="quick-profile-work" hidden><input type="checkbox" id="quick-profile-work-check"> <span id="quick-profile-work-label">이 작품만 이 프로필</span></label>
+      </div>
       <button class="quick-all" id="quick-all-settings" type="button">모든 설정 <span aria-hidden="true">›</span></button>
+    </div>
+    <div class="autoscroll-bar" id="autoscroll-bar" role="group" aria-label="자동 스크롤" hidden>
+      <button type="button" id="autoscroll-toggle" aria-label="멈추기">⏸</button>
+      <button type="button" data-autoscroll-delta="-1" aria-label="느리게">−</button>
+      <output id="autoscroll-speed" aria-label="속도">3</output>
+      <button type="button" data-autoscroll-delta="1" aria-label="빠르게">+</button>
+      <button type="button" id="autoscroll-close" aria-label="자동 스크롤 끄기">✕</button>
     </div>
     <div class="find-bar" id="find-bar" role="search" aria-label="본문 찾기" hidden>
       <div class="find-band" id="find-band" aria-hidden="true"></div>
@@ -716,6 +728,7 @@
           <a id="more-source" href="#" target="_blank" rel="noreferrer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg><span>원문 열기</span></a>
           <button id="more-mode" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16"/></svg><span id="more-mode-label">AA로 보기</span></button>
           <button id="more-mode-reset" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg><span>자동 보기</span></button>
+          <button id="more-autoscroll" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v16M6 14l6 6 6-6"/></svg><span>자동 스크롤</span></button>
           <button id="more-immersive" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span id="more-immersive-label">집중 모드</span></button>
           <button id="more-mark-read" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 12.5 4.5 4.5L20 5.5M4 7.5l2.5 2.5M11 11.5l3-3"/></svg><span id="more-mark-read-label">이전 회차 모두 읽음</span></button>
           <button id="more-handoff" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v1M14 20h1M18 18h3v3"/></svg><span>다른 기기에서</span></button>

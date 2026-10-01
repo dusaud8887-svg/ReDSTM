@@ -2147,3 +2147,63 @@ test("Merging a backup keeps a differently edited note as a conflict copy", asyn
   await expect(page.locator(".excerpt-card", { hasText: "이 기기 메모" }).locator(".result-meta")).toContainText("충돌 사본");
   await expect(page.locator(".excerpt-card", { hasText: "다른 기기 메모" }).locator(".result-meta")).not.toContainText("충돌 사본");
 });
+
+// P6-2: 자동 스크롤 flows, pauses on touch and takes the dock's place; reading profiles switch the
+// reading settings at once, and 이 작품만 opens a work with its profile without changing the base.
+test("Auto scroll flows and pauses, and reading profiles apply globally or to one work", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#collection-context")).toBeVisible();
+  const openMore = () => page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await openMore();
+  await page.locator("#more-autoscroll").click();
+  const bar = page.locator("#autoscroll-bar");
+  await expect(bar).toBeVisible();
+  const pane = page.locator("#reader-pane");
+  const start = await pane.evaluate((element) => element.scrollTop);
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(start + 10);
+  await page.locator('[data-autoscroll-delta="1"]').click();
+  await expect(page.locator("#autoscroll-speed")).toHaveText("4");
+  await page.locator("#archive-body").dispatchEvent("pointerdown", { isPrimary: true, pointerType: "touch", clientX: 100, clientY: 300 });
+  await expect(page.locator("#autoscroll-toggle")).toHaveText("▶");
+  const paused = await pane.evaluate((element) => element.scrollTop);
+  await page.waitForTimeout(400);
+  expect(await pane.evaluate((element) => element.scrollTop)).toBe(paused);
+  await page.locator("#autoscroll-toggle").click();
+  await page.locator(mobileWidth(page) ? "#reader-find" : "#reader-toolbar-find").click();
+  await expect(page.locator("#find-bar")).toBeVisible();
+  await expect(bar).toBeHidden();
+  await page.locator("#find-close").click();
+  await expect(bar).toBeVisible();
+  await expect(page.locator("#autoscroll-toggle")).toHaveText("▶");
+  await page.locator("#autoscroll-close").click();
+  await expect(bar).toBeHidden();
+
+  const quick = () => page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  const surface = () => page.locator('#quick-settings [data-reader-surface][aria-checked="true"]').getAttribute("data-reader-surface");
+  const saveAs = async (name) => {
+    page.once("dialog", (dialog) => dialog.accept(name));
+    await page.locator("#quick-profile-add").click();
+    await expect(page.locator(`#quick-profile-list [data-profile="${name}"]`)).toBeVisible();
+  };
+  await quick();
+  await saveAs("낮");
+  await page.locator('#quick-settings [data-reader-surface="ink"]').click();
+  await saveAs("밤");
+  await expect(page.locator('#quick-profile-list [data-profile="밤"]')).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#quick-profile-work-check").check();
+  await page.locator('#quick-profile-list [data-profile="낮"]').click();
+  expect(await surface()).toBe("default");
+  // Reopened, the work wears its own profile while the stored base stays 낮.
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--reader-dim") || document.body.dataset.readerSurface || document.documentElement.dataset.readerSurface)).toBeTruthy();
+  await quick();
+  await expect.poll(surface).toBe("ink");
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings);
+  expect(stored.readerSurface).toBe("default");
+  expect(Object.values(stored.workProfiles)).toEqual(["밤"]);
+  await page.locator("#quick-profile-work-check").uncheck();
+  await expect.poll(surface).toBe("default");
+});
