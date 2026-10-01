@@ -54,3 +54,37 @@ test("An HTML sign-in page instead of an archive object is not cached and the pa
   const caches = await cachedPaths(page);
   expect(Object.values(caches).flat().filter((path) => path.startsWith("/archive/posts/board_a/2-"))).toEqual([]);
 });
+
+// P4-2 / T08: a work is saved for offline reading through the worker, shows its state in words,
+// becomes partial when a file fails, resumes, appears in settings and is removed again.
+test("A work is saved on this device, resumes after a failed file, and is removed", async ({ page, context }) => {
+  const owner = "0123456789abcdef";
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: owner }) }));
+  await page.goto("/");
+  await controlled(page);
+  let failing = true;
+  await context.route("**/archive/posts/board_a/2-*", (route) => (failing ? route.fulfill({ status: 500, body: "" }) : route.fallback()));
+  await page.goto("/collections/1");
+  const control = page.locator("#collection-offline");
+  await expect(control).toBeVisible();
+  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText("일부만 저장됨 · 2/3편 (1편 실패)");
+  await expect(page.locator("#offline-save")).toHaveText("이어서 저장");
+  failing = false;
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨 · \d/);
+  await expect(page.locator("#offline-save")).toBeHidden();
+  const saved = await cachedPaths(page);
+  expect((saved[`offline-v1-${owner}`] ?? []).filter((path) => path.startsWith("/archive/posts/board_a/")).length).toBe(3);
+  // The snapshot survives a reload.
+  await page.reload();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await page.goto("/settings");
+  await expect(page.locator("#offline-storage")).toContainText("이 기기에 저장한 작품 1개");
+  await page.goto("/collections/1");
+  await page.locator("#offline-delete").click();
+  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect.poll(async () => ((await cachedPaths(page))[`offline-v1-${owner}`] ?? []).length).toBe(0);
+});

@@ -50,6 +50,7 @@ import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
+import { featureEnabled } from "/capabilities.js";
 import { createOffline } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
 import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
@@ -101,7 +102,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
+    "collection-offline", "offline-save", "offline-state", "offline-delete", "offline-storage", "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
     "home-excerpt", "home-excerpt-list", "home-week", "home-week-total", "home-week-bars", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
@@ -2247,6 +2248,7 @@ for (const input of quickSettings.querySelectorAll("[data-quick-setting]")) {
 
 function openSettings() {
   if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+  void renderOfflineStorage();
   elements["settings-dialog"].querySelector("form").scrollTop = 0;
 }
 
@@ -3241,6 +3243,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
       readingEntries.length ? `읽는 중 ${readingEntries.length}` : null,
     ].filter(Boolean).join(" · ");
     void showWorkReadingTime(workKey({ source: "typemoon", id: collection.id }), elements["collection-meta"]);
+    void showOfflineControl(collection);
     const skippedUnread = available.filter((entry) =>
       postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) !== "finished");
     const continueEntry = continueTarget.kind === "finished" || continueTarget.kind === "empty" ? null : continueTarget.entry;
@@ -5874,6 +5877,155 @@ async function showWorkReadingTime(key, element) {
   element.textContent += ` · 읽은 시간(추정) ${minutesLabel(spent)}`;
 }
 
+// ---- 이 기기에 저장 (docs/24 §12.6.2, T08) --------------------------------------------------------
+// A saved work is a snapshot in the owner's store (what to draw offline) plus its files in the
+// owner's offline cache (the worker downloads them). It needs both a verified owner and a worker.
+const OFFLINE_REQUIRES = [
+  "/fonts/maruburi@1.000/400.core.woff2", "/fonts/saitamaar@1.0/Saitamaar-Regular.woff2",
+  "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js", "/vendor/es-hangul@2.4.0/es-hangul.js", "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js",
+  "/vendor/floating-ui-dom@1.8.0/floating-ui.js", "/vendor/idb@8.0.3/idb.js",
+];
+let offlineWork = null; // the snapshot shown in the open work header
+const offlineRuns = new Map(); // workKey → live progress while saving
+
+function collectionSnapshot(collection, owner) {
+  const entries = collection.entries.filter((entry) => entry.object_key).map((entry) => ({
+    documentId: `typemoon:${entry.board_id}:${entry.external_post_id}`, order: entry.position, title: entry.title,
+    url: `/archive/${entry.object_key}`,
+  }));
+  return {
+    workKey: workKey({ source: "typemoon", id: collection.id }), owner, source: "typemoon", textModelVersion: 1,
+    title: collection.title, entries,
+    descriptor: {
+      id: collection.id, board_id: collection.board_id, title: collection.title, kind: collection.kind,
+      entries: collection.entries.map(({ position, board_id, external_post_id, title, object_key }) => ({ position, board_id, external_post_id, title, object_key })),
+    },
+    requires: OFFLINE_REQUIRES, media: "text-only", state: "interrupted", savedAt: new Date().toISOString(), bytes: 0, done: 0, failed: 0,
+  };
+}
+
+function sizeLabel(bytes) {
+  if (bytes < 1_048_576) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  return `${(bytes / 1_048_576).toFixed(1)}MB`;
+}
+
+function renderOfflineControl() {
+  const snapshot = offlineWork;
+  const run = snapshot && offlineRuns.get(snapshot.workKey);
+  const save = elements["offline-save"];
+  const remove = elements["offline-delete"];
+  const state = elements["offline-state"];
+  if (run) {
+    save.textContent = "멈추기";
+    save.dataset.action = "cancel";
+    remove.hidden = true;
+    state.textContent = `저장 중 ${run.done + run.failed}/${run.total}`;
+    return;
+  }
+  const stored = snapshot?.stored;
+  save.dataset.action = "save";
+  remove.hidden = !stored;
+  if (!stored) {
+    save.textContent = "이 기기에 저장";
+    state.textContent = "글만 저장 · 이미지는 온라인에서";
+  } else if (stored.state === "complete") {
+    save.hidden = true;
+    state.textContent = `이 기기에 저장됨 · ${sizeLabel(stored.bytes)}`;
+  } else {
+    save.hidden = false;
+    save.textContent = "이어서 저장";
+    state.textContent = stored.failed
+      ? `일부만 저장됨 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
+      : `저장이 중단됨 · ${stored.done}/${stored.entries.length}편`;
+  }
+  if (stored?.state !== "complete") save.hidden = false;
+}
+
+async function showOfflineControl(collection) {
+  const control = elements["collection-offline"];
+  const [store, owner] = await Promise.all([ownerStore(), ownerIdentity()]);
+  const usable = store && owner && offline.canSave && featureEnabled("offline", true);
+  const stored = store ? await store.get("offline", workKey({ source: "typemoon", id: collection.id })) : null;
+  if (activeCollectionId !== collection.id) return;
+  // With the offline flag off, a saved work can still be removed; nothing new is saved.
+  control.hidden = !usable && !stored;
+  if (control.hidden) return;
+  offlineWork = { ...collectionSnapshot(collection, owner), stored };
+  renderOfflineControl();
+  elements["offline-save"].disabled = !usable;
+}
+
+async function writeSnapshot(snapshot) {
+  const store = await ownerStore();
+  if (!store) return;
+  const { stored: _stored, ...value } = snapshot;
+  try {
+    await store.commit([{ store: "offline", value }]);
+  } catch {
+    showReaderFeedback("저장 상태를 기록하지 못했어요", 2400);
+  }
+}
+
+elements["offline-save"].addEventListener("click", async () => {
+  const snapshot = offlineWork;
+  if (!snapshot) return;
+  if (elements["offline-save"].dataset.action === "cancel") return void offline.cancel(snapshot.workKey);
+  // Ask once to keep saved works through storage pressure (granted silently or not at all).
+  void navigator.storage?.persist?.().catch(() => {});
+  const value = { ...snapshot, state: "interrupted", savedAt: new Date().toISOString() };
+  await writeSnapshot(value);
+  offlineRuns.set(snapshot.workKey, { done: 0, failed: 0, total: snapshot.entries.length });
+  renderOfflineControl();
+  offline.save(snapshot.workKey, snapshot.entries.map((entry) => entry.url), snapshot.requires);
+});
+
+elements["offline-delete"].addEventListener("click", async () => {
+  const snapshot = offlineWork;
+  if (!snapshot?.stored) return;
+  offline.remove(snapshot.workKey, snapshot.stored.entries.map((entry) => entry.url));
+  const store = await ownerStore();
+  try {
+    await store?.commit([{ store: "offline", key: snapshot.workKey, value: null }]);
+  } catch { /* the files are gone; the record is retried on the next delete */ }
+  offlineWork = { ...snapshot, stored: null };
+  renderOfflineControl();
+  showReaderFeedback("이 기기에서 지웠어요");
+  void renderOfflineStorage();
+});
+
+// Worker progress: the header follows it; the end (done, partial or stopped) is recorded.
+async function offlineProgress(message) {
+  const run = offlineRuns.get(message.id);
+  if (message.type === "offline-progress" && run) {
+    Object.assign(run, { done: message.done, failed: message.failed, total: message.total });
+  } else if ((message.type === "offline-done" || message.type === "offline-cancelled") && run) {
+    offlineRuns.delete(message.id);
+    const store = await ownerStore();
+    const stored = await store?.get("offline", message.id);
+    if (stored) {
+      const finished = { ...stored, done: message.done, failed: message.failed, bytes: message.bytes,
+        state: message.type === "offline-done" && !message.failed && message.done === stored.entries.length ? "complete" : message.failed ? "partial" : "interrupted" };
+      await writeSnapshot(finished);
+      if (offlineWork?.workKey === message.id) offlineWork = { ...offlineWork, stored: finished };
+    }
+    showReaderFeedback(message.failed ? `저장하지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "저장을 멈췄어요" : "이 기기에 저장했어요", 2400);
+    void renderOfflineStorage();
+  }
+  if (offlineWork?.workKey === message.id) renderOfflineControl();
+}
+
+// Settings: how many works this device keeps and the space the browser reports (T08).
+async function renderOfflineStorage() {
+  const store = await ownerStore();
+  const works = store ? await store.getAll("offline") : [];
+  const estimate = await navigator.storage?.estimate?.().catch(() => null);
+  const line = elements["offline-storage"];
+  line.hidden = !works.length && !estimate;
+  if (line.hidden) return;
+  const used = estimate?.usage ? ` · 사용 ${sizeLabel(estimate.usage)}${estimate.quota ? ` / 가능 ${sizeLabel(estimate.quota)}` : ""}` : "";
+  line.textContent = `이 기기에 저장한 작품 ${works.length}개${used}. 저장한 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
+}
+
 // Leaving search clears its conditions (showDestination), so the words are put back afterwards.
 document.querySelector("[data-records-scope]").addEventListener("click", async () => {
   const query = elements["search-input"].value.trim();
@@ -6155,6 +6307,7 @@ if (location.pathname === "/text") void handleRoute();
 // Service worker (docs/24 §12.6): registered once the page has settled; its caches are the owner's.
 const offline = createOffline({
   onAuthExpired: () => showReaderFeedback("로그인이 만료됐어요. 페이지를 다시 열어 로그인해 주세요", 3600),
+  onSave: (message) => void offlineProgress(message),
 });
 const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
 if (document.readyState === "complete") startOffline();

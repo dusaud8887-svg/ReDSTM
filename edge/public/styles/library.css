@@ -171,6 +171,11 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .week-bars li { display: grid; gap: 4px; justify-items: center; color: var(--muted); font-size: 11px; }
 .week-bars span { width: 100%; min-height: 3px; border-radius: 3px; background: var(--heat-3); }
 .week-bars li.none span { background: var(--heat-0); }
+/* 이 기기에 저장 (docs/24 §12.6.2): the state in words, never a bare spinner. */
+.offline-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.offline-control[hidden] { display: none; }
+.offline-control button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+.offline-state { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .excerpts-export { justify-self: start; min-height: 40px; margin: 4px 0 8px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .result-action { color: var(--accent); font-weight: 650; }

@@ -314,6 +314,11 @@
             </div>
             <div class="collection-actions">
               <button class="collection-continue" id="collection-continue" type="button" hidden></button>
+              <div class="offline-control" id="collection-offline" hidden>
+                <button type="button" id="offline-save">이 기기에 저장</button>
+                <span class="offline-state" id="offline-state" role="status"></span>
+                <button type="button" id="offline-delete" hidden>삭제</button>
+              </div>
               <form class="toc-jump" id="collection-jump" role="search" aria-label="회차로 이동">
                 <label for="collection-jump-input" class="sr-only">이동할 편 번호</label>
                 <input id="collection-jump-input" type="number" inputmode="numeric" min="1" placeholder="몇 편?" enterkeyhint="go">
@@ -641,6 +646,7 @@
           <a class="settings-ops" id="settings-ops" href="/ops"><span><strong>운영 현황</strong><small>수집 상태와 최근 실패 확인</small></span><span aria-hidden="true">→</span></a>
           <div class="settings-actions"><button class="text-command install-app" id="install-app" type="button" hidden>앱으로 설치</button><button class="text-command reset-settings" id="reset-settings" type="button">설정 기본값</button><button class="text-command" id="export-state" type="button">기록 내보내기</button><button class="text-command" id="import-state" type="button">기록 가져오기</button></div>
           <p class="settings-note">읽기 기록과 저장한 글은 이 브라우저에만 보관됩니다.</p>
+          <p class="settings-note" id="offline-storage" hidden></p>
           <details class="settings-keys" id="settings-keys">
             <summary>키보드 단축키</summary>
             <dl>
