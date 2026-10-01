@@ -1330,6 +1330,11 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - M5 검증: unit 182, check·lint 0 error(기존 warning 8), 전체 E2E 665 pass/0 fail/23 skip.
 - **M5 마감**: P5-1·P5-2 완료. 실기기 확인 대기(M5): PC 화면의 QR을 폰 카메라로 찍어 같은 문장에서 열기, 폰→PC 링크, 두 기기 백업 합치기에서 충돌 사본 확인.
 
+- 2026-10-02 재개 확인: 작업 브랜치 HEAD는 `9d8ff3f`(M5)였다. 요청에 적힌 F0-2b 수정·observeScroll 단위·T20 E2E는 기존 커밋에 반영돼 있으며 이번 실행에서도 통과했다. 기존 미커밋 변경은 P6-2였다. 제외 경로의 변경은 그대로 두었다.
+- P6-2a(`96492dd`): 읽기 프로필·작품별 예외·자동 스크롤 속도의 저장/백업 검사. 프로필 값은 허용된 설정 키만 검사해 중첩 프로필이 재귀 검사되지 않게 했다. 원래 localStorage 스키마와 원본 기록 유지.
+- P6-2b: 프로필 퀵 전환·작품별 적용과 기본 설정 보존, 자동 스크롤 1–10(12–120px/s). 터치·휠·키·찾기·숨은 탭에서 멈춤, Reader 종료·회차 이동에서 정리. 찾기 중 자동 스크롤 바 숨김 후 멈춘 상태로 복귀. 퀵 패널 최대 320px와 내부 스크롤. 실기기 확인 대기: S22+ 120Hz 흐름, 찾기/시스템 Back으로 바 닫기, 프로필 전환 뒤 같은 문장(T01/T34). P6-1은 S4 실기기 미확인과 §17 A9에 따라 구현하지 않는다.
+- P6-2 검증: unit 183 pass, check·lint 0 error(기존 warning 8). Reader spec desktop/mobile 136 pass/10 skip. 전체 668 pass/1 fail/23 skip(axe 포함), medium 레거시 목차 연결 대기 실패는 `--last-failed` 1/1 통과. trace는 `edge/.wrangler/redesign-traces/p6-2-first/`에 보존했다. 마지막 보완의 자동 스크롤→찾기→멈춘 바 복귀와 작품 예외 해제는 desktop/mobile 2/2 재검증 통과. 병렬 실행 중 T27 시간 예산 unit 1회 실패 뒤 전체 unit 재실행 183/183 통과(테스트 기준 변경 없음).
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
