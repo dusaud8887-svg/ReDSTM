@@ -33,6 +33,10 @@ export default [
     "revision": "c0830f0fb20ae570"
   },
   {
+    "url": "/continuous-reader.js",
+    "revision": "2d56f23f350ebc8a"
+  },
+  {
     "url": "/find.js",
     "revision": "c6367336caa93a8d"
   },
@@ -226,7 +230,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "6074387a0cee4ed5"
+    "revision": "6cac51b01976da1c"
   },
   {
     "url": "/work-header.js",

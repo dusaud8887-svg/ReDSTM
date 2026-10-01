@@ -28,6 +28,14 @@ const summary = (extension = "zst", hash = "a") => ({
   object_key: `posts/write_free21/62068-${hash.repeat(64)}.json.${extension}`,
 });
 
+test("continuous prose mode survives backup validation and unknown modes fall back", () => {
+  const current = defaultUserState({ ...defaults, readingMode: "scroll" });
+  const continuous = planImport(exportUserState({ ...current, settings: { ...current.settings, readingMode: "continuous" } }), current.settings);
+  assert.equal(continuous.state.settings.readingMode, "continuous");
+  const unknown = planImport(exportUserState({ ...current, settings: { ...current.settings, readingMode: "infinite" } }), current.settings);
+  assert.equal(unknown.state.settings.readingMode, "scroll");
+});
+
 test("optional locators survive v2 storage and v3 backups without replacing legacy positions", () => {
   const revision = "a".repeat(64);
   const loc = createLocator({ text: "앞 문장. 읽던 문장. 뒤 문장." }, 6, 12, revision);
