@@ -77,6 +77,13 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .mark-menu-actions { display: flex; gap: 6px; }
 .mark-menu-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .note-quote { margin: 0 0 12px; padding-left: 12px; border-left: 3px solid var(--ribbon); color: var(--muted); font-family: var(--prose-font); line-height: 1.6; max-height: 7.5em; overflow: auto; }
+/* 다른 기기에서 (docs/24 P5-1): the QR on white so any camera reads it, in either theme. */
+.handoff-code { width: min(260px, 70vw); margin: 0 auto 12px; padding: 12px; border-radius: 12px; background: #fff; }
+.handoff-code svg { display: block; width: 100%; height: auto; }
+.handoff-quote { margin: 0 0 12px; color: var(--muted); font-family: var(--prose-font); line-height: 1.6; text-align: center; }
+.handoff-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.handoff-actions input { min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.handoff-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .selection-more-actions { display: grid; gap: 8px; }
 .selection-more-actions button { min-height: 48px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
 /* Share sheet (docs/24 §8.14): the canvas itself is the preview (no blob: image under the CSP). */

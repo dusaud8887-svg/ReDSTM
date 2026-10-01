@@ -2092,3 +2092,58 @@ test("Page mode turns pages and keeps the sentence through size, rotation, reloa
   });
   expect(Math.abs(Number(top.match(/\d+$/)[0]) - Number(sentence.match(/\d+$/)[0]))).toBeLessThanOrEqual(2);
 });
+
+// P5-1: 다른 기기에서 shows the place as a QR code and a link; opening the link (the other device)
+// lands on that sentence rather than at the top or the reader's saved place.
+test("다른 기기에서 hands the sentence over in a QR link that opens at it", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.evaluate(() => document.querySelectorAll("#archive-body p")[30].scrollIntoView({ block: "start" }));
+  await page.waitForTimeout(400);
+  if (mobileWidth(page)) await page.locator("#reader-bottom-more").click();
+  else await page.locator("#reader-toolbar-more").click();
+  await page.locator("#more-handoff").click();
+  const dialog = page.locator("#handoff-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("#handoff-code svg")).toHaveCount(1);
+  const url = await page.locator("#handoff-url").inputValue();
+  expect(url).toMatch(/\/read\/board_a\/2\?at=[A-Za-z0-9_-]+$/);
+  await page.keyboard.press("Escape");
+  // This device goes back to the top, so the link has to do the moving.
+  await page.locator("#reader-pane").evaluate((pane) => pane.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+  await page.goto(url);
+  await expect(page).toHaveURL(/\/read\/board_a\/2$/);
+  await expect(page.locator("#archive-body p").nth(30)).toBeInViewport();
+  await expect(page.locator("#aa-zoom-indicator")).toHaveText("다른 기기에서 읽던 곳이에요");
+});
+
+// P5-2: a backup where a note was edited differently on another device keeps both — the later
+// edit, and this device's as a 충돌 사본 shown in 기록 › 발췌.
+test("Merging a backup keeps a differently edited note as a conflict copy", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 2);
+  await page.locator("#sel-note").click();
+  await page.locator("#note-text").fill("이 기기 메모");
+  await page.locator("#note-save").click();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 3"]);
+  await page.goto("/settings");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
+  const record = backup.records.annotations[0];
+  record.note = "다른 기기 메모";
+  record.updatedAt = new Date(Date.parse(record.updatedAt) + 60_000).toISOString();
+  await page.locator("#import-state-file").setInputFiles({ name: "other.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
+  await page.locator("#import-merge").click();
+  await expect(page.locator("#import-review-summary")).toContainText("충돌 사본으로 남김");
+  await page.goto("/saved?view=excerpts");
+  const cards = page.locator(".excerpt-card");
+  await expect(cards).toHaveCount(2);
+  await expect(page.locator(".excerpt-card", { hasText: "이 기기 메모" }).locator(".result-meta")).toContainText("충돌 사본");
+  await expect(page.locator(".excerpt-card", { hasText: "다른 기기 메모" }).locator(".result-meta")).not.toContainText("충돌 사본");
+});
