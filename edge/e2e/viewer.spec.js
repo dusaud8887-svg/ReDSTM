@@ -875,6 +875,69 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   }
 });
 
+// T30/T31 (docs/24 §8.16): a pinch scales the picture while the fingers move and settles on a
+// continuous zoom within 10–300%; a tap toggles the tools at once and a quick second tap undoes
+// that and switches between 맞춤 and 100%.
+test("AA pinch settles on a continuous zoom and a double tap switches 맞춤 and 100%", async ({ page }) => {
+  await useCollectionFixture(page);
+  await openPost(page, aaKey);
+  test.skip(!(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)), "touch gestures need a touch screen");
+  const output = page.locator("#aa-zoom-output");
+  await expect(output).toHaveText("100%");
+  const body = page.locator("#archive-body");
+  const pinch = async (from, to, { release = true } = {}) => body.evaluate((element, [start, end, finish]) => {
+    const box = element.getBoundingClientRect();
+    const touches = (gap) => [0, 1].map((identifier) => new Touch({
+      identifier, target: element, clientX: box.left + 150 + (identifier ? gap / 2 : -gap / 2), clientY: box.top + 80,
+    }));
+    const send = (type, list, changed = list) => element.dispatchEvent(new TouchEvent(type, {
+      touches: list, targetTouches: list, changedTouches: changed, bubbles: true, cancelable: true,
+    }));
+    send("touchstart", touches(start));
+    send("touchmove", touches((start + end) / 2));
+    send("touchmove", touches(end));
+    if (finish) send("touchend", [], touches(end));
+  }, [from, to, release]);
+  // While the fingers move only a transform changes; the zoom itself waits for the release.
+  await pinch(200, 174.6, { release: false });
+  await expect(page.locator(".aa-canvas")).toHaveAttribute("style", /scale\(0\.87/);
+  await expect(output).toHaveText("100%");
+  await body.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const touches = [0, 1].map((identifier) => new Touch({ identifier, target: element, clientX: box.left + 150 + (identifier ? 87.3 : -87.3), clientY: box.top + 80 }));
+    element.dispatchEvent(new TouchEvent("touchend", { touches: [], targetTouches: [], changedTouches: touches, bubbles: true }));
+  });
+  await expect(output).toHaveText("87%");
+  await expect(page.locator(".aa-canvas")).not.toHaveAttribute("style", /scale/);
+  const saved = () => page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews)[0]);
+  await expect.poll(async () => (await saved())?.zoom).toBe(0.873);
+  await pinch(100, 1000);
+  await expect(output).toHaveText("300%");
+  await pinch(1000, 10);
+  await expect(output).toHaveText("10%");
+  // Tap: the tools toggle at once; a second tap within 300ms undoes that and fits the picture.
+  const hidden = () => page.evaluate(() => document.body.classList.contains("reader-controls-hidden"));
+  const tap = async () => {
+    const box = await body.boundingBox();
+    const point = { isPrimary: true, pointerType: "touch", clientX: box.x + 40, clientY: box.y + 60 };
+    await body.dispatchEvent("pointerdown", point);
+    await body.dispatchEvent("pointerup", point);
+  };
+  await page.locator('[data-aa-zoom-delta="0.25"]').click();
+  const before = await hidden();
+  await tap();
+  expect(await hidden()).toBe(!before);
+  await tap();
+  expect(await hidden()).toBe(before);
+  await expect.poll(async () => (await saved())?.fit).toBe(true);
+  // From 맞춤 a double tap goes to a manual 100%.
+  await page.waitForTimeout(350);
+  await tap();
+  await tap();
+  await expect(output).toHaveText("100%");
+  await expect.poll(async () => (await saved())?.fit).toBeUndefined();
+});
+
 test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);

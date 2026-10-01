@@ -45,8 +45,10 @@ import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
+import { PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
 const readerSession = createDocumentSession();
@@ -96,7 +98,7 @@ const elements = Object.fromEntries(
     "text-sort-chips",
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
-    "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit",
+    "aa-source-styles", "aa-color", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
@@ -158,7 +160,6 @@ let searchAppend = false;
 let scrollTimer;
 let searchTimer;
 let postController;
-let pinchDistance = 0;
 let zoomFeedbackTimer;
 let zoomPersistTimer;
 let aaHintShown = false;
@@ -209,6 +210,7 @@ let readerSource = null;
 let readerNavigation = null;
 let routeHandled = false;
 let pointerStart = null;
+let lastPointerType = "";
 let moreOpener = null;
 // Filter sheet edits are a draft until 적용; closing any other way restores this snapshot.
 let filterDraft = null;
@@ -616,6 +618,8 @@ function applySettings() {
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
+  elements["aa-color"].setAttribute("aria-pressed", settings.aaPreserveStyles);
+  elements["aa-color"].ariaLabel = settings.aaPreserveStyles ? "AA 색: 원본색 (누르면 단색)" : "AA 색: 단색 (누르면 원본색)";
   for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
     surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
   }
@@ -716,10 +720,11 @@ function updateAaOverflowCue(showHint = false) {
   }
 }
 
-function setAaZoom(value, debounce = false, { remember = true } = {}) {
-  const zoom = Math.round(Math.max(0.1, Math.min(3, value)) * 1000) / 1000;
+// `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
+function setAaZoom(value, debounce = false, { remember = true, fit = false } = {}) {
+  const zoom = clampAaZoom(value);
   if (!currentAaKey()) settings.aaZoom = zoom;
-  else if (remember) rememberAaView({ zoom });
+  else if (remember) rememberAaView({ zoom, fit: fit || undefined });
   else aaAutoZoom = zoom;
   applySettings();
   showZoomFeedback();
@@ -748,7 +753,7 @@ function fitAaZoom({ remember = true } = {}) {
   const style = getComputedStyle(body);
   const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
   if (!(content > 0) || !(available > 0)) return;
-  setAaZoom(Math.min(1, Math.floor(effectiveAaZoom() * (available / content) * 100) / 100), false, { remember });
+  setAaZoom(fitAaZoomValue(effectiveAaZoom(), available, content), false, { remember, fit: true });
   body.scrollLeft = 0;
 }
 
@@ -4846,6 +4851,7 @@ elements["reader-pane"].addEventListener("scroll", () => {
 // the pane, so they are not mistaken for taps. A mouse click is left to text selection; the
 // mouse brings the bars back by moving to the top edge instead.
 elements["reader-pane"].addEventListener("pointerdown", (event) => {
+  lastPointerType = event.pointerType;
   pointerStart = event.isPrimary
     ? { x: event.clientX, y: event.clientY, time: event.timeStamp, scroll: elements["reader-pane"].scrollTop }
     : null;
@@ -4861,6 +4867,7 @@ elements["reader-pane"].addEventListener("pointerup", (event) => {
     event.timeStamp - start.time <= 500 &&
     Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
   if (!still || String(getSelection() ?? "")) return;
+  if (currentMode === "aa") return void aaTap(event.timeStamp);
   if (settings.tapPaging === "on" && pageByTap(event)) return;
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
 });
@@ -5036,14 +5043,18 @@ for (const button of document.querySelectorAll("[data-aa-preset]")) {
   });
 }
 for (const button of document.querySelectorAll("[data-aa-zoom-delta]")) {
-  button.addEventListener("click", () => setAaZoom(settings.aaZoom + Number(button.dataset.aaZoomDelta)));
+  // Steps from the zoom on screen (this picture's own, when it has one), not the default zoom.
+  button.addEventListener("click", () => setAaZoom(effectiveAaZoom() + Number(button.dataset.aaZoomDelta)));
 }
 elements["aa-zoom-reset"].addEventListener("click", () => setAaZoom(1));
 elements["aa-fit"].addEventListener("click", fitAaZoom);
-elements["aa-source-styles"].addEventListener("click", () => {
-  settings.aaPreserveStyles = !settings.aaPreserveStyles;
-  saveSettings();
-});
+// The AA tool row's 색 and the settings sheet's 원본색/단색 are one switch.
+for (const id of ["aa-source-styles", "aa-color"]) {
+  elements[id].addEventListener("click", () => {
+    settings.aaPreserveStyles = !settings.aaPreserveStyles;
+    saveSettings();
+  });
+}
 for (const button of document.querySelectorAll("[data-aa-background]")) {
   button.addEventListener("click", () => {
     settings.aaBackground = button.dataset.aaBackground;
@@ -5059,8 +5070,7 @@ elements["aa-background"].addEventListener("input", () => {
 let pinchFont = null;
 elements["archive-body"].addEventListener("touchstart", (event) => {
   if (event.touches.length !== 2) return;
-  if (currentMode === "aa") pinchDistance = touchDistance(event);
-  else if (readerSource) pinchFont = { distance: touchDistance(event), size: settings.proseSize };
+  if (currentMode !== "aa" && readerSource) pinchFont = { distance: touchDistance(event), size: settings.proseSize };
 }, { passive: true });
 elements["archive-body"].addEventListener("touchmove", (event) => {
   if (event.touches.length !== 2) return;
@@ -5071,21 +5081,58 @@ elements["archive-body"].addEventListener("touchmove", (event) => {
     if (size === settings.proseSize) return;
     changeTypography(() => { settings.proseSize = size; });
     showReaderFeedback(`글자 ${size}px`);
-    return;
   }
-  if (currentMode !== "aa" || !pinchDistance) return;
-  const distance = touchDistance(event);
-  const zoom = effectiveAaZoom();
-  const next = zoom + (distance - pinchDistance) * 0.003;
-  if (Math.abs(next - zoom) > 0.002) setAaZoom(next, true);
-  pinchDistance = distance;
 }, { passive: true });
 elements["archive-body"].addEventListener("touchend", () => {
-  pinchDistance = 0;
   pinchFont = null;
 }, { passive: true });
+
+// AA pinch (docs/24 §8.16): during the gesture only the canvas is scaled (no relayout); on release
+// the zoom becomes start × scale through setAaZoom (10–300%, three decimals, no 25% steps) and the
+// scroll moves so the point between the fingers stays where it was.
+let aaPinch = null;
+new PinchGesture(elements["archive-body"], ({ first, last, movement: [scale], origin: [x, y] }) => {
+  const body = elements["archive-body"];
+  const canvas = body.querySelector(".aa-canvas");
+  if (first) {
+    aaPinch = null;
+    if (currentMode !== "aa" || !canvas) return;
+    const box = canvas.getBoundingClientRect();
+    aaPinch = { zoom: effectiveAaZoom(), x, y };
+    canvas.style.transformOrigin = `${x - box.left}px ${y - box.top}px`;
+  }
+  if (!aaPinch || !canvas) return;
+  const zoom = pinchAaZoom(aaPinch.zoom, scale);
+  if (!last) {
+    canvas.style.transform = `scale(${zoom / aaPinch.zoom})`;
+    return;
+  }
+  const { zoom: from, x: pointX, y: pointY } = aaPinch;
+  aaPinch = null;
+  canvas.style.removeProperty("transform");
+  canvas.style.removeProperty("transform-origin");
+  const before = body.getBoundingClientRect();
+  const offsetY = pointY - before.top;
+  setAaZoom(zoom);
+  body.scrollLeft = scrollKeepingPoint({ scrollLeft: body.scrollLeft, scrollTop: 0, x: pointX - before.left, y: 0, from, to: zoom }).left;
+  const pane = elements["reader-pane"];
+  pane.scrollTop += body.getBoundingClientRect().top + offsetY * (zoom / from) - pointY;
+}, { pointer: { touch: true }, pinchOnWheel: false, eventOptions: { passive: true } });
+
+// One tap shows or hides the tools at once; a second tap within 300ms undoes that and switches
+// between 맞춤 and 100% (T31).
+const aaTap = createTapJudge({
+  onTap: () => setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden")),
+  onDoubleTap: () => {
+    const key = currentAaKey();
+    if (key && aaViews[key]?.fit) setAaZoom(1);
+    else fitAaZoom();
+  },
+});
+
+// Desktop double click keeps its zoom steps; a touch double tap is the judge's above.
 elements["archive-body"].addEventListener("dblclick", () => {
-  if (currentMode !== "aa") return;
+  if (currentMode !== "aa" || lastPointerType === "touch") return;
   const zoom = effectiveAaZoom();
   setAaZoom(zoom < 1.25 ? 1.5 : zoom < 1.75 ? 2 : 1);
 });
