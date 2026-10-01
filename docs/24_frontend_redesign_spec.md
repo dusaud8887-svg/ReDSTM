@@ -1343,6 +1343,11 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P6-3d: 파일 제한을 지키기 위해 공개 동작 문서(`docs/19` §13·`docs/README`) 갱신을 별도 커밋으로 분리. 코드 커밋 `d7452b9`의 전체 검증과 실제 연결을 기준으로 기록했다.
 
+- P6-4a(`4085c43`): `library.js` 조건·작품 정보 검사와 병합, `store`의 사용자 설정 키 제한, v4 선택 필드 `records.library/works`. 기본 보기 5개, 조건 AND, 분류 삭제·보기 삭제 후 오래된 백업으로 부활하지 않음. 이전 백업에 선택 필드가 없으면 원래 형태 유지. unit 190 pass, check·lint 0 error, Reader desktop/mobile 146 pass/10 skip, 전체 689 pass/23 skip(axe 포함).
+- P6-4b(`13a918b`): Ctrl/Cmd+K 작품·작가·화면/설정/Reader 명령 팔레트(같은 한국어 검색, IME 중 무시, 방향키·Enter), 일반 작품 제안에 텍스트 출처 추가. 세 출처 작품 상세·Reader의 공통 분류·고정 시트, 서재 고정 표지 서가, 조건 조합 저장·수정·삭제. 계정 idb에 서재 설정+작품 정보를 같은 tx로 저장하고 기존 소설 분류는 첫 저장에 함께 포함(원본 localStorage 유지). v4 내보내기·병합 연결. 손 편집 5파일+생성 precache. 공개 계약 문서는 P6-4c로 분리.
+- P6-4b 검증: unit 190 pass, check·lint 0 error(기존 warning 8·info 2). 관련 Reader+viewer desktop/mobile 283 pass/13 skip/2 fail 후 실패 2개를 재실행·수정해 통과. 초기 첫 화면 처리가 열린 팔레트를 닫던 경합은 초기 화면에서 overlay 보존으로 수정했고, 분류 저장 도중 다음 동작을 하던 테스트는 저장 시트 닫힘을 기다렸다. 전체 4폭 693 pass/23 skip/4 fail(10.3분): 새 팔레트의 option 안 button 중첩이 axe 오류 → button 자체를 option으로 변경, `--last-failed` 4/4 통과(최종 697 pass/0 fail/23 skip). 분류·보기 편집창 axe도 통과. 공용 overlay 변경은 불필요하여 남기지 않았다. trace는 `edge/.wrangler/redesign-traces/p6-4b-path`, `p6-4b-related`, `p6-4b-related-retry`, `p6-4b-full`과 각 retry 디렉터리에 보존. Linux visual·main 병합·CI는 M6 종료 때 판정한다. 실기기 대기(§14.5 M6): 단축키·IME 조합·키보드·시스템 Back, 분류/조건 편집 후 복귀.
+- P6-4c: `docs/19` §14·README·이 기록을 별도 문서 티켓으로 갱신. 이전 M4 기록의 텍스트 작품 오프라인 미구현 등 설계 차이도 확인했으며 최종 완료 판정에 포함한다.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
