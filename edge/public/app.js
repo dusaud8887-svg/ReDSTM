@@ -48,6 +48,7 @@ import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
+import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard } from "/share-canvas.js";
 import { createTextModel, modelOffset } from "/text-model.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
@@ -96,7 +97,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "excerpts-export", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
+    "excerpts-export", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
@@ -5308,9 +5309,9 @@ async function saveAnnotation(record, message) {
   if (message) showReaderFeedback(message);
 }
 
-function readerSelection() {
+function readerSelection({ aa = false } = {}) {
   const selection = getSelection();
-  if (!readerSource || currentMode === "aa" || !selection?.rangeCount || selection.isCollapsed) return null;
+  if (!readerSource || (currentMode === "aa" && !aa) || !selection?.rangeCount || selection.isCollapsed) return null;
   const range = selection.getRangeAt(0);
   return elements["archive-body"].contains(range.commonAncestorContainer) ? range : null;
 }
@@ -5326,9 +5327,11 @@ function hideSelectionMenu() {
 }
 
 function updateSelectionMenu() {
-  const range = readerSelection();
+  const range = readerSelection({ aa: true });
   if (!range) return hideSelectionMenu();
   const menu = elements["selection-menu"];
+  const aa = currentMode === "aa";
+  for (const button of menu.querySelectorAll("button")) button.hidden = (button.id === "sel-image") !== aa;
   const fixed = matchMedia("(pointer: coarse)").matches;
   menu.classList.toggle("fixed", fixed);
   if (!menu.matches(":popover-open")) menu.showPopover();
@@ -5407,10 +5410,12 @@ document.querySelector("#sel-copy").addEventListener("click", () => {
   clearSelection();
   if (text) void navigator.clipboard?.writeText(text).then(() => showReaderFeedback("복사했어요"), () => showReaderFeedback("복사하지 못했어요", 2200));
 });
+let moreQuote = "";
 document.querySelector("#sel-more").addEventListener("click", () => {
   const text = readerSelection()?.toString().trim() ?? "";
   hideSelectionMenu();
   if (!text) return;
+  moreQuote = text;
   elements["selection-more-quote"].textContent = text.length > 60 ? `${text.slice(0, 60)}…` : text;
   elements["selection-namu"].href = `https://namu.wiki/Search?q=${encodeURIComponent(text.slice(0, 100))}`;
   elements["selection-more"].showModal();
@@ -5451,6 +5456,147 @@ document.querySelector("#mark-delete").addEventListener("click", () => {
   markMenuRecord = null;
 });
 overlays.watch(elements["mark-menu"], "popover");
+
+// ---- Share images (docs/24 §8.14, T13, T33) ----------------------------------------------------
+// Opening the sheet draws the image and makes its PNG at once; 공유 then only hands the ready file
+// to navigator.share, so the tap's user activation is still there however long the sheet stayed.
+let shareJob = null;
+let shareTone = "work";
+let shareUrl = "";
+
+function documentHue(key) {
+  return workHue(key || readerSession.workId || readerSession.documentKey || "redstm");
+}
+
+async function openShare(job) {
+  shareJob = { ...job, file: null };
+  elements["share-tones"].hidden = job.kind !== "excerpt";
+  elements["share-send"].disabled = true;
+  elements["share-status"].textContent = "이미지를 만드는 중…";
+  if (!elements["share-dialog"].open) elements["share-dialog"].showModal();
+  await renderShare();
+}
+
+async function renderShare() {
+  const job = shareJob;
+  if (!job) return;
+  const context = elements["share-preview"].getContext("2d");
+  try {
+    if (job.kind === "excerpt") {
+      await Promise.all([
+        document.fonts.load("44px MaruBuri", job.quote),
+        document.fonts.load('600 32px "Pretendard Variable"', `${job.work}${job.title}ReDSTM이어짐`),
+      ]);
+      drawExcerptCard(context, { ...job, tone: shareTone });
+    } else {
+      await document.fonts.load(`${job.fontSize}px Saitamaar`, job.lines.flat().map((run) => run.text).join(""));
+      drawAaScene(context, job);
+    }
+  } catch {
+    elements["share-status"].textContent = "이미지를 만들지 못했어요. 텍스트 복사를 써 주세요";
+    return;
+  }
+  const blob = await canvasBlob(elements["share-preview"]);
+  if (shareJob !== job || !blob) return;
+  job.file = new File([blob], `redstm-${job.kind}.png`, { type: "image/png" });
+  if (shareUrl) URL.revokeObjectURL(shareUrl);
+  shareUrl = URL.createObjectURL(blob);
+  elements["share-download"].href = shareUrl;
+  elements["share-download"].download = job.file.name;
+  elements["share-send"].disabled = false;
+  elements["share-status"].textContent = "";
+}
+
+function shareText() {
+  const job = shareJob;
+  const where = [job.work, job.title].filter(Boolean).join(" › ");
+  const credit = elements["share-credit"].checked ? `\n\n${CREDIT}` : "";
+  return job.kind === "excerpt" ? `“${job.quote}”\n— ${where}${credit}` : `${where}${credit}`.trim();
+}
+
+function excerptShare(quote, record = null) {
+  void openShare({
+    kind: "excerpt", quote,
+    work: record?.context?.work ?? (currentCollection?.title || elements["reader-kicker"].textContent),
+    title: record?.context?.title ?? elements["reader-title"].textContent,
+    hue: documentHue(record?.workId || record?.documentId),
+  });
+}
+
+// Whole lines of the selected AA, as runs of text in the colour each one is drawn in on screen.
+function aaSceneLines(range) {
+  const model = createTextModel(elements["archive-body"]);
+  const start = modelOffset(model, range.startContainer, range.startOffset);
+  const end = modelOffset(model, range.endContainer, range.endOffset);
+  if (start === null || end === null || end <= start) return null;
+  const text = model.text;
+  const from = text.lastIndexOf("\n", start - 1) + 1;
+  let to = text.indexOf("\n", Math.max(start, end - 1));
+  if (to < 0) to = text.length;
+  const lines = [[]];
+  let cursor = from;
+  for (const segment of model.segments) {
+    if (segment.end <= from || segment.start >= to) continue;
+    for (const character of text.slice(cursor, Math.max(cursor, segment.start))) if (character === "\n") lines.push([]);
+    const first = Math.max(from, segment.start);
+    const last = Math.min(to, segment.end);
+    const color = getComputedStyle(segment.node.parentElement).color;
+    text.slice(first, last).split("\n").forEach((part, index) => {
+      if (index) lines.push([]);
+      if (part) lines.at(-1).push({ text: part, color });
+    });
+    cursor = last;
+  }
+  return lines.length && lines.length <= 400 ? lines : null;
+}
+
+document.querySelector("#sel-image").addEventListener("click", () => {
+  const range = readerSelection({ aa: true });
+  const lines = range && aaSceneLines(range);
+  clearSelection();
+  if (!lines) return void showReaderFeedback("이미지로 만들 줄을 골라 주세요", 2200);
+  void openShare({
+    kind: "aa", lines, background: settings.aaBackground, fontSize: settings.aaSize,
+    work: currentCollection?.title || elements["reader-kicker"].textContent, title: elements["reader-title"].textContent,
+  });
+});
+document.querySelector("#selection-share").addEventListener("click", () => {
+  elements["selection-more"].close();
+  if (moreQuote) excerptShare(moreQuote);
+});
+document.querySelector("#mark-share").addEventListener("click", () => {
+  elements["mark-menu"].hidePopover();
+  if (markMenuRecord) excerptShare(markMenuRecord.quote, markMenuRecord);
+});
+for (const button of document.querySelectorAll("[data-share-tone]")) {
+  button.addEventListener("click", () => {
+    shareTone = button.dataset.shareTone;
+    for (const choice of document.querySelectorAll("[data-share-tone]")) choice.setAttribute("aria-checked", String(choice === button));
+    elements["share-send"].disabled = true;
+    void renderShare();
+  });
+}
+elements["share-send"].addEventListener("click", () => {
+  const file = shareJob?.file;
+  if (!file) return;
+  const data = { files: [file], text: shareText() };
+  if (navigator.canShare?.(data)) {
+    navigator.share(data).catch((error) => {
+      if (error?.name !== "AbortError") elements["share-status"].textContent = "공유하지 못했어요. 이미지 저장이나 텍스트 복사를 써 주세요";
+    });
+    return;
+  }
+  elements["share-download"].click();
+  elements["share-status"].textContent = "이 브라우저는 이미지 공유를 지원하지 않아 저장했어요";
+});
+document.querySelector("#share-copy").addEventListener("click", () => {
+  if (!shareJob) return;
+  void navigator.clipboard?.writeText(shareText()).then(
+    () => { elements["share-status"].textContent = "텍스트를 복사했어요"; },
+    () => { elements["share-status"].textContent = "복사하지 못했어요"; },
+  );
+});
+elements["share-dialog"].addEventListener("close", () => { shareJob = null; });
 
 // 기록 › 발췌 (docs/24 §8.5): every mark and note of this owner, newest first, searched with the
 // list's own field. A card opens its document and moves to the sentence; one that no longer

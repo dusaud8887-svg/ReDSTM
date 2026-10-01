@@ -1709,7 +1709,7 @@ test("A selection is marked, noted and cleared, and marks survive a reload", asy
     const box = await menu.boundingBox();
     expect(box.y + box.height).toBeGreaterThan(page.viewportSize().height - 80);
   }
-  await expect(menu.locator("button")).toHaveText(["표시", "메모", "복사", "⋯"]);
+  await expect(menu.locator("button:visible")).toHaveText(["표시", "메모", "복사", "⋯"]);
   await page.locator("#sel-mark").click();
   await expect(menu).toBeHidden();
   await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 3"]);
@@ -1792,6 +1792,93 @@ test("기록 › 발췌 lists, searches, exports and opens marks at their senten
   await expect(page).toHaveURL(/\/saved\?view=excerpts&q=/);
   await expect(cards).toHaveCount(1);
   await expect(cards.first().locator(".excerpt-quote")).toHaveText("2편 본문 31");
+});
+
+// P3-3 (docs/24 §8.14): T13 — the card is drawn on a canvas under the Worker's real CSP, 1080×1350
+// in the work colour; T33 — opened, left for five seconds, then 공유 still hands over the ready PNG.
+// An AA selection becomes an image of its whole lines in the AA font and colours.
+test("Share cards are drawn ahead and still share after waiting; AA lines become an image", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__shared = [];
+    window.__copied = [];
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: (data) => Boolean(data?.files?.length) });
+    Object.defineProperty(navigator, "share", { configurable: true, value: async (data) => {
+      window.__shared.push({ text: data.text, files: data.files.map((file) => ({ name: file.name, type: file.type, size: file.size })), active: navigator.userActivation?.isActive ?? null });
+    } });
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__copied.push(text); } } });
+  });
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/1-*", (request) => {
+    const payload = postPayload(1);
+    payload.post.is_aa = true;
+    payload.post.body_html = '<p>（　´∀｀）</p><p><font color="#b4232f">■■■■</font></p><p>끝</p>';
+    return request.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 3);
+  await page.locator("#sel-more").click();
+  await page.locator("#selection-share").click();
+  const dialog = page.locator("#share-dialog");
+  await expect(dialog).toBeVisible();
+  const send = page.locator("#share-send");
+  await expect(send).toBeEnabled();
+  const canvas = page.locator("#share-preview");
+  const pixel = (x, y) => canvas.evaluate((element, [px, py]) => [...element.getContext("2d").getImageData(px, py, 1, 1).data].slice(0, 3), [x, y]);
+  expect(await canvas.evaluate((element) => [element.width, element.height])).toEqual([1080, 1350]);
+  // Text was drawn into the quote area (not an empty card).
+  expect(await canvas.evaluate((element) => {
+    const data = element.getContext("2d").getImageData(96, 160, 888, 120).data;
+    const first = data.slice(0, 3).join();
+    let different = 0;
+    for (let index = 0; index < data.length; index += 4) if (data.slice(index, index + 3).join() !== first) different += 1;
+    return different;
+  })).toBeGreaterThan(200);
+  const band = await pixel(540, 10);
+  const page1 = await pixel(540, 700);
+  expect(band).not.toEqual(page1);
+  await page.waitForTimeout(5000);
+  await send.click();
+  await expect.poll(() => page.evaluate(() => window.__shared.length)).toBe(1);
+  const shared = await page.evaluate(() => window.__shared[0]);
+  expect(shared.files).toEqual([expect.objectContaining({ type: "image/png" })]);
+  expect(shared.files[0].size).toBeGreaterThan(1000);
+  expect(shared.text).toContain("“2편 본문 4”");
+  expect(shared.text).toContain("원문 저작권은 작가에게 있습니다");
+  // 어둡게 redraws; the credit can be left out; 텍스트 복사 copies the same words.
+  await page.locator('[data-share-tone="dark"]').click();
+  await expect(send).toBeEnabled();
+  expect(await pixel(540, 700)).toEqual([22, 21, 20]);
+  await page.locator("#share-credit").uncheck();
+  await page.locator("#share-copy").click();
+  await expect(page.locator("#share-status")).toHaveText("텍스트를 복사했어요");
+  expect(await page.evaluate(() => window.__copied[0])).not.toContain("저작권");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#archive-body")).toHaveClass(/aa/);
+  await page.evaluate(() => {
+    const paragraphs = document.querySelectorAll("#archive-body p");
+    getSelection().setBaseAndExtent(paragraphs[0].firstChild, 2, paragraphs[1].querySelector("font").firstChild, 1);
+  });
+  const menu = page.locator("#selection-menu");
+  await expect(menu.locator("#sel-image")).toBeVisible();
+  await expect(menu.locator("#sel-mark")).toBeHidden();
+  await menu.locator("#sel-image").click();
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#share-tones")).toBeHidden();
+  await expect(send).toBeEnabled();
+  // Two whole lines on the picture's own background, the second one in its preserved red.
+  const size = await canvas.evaluate((element) => [element.width, element.height]);
+  expect(size[1]).toBeLessThan(200);
+  expect(await pixel(2, 2)).toEqual([245, 245, 240]);
+  expect(await canvas.evaluate((element) => {
+    const data = element.getContext("2d").getImageData(0, 0, element.width, element.height).data;
+    for (let index = 0; index < data.length; index += 4) if (data[index] - data[index + 1] > 60 && data[index] - data[index + 2] > 50) return true;
+    return false;
+  })).toBe(true);
 });
 
 test("Without a verified owner, marking says it cannot store anything", async ({ page }) => {
