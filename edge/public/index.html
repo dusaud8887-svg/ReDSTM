@@ -329,23 +329,33 @@
             <button class="icon-button" id="reader-toolbar-more" type="button" title="더보기" aria-label="더보기" aria-haspopup="dialog"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
           </div>
 
+          <div class="aa-host" id="aa-host">
           <div class="aa-controls" id="aa-controls" aria-label="AA 보기 설정" hidden>
             <div class="aa-control-group" aria-label="AA 배율 · 이 글에만 기억됩니다">
               <button type="button" id="aa-fit" title="화면 너비에 맞추기" aria-label="AA를 화면 너비에 맞추기">맞춤</button>
               <button type="button" data-aa-zoom-delta="-0.25" aria-label="AA 축소">−</button><button class="aa-zoom-reset" id="aa-zoom-reset" type="button" title="100%로 초기화"><output id="aa-zoom-output">100%</output></button><button type="button" data-aa-zoom-delta="0.25" aria-label="AA 확대">+</button>
             </div>
+            <div class="aa-control-group">
+              <button type="button" id="aa-color" aria-pressed="true" title="원본색 ↔ 단색">색</button>
+              <button type="button" id="aa-fullscreen" aria-pressed="false" title="가로 전체화면" hidden>⟲ 가로 전체화면</button>
+            </div>
           </div>
 
           <div class="archive-body" id="archive-body" tabindex="0" aria-label="글 본문"></div>
+          <div class="aa-minimap" id="aa-minimap" role="slider" tabindex="0" aria-label="AA 가로 위치" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><span class="aa-minimap-window"></span></div>
+          <button class="page-hint" id="page-hint" type="button" aria-label="쪽 넘기기 안내 닫기" hidden><span>이전 쪽</span><span>도구</span><span>다음 쪽</span></button>
           <div class="aa-zoom-indicator" id="aa-zoom-indicator" role="status" aria-live="polite" popover="manual" style="margin:0;right:auto;bottom:auto" hidden>100%</div>
+          </div>
           <section class="chapter-end" id="chapter-end" aria-label="다음 읽기">
             <p class="chapter-end-note" id="chapter-end-note" hidden></p>
             <button class="chapter-end-next" id="end-next" type="button">
               <span class="chapter-end-copy"><small id="end-next-kicker">다음 글</small><strong id="end-next-title">다음 글이 없습니다</strong></span>
               <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
             </button>
+            <div class="chapter-end-run" id="end-run" hidden><span class="chapter-end-barcode"></span><small id="end-run-label"></small></div>
             <div class="chapter-end-actions">
               <button id="end-list" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".5"/><circle cx="4" cy="12" r=".5"/><circle cx="4" cy="18" r=".5"/></svg><span>목록으로</span></button>
+              <button id="end-comments" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span>댓글 <span id="end-comments-count">0</span></span></button>
               <button id="end-toc" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>작품 목차</span></button>
             </div>
             <button class="chapter-end-previous" id="end-previous" type="button">
@@ -367,7 +377,8 @@
             </nav>
           </section>
           <section class="comments" id="comments" aria-labelledby="comments-title">
-            <h2 id="comments-title">댓글 <span id="comment-count">0</span></h2><ol id="comment-list"></ol>
+            <h2 id="comments-title"><button class="comments-toggle" id="comments-toggle" type="button" aria-expanded="false" aria-controls="comment-list">댓글 <span id="comment-count">0</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></h2>
+            <ol id="comment-list" hidden="until-found"></ol>
           </section>
         </article>
       </section>
@@ -385,7 +396,8 @@
       <button type="button" data-destination="bookmarks" aria-pressed="false"><svg aria-hidden="true"><use href="#i-bookmark"/></svg><span>기록</span></button>
     </nav>
 
-    <p class="reader-status" id="reader-status" aria-hidden="true"></p>
+    <button class="reader-status" id="reader-status" type="button" aria-label="위치 이동" tabindex="-1"></button>
+    <button class="comments-return" id="comments-return" type="button" hidden>본문으로</button>
     <div class="reader-shade" aria-hidden="true"></div>
     <nav class="reader-bottom" aria-label="읽기 도구">
       <button id="reader-bottom-list" type="button" aria-label="목록으로 돌아가기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".5"/><circle cx="4" cy="12" r=".5"/><circle cx="4" cy="18" r=".5"/></svg><span>목록</span></button>
@@ -395,6 +407,25 @@
       <button id="reader-bottom-more" type="button" aria-label="더보기" aria-haspopup="dialog"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg><span>더보기</span></button>
     </nav>
 
+    <div class="quick-panel" id="quick-settings" popover="auto" role="dialog" aria-label="빠른 읽기 설정">
+      <div class="quick-size" role="group" aria-label="글자 크기">
+        <button type="button" class="stepper-small" data-prose-size-delta="-1" aria-label="글자 작게">가</button>
+        <output id="quick-size-output">18</output>
+        <button type="button" class="stepper-large" data-prose-size-delta="1" aria-label="글자 크게">가</button>
+      </div>
+      <div class="segmented" role="radiogroup" aria-label="읽기 면">
+        <button type="button" role="radio" data-reader-surface="default" aria-checked="false">기본</button>
+        <button type="button" role="radio" data-reader-surface="paper" aria-checked="false">종이</button>
+        <button type="button" role="radio" data-reader-surface="ink" aria-checked="false">먹</button>
+      </div>
+      <div class="segmented segmented-2" role="radiogroup" aria-label="읽기 방식">
+        <button type="button" role="radio" data-reading-mode="scroll" aria-checked="false">스크롤</button>
+        <button type="button" role="radio" data-reading-mode="page" aria-checked="false">페이지</button>
+      </div>
+      <label class="quick-range">밝기 낮추기<input type="range" data-quick-setting="readerDim" min="0" max="60" step="5"></label>
+      <label class="quick-range">따뜻하게<input type="range" data-quick-setting="readerWarm" min="0" max="25" step="5"></label>
+      <button class="quick-all" id="quick-all-settings" type="button">모든 설정 <span aria-hidden="true">›</span></button>
+    </div>
     <div class="find-bar" id="find-bar" role="search" aria-label="본문 찾기" hidden>
       <div class="find-band" id="find-band" aria-hidden="true"></div>
       <label class="find-field"><span class="sr-only">이 회차에서 찾을 말</span><svg aria-hidden="true"><use href="#i-search"/></svg><input id="find-input" type="text" enterkeyhint="search" autocomplete="off" placeholder="이 회차에서 찾기"></label>
@@ -422,13 +453,12 @@
     </dialog>
 
     <dialog class="image-viewer" id="image-viewer" aria-label="이미지 보기">
-      <form method="dialog">
-        <img id="image-viewer-image" alt="본문 이미지 크게 보기" referrerpolicy="no-referrer">
-        <div class="image-viewer-actions">
-          <a id="image-viewer-source" href="#" target="_blank" rel="noreferrer">원본 열기</a>
-          <button id="image-viewer-zoom" type="button" aria-pressed="false">실제 크기</button>
-          <button value="close" aria-label="닫기">닫기</button>
-        </div>
+      <div class="image-viewer-stage" id="image-viewer-stage"></div>
+      <form method="dialog" class="image-viewer-actions">
+        <a id="image-viewer-source" href="#" target="_blank" rel="noreferrer">원본 열기</a>
+        <button id="image-viewer-zoom" type="button" aria-pressed="false">실제 크기</button>
+        <button id="image-viewer-share" type="button" hidden>공유</button>
+        <button value="close" aria-label="닫기">닫기</button>
       </form>
     </dialog>
 
@@ -477,9 +507,11 @@
             </div>
           </div>
           <label>줄 간격 <output id="line-height-output"></output><input id="line-height" type="range" min="1.4" max="2.2" step="0.1"></label>
+          <label>문단 간격 <output id="paragraph-spacing-output"></output><input id="paragraph-spacing" type="range" min="0" max="2" step="0.1"></label>
+          <label>들여쓰기 <output id="text-indent-output"></output><input id="text-indent" type="range" min="0" max="2" step="0.5"></label>
           <label class="margin-setting">좌우 여백 <output id="prose-margin-output"></output><input id="prose-margin" type="range" min="12" max="32" step="2"></label>
           <label class="width-setting">본문 너비 <output id="prose-width-output"></output><input id="prose-width" type="range" min="560" max="960" step="20"></label>
-          <label>본문 서체<select id="prose-font"><option value="serif">마루부리</option><option value="sans">프리텐다드</option></select></label>
+          <label>본문 서체<span class="font-preview" id="font-preview" aria-hidden="true"></span><select id="prose-font"><option value="serif">마루부리</option><option value="sans">프리텐다드</option></select></label>
           <div class="setting-row">
             <span class="setting-label" id="prose-align-label">문단 정렬</span>
             <div class="segmented segmented-2" role="radiogroup" aria-labelledby="prose-align-label">
@@ -490,6 +522,14 @@
         </fieldset>
         <fieldset class="settings-group reading-behavior">
           <legend>읽기 동작</legend>
+          <div class="setting-row">
+            <span class="setting-label" id="reading-mode-label">읽기 방식</span>
+            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="reading-mode-label">
+              <button type="button" role="radio" data-reading-mode="scroll" aria-checked="false">스크롤</button>
+              <button type="button" role="radio" data-reading-mode="page" aria-checked="false">페이지</button>
+            </div>
+            <p class="setting-hint">페이지는 소설 본문을 옆으로 넘깁니다. 왼쪽을 누르면 이전 쪽, 오른쪽 절반을 누르면 다음 쪽, 가운데는 도구입니다. AA는 스크롤로 봅니다.</p>
+          </div>
           <div class="setting-row">
             <span class="setting-label" id="tap-paging-label">화면 탭으로 넘기기</span>
             <div class="segmented segmented-2" role="radiogroup" aria-labelledby="tap-paging-label">
@@ -522,6 +562,16 @@
             <label class="aa-color-picker" title="AA 배경색"><input id="aa-background" type="color" value="#f5f5f0" aria-label="직접 고른 AA 배경색">직접</label>
           </div>
         </fieldset>
+        <fieldset class="settings-group library-settings">
+          <legend>서재</legend>
+          <div class="setting-row">
+            <span class="setting-label" id="home-quote-label">이어 읽기 카드에 마지막 문장 보이기</span>
+            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="home-quote-label">
+              <button type="button" role="radio" data-home-quote="off" aria-checked="false">끄기</button>
+              <button type="button" role="radio" data-home-quote="on" aria-checked="false">켜기</button>
+            </div>
+          </div>
+        </fieldset>
         <section class="settings-app" aria-labelledby="settings-app-title">
           <h3 id="settings-app-title">앱과 기록</h3>
           <a class="settings-ops" id="settings-ops" href="/ops"><span><strong>운영 현황</strong><small>수집 상태와 최근 실패 확인</small></span><span aria-hidden="true">→</span></a>
@@ -545,6 +595,17 @@
             <div><button id="import-cancel" type="button">취소</button><button id="import-apply" type="button" title="이 브라우저의 기록과 설정을 파일 내용으로 바꿉니다">덮어쓰기</button><button id="import-merge" type="button" title="더 최근 기록을 남기고 저장·분류를 합칩니다. 설정은 그대로입니다">합쳐서 가져오기</button></div>
           </section>
         </section>
+      </form>
+    </dialog>
+
+    <dialog id="scrubber" aria-labelledby="scrubber-title">
+      <form method="dialog">
+        <header><div><p id="scrubber-context"></p><h2 id="scrubber-title">위치 이동</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+        <label class="scrub-position">이 회차 <span class="more-position-values"><small id="scrubber-remaining"></small><output id="scrubber-output">0%</output></span>
+          <span class="scrub-track"><input id="scrubber-position" type="range" min="0" max="1000" step="1" value="0"><span class="scrub-ticks" id="scrubber-ticks" aria-hidden="true"></span></span>
+        </label>
+        <div class="chapter-end-run" id="scrubber-run" hidden><span class="chapter-end-barcode"></span><small id="scrubber-run-label"></small></div>
+        <button class="scrub-return" id="scrubber-return" type="button" hidden></button>
       </form>
     </dialog>
 

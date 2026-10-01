@@ -130,7 +130,7 @@ ReDSTM의 기반(보존·검색·Reader·Back 계약·AA parity)은 탄탄하지
 | | 서비스 | 가져오는 것 | 위치 |
 |---|---|---|---|
 | **Main** | **Apple Books** | Reading Now(이어읽기 카드·미니바), 표지 서가, 한 패널 테마·글꼴 전환(퀵 설정), 스크러버, 떠 있는 최소 도구, 독서 기록 | §8.2, §8.8–8.9 |
-| Sub | **RIDI** | 스크롤/페이지, 탭 영역, 세밀한 뷰어 설정, 밝기, 듣기, 회차 목록·다음 화 흐름 | §8.8, §8.10, §8.15 |
+| Sub | **RIDI** | 스크롤/페이지, 탭 영역, 세밀한 뷰어 설정, 밝기, 회차 목록·다음 화 흐름 | §8.8, §8.10 |
 | Sub | **Readwise Reader** | 표시·메모·발췌, 스마트 보기, 본문 찾기, 키보드·명령 팔레트 | §8.5, §8.11–8.13 |
 
 AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
@@ -142,7 +142,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | 상황 | 환경 | 필요한 것 |
 |---|---|---|
 | 출퇴근 지하철, 서서 한 손 | S22+ 세로, 데이터 불안정 | 미니바 1탭 재개, 오른손 탭 넘김, 오프라인 저장 회차 |
-| 밤 침대 | S22+ 먹 면, 밝기 최저 | 밝기 overlay·따뜻하게, 자동 스크롤, 듣기(가능한 범위) |
+| 밤 침대 | S22+ 먹 면, 밝기 최저 | 밝기 overlay·따뜻하게, 자동 스크롤 |
 | AA 연재 몰아 보기 | S22+ 가로 | 가로 전체화면, 핀치, 장면 이동, 미니맵 |
 | "그 대사 몇 화였지?" | 폰 또는 PC | 작품 안 KWIC → 원문 → 원래 위치 |
 | PC로 옮겨 이어 읽기 | 데스크톱 | QR(지금 위치 링크), 기록은 백업 파일 병합 |
@@ -190,7 +190,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | D-24 | 이미지 = PhotoSwipe 갤러리(긴 세로 이미지 제외) | 핀치·스와이프 | 기존 뷰어 |
 | D-25 | 공유 이미지(발췌·AA·기록) = **Canvas 2D 직접 렌더** → PNG 1080×1350. modern-screenshot 제거 | DOM 캡처는 `data:` 이미지 → 현재 CSP에 막힘. 직접 렌더는 CSP 완화·메모리 폭증 없음 | 텍스트 복사만 |
 | D-26 | Back = **overlay 관리자**(native 이벤트 반영 + 제스처 안에서 만든 CloseWatcher), LIFO 한 층 | watcher 그룹화·top layer 순서 문제 | 닫기 버튼 + Esc |
-| D-27 | 듣기 = Web Speech + (가능하면) Media Session, **잠금화면 제어는 확인 항목** | 기기별 편차 | 기능 숨김 |
+| D-27 | ~~듣기~~ — **제거(2026-10-01 사용자 결정, §17 A9)** | — | — |
 | D-28 | RUM **보류**(web-vitals 제거). 성능 근거는 마일스톤별 S22+ 실기기 확인과 로컬 측정으로 | 수집 저장소·Worker endpoint 비용 대비 1인 사용 이득 작음 | web-vitals 재설치 |
 | D-29 | 정적 자산 중 **버전 디렉터리**(`/vendor/*@*/`, `/fonts/*@*/`)는 Worker가 `Cache-Control: public, max-age=31536000, immutable` | 매 방문 재검증 제거, SW 캐시와 일관 | 헤더 제거 |
 | D-30 | 키보드 대응은 전역 `interactive-widget`을 쓰지 않고 요소별 VirtualKeyboard API/visualViewport | 전역 viewport 변화가 진행 저장·anchor를 흔듦 | — |
@@ -294,7 +294,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | D9 | 세밀한 타이포 + 서체 카드 | 개편 | M2 |
 | D10 | 읽기 프로필(낮/밤) + 작품별 예외 | 신규 | M6 |
 | D11 | 자동 스크롤 | 신규 | M6 |
-| D12 | 듣기(TTS) | 신규 | M6(스파이크 결과에 따라) |
+| D12 | ~~듣기(TTS)~~ | — | 제거(§17 A9) |
 | D13 | 이어 스크롤 | 신규 | M6 |
 | D14 | 댓글: 본문 아래 단일 DOM 펼침 + `본문으로` | 개편 | M2 |
 | D15 | 이미지 갤러리(PhotoSwipe) | 개편 | M2 |
@@ -391,7 +391,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 ### 8.7 Reader 도구층 · 본문 끝 (M8–M9, 더보기 M25)
 
 - context bar `‹ · 작품점 제목 N/M · 찾기 · 저장` / 도크 `목록 · 이전 · 다음 화 · Aa · 더보기`(떠 있는 pill, 다음 화 1.3fr accent).
-- 접힘: 진행선 + `38%` 배지(탭 = 스크러버). 접기 규칙은 docs/19 §4.3, 찾기·선택·설정·듣기 중 정지.
+- 접힘: 진행선 + `38%` 배지(탭 = 스크러버). 접기 규칙은 docs/19 §4.3, 찾기·선택·설정 중 정지.
 - 도크 자리 점유는 DESIGN §7.11 표.
 - 본문 끝 카드: `다음 화`(제목 serif) · 미니 바코드 + `118/340화` · `목록으로`·`작품 목차` · 작게 이전 화 · `댓글 38`.
   마지막 보존 회차: `마지막 보존 회차예요 · 원작은 연재 중일 수 있어요`. 끝까지 읽음(보존된 마지막 화 끝): 표지 + `끝까지 읽음` + `보존된 회차 기준`.
@@ -446,7 +446,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
   Floating UI `inline()`·`offset(8)`·`flip()`·`shift({padding:8})`·`hide()`, 열린 동안만 `autoUpdate`.
 - OS 선택 툴바·핸들과 겹치면(실기기 확인) 도크 자리 **고정 바**로 같은 4개(정식 대체, 플래그 아님).
 - 표시 문장 탭 → hit-test(Chromium `highlightsFromPoint` 우선, 아니면 caret 위치와 저장 Range 비교) → popover `메모 보기 · 표시 지우기 · 공유`.
-- 강조 겹침 우선순위(T21): find-current > find > tts > mark/note > selection. 글자색은 항상 읽기 가능해야 한다.
+- 강조 겹침 우선순위(T21): find-current > find > mark/note > selection. 글자색은 항상 읽기 가능해야 한다.
 
 ### 8.14 발췌 카드 공유 (M15)
 
@@ -456,12 +456,9 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 - 배경 선택 `작품색 · 밝게 · 어둡게`. 기본 공유 문구 `개인 기록용 인용 — 원문 저작권은 작가에게 있습니다`(끌 수 있음).
 - AA 장면(E6): 사용자가 고른 원본 블록/줄 범위를 AA 글꼴·원 배경·span 색 그대로 줄 단위 fillText(확대·잘림 무관). 가로 4,096px 초과면 축소.
 
-### 8.15 듣기 (M19)
+### 8.15 듣기 (M19) — 제거
 
-- **스파이크 S4 먼저**: S22+ Chrome·Samsung Internet에서 ko-KR 음성 목록, 화면 꺼짐·백그라운드 지속, Media Session 알림 표시 여부를 기록.
-- 기능: `Intl.Segmenter` 문장 큐, `redstm-tts` 강조 + 자동 스크롤, 속도 0.8–2.0, 타이머, 회차 끝 이어 듣기, AA 블록 건너뜀.
-- 잠금화면 제어·화면 꺼짐 중 재생은 **확인된 기기에서만** 켠다. 필요하면 `화면 켜 두기` 자동 제안. 무음 `<audio>` 트릭은 쓰지 않는다.
-- 듣기 시간은 읽기 시간과 따로 센다.
+2026-10-01 사용자 결정으로 계획에서 뺐다(§17 A9). 구현하지 않으며, S4 기록은 참고로만 남긴다.
 
 ### 8.16 AA 뷰어 (M16)
 
@@ -550,18 +547,18 @@ DESIGN §10 순서. 설정 검색(uFuzzy). 서체 미리보기 카드(현재 본
 |---|---|---|---|
 | dialog/시트 | `showModal()` (invoker `command="show-modal"` 가능) | native `cancel`/`close` 이벤트 → 관리자에서 pop | CloseWatcher 덧씌우지 않음 |
 | popover(퀵 설정·메뉴) | `showPopover()` | native `toggle` 이벤트 → pop | 〃 |
-| 바(찾기·듣기)·스크러버 | **클릭 핸들러 안에서** `new CloseWatcher()` | watcher `close` → pop | 비동기 후 열면 활성화가 없어 그룹화될 수 있음 → 열기 전에 watcher부터 만든다 |
+| 바(찾기)·스크러버 | **클릭 핸들러 안에서** `new CloseWatcher()` | watcher `close` → pop | 비동기 후 열면 활성화가 없어 그룹화될 수 있음 → 열기 전에 watcher부터 만든다 |
 | 전체화면 | `requestFullscreen()` | `fullscreenchange` → pop | Back 이중 처리 금지 |
 | 선택 메뉴 | 선택 이벤트 | 층 아님(선택 해제 시 닫힘) | OS가 Back으로 선택 먼저 해제 |
 
 - 닫힘 사유를 구분해 기록: `back` · `outside` · `cancel` · `navigate`(회차 전환 시 관리자가 모두 닫음) · `parent`(부모 닫힘).
-- 중첩 허용: 바 위에 시트·popover. 상호 배타: 찾기 바 ↔ 듣기 바(도크 점유 표), 퀵 설정 ↔ 더보기 시트.
+- 중첩 허용: 바 위에 시트·popover. 상호 배타: 퀵 설정 ↔ 더보기 시트.
 - CloseWatcher 미지원: 모든 층에 보이는 `닫기` + Esc, Back은 목록 복귀(알려진 저하). history는 쌓지 않는다.
 - top layer: 토스트는 `popover="manual"`, 표시할 때마다 `showPopover()` 재호출로 최상단. 전체화면 중엔 host 안 토스트.
 
 ### 9.3 키보드
 
-DESIGN §11. `Space`/`Shift+Space`(페이지), `h`(표시), `t`(듣기), `Ctrl/⌘+K`. IME 조합·입력 중 비활성.
+DESIGN §11. `Space`/`Shift+Space`(페이지), `h`(표시), `Ctrl/⌘+K`. IME 조합·입력 중 비활성.
 
 ### 9.4 햅틱
 
@@ -592,7 +589,7 @@ API 존재와 필요한 조합 동작은 따로 검증한다. 실기기 확인 �
 
 | 기술 | 쓰는 곳 | 대체 | 대체에서도 지키는 핵심 |
 |---|---|---|---|
-| CSS Custom Highlight | 찾기·표시·메모·검색어·듣기 | 개수·이동·결과 목록 | DOM 불변 |
+| CSS Custom Highlight | 찾기·표시·메모·검색어 | 개수·이동·결과 목록 | DOM 불변 |
 | `highlightsFromPoint()` | 표시 문장 탭 | caret hit-test | 메모 열기 |
 | CSS anchor positioning + `position-try` | 버튼 기준 popover | JS 좌표 | 메뉴 사용 |
 | Popover · invoker commands · `closedby` | 메뉴·시트 | click 핸들러, backdrop 클릭 | 닫기 가능 |
@@ -614,8 +611,7 @@ API 존재와 필요한 조합 동작은 따로 검증한다. 실기기 확인 �
 | VirtualKeyboard API | 찾기 바 | visualViewport | 입력 가능 |
 | Fullscreen + Orientation lock | AA 가로 | 전체화면만 / 회전 안내 | — |
 | Vibration | 햅틱 | 없음 | — |
-| Wake Lock | 화면 켜 두기, 듣기 | 없음 | — |
-| Web Speech + Media Session | 듣기 | 기능 숨김 | — |
+| Wake Lock | 화면 켜 두기 | 없음 | — |
 | Web Share(files) · Clipboard | 공유 | 다운로드 | — |
 | Service Worker(module) + Cache Storage | 오프라인 | 온라인 전용 | 읽기 |
 | IndexedDB · `storage.persist/estimate` | 사용자 기록 | 저장 실패 안내 | 기록 유실 없음 |
@@ -704,7 +700,7 @@ v3에서 제거: **modern-screenshot**(D-25, Canvas 직접 렌더로 대체), **
 | `annotations.js` · `share-canvas.js` · `stats.js` | 표시·메모·발췌 / Canvas 공유 / 기록 | M3 |
 | `offline.js` · `sw.js` | SW 등록·오프라인 저장 / Service Worker | M4 |
 | `sync.js` | 동기화(보류) | — |
-| `tts.js` · `kwic-worker.js` · `kwic-core.js` | 듣기·KWIC | M6 |
+| `kwic-worker.js` · `kwic-core.js` | KWIC | M6 |
 
 순수 로직(색 hash, 바코드 bin, 퍼지 파이프라인, 대응표, locator 복원, snapZoom, KWIC, 통계 집계, 병합 규칙)은 DOM 없이 `node --test`.
 새 파일은 `package.json` `check`의 `node --check`에 추가.
@@ -778,7 +774,7 @@ DB "redstm" v1   (owner namespace: 로그인 사용자별 DB 이름 "redstm:<own
   ③ 아니면 unresolved(발췌는 유지, 이동 대신 안내). **첫 일치로 조용히 이동 금지.** ④ `loc` 없는 옛 레코드는 기존 offset+anchor 경로.
 
 **DocumentSession**
-- `documentKey`·`rev`·`generation`(문서를 바꿀 때마다 +1). 검색·글꼴 보정·이미지 로드·TTS·KWIC 콜백은 시작 시 generation을 잡고,
+- `documentKey`·`rev`·`generation`(문서를 바꿀 때마다 +1). 검색·글꼴 보정·이미지 로드·KWIC 콜백은 시작 시 generation을 잡고,
   다르면 아무것도 바꾸지 않는다. `cancelPendingWork()`가 AbortController·타이머·rAF를 정리한다.
 - 글꼴 보정: `document.fonts` `loadingdone`마다 **사용자가 직접 스크롤하지 않은 경우에만** `restoreLocator(saved, "keep-top")`. 사용자 스크롤 뒤에는 보정 중단(T20).
 - 키보드가 열린 동안 위치 저장·도구 접기 정지.
@@ -906,7 +902,7 @@ CREATE INDEX user_sync_rev ON user_sync(owner_id, server_rev);
 ### 12.9 기능 플래그
 
 `localStorage["redstm.flags"]`: `newShell, miniBar, typeCovers, barcode, find, annotations, pageMode, quickSettings, gallery,
-aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off = UI만 복귀(데이터 유지). `all-off` E2E 1회.
+aaGestures, aaFullscreen, stats, offline, sync, kwic, glass, haptics`. off = UI만 복귀(데이터 유지). `all-off` E2E 1회.
 `capabilities.js`에 실기기 확인 날짜가 없는 기능은 기본 off.
 
 ---
@@ -967,7 +963,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | T18 | 3,000행 먼 행 이동·정렬·키보드 / 10,000행 목록 | 예산 충족, stable key·초점·위치 |
 | T19 | 검색 A → B → 다른 작품, A 늦게 응답 | 오래된 결과가 덮지 않음 |
 | T20 | 글꼴 조각 순차 도착 중 사용자 직접 스크롤 | 보정이 사용자 스크롤을 되돌리지 않음 |
-| T21 | 찾기·표시·메모·듣기 강조 겹침 | 우선순위대로, 글자 읽힘 |
+| T21 | 찾기·표시·메모 강조 겹침 | 우선순위대로, 글자 읽힘 |
 | T22 | 두 탭 주석 수정 + 저장 실패 + 백업 병합 | 기록 보존, 정책대로 병합 |
 | T23 | 구 앱 열린 상태에서 새 배포 | 구/신 모듈 혼합 없음, 안전 지점 reload |
 | T24 | offline·sync 플래그 off | 데이터 보존, 새 작업 중단, SW 상태 명시 |
@@ -1020,7 +1016,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 | F0-4 | `store.js`(idb namespace·Web Locks·outbox tx·localStorage 어댑터) + `capabilities.js` + `haptics.js` | store.js, capabilities.js, haptics.js, test/store.test.js | 트랜잭션·재조정 순수 테스트 |
 | S1 | 스파이크: 페이지 모드 transform 방식(10만 자·이미지·ruby·회전) — 결과 문서만 | docs/24 §19(기록) | 진입 ms·T02 시나리오 결과 기록 |
 | S3 | 스파이크: SW가 `.json.zst`·text object를 캐시 후 오프라인 cold start로 재생 — 결과 문서만 | docs/24 §19 | 가능/불가 기록 |
-| S4 | 스파이크: S22+ TTS·Media Session·백그라운드 — 결과 문서만 | docs/24 §19 | 기록 |
+| S4 | 스파이크: S22+ TTS·Media Session·백그라운드 — 결과 문서만(듣기 제거로 참고 기록만 유지) | docs/24 §19 | 기록 |
 
 ### M1 — 첫 가치 묶음
 
@@ -1084,7 +1080,7 @@ aaGestures, aaFullscreen, tts, stats, offline, sync, kwic, glass, haptics`. off 
 
 ### M6 — 확장
 
-P6-1 듣기(S4 결과대로) · P6-2 자동 스크롤·읽기 프로필·작품별 예외 · P6-3 KWIC(T16·T17) · P6-4 명령 팔레트·스마트 서재·분류 전 출처 ·
+~~P6-1 듣기~~(제거, §17 A9) · P6-2 자동 스크롤·읽기 프로필·작품별 예외 · P6-3 KWIC(T16·T17) · P6-4 명령 팔레트·스마트 서재·분류 전 출처 ·
 P6-5 이어 스크롤 · P6-6 localStorage 상태 → idb 이전(검증 전 원본 보존) · P6-7 고운바탕 동적 link · P6-8 장면 이동·한글 AA 글꼴 실험.
 
 ### M7 — 통합 · 정리
@@ -1109,7 +1105,6 @@ P7-3 docs/19·09·07·README 본문 갱신.
 | 글꼴 원본 유실·버전 차이 | `font-sources` SHA 고정, 공식 1.000, CI 재현 검사 |
 | 글꼴 예산 | core/rest 실측 677KB |
 | 오프라인 평문 잔존 | 설정 명시, 작품별·전체 삭제 |
-| TTS 기기 편차 | S4 스파이크, 확인 항목으로 낮춤 |
 | 스포일러 | 읽은 회차 집합 기준, 집계 전 필터, T17 |
 | 대비 회귀 | 부록 B + axe |
 
@@ -1127,6 +1122,7 @@ P7-3 docs/19·09·07·README 본문 갱신.
 | A6 | 서버 동기화(D1 확장) | **보류(pass)** — QR 이어 읽기 + 백업 병합으로 대체. `docs/00` 계약 변경 없음 | M5는 QR·병합만 |
 | A7 | RUM 수집 | **보류(pass)** — web-vitals 제거, 실기기 확인으로 대체 | — |
 | A8 | `/ops` 토큰 매핑 | **보류(pass)** | — |
+| A9 | 듣기(TTS, P6-1) | **제거**(2026-10-01 사용자 결정) — 계획·UI·설정·단축키에서 뺀다 | — |
 
 보류 항목을 다시 하려면 이 표를 먼저 바꾼다.
 
@@ -1154,7 +1150,7 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - 설계와 다르게 해야 할 근거가 생기면 멈추고 근거와 선택지를 보고한다.
 - 마일스톤이 끝나면 docs/24 §19에 결과를 적고 main에 병합·푸시한 뒤 CI 결과를 확인한다.
 - 마지막에 내가 S22+ 실기기에서 확인할 목록(§14.5 해당 행)을 짧게 정리해 준다.
-- 실기기에서는 멈추지 않고 확인 대기에 쌓는다. S4 미확인/불가이면 P6-1 듣기를 건너뛰고 §19에 기록한다.
+- 실기기에서는 멈추지 않고 확인 대기에 쌓는다. P6-1 듣기는 제거됐다(§17 A9).
 ```
 
 ### 18.3 마일스톤별 지시문 (공통 지시문 뒤에 붙인다)
@@ -1169,7 +1165,7 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 | 6 | `이번 세션: M3(P3-1 ~ P3-5). 공유 이미지는 Canvas 직접 렌더, CSP는 바꾸지 않는다.` |
 | 7 | `이번 세션: M4(P4-1 ~ P4-4). §12.6 경로표 순서를 그대로, S3 결과를 따른다. 오프라인은 사용자가 저장한 작품만.` |
 | 8 | `이번 세션: M5(P5-1 ~ P5-2). 서버 동기화는 하지 않는다.` |
-| 9 | `이번 세션: M6에서 P6-3(KWIC)·P6-4(명령 팔레트·스마트 서재)부터. 듣기(P6-1)는 §19의 S4 결과가 '가능'일 때만.` |
+| 9 | `이번 세션: M6에서 P6-3(KWIC)·P6-4(명령 팔레트·스마트 서재)부터. 듣기(P6-1)는 제거됐다.` |
 | 10 | `이번 세션: M7. 내가 전달하는 실기기 확인 결과로 통합 회귀, 옛 자산·별칭 제거, docs/19·09·07·README 본문 갱신.` |
 
 ### 18.4 중간에 쓰는 짧은 지시
@@ -1288,6 +1284,27 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - **M1 마감**: 최종 커밋 전체 E2E(worktree, workers=2) 566 pass/0 fail/18 skip(새 폰 전용 테스트 2건이 넓은 폭에서 skip), axe 포함. unit 149, check·lint 0 error. Linux 시각 기준선은 M1 동안 비워 CI가 매번 생성하게 했고, M1 main CI artifact로 새 기준선을 커밋한다.
 - M1 시안(`prototype.html`, preview-1/2) 대비 차이: ① 서재 머리 — 시안은 로고+설정만, 구현은 기존 앱 바(운영 링크·보존본 상태 유지, E2E 운영 접근 계약). ② 이어읽기 카드 — 시안의 채운 `이어 읽기` 버튼 대신 카드 전체가 주행동, `목차`는 카드 아래 보조 버튼. ③ 오늘의 발췌·이번 주 독서(M3), 스마트 서재 칩(M6)은 데이터 없는 빈 모듈이라 없음. ④ 둘러보기 — 시안 제목 `둘러보기`, 구현은 `게시판 둘러보기` + `게시판 글/작품` 범위 탭이 한 줄 더 있음. ⑤ 목록 행의 S 표지·진행선(DESIGN §7.5)은 아직 행에 연결하지 않음(후속: M2 전 또는 M7 정리 시 목록 행 공통 렌더에서). ⑥ 기록 탭 `발췌·통계`는 M3. ⑦ Reader context bar/도크/퀵 설정은 M2. ⑧ 폭 경계 760/1200 유지(DESIGN 600/960과 차이, P1-5 기록). 실기기 확인 대기(M1): 미니바·탭 no-wrap, 찾기 바 키보드 위(T34), 초성·IME 입력 — S22+ Chrome·Samsung Internet.
 
+- P2-1: `reader-chrome.js` + 모바일 도크를 떠 있는 glass pill(좌우 12·아래 8+safe-area, radius 18, `다음` accent 글자, 접힘 시 화면 밖으로), 비활성 이전/다음은 ink-3 중립(U1, 흐린 강조색 없음), 본문 끝 카드 다음 화 제목 명조 + 작품 안 위치(`run`: 미니 바코드 + `N/M편·화`, 이 회차만 ribbon — 타입문넷 컬렉션·텍스트 작품 목차 양쪽 내비게이션에 추가). 도크 점유는 찾기 바(P1-15)가 연 동안 도크 숨김으로 연결됨. `댓글 38` 바로가기·단일 DOM 펼침은 P2-4(T29), 접힘 `38%` 배지 탭 = 스크러버는 P2-2. 관찰: 로컬 캡처 1회에서 스타일시트 한 개가 적용되지 않은 화면이 나왔다가 재현되지 않음(요청 실패로 추정) — CSS 7+글꼴 CSS 3개로 요청이 늘어, M4 셸 precache에서 함께 다룬다.
+
+- P2-2a: 도크·도구줄 `Aa`가 퀵 설정 패널(popover auto, overlay 관리자 등록, 모바일은 도크 위·넓은 화면은 도구줄 아래 오른쪽)을 연다 — 글자 크기 −/+(기존 keep-top 경로), 읽기 면 기본·종이·먹, 밝기·따뜻하게, `모든 설정 ›`. 먹일 때 패널도 dark 토큰(T32 범위). 설정 선택 상태 동기화를 문서 전체로 넓혀 같은 컨트롤이 두 곳에 있어도 일치. 기존 E2E의 설정 시트 진입은 `Aa → 모든 설정`으로, 중복 컨트롤 선택자는 `#settings-dialog` 안으로 좁힘. 읽기 방식 스크롤/페이지는 P2-3과 함께.
+
+- P2-2b: 스크러버 시트 — 접힌 `%` 배지(버튼으로 바꾸고 누를 때 포커스를 막아 도구가 펼쳐지며 탭이 사라지지 않게)로 열림, 회차 안 위치 슬라이더(1000단계, rAF로 본문이 따라감, 찾기 적중 눈금), 남은 시간, 작품 안 위치(`run`), `이동 전 위치로`/`검색 전 위치로`(문서 세션 동안 유지, 새 명시 이동이 교체 — 스크럽 첫 움직임과 찾기 이동이 기록). 스크러버 바코드에서 회차 선택·`몇 화?`는 목차 경로가 있어 이번엔 표시만(후속 연결 후보).
+- P2-2c: 문단 간격(0–2em)·들여쓰기(0–2em) 설정(저장·백업 sanitize, docs/19 갱신) — 산문 `p`에만, AA 문단은 `:not(.aa)`로 제외(E2E로 AA text-indent·margin 0 확인), 서체 선택 아래 현재 회차 첫 줄로 미리보기, `이어 읽기 카드에 마지막 문장 보이기`(`homeQuote`, 기본 켬). 굵기 설정은 MaruBuri가 400/700 고정 굵기라 중간 굵기가 적용되지 않아 넣지 않음(가변 Pretendard만 해당 — 필요하면 서체별 조건부로). 고운바탕 카드는 P6-7(동적 link)과 함께.
+
+- 계획 변경(2026-10-01 사용자 결정): 듣기(TTS, P6-1)를 계획에서 제거(§17 A9). §8.15·D-27·D12·도크 점유·단축키 `t`·Highlight/Wake Lock 표·R-RD-04, DESIGN §7.9·§7.11·설정 순서에서 뺐다. S4 기록은 참고로만 남기며 M6는 P6-2부터 진행한다.
+- P2-3: `reader-modes.js`(쪽 기하·쪽 수·쪽 찾기·스와이프 판정 순수 함수 + 쪽 첫 글자 capture/anchor 좌표) + 페이지 모드 연결. S1 결과대로 회차 전체를 한 쪽 폭 CSS columns로 배치하고 transform으로 넘긴다(scroll-snap 없음). 설정 `readingMode`(`scroll|page`, 퀵 설정·설정 시트, sanitize), 탭 영역 오른손 30/20/50, 손가락 따라가는 스와이프(1/5 또는 0.3px/ms에서 넘김, 200ms 정착·reduced-motion 즉시), 가장자리 24px 시작 스와이프 무시, 마지막 쪽 너머 = 다음 화·첫 쪽 앞 = 이전 화, 키보드 ←/→·Space·PageUp/Down·Home/End(Reader가 화면에 있을 때만), 접힘 배지 `n / m쪽`, AA는 스크롤로(안내 1회), 터치 화면 첫 진입 때 탭 영역 안내(한 번 탭하면 닫히고 기기에 기억, `redstm.pageHint.v1`). 위치는 스크롤과 같은 locator로 저장한다. 구현 중 재현·수정한 결함 3건: ① 회전 왕복마다 쪽 첫 글자를 다시 잡아 한 쪽씩 앞으로 밀림 → 쪽에 도달한 문장(넘김·복원·찾기)을 `paged.anchor`로 유지하고 relayout·세션 capture가 그 문장을 쓴다. ② 페이지 모드에서 저장 `scroll`이 항상 0이라 복원 때 `atStart`로 판정돼 첫 쪽으로 감 → `readingPosition()`이 페이지 모드에서는 쪽 번호(첫 쪽 0)를 돌려주고 텍스트 서재 저장도 같은 함수를 쓴다. ③ TypeMoon 글은 본문 렌더(페이지 진입) 뒤 문서 세션을 시작해 어댑터가 스크롤로 덮어써짐 → 시작 시 현재 모드 어댑터를 유지. 늦은 글꼴·이미지 load는 같은 문장으로 쪽을 다시 배치한다. 한계(후속): 페이지 모드에서는 회차 머리·본문 끝 카드·댓글을 숨긴다(스크롤 방식에서 보임). 다음 화는 마지막 쪽 너머 넘김·도크로 간다. 편집: P2-3a(`reader-modes.js`·단위 테스트·`user-state.js`·`package.json`), P2-3b(`app.js`·`index.html`·`reader.css`·`text-library.js`·E2E), P2-3c(이 기록·docs/19).
+- P2-3 검증: unit 153, check·lint 0 error(기존 warning 8), 전체 E2E 584 pass/4 fail/20 skip — 실패 4건은 axe mobile·compact의 `#reader-topbar-progress` 대비 3.49:1. 페이지 모드 연결로 본문 렌더 직후 진행 숫자가 채워져 처음 노출됐다. 요약 줄을 잘못 읽어 P2-3a–c를 먼저 커밋했고, P2-3d에서 색을 `--muted`로 바꿔 axe 16/16 통과.
+- P2-4a: 산문 문단 규칙(`p` 간격·들여쓰기)만 `@scope (.archive-body) to (.aa-canvas, .media-figure)`로 옮기고 `:scope`로 기존 특이도를 유지. 제목·인용·구분선·이미지·링크는 범위에 넣지 않았다 — AA 안 요소의 현재 렌더링(링크 색·제목 행간 등)이 바뀌기 때문(설계 DESIGN §8.1과의 차이, 바꾸려면 T06 기준 변경 결정 필요). AA 루트에 §8.16 "새로 막아야 하는 것" 12개 속성을 별도 규칙으로 추가(기존 규칙 값 불변, `all: initial` 없음). 변경 전후 AA fixture의 모든 computed style을 덤프 비교: 바뀐 것은 `text-wrap-style` pretty→auto(산문 pretty 차단, 의도) 하나, 캔버스 스크린샷 바이트 동일(desktop·mobile). T06 E2E: 산문 설정 8개+테마를 바꿔도 AA DOM·computed style·스크린샷 동일.
+- P2-4b: 댓글 단일 DOM(D14, T29) — `#comment-list`를 `hidden="until-found"`로 접고(미지원 브라우저는 일반 hidden + 제목 버튼), 제목 `댓글 N`이 펼침 버튼(`aria-expanded`), 브라우저 찾기의 `beforematch`가 상태를 맞춘다. 본문 끝 카드 `댓글 N`(댓글 0이면 숨김)은 그 자리에서 펼치고 댓글로 이동하며 `본문으로` pill을 띄운다(돌아갈 위치는 스크러버와 같은 `readerReturn`, 라벨 `댓글 전 위치`). 본문으로 올라가면 pill이 사라지고 새 글은 접힌 채 시작. 페이지 모드에서는 여전히 댓글이 보이지 않는다(P2-3 한계).
+- P2-4 검증: unit 153, check·lint 0 error(기존 warning 8), 전체 E2E 596 pass/0 fail/20 skip(T06·T29 포함), axe 16/16.
+- P2-5: `aa-viewer.js` — 기존 `setAaZoom`의 범위·정밀도(`clampAaZoom`: 0.1–3.0, 소수 셋째 자리)와 `fitAaZoom` 수식(`fitAaZoomValue`)을 값 그대로 옮기고 app은 그 함수를 부른다. 핀치는 vendored @use-gesture `PinchGesture`(touch, 휠 핀치 끔): 제스처 중에는 `.aa-canvas`에 두 손가락 중점 기준 `transform: scale()`만, 손을 떼면 `시작 배율 × scale`을 연속값으로 확정(25% 단위로 맞추지 않음) 후 그 점이 같은 화면 위치에 오도록 가로(AA 본문)·세로(Reader) 스크롤 보정. 옛 거리×0.003 누적 핀치는 이 방식으로 대체. 탭 판별: 한 번 탭은 즉시 도구 토글, 300ms 안 두 번째 탭은 토글을 되돌리고 `맞춤 ↔ 100%`. `맞춤` 결과는 `aaViews[key].fit`으로 수동 배율과 구분 저장(백업·가져오기 sanitize 포함). 데스크톱 `dblclick` 배율 단계는 유지하되 터치 두 번 탭과 겹치지 않게 마지막 포인터가 터치면 무시. 도구줄에 `색`(원본색 ↔ 단색, 설정 시트와 같은 스위치) 추가. 기존 결함 수정: `−`/`+`가 글별 배율이 아니라 기본 배율에서 계산해 글별 배율이 있으면 늘 125%/75%로 튀던 것을 화면의 배율 기준으로. 넘침 표시는 §8.16 인벤토리의 오른쪽 안쪽 그림자를 그대로 둔다(fade mask로 바꾸지 않음). 가로 전체화면 버튼은 P2-6. 편집: P2-5a(`aa-viewer.js`·단위 테스트·`package.json`·`user-state.js`·user-state 테스트), P2-5b(`app.js`·`index.html`·E2E T30/T31), P2-5c(기록).
+- P2-5 검증: unit 158, check·lint 0 error(기존 warning 8), 전체 E2E 597 pass/0 fail/23 skip(T30/T31은 터치 화면 project에서만 실행).
+- P2-6: AA host(`#aa-host` = 도구줄 + AA 본문 + 미니맵 + 배율 메시지) 감싸기. `⟲ 가로 전체화면`(Fullscreen API 없으면 숨김)은 host를 전체화면으로 열고 `screen.orientation.lock('landscape')`를 요청한다(거절돼도 전체화면 유지). 상태는 `fullscreenchange`만 따른다(Back/Esc/버튼이 같은 경로). 나오면 들어가기 전 배율(`aaViews` 항목·자동 맞춤·기본 배율)과 가로 위치를 복원하고 방향 잠금을 푼다. 전체화면 안에서는 페이지의 밝기·따뜻하게 overlay가 보이지 않으므로 host의 `::before/::after`로 같은 값을 그린다. 배율 메시지·설정 dialog는 top layer라 전체화면 위에 보인다. AA 글이 아닌 글로 바뀌면 전체화면을 닫는다. 미니맵: 그림이 stage보다 넓을 때만, 본문 아래 sticky 48px 터치 영역(모바일은 도구가 보이는 동안 도크 위), 보이는 구간 비례 창, 끌기/탭(@use-gesture `DragGesture`)으로 그 지점을 가운데로, 키보드 ←/→(stage 1/4)·Home/End, `role=slider`. 장면 이동(`‹ 장면 3/12 ›`)은 P6-8. 편집: P2-6a(`aa-viewer.js` 미니맵 계산·단위 테스트·`index.html`·`aa.css`), P2-6b(`app.js`·E2E T05·이 기록).
+- P2-6 검증: unit 159, check·lint 0 error(기존 warning 8), 전체 E2E 601 pass/0 fail/23 skip(T05·미니맵 포함). 실제 가로 회전·시스템 Back은 실기기 확인(§14.5 M2).
+- P2-7: `gallery.js` — vendored PhotoSwipe를 기존 `#image-viewer` dialog 안의 stage에 그린다(dialog가 Back·Esc·닫기·overlay 관리자 층 하나를 계속 맡고 E2E id 유지). 대상은 본문의 이미지와 이미지 링크 문서 순서, 불러오지 못한 figure(만료·미보존)는 제외. 크기는 로드 후 `naturalWidth/Height`(DOM 이미지가 아직이면 `no-referrer`로 미리 읽음, 2.5초 상한). 핀치·두 번 탭·좌우 스와이프·아래로 끌어 닫기·`n / m`은 PhotoSwipe, 세로 비율 1:3 초과는 폭 맞춤(원본보다 키우지 않음)으로 열어 끌어 내려 본다. 원본 호스트 referrer 거절을 피하려 PhotoSwipe 이미지에도 `referrerpolicy=no-referrer`. 도구: `원본 열기`(현재 그림 따라감)·`실제 크기`(화면보다 큰 그림만, 1배 ↔ 맞춤)·`공유`(Web Share 있을 때)·`닫기`. dialog가 닫히면 인스턴스를 파기한다. PhotoSwipe CSS는 처음 열 때만 불러온다(셸 CSS 요청을 늘리지 않음). 함께 고친 결함: 열린 dialog 안(갤러리·설정 시트)에서 ←/→ 등이 Reader 회차 이동으로 새던 것 — 전역 키 처리에서 열린 dialog 안의 키를 제외. 기존 이미지 보기 E2E 2건을 갤러리 동작으로 갱신(id 유지)하고 세로로 긴 그림 E2E 추가. 편집: P2-7a(`gallery.js`·`package.json`), P2-7b(`app.js`·`index.html`·`reader.css`·E2E), P2-7c(기록).
+- P2-7 검증: unit 159, check·lint 0 error(기존 warning 8), 전체 E2E 605 pass/0 fail/23 skip.
+- **M2 마감**: P2-1~P2-7 완료. 최종 커밋 전체 E2E(4 project, workers=2) 605 pass/0 fail/23 skip(터치·폭 전용 테스트가 해당 없는 project에서 skip), axe 포함, unit 159, check·lint 0 error. Linux 시각 기준선은 M1 이후 비어 있어 CI가 생성만 하므로, M2 main CI artifact를 기준선으로 커밋한다(M1 기록의 같은 할 일 포함). 남은 한계: 페이지 모드에서 머리·본문 끝 카드·댓글 숨김, AA `@scope`는 문단 규칙만(제목·인용·링크는 기존 렌더 유지), 장면 이동은 P6-8. 실기기 확인 대기(M2, §14.5): 페이지 넘김 탭·스와이프·가장자리 Back·회전·주소창 높이 변화(T02), 탭 영역 안내, AA 핀치 시작점·10/300% 경계·두 번 탭, 가로 전체화면 회전·시스템 Back·전체화면 안 밝기, 미니맵 끌기, 갤러리 핀치·아래로 끌어 닫기·Back, 댓글 펼침 뒤 `본문으로`.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
@@ -1321,7 +1338,7 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 | R-RD-01 바코드 | adopt(bin) | P1-10 |
 | R-RD-02 U1–U5 | adopt | P1-14, P2-1 |
 | R-RD-03 KWIC | adopt | P6-3 |
-| R-RD-04 듣기 | adopt(S4 후) | P6-1 |
+| R-RD-04 듣기 | 제거(§17 A9) | — |
 | R-RD-05 EPUB | 범위 밖 | — |
 | R-RD-06 인용 메모 | adopt | P3-1 |
 | R-RD-07 책 모드 | 페이지 모드로 흡수 | P2-3 |
@@ -1431,7 +1448,7 @@ const idxs = uf.filter(haystack, disassemble(query)); // 세이바 → 세이버
 | A6 | 글꼴 예산 초과 → 정적 3굵기 비교 | 대안 채택 | 실측: 정적 3굵기 672KB로 오히려 큼. **core/rest 분할**로 서재 677KB, 이후 추가 거의 없음(D-04). 늦게 도착하는 조각은 locator 복원 + 사용자 스크롤 존중(T20) |
 | B1 | 정적 자산 immutable 없음 | 수용 | 버전 디렉터리(완료) + Worker 헤더 P0-3 |
 | B2 | precache 목록 낡음, module SW | 수용 | precache 목록 생성·check 검증, `type: "module"`, SW 내 동적 import 금지 |
-| B3 | TTS 낙관적 | 수용 | S4 스파이크, 확인 항목으로 낮춤, 무음 오디오 트릭 금지 |
+| B3 | TTS 낙관적 | 수용 → 이후 듣기 제거(§17 A9) | S4 스파이크 기록만 유지 |
 | B4 | Web Share 활성화 | 수용 | 시트 열 때 미리 생성, 버튼은 share만(T33) |
 | B5 | CloseWatcher는 제스처 안에서 | 수용 | §9.2 |
 | B6 | 전체화면에서 바깥 overlay 사라짐 | 수용 | AA host 안 overlay |

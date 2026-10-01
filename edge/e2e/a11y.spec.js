@@ -55,6 +55,7 @@ test("the Reader, its settings and 더보기 sheets", async ({ page }) => {
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await expectAccessible(page, "reader");
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.locator("#settings-dialog")).toBeVisible();
   await expectAccessible(page, "settings");
   await page.locator("#settings-dialog button[aria-label='닫기']").click();

@@ -24,8 +24,6 @@ const definitions = [
   ["orientationLock", api((g) => g.screen?.orientation?.lock), "회전 안내", "전체화면"],
   ["vibration", api((g) => g.navigator?.vibrate), "진동 없음", "동작"],
   ["wakeLock", api((g) => g.navigator?.wakeLock), "화면 켜 두기 숨김", "읽기"],
-  ["tts", api((g) => g.speechSynthesis && g.SpeechSynthesisUtterance), "기능 숨김", "읽기"],
-  ["mediaSession", api((g) => g.navigator?.mediaSession), "본문 도구", "듣기 제어"],
   ["shareFiles", api((g) => g.navigator?.canShare && g.navigator?.share), "다운로드", "공유"],
   ["clipboard", api((g) => g.navigator?.clipboard?.writeText), "선택·다운로드", "발췌 보존"],
   ["serviceWorker", api((g) => g.navigator?.serviceWorker && g.caches), "온라인 전용", "읽기"],
@@ -41,7 +39,7 @@ export const capabilities = Object.fromEntries(definitions.map(([id, detect, fal
 }]));
 
 export const FLAG_NAMES = ["newShell", "miniBar", "typeCovers", "barcode", "find", "annotations", "pageMode", "quickSettings", "gallery",
-  "aaGestures", "aaFullscreen", "tts", "stats", "offline", "sync", "kwic", "glass", "haptics"];
+  "aaGestures", "aaFullscreen", "stats", "offline", "sync", "kwic", "glass", "haptics"];
 
 export function featureEnabled(name, defaultValue = false) {
   if (!FLAG_NAMES.includes(name) || name === "sync") return false;

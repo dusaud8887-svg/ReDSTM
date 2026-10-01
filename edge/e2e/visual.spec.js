@@ -35,6 +35,7 @@ if (process.env.VISUAL === "1") {
           await expect(page.locator(ready).first()).toBeVisible();
           if (screen === "settings") {
             await page.locator(width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
+            await page.locator("#quick-all-settings").click();
             await expect(page.locator("#settings-dialog")).toBeVisible();
           }
           await page.evaluate(() => document.fonts.ready);

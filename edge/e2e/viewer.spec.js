@@ -320,6 +320,7 @@ test("keeps text reading, search, settings, and bookmarks inside the shared Read
   await expect(page.locator("#comments")).toBeHidden();
   const mobileText = page.viewportSize().width < 760;
   await page.locator(mobileText ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.getByRole("dialog", { name: "읽기 설정" })).toBeVisible();
   // A late TypeMoon boot must not reopen the independent text Reader.
   releaseResponse();
@@ -874,6 +875,118 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
   }
 });
 
+// T30/T31 (docs/24 §8.16): a pinch scales the picture while the fingers move and settles on a
+// continuous zoom within 10–300%; a tap toggles the tools at once and a quick second tap undoes
+// that and switches between 맞춤 and 100%.
+test("AA pinch settles on a continuous zoom and a double tap switches 맞춤 and 100%", async ({ page }) => {
+  await useCollectionFixture(page);
+  await openPost(page, aaKey);
+  test.skip(!(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)), "touch gestures need a touch screen");
+  const output = page.locator("#aa-zoom-output");
+  await expect(output).toHaveText("100%");
+  const body = page.locator("#archive-body");
+  const pinch = async (from, to, { release = true } = {}) => body.evaluate((element, [start, end, finish]) => {
+    const box = element.getBoundingClientRect();
+    const touches = (gap) => [0, 1].map((identifier) => new Touch({
+      identifier, target: element, clientX: box.left + 150 + (identifier ? gap / 2 : -gap / 2), clientY: box.top + 80,
+    }));
+    const send = (type, list, changed = list) => element.dispatchEvent(new TouchEvent(type, {
+      touches: list, targetTouches: list, changedTouches: changed, bubbles: true, cancelable: true,
+    }));
+    send("touchstart", touches(start));
+    send("touchmove", touches((start + end) / 2));
+    send("touchmove", touches(end));
+    if (finish) send("touchend", [], touches(end));
+  }, [from, to, release]);
+  // While the fingers move only a transform changes; the zoom itself waits for the release.
+  await pinch(200, 174.6, { release: false });
+  await expect(page.locator(".aa-canvas")).toHaveAttribute("style", /scale\(0\.87/);
+  await expect(output).toHaveText("100%");
+  await body.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const touches = [0, 1].map((identifier) => new Touch({ identifier, target: element, clientX: box.left + 150 + (identifier ? 87.3 : -87.3), clientY: box.top + 80 }));
+    element.dispatchEvent(new TouchEvent("touchend", { touches: [], targetTouches: [], changedTouches: touches, bubbles: true }));
+  });
+  await expect(output).toHaveText("87%");
+  await expect(page.locator(".aa-canvas")).not.toHaveAttribute("style", /scale/);
+  const saved = () => page.evaluate(() => Object.values(JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews)[0]);
+  await expect.poll(async () => (await saved())?.zoom).toBe(0.873);
+  await pinch(100, 1000);
+  await expect(output).toHaveText("300%");
+  await pinch(1000, 10);
+  await expect(output).toHaveText("10%");
+  // Tap: the tools toggle at once; a second tap within 300ms undoes that and fits the picture.
+  const hidden = () => page.evaluate(() => document.body.classList.contains("reader-controls-hidden"));
+  const tap = async () => {
+    const box = await body.boundingBox();
+    const point = { isPrimary: true, pointerType: "touch", clientX: box.x + 40, clientY: box.y + 60 };
+    await body.dispatchEvent("pointerdown", point);
+    await body.dispatchEvent("pointerup", point);
+  };
+  await page.locator('[data-aa-zoom-delta="0.25"]').click();
+  const before = await hidden();
+  await tap();
+  expect(await hidden()).toBe(!before);
+  await tap();
+  expect(await hidden()).toBe(before);
+  await expect.poll(async () => (await saved())?.fit).toBe(true);
+  // From 맞춤 a double tap goes to a manual 100%.
+  await page.waitForTimeout(350);
+  await tap();
+  await tap();
+  await expect(output).toHaveText("100%");
+  await expect.poll(async () => (await saved())?.fit).toBeUndefined();
+});
+
+// T05 (docs/24 §8.17) and the minimap (DESIGN §8.4): the AA host goes full screen with its tools,
+// takes zoom changes and messages inside it, and leaving — by the button or by Back/Esc, which
+// arrive as fullscreenchange — brings back the zoom and sideways place from before.
+test("AA full screen keeps its tools inside and returns to the same view; the minimap moves a wide picture", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.route(`**/archive/${aaKey}`, (route) => {
+    const payload = aaPostPayload(1, "첫째");
+    payload.post.body_html = `<div class="AA_Text"><p>${"＿".repeat(240)}</p><p>（　´∀｀）</p></div>`;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await openPost(page, aaKey);
+  const body = page.locator("#archive-body");
+  const map = page.locator("#aa-minimap");
+  await expect(map).toBeVisible();
+  const windowLeft = () => map.evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--window-left")));
+  expect(await windowLeft()).toBe(0);
+  const box = await map.boundingBox();
+  await page.mouse.click(box.x + box.width * 0.75, box.y + box.height / 2);
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await expect.poll(windowLeft).toBeGreaterThan(40);
+  await map.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBe(0);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  const left = await body.evaluate((element) => element.scrollLeft);
+
+  const button = page.locator("#aa-fullscreen");
+  await expect(button).toBeVisible();
+  await button.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe("aa-host");
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#aa-controls")).toBeVisible();
+  await page.locator('[data-aa-zoom-delta="0.25"]').click();
+  await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
+  // The zoom message is in the top layer, over the full-screen host.
+  await expect(page.locator("#aa-zoom-indicator")).toBeVisible();
+  // Back/Esc leave full screen outside the page; only fullscreenchange tells it.
+  await page.evaluate(() => document.exitFullscreen());
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#aa-zoom-output")).toHaveText("100%");
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBe(left);
+  // The button leaves too.
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await button.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+});
+
 test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);
@@ -888,6 +1001,7 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator("#reader-kicker")).toContainText("자유게시판");
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.locator('[data-aa-background="#f5f5f0"]')).toHaveText("아이보리");
   await expect(page.locator('[data-aa-background="#ffffff"]')).toHaveText("흰색");
   await expect(page.locator(".aa-color-picker")).toContainText("직접");
@@ -947,11 +1061,95 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await page.screenshot({ path: `.wrangler/screenshots/${testInfo.project.name}-aa-fixture.png` });
 });
 
+// T06 (docs/24 §8.16): every prose setting and the app theme leave an AA picture as it was —
+// the same DOM, the same computed grid and colours, and the same pixels.
+test("prose settings and theme never change an AA picture", async ({ page }) => {
+  await useCollectionFixture(page);
+  const properties = [
+    "font-family", "font-size", "line-height", "white-space", "overflow-wrap", "text-align", "letter-spacing", "word-spacing",
+    "text-indent", "font-weight", "font-style", "text-transform", "font-feature-settings", "font-variant-numeric", "hyphens",
+    "text-wrap-mode", "text-wrap-style", "color", "background-color", "margin", "padding", "width",
+  ];
+  const snapshot = async () => {
+    await openPost(page, aaKey);
+    await page.evaluate(() => document.fonts.ready);
+    const styles = await page.evaluate((names) => {
+      const root = document.getElementById("archive-body");
+      return [root, ...root.querySelectorAll(".aa-canvas, .aa-canvas *")].map((element) => {
+        const style = getComputedStyle(element);
+        return Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name)]));
+      });
+    }, properties);
+    const html = await page.locator("#archive-body").innerHTML();
+    const pixels = await page.locator(".aa-canvas").screenshot({ animations: "disabled", caret: "hide" });
+    return { styles, html, pixels };
+  };
+  const before = await snapshot();
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("redstm.userState.v2"));
+    Object.assign(state.settings, {
+      theme: "dark", proseAlign: "justify", proseFont: "sans", proseSize: 24, lineHeight: 2.2,
+      paragraphSpacing: 2, textIndent: 2, readerSurface: "ink",
+    });
+    localStorage.setItem("redstm.userState.v2", JSON.stringify(state));
+  });
+  const after = await snapshot();
+  expect(after.html).toBe(before.html);
+  expect(after.styles).toEqual(before.styles);
+  expect(after.pixels.equals(before.pixels)).toBe(true);
+});
+
+// T29 (docs/24 §8.7 D14): comments stay one DOM below the body, folded until asked for; the
+// chapter-end shortcut unfolds them in place and 본문으로 returns to the reading place.
+test("comments unfold in place from the chapter end and 본문으로 returns to the text", async ({ page }) => {
+  await useCollectionFixture(page);
+  await openPost(page, firstKey);
+  const list = page.locator("#comment-list");
+  const toggle = page.locator("#comments-toggle");
+  await expect(list).toBeHidden();
+  await expect(list).toHaveAttribute("hidden", "until-found");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("댓글 2");
+  const shortcut = page.locator("#end-comments");
+  await expect(shortcut).toContainText("댓글 2");
+  const pane = page.locator("#reader-pane");
+  await shortcut.scrollIntoViewIfNeeded();
+  const before = await pane.evaluate((element) => element.scrollTop);
+  await shortcut.click();
+  await expect(list).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".comment")).toHaveCount(2);
+  await expect(page.locator("#comments-title")).toBeInViewport();
+  const back = page.locator("#comments-return");
+  await expect(back).toBeVisible();
+  await expect(back).toHaveText("본문으로");
+  // One DOM: nothing was copied into a sheet, so no id appears twice.
+  expect(await page.evaluate(() => {
+    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
+    return ids.length - new Set(ids).size;
+  })).toBe(0);
+  await back.click();
+  await expect(back).toBeHidden();
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(before + 80);
+  // The heading folds them again; browser find (beforematch) unfolds and the heading follows.
+  await toggle.click();
+  await expect(list).toBeHidden();
+  await list.evaluate((element) => {
+    element.removeAttribute("hidden");
+    element.dispatchEvent(new Event("beforematch"));
+  });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  // A new post starts folded.
+  await openPost(page, secondKey);
+  await expect(list).toHaveAttribute("hidden", "until-found");
+});
+
 test("applies and persists prose typography over legacy source styles", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, proseKey);
   await expect(page.locator("#aa-controls")).toBeHidden();
   await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await page.locator('[data-theme-choice="light"]').click();
   await expect(page.locator('[data-theme-choice="light"]')).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(253, 252, 250)");
@@ -1169,6 +1367,7 @@ test("searches and renders a representative AA post", async ({ page }, testInfo)
 
   const mobile = page.viewportSize().width < 760;
   await page.locator(mobile ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await expect(page.locator("#settings-dialog")).toBeVisible();
   await expect(page.locator("#export-state")).toBeVisible();
   await expect(page.locator("#import-state")).toBeVisible();

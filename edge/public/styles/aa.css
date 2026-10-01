@@ -14,6 +14,10 @@
 .aa-zoom-indicator { position: fixed; top: 50%; left: calc(50% + 216px); z-index: 40; transform: translate(-50%, -50%); padding: 13px 18px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
 
 .archive-body.aa { width: 100%; max-width: none; padding: 42px 24px 72px; text-align: start; overflow-x: auto; overflow-y: hidden; overflow-wrap: normal; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre-wrap; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x pan-y; text-size-adjust: 100%; }
+/* Prose settings added by the redesign never reach an AA picture (docs/24 §8.16 "새로 막아야 하는 것").
+   @scope limits prose selectors but not inheritance, so the AA root restates these. The rule above
+   keeps its values; white-space and overflow-wrap stay as they are, and all: initial is not used. */
+.archive-body.aa { letter-spacing: 0; word-spacing: 0; text-indent: 0; text-align: start; font-weight: 400; font-style: normal; text-transform: none; font-feature-settings: normal; font-variant-numeric: normal; hyphens: manual; text-autospace: no-autospace; text-wrap: wrap; }
 .archive-body.aa.aa-can-scroll { box-shadow: inset -26px 0 22px -22px rgb(11 13 18 / 58%); }
 .aa-canvas { width: fit-content; min-width: 100%; }
 .aa-canvas[data-width="680"] { width: 680px; min-width: 680px; }
@@ -21,6 +25,19 @@
 .archive-body.aa p { margin: 0; }
 .archive-body.aa :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; display: block; margin: 0; padding: 0; white-space: nowrap !important; font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; background: transparent !important; }
 .archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
+
+/* AA host (docs/24 §8.17): the toolbar, the picture, its minimap and the zoom message go full
+   screen together, with 밝기 · 따뜻하게 drawn inside it because the page's shade stays outside. */
+.aa-host:fullscreen { display: flex; flex-direction: column; overflow: auto; background: var(--aa-background); }
+.aa-host:fullscreen .aa-controls { top: 0; flex: 0 0 auto; }
+.aa-host:fullscreen .archive-body.aa { flex: 1 0 auto; padding-block: 16px 24px; }
+.aa-host:fullscreen::before, .aa-host:fullscreen::after { content: ""; position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.aa-host:fullscreen::before { background: #000; opacity: var(--reader-dim, 0); }
+.aa-host:fullscreen::after { background: #FF9E4A; opacity: var(--reader-warm, 0); mix-blend-mode: multiply; }
+.aa-minimap { position: sticky; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 6; height: 48px; margin: 0 16px; display: flex; align-items: center; cursor: pointer; touch-action: none; }
+.aa-minimap::before { content: ""; position: absolute; inset: 21px 0; border-radius: 3px; background: color-mix(in srgb, var(--aa-ink) 18%, transparent); }
+.aa-minimap-window { position: absolute; top: 18px; bottom: 18px; left: var(--window-left, 0%); width: var(--window-width, 100%); border-radius: 6px; background: color-mix(in srgb, var(--aa-ink) 55%, transparent); }
+.aa-minimap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .comment-body.aa-comment { overflow-x: auto; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; }
 .comment-body.aa-comment :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; min-width: 100%; margin: 0; padding: 0; white-space: pre !important; font: inherit !important; background: transparent !important; }
@@ -35,4 +52,6 @@
   .aa-control-group { flex: 0 0 auto; }
   .aa-zoom-indicator { left: 50%; }
   .archive-body.aa { width: 100%; padding: 28px 8px 52px; }
+  /* Above the floating dock while the tools show. */
+  body:not(.reader-controls-hidden) .aa-minimap { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }

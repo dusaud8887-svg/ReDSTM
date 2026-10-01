@@ -61,7 +61,7 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .more-position { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .more-position-values { display: inline-flex; align-items: baseline; gap: 8px; }
 .more-position-values small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.reader-topbar-progress { color: var(--subtle); font-variant-numeric: tabular-nums; font-weight: 600; }
+.reader-topbar-progress { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
 .reader-topbar-progress:empty { display: none; }
 .more-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .more-actions :is(button, a) { min-width: 0; min-height: 80px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; text-align: center; text-decoration: none; cursor: pointer; }

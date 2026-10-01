@@ -91,7 +91,7 @@
   --reader-ink-2: #9FA39E;
   --reader-line: #1F2221;
 }
-:root[data-surface="ink"] body.reader-active :is(#settings-dialog, #reader-more) { color-scheme: dark; }
+:root[data-surface="ink"] body.reader-active :is(#settings-dialog, #reader-more, #quick-settings) { color-scheme: dark; }
 /* Custom properties inherit substituted values, so the Reader re-derives the names that read
    the surface tokens (the aliases included). */
 :is(.reader, .reader-bottom, .reader-status) {

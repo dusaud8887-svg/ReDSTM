@@ -102,6 +102,7 @@ for (const closeWatcher of [true, false]) {
     await page.locator("#fixture-open-find").click();
     await expect(page.locator("#fixture-find")).toBeVisible();
     await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+    await page.locator("#quick-all-settings").click();
     await page.locator("#fixture-open-menu").click();
     await expect(page.locator("#fixture-menu")).toBeVisible();
     await page.keyboard.press("Escape");
@@ -337,9 +338,10 @@ test("Reader settings keep the same sentence on screen when the font size change
   await page.waitForFunction(() => document.getAnimations().length === 0);
   const before = await topSentence();
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
-  await page.locator('[data-prose-size-delta="1"]').click();
-  await page.locator('[data-prose-size-delta="1"]').click();
-  await page.locator('[data-prose-size-delta="1"]').click();
+  await page.locator("#quick-all-settings").click();
+  await page.locator('#settings-dialog [data-prose-size-delta="1"]').click();
+  await page.locator('#settings-dialog [data-prose-size-delta="1"]').click();
+  await page.locator('#settings-dialog [data-prose-size-delta="1"]').click();
   await expect(page.locator("#prose-size-output")).toHaveText("21px");
   expect(await topSentence()).toBe(before);
 });
@@ -381,11 +383,19 @@ test("Image links in a body show as images, fail softly, and open a closable vie
   await figures.nth(0).locator(".media-open").click();
   const viewer = page.getByRole("dialog", { name: "이미지 보기" });
   await expect(viewer).toBeVisible();
-  await expect(viewer.locator("img")).toHaveAttribute("src", "https://img.example.test/a.png");
+  // The gallery holds the pictures that load, image links included; the failed one is left out.
+  await expect(viewer.locator(".pswp__counter")).toHaveText("1 / 3");
+  await expect(viewer.locator("#image-viewer-source")).toHaveAttribute("href", "https://img.example.test/a.png");
   // A picture smaller than the screen has nothing to zoom into.
   await expect(viewer.locator("#image-viewer-zoom")).toBeHidden();
+  // Arrows move through the gallery, not to the next post.
+  await page.keyboard.press("ArrowRight");
+  await expect(viewer.locator(".pswp__counter")).toHaveText("2 / 3");
+  await expect(viewer.locator("#image-viewer-source")).toHaveAttribute("href", /b\.jpg/);
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await viewer.getByRole("button", { name: "닫기" }).click();
   await expect(viewer).toBeHidden();
+  await expect(viewer.locator(".pswp")).toHaveCount(0);
   await expect(page).toHaveURL(/\/read\/board_a\/2$/);
 });
 
@@ -787,6 +797,7 @@ test("Reading settings opened over a chapter leave the text visible on phones", 
   await useLongCollection(page, 3);
   await page.goto("/read/board_a/2");
   await page.locator("#reader-bottom-settings").click();
+  await page.locator("#quick-all-settings").click();
   const sheetTop = await page.locator("#settings-dialog").evaluate((dialog) => dialog.getBoundingClientRect().top);
   expect(sheetTop).toBeGreaterThan(page.viewportSize().height * 0.35);
 });
@@ -812,8 +823,9 @@ test("종이 surface and 양쪽 맞춤 apply to the Reader and survive a reload"
   const readerBackground = () => page.locator("#reader").evaluate((element) => getComputedStyle(element).backgroundColor);
   const plain = await readerBackground();
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
-  await page.locator('[data-reader-surface="paper"]').click();
-  await expect(page.locator('[data-reader-surface="paper"]')).toHaveAttribute("aria-checked", "true");
+  await page.locator("#quick-all-settings").click();
+  await page.locator('#settings-dialog [data-reader-surface="paper"]').click();
+  await expect(page.locator('#settings-dialog [data-reader-surface="paper"]')).toHaveAttribute("aria-checked", "true");
   await expect.poll(readerBackground).not.toBe(plain);
   await expect(page.locator("#archive-body")).toHaveCSS("text-align", "start");
   await page.locator('[data-prose-align="justify"]').click();
@@ -835,8 +847,9 @@ test("The 먹 surface stays black under a light app theme and dims without touch
   await page.goto("/read/board_a/2");
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await page.locator('[data-theme-choice="light"]').click();
-  await page.locator('[data-reader-surface="ink"]').click();
+  await page.locator('#settings-dialog [data-reader-surface="ink"]').click();
   await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
   await expect(page.locator("#archive-body p").first()).toHaveCSS("color", "rgb(214, 216, 212)");
   await expect(page.locator("#reader")).toHaveCSS("color-scheme", "dark");
@@ -1032,16 +1045,43 @@ test("The image viewer shows a large picture at its own size and fits it again",
   const viewer = page.getByRole("dialog", { name: "이미지 보기" });
   const zoom = viewer.locator("#image-viewer-zoom");
   await expect(zoom).toBeVisible();
-  const width = () => viewer.locator("img").evaluate((image) => image.getBoundingClientRect().width);
-  expect(await width()).toBeLessThanOrEqual(page.viewportSize().width);
+  const width = () => viewer.locator(".pswp__img").first().evaluate((image) => Math.round(image.getBoundingClientRect().width));
+  await expect.poll(width).toBeLessThanOrEqual(page.viewportSize().width);
   await zoom.click();
   await expect(zoom).toHaveAttribute("aria-pressed", "true");
   await expect.poll(width).toBe(3000);
-  // Panned to the middle of the picture, with the actions still on screen.
-  expect(await viewer.locator("form").evaluate((form) => form.scrollLeft)).toBeGreaterThan(0);
+  // The actions stay on screen over the zoomed picture.
   await expect(zoom).toBeInViewport();
   await zoom.click();
   await expect.poll(width).toBeLessThanOrEqual(page.viewportSize().width);
+});
+
+// docs/24 §8.18: a picture taller than 1:3 opens filling the width, to be read by panning down.
+test("A very tall picture opens at the screen width instead of a sliver", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="9000"><rect width="2000" height="9000" fill="#468"/></svg>';
+  await page.route("https://img.example.test/**", (route) => route.fulfill({ contentType: "image/svg+xml", body: svg }));
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: false,
+        body_html: '<p><a href="https://img.example.test/tall.png">https://img.example.test/tall.png</a></p>',
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await page.locator("#archive-body .media-open").click();
+  const viewer = page.getByRole("dialog", { name: "이미지 보기" });
+  const box = () => viewer.locator(".pswp__img").first().evaluate((image) => {
+    const rect = image.getBoundingClientRect();
+    return { width: Math.round(rect.width), height: Math.round(rect.height) };
+  });
+  await expect.poll(async () => (await box()).width).toBe(page.viewportSize().width);
+  expect((await box()).height).toBeGreaterThan(page.viewportSize().height);
 });
 
 test("Text: novels read before show new chapters in the list, the read-state chips and Home", async ({ page }) => {
@@ -1276,6 +1316,7 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
 
   // 넓은 AA 화면에 맞추기 fits a picture with no zoom of its own, without remembering it.
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
   await page.locator('[data-aa-auto-fit="on"]').click();
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
   await page.goto("/read/board_a/2");
@@ -1552,4 +1593,206 @@ test("The mini bar appears on a list opened directly once saved records resolve"
   await page.goto("/browse");
   await expect(page.locator("#mini-bar")).toBeVisible();
   await expect(page.locator("#mini-bar")).toHaveAccessibleName(/3편 제목/);
+});
+
+test("The chapter end shows where the episode sits in its work", async ({ page }) => {
+  await useLongCollection(page, 12);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#end-run-label")).toHaveText("2/12편");
+  await expect(page.locator("#end-run .barcode-mini .bin.reading")).toHaveCount(1);
+});
+
+// docs/24 §8.8: Aa opens the quick panel; changes apply at once and keep the top sentence.
+test("Aa opens quick settings that apply at once and lead to all settings", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  const panel = page.locator("#quick-settings");
+  await expect(panel).toBeVisible();
+  await expect(page.locator("#quick-size-output")).toHaveText("18");
+  await panel.getByRole("button", { name: "글자 크게" }).click();
+  await expect(page.locator("#quick-size-output")).toHaveText("19");
+  await expect(page.locator("#archive-body")).toHaveCSS("font-size", "19px");
+  await panel.getByRole("radio", { name: "먹" }).click();
+  await expect(page.locator("#reader")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  await expect(panel).toHaveCSS("color-scheme", "dark");
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(page.locator("#reader")).toBeVisible();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
+  await expect(page.locator("#settings-dialog")).toBeVisible();
+  await expect(panel).toBeHidden();
+});
+
+// docs/24 §8.9: the folded badge opens the scrubber; a scrub keeps the place it left.
+test("The scrubber moves through the chapter and offers the place before the move", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const pane = page.locator("#reader-pane");
+  await pane.evaluate((element) => { element.scrollTop = 300; element.dispatchEvent(new Event("scroll")); });
+  await pane.hover();
+  await page.mouse.wheel(0, 400);
+  await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
+  const before = await pane.evaluate((element) => element.scrollTop);
+  await page.locator("#reader-status").click();
+  const sheet = page.locator("#scrubber");
+  await expect(sheet).toBeVisible();
+  await expect(page.locator("#scrubber-run-label")).toHaveText("2/3편");
+  await page.locator("#scrubber-position").evaluate((input) => {
+    input.value = "900";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#scrubber-output")).toHaveText("90%");
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(before + 200);
+  await sheet.getByRole("button", { name: "닫기" }).click();
+  await page.locator("#reader-status").evaluate((badge) => badge.click());
+  await expect(sheet.locator("#scrubber-return")).toHaveText("이동 전 위치로");
+  await sheet.locator("#scrubber-return").click();
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(before + 80);
+});
+
+// Fine typography reaches prose only; an AA picture keeps its grid (T06, docs/24 §8.16).
+test("Paragraph spacing and indent change prose but never an AA picture", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/1-*", (request) => {
+    const payload = postPayload(1);
+    payload.post.is_aa = true;
+    payload.post.body_html = '<p>（　´∀｀）</p><div class="AA_Text">　|　　|</div>';
+    return request.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator("#quick-all-settings").click();
+  for (const [id, value] of [["#paragraph-spacing", "1.5"], ["#text-indent", "1"]]) {
+    await page.locator(id).evaluate((input, next) => {
+      input.value = next;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, value);
+  }
+  await expect(page.locator("#font-preview")).toContainText("2편 본문 1");
+  const prose = page.locator("#archive-body p").first();
+  await expect(prose).toHaveCSS("text-indent", "18px");
+  await expect(prose).toHaveCSS("margin-bottom", "27px");
+  await page.goto("/read/board_a/1");
+  const aa = page.locator("#archive-body.aa p").first();
+  await expect(aa).toHaveCSS("text-indent", "0px");
+  await expect(aa).toHaveCSS("margin-bottom", "0px");
+});
+
+// Page mode tap zones (DESIGN §8.2 오른손) and the edge guard for system Back.
+test("Page mode taps turn pages by zone, the middle shows the tools and edge swipes stay with Back", async ({ page }) => {
+  test.skip(!mobileWidth(page), "tap zones are a touch layout");
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({ schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null, history: {} }));
+  });
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  // A touch screen shows the zones once; a tap dismisses them for good.
+  if (await page.evaluate(() => matchMedia("(pointer: coarse)").matches)) {
+    await page.locator("#page-hint").click();
+    await expect(page.locator("#page-hint")).toBeHidden();
+    await page.reload();
+    await expect(page.locator("#reader")).toHaveClass(/paged/);
+    await expect(page.locator("#page-hint")).toBeHidden();
+  }
+  const status = page.locator("#reader-status");
+  await expect(status).toHaveText(/^1 \/ \d+쪽$/);
+  const box = await page.locator("#reader-pane").boundingBox();
+  const y = box.y + box.height / 2;
+  const body = page.locator("#archive-body");
+  const touch = async (type, x) => body.dispatchEvent(type, { isPrimary: true, pointerType: "touch", clientX: x, clientY: y });
+  const tap = async (ratio) => {
+    await touch("pointerdown", box.x + box.width * ratio);
+    await touch("pointerup", box.x + box.width * ratio);
+  };
+  await tap(0.8);
+  await expect(status).toHaveText(/^2 \//);
+  await tap(0.1);
+  await expect(status).toHaveText(/^1 \//);
+  const hidden = await page.evaluate(() => document.body.classList.contains("reader-controls-hidden"));
+  await tap(0.4);
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains("reader-controls-hidden"))).toBe(!hidden);
+  // A swipe from the middle follows the finger and turns on release.
+  await touch("pointerdown", box.x + box.width * 0.8);
+  await touch("pointermove", box.x + box.width * 0.5);
+  await touch("pointermove", box.x + box.width * 0.2);
+  await touch("pointerup", box.x + box.width * 0.2);
+  await expect(status).toHaveText(/^2 \//);
+  // One that starts at the screen edge is the system Back gesture's, not a page turn.
+  await touch("pointerdown", 8);
+  await touch("pointermove", 200);
+  await touch("pointerup", 200);
+  await page.waitForTimeout(300);
+  await expect(status).toHaveText(/^2 \//);
+});
+
+// T01/T02 (automatable part): page mode keeps the same sentence through a font change, a
+// rotation, a reload and a switch back to scrolling; no page is empty.
+test("Page mode turns pages and keeps the sentence through size, rotation, reload and scroll", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({ schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null, history: {} }));
+  });
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  const status = page.locator("#reader-status");
+  await expect(status).toHaveText(/^1 \/ \d+쪽$/);
+  const pages = Number((await status.textContent()).match(/\/ (\d+)/)[1]);
+  expect(pages).toBeGreaterThan(1);
+  // The first visible paragraph on the current page, once a page turn has settled.
+  const firstVisible = () => page.evaluate(async () => {
+    const body = document.getElementById("archive-body");
+    await Promise.all(body.getAnimations().map((animation) => animation.finished.catch(() => {})));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const left = document.getElementById("reader-pane").getBoundingClientRect().left;
+    const right = left + document.getElementById("reader-pane").clientWidth;
+    return [...document.querySelectorAll("#archive-body p")].find((p) => {
+      const box = p.getBoundingClientRect();
+      return box.left >= left - 1 && box.right <= right + 1;
+    })?.textContent ?? "";
+  });
+  await page.keyboard.press("ArrowRight");
+  await expect(status).toHaveText(`2 / ${pages}쪽`);
+  // Wait for the 200ms turn to settle before reading what is on the page.
+  await expect.poll(firstVisible).toMatch(/\d+$/);
+  const sentence = await firstVisible();
+  expect(sentence).not.toBe("2편 본문 1");
+  // Every page has text: the last page is not empty.
+  await page.keyboard.press("End");
+  await expect(status).toHaveText(`${pages} / ${pages}쪽`);
+  await expect.poll(firstVisible).toMatch(/\d+$/);
+  for (let index = pages; index > 2; index -= 1) await page.keyboard.press("ArrowLeft");
+  await expect(status).toHaveText(`2 / ${pages}쪽`);
+  await expect.poll(firstVisible).toBe(sentence);
+  const size = page.viewportSize();
+  await page.setViewportSize({ width: size.height, height: size.width });
+  // Rotated, the pages hold different paragraphs, but the sentence the page began with is on screen.
+  await expect.poll(() => page.evaluate(async (text) => {
+    const body = document.getElementById("archive-body");
+    await Promise.all(body.getAnimations().map((animation) => animation.finished.catch(() => {})));
+    const pane = document.getElementById("reader-pane").getBoundingClientRect();
+    const box = [...body.querySelectorAll("p")].find((p) => p.textContent === text)?.getClientRects()[0];
+    return Boolean(box) && box.left >= pane.left && box.right <= pane.right;
+  }, sentence)).toBe(true);
+  await page.setViewportSize(size);
+  await expect.poll(firstVisible).toBe(sentence);
+  await page.waitForTimeout(400);
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(firstVisible).toBe(sentence);
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator('#quick-settings [data-reading-mode="scroll"]').click();
+  await expect(page.locator("#reader")).not.toHaveClass(/paged/);
+  const top = await page.evaluate(() => {
+    const pane = document.getElementById("reader-pane").getBoundingClientRect().top;
+    return [...document.querySelectorAll("#archive-body p")].find((p) => p.getBoundingClientRect().bottom > pane + 60)?.textContent;
+  });
+  expect(Math.abs(Number(top.match(/\d+$/)[0]) - Number(sentence.match(/\d+$/)[0]))).toBeLessThanOrEqual(2);
 });

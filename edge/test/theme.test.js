@@ -24,3 +24,10 @@ test("the ink surface, brightness and warmth survive a backup and stay in range"
   const bad = planImport(JSON.stringify({ schema_version: 2, settings: { readerSurface: "neon", readerDim: 90, readerWarm: -1 } }), { readerSurface: "default", readerDim: 0, readerWarm: 0 }).state.settings;
   assert.deepEqual([bad.readerSurface, bad.readerDim, bad.readerWarm], ["default", 0, 0]);
 });
+
+test("paragraph spacing, indent and the Home quote switch survive a backup and stay in range", () => {
+  const ok = planImport(JSON.stringify({ schema_version: 2, settings: { paragraphSpacing: 1.5, textIndent: 1, homeQuote: "off" } })).state.settings;
+  assert.deepEqual([ok.paragraphSpacing, ok.textIndent, ok.homeQuote], [1.5, 1, "off"]);
+  const bad = planImport(JSON.stringify({ schema_version: 2, settings: { paragraphSpacing: 9, textIndent: -1, homeQuote: "maybe" } }), { paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on" }).state.settings;
+  assert.deepEqual([bad.paragraphSpacing, bad.textIndent, bad.homeQuote], [0.95, 0, "on"]);
+});

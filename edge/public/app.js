@@ -44,7 +44,12 @@ import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
+import { renderChapterRun } from "/reader-chrome.js";
+import { openGallery } from "/gallery.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
+import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
+import { DragGesture, PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
 const readerSession = createDocumentSession();
@@ -60,13 +65,13 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", readingMode: "scroll", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
   proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", readingMode: "읽기 방식", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
@@ -74,11 +79,12 @@ const elements = Object.fromEntries(
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "scope-tabs", "source-switch", "search-suggest", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
-    "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
+    "archive-body", "page-hint", "comments", "comment-count", "comment-list", "comments-toggle", "comments-return", "end-comments", "end-comments-count", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
     "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
+    "paragraph-spacing", "paragraph-spacing-output", "text-indent", "text-indent-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
@@ -86,14 +92,14 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "image-viewer", "image-viewer-image", "image-viewer-source",
+    "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
     "more-link", "more-wake", "image-viewer-zoom", "install-app",
     "text-sort-chips",
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
-    "aa-source-styles", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit",
+    "aa-source-styles", "aa-color", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit", "aa-host", "aa-fullscreen", "aa-minimap",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
@@ -155,7 +161,6 @@ let searchAppend = false;
 let scrollTimer;
 let searchTimer;
 let postController;
-let pinchDistance = 0;
 let zoomFeedbackTimer;
 let zoomPersistTimer;
 let aaHintShown = false;
@@ -206,6 +211,7 @@ let readerSource = null;
 let readerNavigation = null;
 let routeHandled = false;
 let pointerStart = null;
+let lastPointerType = "";
 let moreOpener = null;
 // Filter sheet edits are a draft until 적용; closing any other way restores this snapshot.
 let filterDraft = null;
@@ -222,6 +228,7 @@ const textLibrary = createTextLibrary({
     syncScroll: syncScrollBaseline,
     setList: renderReaderList,
     captureAnchor: () => readerSession.capture(),
+    readingPosition: () => readingPosition(),
     canSavePosition: () => readerSession.canSave,
     cancelPendingWork: () => readerSession.cancelPendingWork(),
     trackPendingWork: (cancel) => readerSession.track(cancel),
@@ -261,6 +268,7 @@ function openFind() {
   find.open((anchor) => {
     if (!anchor) return;
     findReturnAnchor = anchor;
+    rememberReturn(anchor, "검색 전 위치");
     const toast = document.querySelector("#find-return");
     overlays.showToast(toast);
     clearTimeout(findReturnTimer);
@@ -562,6 +570,8 @@ function applySettings() {
   root.style.setProperty("--prose-line", settings.lineHeight);
   root.style.setProperty("--prose-width", `${settings.proseWidth}px`);
   root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
+  root.style.setProperty("--prose-paragraph", `${settings.paragraphSpacing}em`);
+  root.style.setProperty("--prose-indent", `${settings.textIndent}em`);
   root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
   const aaZoom = effectiveAaZoom();
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * aaZoom}px`);
@@ -576,8 +586,10 @@ function applySettings() {
     ["[data-prose-align]", "proseAlign", settings.proseAlign],
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
     ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
+    ["[data-home-quote]", "homeQuote", settings.homeQuote],
+    ["[data-reading-mode]", "readingMode", settings.readingMode],
   ]) {
-    for (const choice of elements["settings-dialog"].querySelectorAll(selector)) {
+    for (const choice of document.querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
     }
   }
@@ -590,15 +602,25 @@ function applySettings() {
     ["aa-size", settings.aaSize, "px"],
     ["reader-dim", settings.readerDim, "%"],
     ["reader-warm", settings.readerWarm, "%"],
+    ["paragraph-spacing", settings.paragraphSpacing, "em"],
+    ["text-indent", settings.textIndent, "em"],
   ]) {
+    for (const quick of document.querySelectorAll(`[data-quick-setting="${id === "reader-dim" ? "readerDim" : id === "reader-warm" ? "readerWarm" : ""}"]`)) quick.value = value;
     elements[id].value = value;
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
+  // The font is judged on the reader's own text: the first lines of the open chapter, if any.
+  const preview = document.querySelector("#font-preview");
+  preview.textContent = elements["archive-body"].textContent.replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
+  preview.style.fontFamily = settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)";
+  document.querySelector("#quick-size-output").value = String(settings.proseSize);
   elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
   elements["aa-source-styles"].textContent = settings.aaPreserveStyles ? "원본색" : "단색";
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
+  elements["aa-color"].setAttribute("aria-pressed", settings.aaPreserveStyles);
+  elements["aa-color"].ariaLabel = settings.aaPreserveStyles ? "AA 색: 원본색 (누르면 단색)" : "AA 색: 단색 (누르면 원본색)";
   for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
     surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
   }
@@ -693,16 +715,30 @@ function updateAaOverflowCue(showHint = false) {
   const overflow = currentMode === "aa" && body.scrollWidth > body.clientWidth + 1;
   const canScrollRight = overflow && body.scrollLeft < body.scrollWidth - body.clientWidth - 2;
   body.classList.toggle("aa-can-scroll", canScrollRight);
+  updateAaMinimap();
   if (showHint && overflow && !aaHintShown) {
     aaHintShown = true;
     showReaderFeedback("↔ 가로로 이동", 2200);
   }
 }
 
-function setAaZoom(value, debounce = false, { remember = true } = {}) {
-  const zoom = Math.round(Math.max(0.1, Math.min(3, value)) * 1000) / 1000;
+// `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
+// The minimap under a picture wider than the stage: where the view is across it (DESIGN §8.4).
+function updateAaMinimap() {
+  const body = elements["archive-body"];
+  const map = elements["aa-minimap"];
+  const view = currentMode === "aa" ? minimapWindow(body) : null;
+  map.hidden = !view;
+  if (!view) return;
+  map.style.setProperty("--window-left", `${view.left * 100}%`);
+  map.style.setProperty("--window-width", `${view.width * 100}%`);
+  map.ariaValueNow = String(Math.round((view.left / Math.max(0.001, 1 - view.width)) * 100));
+}
+
+function setAaZoom(value, debounce = false, { remember = true, fit = false } = {}) {
+  const zoom = clampAaZoom(value);
   if (!currentAaKey()) settings.aaZoom = zoom;
-  else if (remember) rememberAaView({ zoom });
+  else if (remember) rememberAaView({ zoom, fit: fit || undefined });
   else aaAutoZoom = zoom;
   applySettings();
   showZoomFeedback();
@@ -731,7 +767,7 @@ function fitAaZoom({ remember = true } = {}) {
   const style = getComputedStyle(body);
   const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
   if (!(content > 0) || !(available > 0)) return;
-  setAaZoom(Math.min(1, Math.floor(effectiveAaZoom() * (available / content) * 100) / 100), false, { remember });
+  setAaZoom(fitAaZoomValue(effectiveAaZoom(), available, content), false, { remember, fit: true });
   body.scrollLeft = 0;
 }
 
@@ -908,7 +944,7 @@ function renderTextContinue(text) {
   setContinueProgress(finished ? 0 : text.progress);
   fillContinueCard(continueCardParts(), {
     title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("novel:") ? "소설" : "아카라이브",
-    hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
+    hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished || settings.homeQuote === "off" ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
   });
 }
 
@@ -1014,7 +1050,7 @@ async function renderContinueCard() {
   }
   fillContinueCard(continueCardParts(), {
     title: membership?.collection.title || summary.title || "제목 없음", source: "타입문넷",
-    hueKey: postHueKey(summary, membership?.collection.id), progress, sentence: lastSentenceQuote(shownEntry?.loc),
+    hueKey: postHueKey(summary, membership?.collection.id), progress, sentence: settings.homeQuote === "off" ? "" : lastSentenceQuote(shownEntry?.loc),
     readAt: shownEntry?.readAt ?? latestEntry.readAt,
   });
 }
@@ -1199,6 +1235,7 @@ function setReaderSource(source) {
   document.body.classList.remove("collection-detail-open");
   const text = source === "text";
   elements.comments.hidden = text;
+  if (text) elements["end-comments"].hidden = true;
   elements["mode-toggle"].hidden = text;
   if (text) {
     elements["mode-reset"].hidden = true;
@@ -1219,10 +1256,180 @@ function beginReaderDocument(documentKey, workId, rev) {
     textLibrary.cancelPendingPosition();
     overlays.hideToast(elements["aa-zoom-indicator"]);
   });
-  readerSession.adapter = createScrollAdapter({
+  scrollAdapter = createScrollAdapter({
     body: elements["archive-body"], scroller: elements["reader-pane"], topInset: readerTopInset,
     revision: () => readerSession.rev, progress: bodyProgress, mode: currentMode === "aa" ? "aa" : "scroll",
   });
+  // A TypeMoon post lays its body out (and may enter page mode) before the document begins.
+  readerSession.adapter = paged.active ? pagedAdapter : scrollAdapter;
+  paged.page = 0;
+  paged.anchor = null;
+}
+
+// ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
+let scrollAdapter = null;
+// `anchor` is the sentence the current page was reached by (a turn, a restore or a find). Every
+// relayout puts that sentence back on screen, so rotating there and back does not drift a page.
+const paged = { active: false, page: 0, pages: 1, geometry: null, drag: null, anchor: null };
+let pageNoticeShown = false;
+const PAGE_HINT_KEY = "redstm.pageHint.v1";
+
+// First page-mode visit on a touch screen shows the tap zones once (docs/24 §8.10); one tap dismisses it.
+function showPageHintOnce() {
+  if (!matchMedia("(pointer: coarse)").matches) return;
+  try {
+    if (localStorage.getItem(PAGE_HINT_KEY)) return;
+  } catch {
+    return;
+  }
+  elements["page-hint"].hidden = false;
+}
+
+function layoutPages() {
+  const pane = elements["reader-pane"];
+  const narrow = isNarrowScreen();
+  const top = readerTopInset() + 16;
+  const geometry = pageGeometry({
+    paneWidth: pane.clientWidth, paneHeight: pane.clientHeight, margin: narrow ? settings.proseMargin : 32,
+    maxWidth: settings.proseWidth, top, bottom: narrow ? 84 : 32,
+  });
+  const reader = elements.reader;
+  reader.style.setProperty("--page-width", `${geometry.width}px`);
+  reader.style.setProperty("--page-gap", `${geometry.gap}px`);
+  reader.style.setProperty("--page-height", `${geometry.height}px`);
+  reader.style.setProperty("--page-left", `${geometry.left}px`);
+  reader.style.setProperty("--page-top", `${top}px`);
+  paged.geometry = geometry;
+  paged.pages = pageCount(elements["archive-body"].scrollWidth, geometry);
+}
+
+function showPage(page, { animate = false, offset = 0 } = {}) {
+  paged.page = Math.max(0, Math.min(paged.pages - 1, page));
+  const body = elements["archive-body"];
+  body.classList.toggle("turning", animate && !matchMedia("(prefers-reduced-motion: reduce)").matches);
+  body.style.transform = `translateX(${offset - paged.page * paged.geometry.step}px)`;
+  updateReadingProgress();
+}
+
+// The reader turned the page: saved like a scroll, and no late layout pulls it back.
+function turnPage(page, options) {
+  readerSession.markUserScroll();
+  showPage(page, options);
+  paged.anchor = capturePageStart();
+  queueScrollSave();
+}
+
+// The first character on the current page. Measured against the body's own box, which moves with
+// the transform, so a turn still animating reads the page it is going to.
+function capturePageStart() {
+  return capturePagedAnchor(elements["archive-body"],
+    elements["archive-body"].getBoundingClientRect().left + paged.page * paged.geometry.step, readerSession.rev);
+}
+
+const pagedAdapter = {
+  mode: "paged",
+  // The place is the sentence the page was reached by, not whatever begins the page now: a page
+  // start moves with every relayout, and recapturing it would drift the place a page at a time.
+  captureVisiblePosition: () => paged.anchor ?? capturePageStart(),
+  scrollToRange(anchor) {
+    if (anchor?.atStart) {
+      showPage(0);
+      paged.anchor = anchor;
+      return true;
+    }
+    const left = anchorLeft(elements["archive-body"], anchor, readerSession.rev);
+    if (left === null) return false;
+    showPage(pageAt(left - elements["archive-body"].getBoundingClientRect().left, paged.geometry, paged.pages));
+    paged.anchor = anchor;
+    return true;
+  },
+  measureProgress: () => (paged.pages > 1 ? paged.page / (paged.pages - 1) : 1),
+  onViewportChanged(anchor) { return pagedAdapter.scrollToRange(anchor); },
+  scrollTop: () => 0,
+};
+
+// Chooses the layout for the open body and keeps the sentence at the reader's place across it.
+function applyReadingMode() {
+  const want = settings.readingMode === "page" && Boolean(readerSource) && currentMode !== "aa";
+  if (settings.readingMode === "page" && readerSource && currentMode === "aa" && !pageNoticeShown) {
+    pageNoticeShown = true;
+    showReaderFeedback("AA는 스크롤로 보여 줍니다", 2200);
+  }
+  const anchor = paged.active !== want ? readerSession.adapter?.captureVisiblePosition() : null;
+  paged.active = want;
+  elements.reader.classList.toggle("paged", want);
+  elements["reader-pane"].classList.toggle("paged-host", want);
+  document.body.classList.toggle("page-mode", want);
+  const body = elements["archive-body"];
+  if (want) {
+    elements["reader-pane"].scrollTop = 0;
+    layoutPages();
+    readerSession.adapter = pagedAdapter;
+    showPage(paged.page);
+    showPageHintOnce();
+  } else {
+    elements["page-hint"].hidden = true;
+    body.style.transform = "";
+    body.classList.remove("turning");
+    paged.anchor = null;
+    if (scrollAdapter) readerSession.adapter = scrollAdapter;
+  }
+  if (anchor && readerSession.restore(anchor)) syncScrollBaseline();
+  updateReadingProgress();
+}
+
+// Pages turn by tap zones (오른손: left 30% back, middle 20% tools, right half forward) or by a
+// swipe that follows the finger. A swipe starting at the screen edges belongs to system Back.
+const EDGE_GUARD = 24;
+function followPageGesture(event, start) {
+  const dx = event.clientX - start.x;
+  if (!paged.drag) {
+    const fromEdge = start.x < EDGE_GUARD || start.x > innerWidth - EDGE_GUARD;
+    if (fromEdge || Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(event.clientY - start.y)) return;
+    paged.drag = true;
+  }
+  showPage(paged.page, { offset: dx });
+}
+
+// Page keys belong to the Reader only while it is on screen (a list over it keeps Space for scrolling).
+function pageKeys() {
+  return paged.active && document.body.classList.contains("reader-open");
+}
+
+function stepPage(direction) {
+  const next = paged.page + direction;
+  if (next >= paged.pages) return void readerCommand("next");
+  if (next < 0) return void readerCommand("previous");
+  turnPage(next, { animate: true });
+}
+
+function finishPageGesture(event, start) {
+  if (paged.drag) {
+    paged.drag = false;
+    const dx = event.clientX - start.x;
+    const target = swipeTarget(paged.page, paged.pages, dx, event.timeStamp - start.time, paged.geometry.width);
+    // A swipe past the last page moves on to the next episode, like the chapter end card.
+    if (target === paged.page && dx < -paged.geometry.width * 0.2 && paged.page === paged.pages - 1) readerCommand("next");
+    else turnPage(target, { animate: true });
+    return true;
+  }
+  if (event.pointerType === "mouse" || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) return false;
+  if (event.target.closest("a, button, input, select, textarea, label, summary, img, [role='button'], .media-figure, .reader-topbar, .reader-toolbar")) return false;
+  if (String(getSelection() ?? "")) return false;
+  const rect = elements["reader-pane"].getBoundingClientRect();
+  const ratio = (event.clientX - rect.left) / rect.width;
+  if (ratio < 0.3) stepPage(-1);
+  else if (ratio > 0.5) stepPage(1);
+  else setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
+  return true;
+}
+
+// Size or fonts changed the columns: lay them out again around the same sentence.
+function relayoutPages() {
+  if (!paged.active) return;
+  const anchor = pagedAdapter.captureVisiblePosition();
+  layoutPages();
+  if (!anchor || !pagedAdapter.scrollToRange(anchor)) showPage(paged.page);
 }
 
 function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision }) {
@@ -1253,6 +1460,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   body.dataset.renderId = renderId;
   void archiveTextMedia(body, renderId);
   openMobileReader();
+  applyReadingMode();
   updateShellMode();
   readerSession.frame(() => elements["reader-title"].focus({ preventScroll: true }));
 }
@@ -1345,6 +1553,7 @@ function readerTopInset() {
 
 // Progress through the body itself, so long comment threads below do not hold "finished" back.
 function bodyProgress() {
+  if (paged.active) return pagedAdapter.measureProgress();
   const pane = elements["reader-pane"];
   const body = elements["archive-body"];
   const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
@@ -1362,7 +1571,50 @@ function updateReaderLength() {
 
 function renderRemainingTime(progress) {
   elements["more-remaining"].textContent = remainingTimeLabel(readerMinutes, progress);
+  document.querySelector("#scrubber-remaining").textContent = elements["more-remaining"].textContent;
 }
+
+// Moves the body to a share of the chapter; the far end lands on the 다음 화 card rather than the
+// last line behind the tools.
+function scrubTo(ratio) {
+  readerSession.markUserScroll();
+  const pane = elements["reader-pane"];
+  const body = elements["archive-body"];
+  const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
+  const chapterEnd = document.getElementById("chapter-end");
+  pane.scrollTop = ratio >= 1
+    ? chapterEnd.offsetTop - pane.clientHeight / 3
+    : ratio * (span > 0 ? span : pane.scrollHeight - pane.clientHeight);
+  syncScrollBaseline();
+  renderRemainingTime(ratio);
+}
+
+// Scrubber (docs/24 §8.9). The place before the reader's last explicit jump (a scrub or a find
+// move) stays offered for this document until another jump replaces it.
+const scrubber = document.querySelector("#scrubber");
+let readerReturn = null;
+function rememberReturn(anchor, label) {
+  if (anchor) readerReturn = { anchor, label, generation: readerSession.generation };
+}
+function openScrubber() {
+  if (!readerSource) return;
+  const progress = bodyProgress();
+  document.querySelector("#scrubber-position").value = String(Math.round(progress * 1000));
+  document.querySelector("#scrubber-output").value = `${Math.round(progress * 100)}%`;
+  document.querySelector("#scrubber-context").textContent = elements["reader-more-context"].textContent;
+  renderRemainingTime(progress);
+  renderChapterRun(document.querySelector("#scrubber-run"), document.querySelector("#scrubber-run-label"), readerNavigation?.run ?? null);
+  const ticks = document.querySelector("#find-band").cloneNode(true).children;
+  document.querySelector("#scrubber-ticks").replaceChildren(...ticks);
+  const back = document.querySelector("#scrubber-return");
+  const live = readerReturn && readerReturn.generation === readerSession.generation ? readerReturn : null;
+  back.hidden = !live;
+  if (live) back.textContent = `${live.label}로`;
+  scrubAnchor = null;
+  if (!scrubber.open) scrubber.showModal();
+}
+let scrubAnchor = null;
+let scrubFrame = 0;
 
 function subjectParticle(word) {
   const code = String(word).trim().at(-1)?.charCodeAt(0) - 0xac00;
@@ -1418,6 +1670,7 @@ function renderReaderNavigation(nav) {
   elements["chapter-end-note"].textContent = nav.note ?? "";
   elements["chapter-end-note"].hidden = !nav.note;
   elements["reader-topbar-title"].textContent = nav.context ?? "";
+  renderChapterRun(document.querySelector("#end-run"), document.querySelector("#end-run-label"), nav.run ?? null);
   schedulePrefetch(nav.next?.prefetch);
   elements["reader-more-context"].textContent = nav.context ?? "";
 }
@@ -1449,7 +1702,7 @@ function renderBookmarkState(active, { notes = false } = {}) {
 
 function readerCommand(name) {
   if (!readerSource) return;
-  if (name === "settings") return openSettings();
+  if (name === "settings") return openQuickSettings();
   if (name === "more") return openReaderMore();
   if (readerSource === "text") return textLibrary.command(name);
   if (name === "previous") return typeMoonStep(-1);
@@ -1937,6 +2190,29 @@ function closeFilterSheet() {
   const opener = filterOpener;
   filterOpener = null;
   if (opener?.isConnected) opener.focus({ preventScroll: true });
+}
+
+// Aa (docs/24 §8.8): the most used reading controls above the dock; 모든 설정 opens the sheet.
+const quickSettings = document.querySelector("#quick-settings");
+overlays.watch(quickSettings, "popover");
+function openQuickSettings() {
+  document.querySelector("#quick-size-output").value = String(settings.proseSize);
+  quickSettings.showPopover();
+}
+document.querySelector("#quick-all-settings").addEventListener("click", () => {
+  quickSettings.hidePopover();
+  openSettings();
+});
+for (const input of quickSettings.querySelectorAll("[data-quick-setting]")) {
+  input.addEventListener("input", () => {
+    settings[input.dataset.quickSetting] = Number(input.value);
+    applySettings();
+    clearTimeout(typographyPersistTimer);
+    typographyPersistTimer = setTimeout(() => {
+      typographyPersistTimer = null;
+      persistUserState();
+    }, 250);
+  });
 }
 
 function openSettings() {
@@ -3383,11 +3659,12 @@ function renderPostBody() {
   const identity = `${post.board_id}:${post.external_post_id}`;
   const override = settings.viewModes[identity];
   currentMode = override ?? (post.is_aa ? "aa" : "prose");
-  if (readerSession.adapter) readerSession.adapter.mode = currentMode === "aa" ? "aa" : "scroll";
+  if (scrollAdapter) scrollAdapter.mode = currentMode === "aa" ? "aa" : "scroll";
   const isAa = currentMode === "aa";
   elements["archive-body"].classList.toggle("aa", isAa);
   elements["archive-body"].ariaLabel = isAa ? "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다" : "글 본문";
   elements["aa-controls"].hidden = !isAa;
+  if (!isAa && document.fullscreenElement === elements["aa-host"]) void document.exitFullscreen().catch(() => {});
   elements["mode-toggle"].textContent = isAa ? "소설로 보기" : "AA로 보기";
   elements["mode-reset"].hidden = !override;
   elements["archive-body"].classList.remove("plain-text");
@@ -3407,6 +3684,7 @@ function renderPostBody() {
   updateReaderLength();
   if (isAa) restoreAaView();
   else requestAnimationFrame(() => updateAaOverflowCue(true));
+  applyReadingMode();
 }
 
 function normalizeReaderTypography(container) {
@@ -3417,31 +3695,44 @@ function normalizeReaderTypography(container) {
   }
 }
 
-function openImageViewer(href) {
-  setImageZoom(false);
-  elements["image-viewer-zoom"].hidden = true;
-  elements["image-viewer-image"].src = href;
-  elements["image-viewer-source"].href = href;
-  if (!elements["image-viewer"].open) elements["image-viewer"].showModal();
-}
+// The gallery over the body's pictures (gallery.js). One instance at a time; closing the dialog
+// (닫기, Back, Esc, a drag down) or leaving the document destroys it.
+let gallery = null;
+let galleryRequest = 0;
 
-// Fitted by default; 실제 크기 shows the image at its own pixels, centred on the tapped point
-// (or the middle) and panned by scrolling.
-function setImageZoom(zoomed, focus = { x: 0.5, y: 0.5 }) {
-  const viewer = elements["image-viewer"];
-  viewer.classList.toggle("zoomed", zoomed);
-  elements["image-viewer-zoom"].setAttribute("aria-pressed", String(zoomed));
-  elements["image-viewer-zoom"].textContent = zoomed ? "화면에 맞춤" : "실제 크기";
-  const scroller = viewer.querySelector("form");
-  if (!zoomed) {
-    scroller.scrollTo(0, 0);
+async function openImageViewer(target) {
+  const dialog = elements["image-viewer"];
+  const request = ++galleryRequest;
+  gallery?.destroy();
+  elements["image-viewer-zoom"].hidden = true;
+  elements["image-viewer-source"].href = target.dataset.image ?? target.currentSrc ?? target.src ?? "#";
+  if (!dialog.open) dialog.showModal();
+  const opened = await openGallery({
+    container: elements["archive-body"], target, appendTo: elements["image-viewer-stage"],
+    onChange: showGalleryItem,
+    onClose: () => {
+      if (gallery !== opened) return;
+      gallery = null;
+      if (dialog.open) dialog.close();
+    },
+  });
+  if (request !== galleryRequest || !dialog.open) return void opened?.destroy();
+  if (!opened) {
+    dialog.close();
+    showReaderFeedback("이미지를 열 수 없습니다", 2200);
     return;
   }
-  const image = elements["image-viewer-image"];
-  scroller.scrollTo(
-    Math.max(0, image.offsetLeft + image.offsetWidth * focus.x - scroller.clientWidth / 2),
-    Math.max(0, image.offsetTop + image.offsetHeight * focus.y - scroller.clientHeight / 2),
-  );
+  gallery = opened;
+}
+
+// 원본 열기 follows the picture on screen; 실제 크기 only matters for one larger than the screen.
+function showGalleryItem(item) {
+  if (!item) return;
+  elements["image-viewer-source"].href = item.src;
+  const stage = elements["image-viewer-stage"];
+  elements["image-viewer-zoom"].hidden = item.width <= stage.clientWidth && item.height <= stage.clientHeight;
+  elements["image-viewer-zoom"].setAttribute("aria-pressed", "false");
+  elements["image-viewer-zoom"].textContent = "실제 크기";
 }
 
 function renderComments(comments) {
@@ -3470,7 +3761,31 @@ function renderComments(comments) {
     fragment.append(item);
   }
   elements["comment-list"].append(fragment);
+  elements["end-comments-count"].textContent = elements["comment-count"].textContent;
+  elements["end-comments"].hidden = !comments.length;
+  setCommentsOpen(false);
   applySettings();
+}
+
+// Comments are one DOM below the body (docs/24 §8.7 D14), folded with hidden="until-found" so the
+// browser's find still reaches them; where that is not supported the value acts as plain hidden
+// and the heading button unfolds them.
+function setCommentsOpen(open) {
+  if (open) elements["comment-list"].hidden = false;
+  else elements["comment-list"].setAttribute("hidden", "until-found");
+  elements["comments-toggle"].setAttribute("aria-expanded", String(open));
+  if (!open) elements["comments-return"].hidden = true;
+}
+
+// 댓글 N on the chapter end: unfold in place, go there, and offer the way back to the text.
+function showComments() {
+  const anchor = readerSession.capture();
+  rememberReturn(anchor, "댓글 전 위치");
+  setCommentsOpen(true);
+  const pane = elements["reader-pane"];
+  readerSession.markUserScroll();
+  pane.scrollTop += elements.comments.getBoundingClientRect().top - pane.getBoundingClientRect().top - readerTopInset();
+  elements["comments-return"].hidden = !anchor;
 }
 
 function rememberHistory(summary) {
@@ -3487,8 +3802,10 @@ function isNarrowScreen() {
   return matchMedia("(max-width: 759px)").matches;
 }
 
+// The stored pixel offset. In page mode the pane never scrolls, so it records only whether the
+// reader is at the start (0) — restore treats 0 as "the top", not as a sentence to find.
 function readingPosition() {
-  return elements["reader-pane"].scrollTop;
+  return paged.active ? paged.page : elements["reader-pane"].scrollTop;
 }
 
 function restoreReadingPosition(summary) {
@@ -3543,7 +3860,7 @@ function updateReadingProgress() {
   const progress = bodyProgress();
   elements["reading-progress"].style.width = `${progress * 100}%`;
   elements["reader-topbar-progress"].textContent = `${Math.round(progress * 100)}%`;
-  elements["reader-status"].textContent = `${Math.round(progress * 100)}%`;
+  elements["reader-status"].textContent = paged.active ? `${paged.page + 1} / ${paged.pages}쪽` : `${Math.round(progress * 100)}%`;
   elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
@@ -3612,6 +3929,19 @@ function updateNavigation() {
   if (readerSource === "typemoon") renderReaderNavigation(typeMoonNavigation());
 }
 
+// Where this episode sits in its work, for the chapter-end card: only this one is "reading".
+function collectionRun(collection, index) {
+  const read = historyByIdentityMap();
+  return {
+    position: index + 1, total: collection.entries.length, unit: "편",
+    entries: collection.entries.map((entry, at) => ({
+      position: entry.position,
+      state: !entry.object_key ? "missing" : at === index ? "reading"
+        : postReadingState(read.get(postIdentity(entry))?.progress) === "finished" ? "read" : "unread",
+    })),
+  };
+}
+
 function entryStep(entry) {
   return entry ? {
     title: entry.title || "제목 없음",
@@ -3640,6 +3970,7 @@ function typeMoonNavigation() {
       endFallback: next.target ? null : { kicker: "마지막 보존 편", label: "작품 목차로 돌아가기", action: "toc" },
       hasToc: true,
       context: `${collection.title} · ${index + 1}/${collection.entries.length}`,
+      run: collectionRun(collection, index),
     };
   }
   // Other posts step through the list the session came from, in that list's order.
@@ -4039,20 +4370,30 @@ for (const [id, delta] of [["reader-list-previous", -1], ["reader-list-next", 1]
 elements["reader-list-all"].addEventListener("click", () => readerCommand("list"));
 // Jump within a long body (the inverse of bodyProgress).
 elements["more-position"].addEventListener("input", () => {
-  readerSession.markUserScroll();
-  const pane = elements["reader-pane"];
-  const body = elements["archive-body"];
   const ratio = Number(elements["more-position"].value) / 100;
-  const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
-  const chapterEnd = document.getElementById("chapter-end");
-  // The far end lands on the 다음 화 card rather than the last line behind the toolbar.
-  pane.scrollTop = ratio >= 1
-    ? chapterEnd.offsetTop - pane.clientHeight / 3
-    : ratio * (span > 0 ? span : pane.scrollHeight - pane.clientHeight);
-  syncScrollBaseline();
+  scrubTo(ratio);
   elements["more-position-output"].value = `${Math.round(ratio * 100)}%`;
-  renderRemainingTime(ratio);
 });
+// The body follows the slider once per frame; the first move keeps the place it left.
+document.querySelector("#scrubber-position").addEventListener("input", (event) => {
+  if (!scrubAnchor) {
+    scrubAnchor = readerSession.adapter?.captureVisiblePosition() ?? null;
+    rememberReturn(scrubAnchor, "이동 전 위치");
+  }
+  const ratio = Number(event.target.value) / 1000;
+  document.querySelector("#scrubber-output").value = `${Math.round(ratio * 100)}%`;
+  cancelAnimationFrame(scrubFrame);
+  scrubFrame = requestAnimationFrame(() => scrubTo(ratio));
+});
+document.querySelector("#scrubber-return").addEventListener("click", () => {
+  const target = readerReturn;
+  scrubber.close();
+  if (target && readerSession.restore(target.anchor)) syncScrollBaseline();
+  readerReturn = null;
+});
+// Focusing the badge would unfold the tools and take it away from under the finger mid-tap.
+elements["reader-status"].addEventListener("pointerdown", (event) => event.preventDefault());
+elements["reader-status"].addEventListener("click", openScrubber);
 elements["more-mode"].addEventListener("click", () => {
   closeReaderMore();
   elements["mode-toggle"].click();
@@ -4428,30 +4769,28 @@ elements["archive-body"].addEventListener("click", (event) => {
   if (currentMode === "aa") return;
   const trigger = event.target.closest(".media-open, a[data-image], img");
   if (!trigger || !elements["archive-body"].contains(trigger)) return;
-  const href = trigger.dataset.image ?? trigger.querySelector?.("img")?.src ?? trigger.src;
-  if (!href) return;
+  const target = trigger.matches(".media-open") ? trigger.querySelector("img") : trigger;
+  if (!target || !(target.dataset.image ?? target.src)) return;
   event.preventDefault();
-  openImageViewer(href);
+  void openImageViewer(target);
 });
-elements["image-viewer"].addEventListener("close", () => elements["image-viewer-image"].removeAttribute("src"));
-elements["image-viewer"].addEventListener("click", (event) => {
-  if (event.target === elements["image-viewer"]) elements["image-viewer"].close();
-});
-// 실제 크기 only matters when the image is larger than the screen.
-elements["image-viewer-image"].addEventListener("load", () => {
-  const image = elements["image-viewer-image"];
-  const scroller = elements["image-viewer"].querySelector("form");
-  elements["image-viewer-zoom"].hidden =
-    image.naturalWidth <= scroller.clientWidth && image.naturalHeight <= scroller.clientHeight;
-});
-elements["image-viewer-image"].addEventListener("click", (event) => {
-  if (elements["image-viewer-zoom"].hidden) return;
-  const image = elements["image-viewer-image"];
-  const zoomed = !elements["image-viewer"].classList.contains("zoomed");
-  setImageZoom(zoomed, { x: event.offsetX / image.offsetWidth, y: event.offsetY / image.offsetHeight });
+elements["image-viewer"].addEventListener("close", () => {
+  galleryRequest += 1;
+  gallery?.destroy();
+  gallery = null;
 });
 elements["image-viewer-zoom"].addEventListener("click", () => {
-  setImageZoom(!elements["image-viewer"].classList.contains("zoomed"));
+  const slide = gallery?.currSlide;
+  if (!slide) return;
+  const actual = elements["image-viewer-zoom"].getAttribute("aria-pressed") !== "true";
+  slide.zoomTo(actual ? 1 : slide.zoomLevels.initial, undefined, 200);
+  elements["image-viewer-zoom"].setAttribute("aria-pressed", String(actual));
+  elements["image-viewer-zoom"].textContent = actual ? "화면에 맞춤" : "실제 크기";
+});
+elements["image-viewer-share"].hidden = !navigator.share;
+elements["image-viewer-share"].addEventListener("click", () => {
+  const url = gallery?.currSlide?.data.src;
+  if (url) navigator.share({ url }).catch(() => { /* dismissed */ });
 });
 // Reading chrome (docs/19 §4.3): reading downward folds the top and bottom bars away on every
 // screen width; a still tap toggles them, a deliberate scroll back up or reaching the end of
@@ -4538,6 +4877,7 @@ elements["reader-pane"].addEventListener("scroll", () => {
 // the pane, so they are not mistaken for taps. A mouse click is left to text selection; the
 // mouse brings the bars back by moving to the top edge instead.
 elements["reader-pane"].addEventListener("pointerdown", (event) => {
+  lastPointerType = event.pointerType;
   pointerStart = event.isPrimary
     ? { x: event.clientX, y: event.clientY, time: event.timeStamp, scroll: elements["reader-pane"].scrollTop }
     : null;
@@ -4546,16 +4886,19 @@ elements["reader-pane"].addEventListener("pointercancel", () => { pointerStart =
 elements["reader-pane"].addEventListener("pointerup", (event) => {
   const start = pointerStart;
   pointerStart = null;
+  if (paged.active && start && finishPageGesture(event, start)) return;
   if (!start || event.pointerType === "mouse" || !document.body.classList.contains("reader-open")) return;
   if (event.target.closest("a, button, input, select, textarea, label, summary, img, [role='button'], .media-figure, .chapter-end, .reader-list, .reader-topbar, .reader-toolbar")) return;
   const still = Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10 &&
     event.timeStamp - start.time <= 500 &&
     Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
   if (!still || String(getSelection() ?? "")) return;
+  if (currentMode === "aa") return void aaTap(event.timeStamp);
   if (settings.tapPaging === "on" && pageByTap(event)) return;
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
 });
 elements["reader-pane"].addEventListener("pointermove", (event) => {
+  if (paged.active && pointerStart && event.pointerType !== "mouse") followPageGesture(event, pointerStart);
   if (pointerStart && Math.abs(event.clientY - pointerStart.y) > 4) readerSession.markUserScroll();
   if (event.pointerType !== "mouse" || !document.body.classList.contains("reader-controls-hidden")) return;
   if (event.clientY - elements["reader-pane"].getBoundingClientRect().top < 64) setReaderChromeHidden(false);
@@ -4592,6 +4935,46 @@ for (const [id, key] of [["reader-dim", "readerDim"], ["reader-warm", "readerWar
 for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {
   choice.addEventListener("click", () => {
     settings.aaAutoFit = choice.dataset.aaAutoFit;
+    saveSettings();
+  });
+}
+for (const choice of document.querySelectorAll("button[data-reading-mode]")) {
+  choice.addEventListener("click", () => {
+    settings.readingMode = choice.dataset.readingMode;
+    saveSettings();
+    applyReadingMode();
+  });
+}
+elements["comments-toggle"].addEventListener("click", () => setCommentsOpen(Boolean(elements["comment-list"].hidden)));
+elements["comment-list"].addEventListener("beforematch", () => elements["comments-toggle"].setAttribute("aria-expanded", "true"));
+elements["end-comments"].addEventListener("click", showComments);
+elements["comments-return"].addEventListener("click", () => {
+  const target = readerReturn;
+  elements["comments-return"].hidden = true;
+  if (target?.generation === readerSession.generation && readerSession.restore(target.anchor)) syncScrollBaseline();
+});
+// Scrolled back above the comments: the way back has done its job.
+new IntersectionObserver(([entry]) => {
+  if (!entry.isIntersecting && entry.boundingClientRect.top > 0) elements["comments-return"].hidden = true;
+}, { root: elements["reader-pane"] }).observe(elements.comments);
+elements["page-hint"].addEventListener("click", () => {
+  elements["page-hint"].hidden = true;
+  try {
+    localStorage.setItem(PAGE_HINT_KEY, "1");
+  } catch { /* shown again next time */ }
+});
+new ResizeObserver(() => relayoutPages()).observe(elements["reader-pane"]);
+// Focus or find can scroll a clipped box; in page mode only the transform may move the text.
+for (const clipped of [elements.reader, elements["reader-pane"]]) {
+  clipped.addEventListener("scroll", () => {
+    if (!paged.active) return;
+    clipped.scrollLeft = 0;
+    clipped.scrollTop = 0;
+  }, { passive: true });
+}
+for (const choice of document.querySelectorAll("button[data-home-quote]")) {
+  choice.addEventListener("click", () => {
+    settings.homeQuote = choice.dataset.homeQuote;
     saveSettings();
   });
 }
@@ -4653,7 +5036,8 @@ function changeTypography(mutate) {
     syncScrollBaseline();
   }
 }
-for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["prose-margin", "proseMargin"], ["aa-size", "aaSize"]]) {
+for (const [id, key] of [["prose-size", "proseSize"], ["line-height", "lineHeight"], ["prose-width", "proseWidth"], ["prose-margin", "proseMargin"], ["aa-size", "aaSize"],
+  ["paragraph-spacing", "paragraphSpacing"], ["text-indent", "textIndent"]]) {
   elements[id].addEventListener("input", () => changeTypography(() => {
     settings[key] = Number(elements[id].value);
   }));
@@ -4685,14 +5069,18 @@ for (const button of document.querySelectorAll("[data-aa-preset]")) {
   });
 }
 for (const button of document.querySelectorAll("[data-aa-zoom-delta]")) {
-  button.addEventListener("click", () => setAaZoom(settings.aaZoom + Number(button.dataset.aaZoomDelta)));
+  // Steps from the zoom on screen (this picture's own, when it has one), not the default zoom.
+  button.addEventListener("click", () => setAaZoom(effectiveAaZoom() + Number(button.dataset.aaZoomDelta)));
 }
 elements["aa-zoom-reset"].addEventListener("click", () => setAaZoom(1));
 elements["aa-fit"].addEventListener("click", fitAaZoom);
-elements["aa-source-styles"].addEventListener("click", () => {
-  settings.aaPreserveStyles = !settings.aaPreserveStyles;
-  saveSettings();
-});
+// The AA tool row's 색 and the settings sheet's 원본색/단색 are one switch.
+for (const id of ["aa-source-styles", "aa-color"]) {
+  elements[id].addEventListener("click", () => {
+    settings.aaPreserveStyles = !settings.aaPreserveStyles;
+    saveSettings();
+  });
+}
 for (const button of document.querySelectorAll("[data-aa-background]")) {
   button.addEventListener("click", () => {
     settings.aaBackground = button.dataset.aaBackground;
@@ -4708,8 +5096,7 @@ elements["aa-background"].addEventListener("input", () => {
 let pinchFont = null;
 elements["archive-body"].addEventListener("touchstart", (event) => {
   if (event.touches.length !== 2) return;
-  if (currentMode === "aa") pinchDistance = touchDistance(event);
-  else if (readerSource) pinchFont = { distance: touchDistance(event), size: settings.proseSize };
+  if (currentMode !== "aa" && readerSource) pinchFont = { distance: touchDistance(event), size: settings.proseSize };
 }, { passive: true });
 elements["archive-body"].addEventListener("touchmove", (event) => {
   if (event.touches.length !== 2) return;
@@ -4720,21 +5107,121 @@ elements["archive-body"].addEventListener("touchmove", (event) => {
     if (size === settings.proseSize) return;
     changeTypography(() => { settings.proseSize = size; });
     showReaderFeedback(`글자 ${size}px`);
-    return;
   }
-  if (currentMode !== "aa" || !pinchDistance) return;
-  const distance = touchDistance(event);
-  const zoom = effectiveAaZoom();
-  const next = zoom + (distance - pinchDistance) * 0.003;
-  if (Math.abs(next - zoom) > 0.002) setAaZoom(next, true);
-  pinchDistance = distance;
 }, { passive: true });
 elements["archive-body"].addEventListener("touchend", () => {
-  pinchDistance = 0;
   pinchFont = null;
 }, { passive: true });
+
+// AA pinch (docs/24 §8.16): during the gesture only the canvas is scaled (no relayout); on release
+// the zoom becomes start × scale through setAaZoom (10–300%, three decimals, no 25% steps) and the
+// scroll moves so the point between the fingers stays where it was.
+let aaPinch = null;
+new PinchGesture(elements["archive-body"], ({ first, last, movement: [scale], origin: [x, y] }) => {
+  const body = elements["archive-body"];
+  const canvas = body.querySelector(".aa-canvas");
+  if (first) {
+    aaPinch = null;
+    if (currentMode !== "aa" || !canvas) return;
+    const box = canvas.getBoundingClientRect();
+    aaPinch = { zoom: effectiveAaZoom(), x, y };
+    canvas.style.transformOrigin = `${x - box.left}px ${y - box.top}px`;
+  }
+  if (!aaPinch || !canvas) return;
+  const zoom = pinchAaZoom(aaPinch.zoom, scale);
+  if (!last) {
+    canvas.style.transform = `scale(${zoom / aaPinch.zoom})`;
+    return;
+  }
+  const { zoom: from, x: pointX, y: pointY } = aaPinch;
+  aaPinch = null;
+  canvas.style.removeProperty("transform");
+  canvas.style.removeProperty("transform-origin");
+  const before = body.getBoundingClientRect();
+  const offsetY = pointY - before.top;
+  setAaZoom(zoom);
+  body.scrollLeft = scrollKeepingPoint({ scrollLeft: body.scrollLeft, scrollTop: 0, x: pointX - before.left, y: 0, from, to: zoom }).left;
+  const pane = elements["reader-pane"];
+  pane.scrollTop += body.getBoundingClientRect().top + offsetY * (zoom / from) - pointY;
+}, { pointer: { touch: true }, pinchOnWheel: false, eventOptions: { passive: true } });
+
+// One tap shows or hides the tools at once; a second tap within 300ms undoes that and switches
+// between 맞춤 and 100% (T31).
+const aaTap = createTapJudge({
+  onTap: () => setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden")),
+  onDoubleTap: () => {
+    const key = currentAaKey();
+    if (key && aaViews[key]?.fit) setAaZoom(1);
+    else fitAaZoom();
+  },
+});
+
+// Minimap: drag or tap a point to bring that part of the picture to the middle; arrows step.
+new DragGesture(elements["aa-minimap"], ({ xy: [x] }) => {
+  const box = elements["aa-minimap"].getBoundingClientRect();
+  elements["archive-body"].scrollLeft = minimapScroll((x - box.left) / box.width, elements["archive-body"]);
+}, { pointer: { capture: true } });
+elements["aa-minimap"].addEventListener("keydown", (event) => {
+  const body = elements["archive-body"];
+  const step = { ArrowLeft: -0.25, ArrowRight: 0.25 }[event.key];
+  if (step) body.scrollLeft += step * body.clientWidth;
+  else if (event.key === "Home") body.scrollLeft = 0;
+  else if (event.key === "End") body.scrollLeft = body.scrollWidth;
+  else return;
+  event.preventDefault();
+  event.stopPropagation();
+});
+new ResizeObserver(() => updateAaOverflowCue()).observe(elements["archive-body"]);
+
+// 가로 전체화면 (docs/24 §8.17): the AA host goes full screen and asks for landscape (a refused
+// lock keeps the full screen). Its state follows fullscreenchange alone, so Back, Esc and the
+// button agree; leaving restores the zoom and sideways place the picture had before.
+let aaFullscreenReturn = null;
+elements["aa-fullscreen"].hidden = !document.fullscreenEnabled;
+elements["aa-fullscreen"].addEventListener("click", async () => {
+  if (document.fullscreenElement) return void document.exitFullscreen().catch(() => {});
+  const key = currentAaKey();
+  aaFullscreenReturn = {
+    key, view: key && aaViews[key] ? { ...aaViews[key] } : null, auto: aaAutoZoom, zoom: settings.aaZoom,
+    left: elements["archive-body"].scrollLeft,
+  };
+  try {
+    await elements["aa-host"].requestFullscreen({ navigationUI: "hide" });
+  } catch {
+    aaFullscreenReturn = null;
+    showReaderFeedback("전체화면을 열 수 없습니다", 2200);
+    return;
+  }
+  try {
+    await screen.orientation?.lock?.("landscape");
+  } catch { /* the full screen stays without turning */ }
+});
+document.addEventListener("fullscreenchange", () => {
+  const active = document.fullscreenElement === elements["aa-host"];
+  elements["aa-fullscreen"].setAttribute("aria-pressed", String(active));
+  elements["aa-fullscreen"].textContent = active ? "⟲ 나가기" : "⟲ 가로 전체화면";
+  if (active) return;
+  const back = aaFullscreenReturn;
+  aaFullscreenReturn = null;
+  try {
+    screen.orientation?.unlock?.();
+  } catch { /* nothing was locked */ }
+  if (!back || back.key !== currentAaKey()) return;
+  if (back.key && back.view) aaViews[back.key] = back.view;
+  else if (back.key) delete aaViews[back.key];
+  aaAutoZoom = back.auto;
+  settings.aaZoom = back.zoom;
+  applySettings();
+  persistUserState();
+  requestAnimationFrame(() => {
+    elements["archive-body"].scrollLeft = back.left;
+    updateAaOverflowCue();
+  });
+});
+
+// Desktop double click keeps its zoom steps; a touch double tap is the judge's above.
 elements["archive-body"].addEventListener("dblclick", () => {
-  if (currentMode !== "aa") return;
+  if (currentMode !== "aa" || lastPointerType === "touch") return;
   const zoom = effectiveAaZoom();
   setAaZoom(zoom < 1.25 ? 1.5 : zoom < 1.75 ? 2 : 1);
 });
@@ -4864,12 +5351,20 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.target.closest("input, select, textarea, button, [contenteditable]")) return;
+  // Keys inside an open dialog (the gallery's arrows, a sheet) are not Reader commands.
+  if (event.target.closest("dialog[open]")) return;
   // Browser and OS shortcuts (Ctrl+F find, Ctrl+B, Cmd+[ …) are not Reader commands.
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === "/") {
     event.preventDefault();
     showDestination("search");
     elements["search-input"].focus();
+  } else if (pageKeys() && (event.key === "Home" || event.key === "End")) {
+    event.preventDefault();
+    turnPage(event.key === "Home" ? 0 : paged.pages - 1);
+  } else if (pageKeys() && ["ArrowLeft", "ArrowRight", " ", "PageUp", "PageDown"].includes(event.key)) {
+    event.preventDefault();
+    stepPage(event.key === "ArrowLeft" || event.key === "PageUp" || (event.key === " " && event.shiftKey) ? -1 : 1);
   } else if (event.key === "[" || (event.key === "ArrowLeft" && readerSource && currentMode !== "aa")) {
     readerCommand("previous");
   } else if (event.key === "]" || (event.key === "ArrowRight" && readerSource && currentMode !== "aa")) {
@@ -4934,10 +5429,13 @@ matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
 // started scrolling in the meantime.
 document.fonts.addEventListener("loading", () => { fontGeneration = readerSession.generation; });
 document.fonts.addEventListener("loadingdone", () => {
+  relayoutPages();
   if (readerSession.afterLayout(fontGeneration)) syncScrollBaseline();
 });
 elements["archive-body"].addEventListener("load", (event) => {
-  if (elements["archive-body"].contains(event.target) && readerSession.afterLayout(readerSession.generation)) syncScrollBaseline();
+  if (!elements["archive-body"].contains(event.target)) return;
+  relayoutPages();
+  if (readerSession.afterLayout(readerSession.generation)) syncScrollBaseline();
 }, { capture: true });
 elements["reader-pane"].addEventListener("wheel", () => readerSession.markUserScroll(), { passive: true });
 elements["reader-pane"].addEventListener("keydown", (event) => {

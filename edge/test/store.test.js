@@ -49,8 +49,9 @@ test("legacy reconciliation catches the gap after a local write, including a bac
 test("capability fallbacks and flags are explicit; sync and unverified defaults stay off", (context) => {
   const previous = globalThis.localStorage;
   context.after(() => { globalThis.localStorage = previous; });
-  globalThis.localStorage = { getItem: () => '{"tts":true,"sync":true,"haptics":"true"}' };
-  assert.equal(featureEnabled("tts"), true);
+  globalThis.localStorage = { getItem: () => '{"kwic":true,"tts":true,"sync":true,"haptics":"true"}' };
+  assert.equal(featureEnabled("kwic"), true);
+  assert.equal(featureEnabled("tts"), false);
   assert.equal(featureEnabled("sync"), false);
   assert.equal(featureEnabled("haptics"), false);
   assert.equal(featureEnabled("pageMode"), false);
