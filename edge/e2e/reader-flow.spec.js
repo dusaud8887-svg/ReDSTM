@@ -1,3 +1,5 @@
+import { gunzipSync } from "node:zlib";
+
 import { expect, test } from "@playwright/test";
 
 import { arcalivePost, arcaliveWork, novelWork, useTextArchive } from "./text-fixture.js";
@@ -1408,7 +1410,9 @@ test("Backup v3 carries TypeMoon and text records, and 합쳐서 가져오기 me
   });
   await page.goto("/settings");
   const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
-  const backup = JSON.parse(await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks).toString("utf8")));
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  // Without the owner's store there are no records, so the file stays v3; it is still gzip.
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
   expect(backup).toMatchObject({ format: "redstm-backup", schema_version: 3 });
   expect(backup.typemoon.settings).toBeTruthy();
   expect(backup.text.history["novel:novel:toki:1:1-1"].progress).toBe(1);
@@ -1682,6 +1686,295 @@ test("Paragraph spacing and indent change prose but never an AA picture", async 
   const aa = page.locator("#archive-body.aa p").first();
   await expect(aa).toHaveCSS("text-indent", "0px");
   await expect(aa).toHaveCSS("margin-bottom", "0px");
+});
+
+// P3-1 (docs/24 §8.13): a selection becomes a mark or a note in the owner's store, painted as a
+// Custom Highlight without touching the body, kept across a reload and cleared from its menu.
+// T21: marks sit below find; T26: on a touch screen the menu is the fixed bar in the dock's place.
+const selectParagraph = (page, index) => page.evaluate((at) => {
+  const paragraph = document.querySelectorAll("#archive-body p")[at];
+  paragraph.scrollIntoView({ block: "center" });
+  const node = paragraph.firstChild;
+  getSelection().setBaseAndExtent(node, 0, node, node.data.length);
+}, index);
+const highlightTexts = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((range) => range.toString()), name);
+
+test("A selection is marked, noted and cleared, and marks survive a reload", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const before = await page.locator("#archive-body").innerHTML();
+  const menu = page.locator("#selection-menu");
+  await selectParagraph(page, 2);
+  await expect(menu).toBeVisible();
+  if (await page.evaluate(() => matchMedia("(pointer: coarse)").matches)) {
+    await expect(menu).toHaveClass(/fixed/);
+    const box = await menu.boundingBox();
+    expect(box.y + box.height).toBeGreaterThan(page.viewportSize().height - 80);
+  }
+  await expect(menu.locator("button:visible")).toHaveText(["표시", "메모", "복사", "⋯"]);
+  await page.locator("#sel-mark").click();
+  await expect(menu).toBeHidden();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 3"]);
+  expect(await page.evaluate(() => CSS.highlights.get("redstm-mark").priority)).toBeLessThan(0);
+  await selectParagraph(page, 4);
+  await page.locator("#sel-note").click();
+  const dialog = page.locator("#note-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#note-quote")).toHaveText("2편 본문 5");
+  await page.locator("#note-text").fill("다시 볼 장면");
+  await page.locator("#note-save").click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  // The body DOM is the same: no <mark> or <span> went in.
+  expect(await page.locator("#archive-body").innerHTML()).toBe(before);
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 3"]);
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  // A marked sentence opens its menu; the note shows there.
+  await page.locator("#archive-body p").nth(4).click({ position: { x: 12, y: 8 } });
+  await expect(page.locator("#mark-menu")).toBeVisible();
+  await expect(page.locator("#mark-menu-note")).toHaveText("다시 볼 장면");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#mark-menu")).toBeHidden();
+  await page.locator("#archive-body p").nth(2).click({ position: { x: 12, y: 8 } });
+  await page.locator("#mark-delete").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual([]);
+  await page.reload();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  expect(await highlightTexts(page, "redstm-mark")).toEqual([]);
+});
+
+// P3-2 (docs/24 §8.5, F2/F4, B4): 기록 › 발췌 lists marks and notes newest first, searches them,
+// exports them as Markdown and opens a card at its sentence; search's 내 기록 hands the words over.
+test("기록 › 발췌 lists, searches, exports and opens marks at their sentence", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 30);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 31"]);
+  await selectParagraph(page, 4);
+  await page.locator("#sel-note").click();
+  await page.locator("#note-text").fill("다시 볼 장면");
+  await page.locator("#note-save").click();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  // Leave the reading place at the top, so opening the far card has to move.
+  await page.locator("#reader-pane").evaluate((pane) => pane.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+
+  await page.goto("/saved?view=excerpts");
+  const cards = page.locator(".excerpt-card");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0).locator(".excerpt-quote")).toHaveText("2편 본문 5");
+  await expect(cards.nth(0).locator(".excerpt-note")).toHaveText("다시 볼 장면");
+  await expect(cards.nth(0).locator(".result-meta")).toContainText("2편 제목");
+  await expect(page.locator('[data-view="excerpts"]')).toHaveAttribute("aria-pressed", "true");
+  const download = page.waitForEvent("download");
+  await page.locator("#excerpts-export").click();
+  const file = await download;
+  const markdown = await (await file.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks).toString("utf8"));
+  expect(markdown).toContain("> 2편 본문 5\n\n다시 볼 장면\n\n— ");
+  expect(markdown).toContain("/read/board_a/2");
+  await page.locator("#search-input").fill("장면");
+  await expect(cards).toHaveCount(1);
+  await page.locator("#search-input").fill("");
+  await expect(cards).toHaveCount(2);
+  // The far mark opens its post at that sentence, not at the top.
+  await cards.nth(1).click();
+  await expect(page).toHaveURL(/\/read\/board_a\/2$/);
+  await expect(page.locator("#archive-body p").nth(30)).toBeInViewport();
+  // 검색's 내 기록 opens the same words in 기록 › 발췌.
+  await page.goto("/search");
+  await page.locator("#search-input").fill("본문 31");
+  const records = page.locator("[data-records-scope]");
+  await expect(records).toBeVisible();
+  await records.click();
+  await expect(page).toHaveURL(/\/saved\?view=excerpts&q=/);
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first().locator(".excerpt-quote")).toHaveText("2편 본문 31");
+});
+
+// P3-3 (docs/24 §8.14): T13 — the card is drawn on a canvas under the Worker's real CSP, 1080×1350
+// in the work colour; T33 — opened, left for five seconds, then 공유 still hands over the ready PNG.
+// An AA selection becomes an image of its whole lines in the AA font and colours.
+test("Share cards are drawn ahead and still share after waiting; AA lines become an image", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__shared = [];
+    window.__copied = [];
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: (data) => Boolean(data?.files?.length) });
+    Object.defineProperty(navigator, "share", { configurable: true, value: async (data) => {
+      window.__shared.push({ text: data.text, files: data.files.map((file) => ({ name: file.name, type: file.type, size: file.size })), active: navigator.userActivation?.isActive ?? null });
+    } });
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__copied.push(text); } } });
+  });
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/1-*", (request) => {
+    const payload = postPayload(1);
+    payload.post.is_aa = true;
+    payload.post.body_html = '<p>（　´∀｀）</p><p><font color="#b4232f">■■■■</font></p><p>끝</p>';
+    return request.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 3);
+  await page.locator("#sel-more").click();
+  await page.locator("#selection-share").click();
+  const dialog = page.locator("#share-dialog");
+  await expect(dialog).toBeVisible();
+  const send = page.locator("#share-send");
+  await expect(send).toBeEnabled();
+  const canvas = page.locator("#share-preview");
+  const pixel = (x, y) => canvas.evaluate((element, [px, py]) => [...element.getContext("2d").getImageData(px, py, 1, 1).data].slice(0, 3), [x, y]);
+  expect(await canvas.evaluate((element) => [element.width, element.height])).toEqual([1080, 1350]);
+  // Text was drawn into the quote area (not an empty card).
+  expect(await canvas.evaluate((element) => {
+    const data = element.getContext("2d").getImageData(96, 160, 888, 120).data;
+    const first = data.slice(0, 3).join();
+    let different = 0;
+    for (let index = 0; index < data.length; index += 4) if (data.slice(index, index + 3).join() !== first) different += 1;
+    return different;
+  })).toBeGreaterThan(200);
+  const band = await pixel(540, 10);
+  const page1 = await pixel(540, 700);
+  expect(band).not.toEqual(page1);
+  await page.waitForTimeout(5000);
+  await send.click();
+  await expect.poll(() => page.evaluate(() => window.__shared.length)).toBe(1);
+  const shared = await page.evaluate(() => window.__shared[0]);
+  expect(shared.files).toEqual([expect.objectContaining({ type: "image/png" })]);
+  expect(shared.files[0].size).toBeGreaterThan(1000);
+  expect(shared.text).toContain("“2편 본문 4”");
+  expect(shared.text).toContain("원문 저작권은 작가에게 있습니다");
+  // 어둡게 redraws; the credit can be left out; 텍스트 복사 copies the same words.
+  await page.locator('[data-share-tone="dark"]').click();
+  await expect(send).toBeEnabled();
+  expect(await pixel(540, 700)).toEqual([22, 21, 20]);
+  await page.locator("#share-credit").uncheck();
+  await page.locator("#share-copy").click();
+  await expect(page.locator("#share-status")).toHaveText("텍스트를 복사했어요");
+  expect(await page.evaluate(() => window.__copied[0])).not.toContain("저작권");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#archive-body")).toHaveClass(/aa/);
+  await page.evaluate(() => {
+    const paragraphs = document.querySelectorAll("#archive-body p");
+    getSelection().setBaseAndExtent(paragraphs[0].firstChild, 2, paragraphs[1].querySelector("font").firstChild, 1);
+  });
+  const menu = page.locator("#selection-menu");
+  await expect(menu.locator("#sel-image")).toBeVisible();
+  await expect(menu.locator("#sel-mark")).toBeHidden();
+  await menu.locator("#sel-image").click();
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#share-tones")).toBeHidden();
+  await expect(send).toBeEnabled();
+  // Two whole lines on the picture's own background, the second one in its preserved red.
+  const size = await canvas.evaluate((element) => [element.width, element.height]);
+  expect(size[1]).toBeLessThan(200);
+  expect(await pixel(2, 2)).toEqual([245, 245, 240]);
+  expect(await canvas.evaluate((element) => {
+    const data = element.getContext("2d").getImageData(0, 0, element.width, element.height).data;
+    for (let index = 0; index < data.length; index += 4) if (data[index] - data[index + 1] > 60 && data[index] - data[index + 2] > 50) return true;
+    return false;
+  })).toBe(true);
+});
+
+// P3-4 (DESIGN §9): five minutes of reading become today's 읽은 시간(추정), a streak, the month's
+// heat map, the Home week and 오늘의 발췌; the stats card shares through the same sheet.
+test("Reading time shows in 기록 › 통계, the Home week and today's excerpt", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-10-01T09:00:00") });
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 6);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 7"]);
+  for (let step = 0; step < 10; step += 1) {
+    await page.locator("#reader-pane").evaluate((pane) => pane.scrollBy(0, 30));
+    await page.clock.fastForward(30_000);
+  }
+  const go = (path) => page.evaluate((target) => {
+    history.pushState({}, "", target);
+    dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+  }, path);
+  await go("/saved?view=stats");
+  await expect(page.locator("#stats-panel")).toBeVisible();
+  await expect(page.locator("#result-list")).toBeHidden();
+  await expect(page.locator("#stats-today")).toHaveText(/^[56]분$/);
+  await expect(page.locator("#stats-streak")).toHaveText("1일");
+  await expect(page.locator("#stats-month-title")).toHaveText("10월");
+  await expect(page.locator("#stats-heat li.today")).toHaveClass(/level-1/);
+  await expect(page.locator("#stats-heat li.today")).toHaveAttribute("aria-label", /10월 1일 [56]분/);
+  await expect(page.locator(".stats-note")).toHaveText("보존된 회차 기준");
+  await page.locator("#stats-share").click();
+  await expect(page.locator("#share-dialog")).toBeVisible();
+  await expect(page.locator("#share-send")).toBeEnabled();
+  await expect(page.locator("#share-tones")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await go("/");
+  await expect(page.locator("#home-week")).toBeVisible();
+  await expect(page.locator("#home-week-total")).toHaveText(/^[56]분 · 1일 읽음$/);
+  await expect(page.locator("#home-week-bars li")).toHaveCount(7);
+  await expect(page.locator("#home-excerpt")).toBeVisible();
+  await expect(page.locator("#home-excerpt .excerpt-quote")).toHaveText("2편 본문 7");
+});
+
+// P3-5 / T22: a mark made in one tab paints in another; backup v4 is a .json.gz with the marks,
+// notes and sessions; importing it into an empty store brings them back on the page.
+test("Marks reach another tab, ride in a v4 .json.gz backup and come back from it", async ({ page }) => {
+  const me = (target) => target.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await me(page);
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 1);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 2"]);
+  const other = await page.context().newPage();
+  await me(other);
+  await useLongCollection(other, 3);
+  await other.goto("/read/board_a/2");
+  await expect.poll(() => highlightTexts(other, "redstm-mark")).toEqual(["2편 본문 2"]);
+  await selectParagraph(page, 3);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(other, "redstm-mark").then((texts) => texts.sort())).toEqual(["2편 본문 2", "2편 본문 4"]);
+  await other.close();
+
+  await page.goto("/settings");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
+  expect(download.suggestedFilename()).toMatch(/\.json\.gz$/);
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
+  expect(backup.schema_version).toBe(4);
+  expect(backup.records.annotations.map((record) => record.quote).sort()).toEqual(["2편 본문 2", "2편 본문 4"]);
+
+  // A device without these records: the owner's database is gone, then the backup comes in.
+  await page.goto("/settings");
+  await page.evaluate(() => new Promise((resolve) => { indexedDB.deleteDatabase("redstm:0123456789abcdef").onsuccess = resolve; }));
+  await page.reload();
+  await page.locator("#import-state-file").setInputFiles({ name: "redstm-state.json.gz", mimeType: "application/gzip", buffer: raw });
+  await expect(page.locator("#import-review-summary")).toContainText("표시·메모 2");
+  await page.locator("#import-merge").click();
+  await expect(page.locator("#import-review-summary")).toContainText("표시·메모 2건");
+  await page.goto("/read/board_a/2");
+  await expect.poll(() => highlightTexts(page, "redstm-mark").then((texts) => texts.sort())).toEqual(["2편 본문 2", "2편 본문 4"]);
+});
+
+test("Without a verified owner, marking says it cannot store anything", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 1);
+  await page.locator("#sel-mark").click();
+  await expect(page.locator("#aa-zoom-indicator")).toHaveText("이 기기에 기록을 저장할 수 없어요");
+  expect(await highlightTexts(page, "redstm-mark")).toEqual([]);
 });
 
 // Page mode tap zones (DESIGN §8.2 오른손) and the edge guard for system Back.

@@ -133,6 +133,45 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .result-title mark { padding: 0; background: var(--hl-find); color: inherit; font: inherit; }
 .result-badges { flex: 0 0 auto; display: inline-flex; gap: 4px; }
 .result-badges span { max-width: 6rem; overflow: hidden; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--muted); font-size: 11px; font-weight: 680; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+/* 기록 › 발췌 (DESIGN §7.8): the quote in the reading face with a ribbon edge, then the note
+   and where it came from. */
+.excerpt-card { border-left: 3px solid var(--ribbon); }
+.excerpt-quote { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; color: var(--ink); font-family: var(--prose-font); font-size: 15px; line-height: 1.7; white-space: pre-line; overflow-wrap: anywhere; }
+.excerpt-note { color: var(--ink-2, var(--muted)); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 기록 › 통계 (DESIGN §9): today's ring, the figures with what they mean, and the month. */
+@property --ring { syntax: "<number>"; inherits: false; initial-value: 0; }
+/* Like the list it replaces, the panel scrolls itself inside the catalog column. */
+.stats-panel { display: grid; align-content: start; gap: 14px; padding: 4px 0 24px; }
+.catalog-inner > .stats-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+.catalog-inner > .stats-panel[hidden] { display: none; }
+.stats-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; align-items: center; }
+.stats-ring { --ring: 0; width: 148px; aspect-ratio: 1; display: grid; place-content: center; text-align: center; border-radius: 50%; background: radial-gradient(closest-side, var(--page) 78%, transparent 79%), conic-gradient(var(--accent) calc(var(--ring) * 1turn), var(--surface) 0); transition: --ring 700ms var(--ease-out); }
+.stats-ring strong { font: 700 28px/1.1 var(--font-display); color: var(--ink); }
+.stats-ring small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.stats-figures { display: grid; gap: 10px; margin: 0; }
+.stats-figures div { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; align-items: baseline; }
+.stats-figures dt { color: var(--muted); font-size: 13px; }
+.stats-figures dd { margin: 0; color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.stats-figures .stats-note { grid-column: 2; color: var(--muted); font-size: 11px; font-weight: 400; }
+.stats-month { margin: 6px 0 0; font-size: 15px; }
+.stats-heat { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; list-style: none; }
+.stats-heat li { aspect-ratio: 1; border-radius: 4px; background: var(--heat-0); }
+.stats-heat li.empty { background: transparent; }
+.stats-heat li.level-1 { background: var(--heat-1); }
+.stats-heat li.level-2 { background: var(--heat-2); }
+.stats-heat li.level-3 { background: var(--heat-3); }
+.stats-heat li.level-4 { background: var(--heat-4); }
+.stats-heat li.today { outline: 2px solid var(--ribbon); outline-offset: 1px; }
+.stats-help { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.stats-share { justify-self: start; min-height: 44px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+/* Home: 오늘의 발췌 and 이번 주 기록 (hidden when empty). */
+.home-excerpt-list { margin: 0; padding: 0; list-style: none; }
+.home-week-total { margin: 0 0 8px; color: var(--ink); font-weight: 650; }
+.week-bars { height: 64px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; align-items: end; margin: 0; padding: 0; list-style: none; }
+.week-bars li { display: grid; gap: 4px; justify-items: center; color: var(--muted); font-size: 11px; }
+.week-bars span { width: 100%; min-height: 3px; border-radius: 3px; background: var(--heat-3); }
+.week-bars li.none span { background: var(--heat-0); }
+.excerpts-export { justify-self: start; min-height: 40px; margin: 4px 0 8px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .result-action { color: var(--accent); font-weight: 650; }
 .result-board { color: var(--muted); font-weight: 650; }

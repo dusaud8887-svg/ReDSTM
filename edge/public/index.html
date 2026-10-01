@@ -110,6 +110,7 @@
           <nav class="view-tabs scope-tabs" id="scope-tabs" aria-label="탐색 범위" hidden>
             <button type="button" class="active" data-scope="posts" aria-pressed="true">게시판 글</button>
             <button type="button" data-scope="collections" aria-pressed="false">작품</button>
+            <button type="button" data-records-scope hidden>내 기록</button>
           </nav>
           <div class="board-dock" id="board-dock" hidden>
             <button class="board-dock-button" id="board-dock-button" type="button" aria-haspopup="dialog" aria-controls="board-dialog">
@@ -136,7 +137,10 @@
             <button type="button" data-view="reading" aria-pressed="false">읽는 중</button>
             <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장</button>
             <button type="button" data-view="history" aria-pressed="false">최근</button>
+            <button type="button" data-view="excerpts" aria-pressed="false">발췌</button>
+            <button type="button" data-view="stats" aria-pressed="false">통계</button>
           </nav>
+          <button class="excerpts-export" id="excerpts-export" type="button" hidden>Markdown으로 내보내기</button>
           <div class="catalog-search-row" id="catalog-search-row" hidden>
             <label class="search-field">
               <span class="sr-only">검색</span>
@@ -200,6 +204,20 @@
             <button type="button" id="search-empty-browse" data-destination="browse">둘러보기에서 훑기</button>
             <ol class="recent-queries" id="recent-queries" hidden></ol>
           </div>
+          <section class="stats-panel" id="stats-panel" aria-label="독서 통계" hidden>
+            <div class="stats-top">
+              <div class="stats-ring" id="stats-ring"><strong id="stats-today">0분</strong><small>오늘 읽은 시간(추정)</small></div>
+              <dl class="stats-figures">
+                <div><dt>연속</dt><dd id="stats-streak">0일</dd></div>
+                <div><dt>끝까지 읽은 작품</dt><dd id="stats-finished">0</dd><dd class="stats-note">보존된 회차 기준</dd></div>
+                <div><dt>읽은 글자</dt><dd id="stats-chars">0자</dd></div>
+              </dl>
+            </div>
+            <h3 class="stats-month" id="stats-month-title"></h3>
+            <ol class="stats-heat" id="stats-heat" aria-labelledby="stats-month-title"></ol>
+            <p class="stats-help">읽은 시간은 본문이 화면에 있고 1분 안에 스크롤·탭·키 입력이 있던 시간을 더한 추정치입니다. 같은 시각의 여러 탭·기기는 한 번만 셉니다. 하루는 이 기기의 자정 기준이고, 읽기를 시작한 날에 넣습니다.</p>
+            <button class="stats-share" id="stats-share" type="button">기록 카드 공유</button>
+          </section>
           <ol class="result-list" id="result-list"></ol>
           <div class="search-widen" id="search-widen" hidden></div>
           <button class="result-more" id="result-more" type="button" hidden>더 보기</button>
@@ -258,6 +276,15 @@
               <h3 id="discover-day-title">이날의 기록</h3>
               <ol id="discover-day"></ol>
             </div>
+          </section>
+          <section class="home-excerpt" id="home-excerpt" aria-labelledby="home-excerpt-title" hidden>
+            <header><h2 id="home-excerpt-title">오늘의 발췌</h2><button id="home-excerpt-next" type="button">다른 발췌</button></header>
+            <ol class="home-excerpt-list" id="home-excerpt-list"></ol>
+          </section>
+          <section class="home-week" id="home-week" aria-labelledby="home-week-title" hidden>
+            <header><h2 id="home-week-title">이번 주 기록</h2><button id="home-week-all" type="button">통계</button></header>
+            <p class="home-week-total" id="home-week-total"></p>
+            <ol class="week-bars" id="home-week-bars"></ol>
           </section>
           <div class="home-grid">
             <section><header><h2>최근 게시된 글</h2><button id="browse-all" type="button">둘러보기</button></header><ol id="latest-list"></ol></section>
@@ -449,6 +476,43 @@
           <button type="button" id="filter-reset">초기화</button>
           <button type="button" id="filter-apply">적용</button>
         </div>
+      </form>
+    </dialog>
+
+    <div class="selection-menu" id="selection-menu" popover="manual" role="toolbar" aria-label="선택한 문장">
+      <button type="button" id="sel-mark">표시</button><button type="button" id="sel-note">메모</button><button type="button" id="sel-copy">복사</button><button type="button" id="sel-more" aria-label="더보기">⋯</button><button type="button" id="sel-image" hidden>이미지로 공유</button>
+    </div>
+    <div class="mark-menu" id="mark-menu" popover="auto" role="dialog" aria-label="표시한 문장">
+      <p class="mark-menu-note" id="mark-menu-note" hidden></p>
+      <div class="mark-menu-actions"><button type="button" id="mark-note">메모 쓰기</button><button type="button" id="mark-delete">표시 지우기</button><button type="button" id="mark-share">공유</button></div>
+    </div>
+    <dialog id="note-dialog" aria-labelledby="note-dialog-title">
+      <form id="note-form">
+        <header><div><p>이 기기에 저장됩니다</p><h2 id="note-dialog-title">메모</h2></div><button class="icon-button" type="button" data-note-close aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <blockquote class="note-quote" id="note-quote"></blockquote>
+        <label>메모<textarea id="note-text" maxlength="1000" rows="5" placeholder="이 문장에 대한 생각을 적어 두세요"></textarea></label>
+        <div class="bookmark-dialog-actions"><span></span><button type="button" data-note-close>취소</button><button id="note-save" type="submit">저장</button></div>
+      </form>
+    </dialog>
+    <dialog id="selection-more" aria-labelledby="selection-more-title">
+      <form method="dialog">
+        <header><div><p id="selection-more-quote"></p><h2 id="selection-more-title">선택한 문장</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <div class="selection-more-actions"><button type="button" id="selection-share">이미지로 공유</button><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
+      </form>
+    </dialog>
+
+    <dialog id="share-dialog" aria-labelledby="share-dialog-title">
+      <form method="dialog">
+        <header><div><p>개인 기록용 인용으로 나눕니다</p><h2 id="share-dialog-title">이미지로 공유</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <canvas class="share-preview" id="share-preview" width="1080" height="1350" role="img" aria-label="공유 이미지 미리보기"></canvas>
+        <div class="segmented" id="share-tones" role="radiogroup" aria-label="카드 배경">
+          <button type="button" role="radio" data-share-tone="work" aria-checked="true">작품색</button>
+          <button type="button" role="radio" data-share-tone="light" aria-checked="false">밝게</button>
+          <button type="button" role="radio" data-share-tone="dark" aria-checked="false">어둡게</button>
+        </div>
+        <label class="share-credit"><input type="checkbox" id="share-credit" checked> 개인 기록용 인용 문구 함께 보내기</label>
+        <div class="share-actions"><button type="button" id="share-send" disabled>공유</button><a id="share-download" href="#" download="redstm.png">이미지 저장</a><button type="button" id="share-copy">텍스트 복사</button></div>
+        <p class="share-status" id="share-status" role="status"></p>
       </form>
     </dialog>
 

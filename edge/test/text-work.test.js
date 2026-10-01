@@ -125,3 +125,15 @@ test("old text records shrink to what progress needs; the latest per work keeps 
   assert.ok(JSON.stringify(state).length <= 2000);
   assert.deepEqual(state.bookmarks, { keep: { savedAt: "x" } });
 });
+
+test("trimming drops the record read earliest by instant, whatever its zone notation (R01)", () => {
+  const state = {
+    schema_version: 1, bookmarks: {},
+    history: {
+      "novel:a:1": { readAt: "2026-09-30T00:30:00Z", title: "늦게 읽음", route: "/text?x=".padEnd(400, "x") },
+      "novel:a:2": { readAt: "2026-09-30T09:00:00+09:00", title: "먼저 읽음", route: "/text?y=".padEnd(400, "y") },
+    },
+  };
+  trimTextState(state, JSON.stringify(state).length - 10);
+  assert.deepEqual(Object.keys(state.history), ["novel:a:1"]);
+});

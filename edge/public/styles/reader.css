@@ -64,6 +64,31 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .media-retry { min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--page); color: var(--ink); cursor: pointer; }
 .media-figure.failed figcaption { flex-basis: 100%; margin: 0; }
 .archive-body a[data-image] { text-decoration-style: dotted; }
+/* Selection menu (DESIGN §7.8): a dark pill under the selection; on touch screens, where the OS
+   toolbar and handles sit around the selection, the same four actions take the dock's place. */
+.selection-menu { position: fixed; inset: auto; margin: 0; padding: 4px; display: flex; gap: 2px; border: 0; border-radius: 999px; background: var(--ink); color: var(--page); box-shadow: var(--shadow); }
+.selection-menu:not(:popover-open) { display: none; }
+.selection-menu button { min-width: 48px; min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: 600 14px/1 var(--font-ui); cursor: pointer; }
+.selection-menu button:hover, .selection-menu button:focus-visible { background: color-mix(in srgb, var(--page) 16%, transparent); }
+.selection-menu.fixed { left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); justify-content: space-around; border-radius: 18px; }
+.selection-menu.fixed button { flex: 1; min-height: 48px; }
+.mark-menu { position: fixed; inset: auto; margin: 0; max-width: min(320px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow); }
+.mark-menu-note { margin: 2px 4px 10px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mark-menu-actions { display: flex; gap: 6px; }
+.mark-menu-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+.note-quote { margin: 0 0 12px; padding-left: 12px; border-left: 3px solid var(--ribbon); color: var(--muted); font-family: var(--prose-font); line-height: 1.6; max-height: 7.5em; overflow: auto; }
+.selection-more-actions { display: grid; gap: 8px; }
+.selection-more-actions button { min-height: 48px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
+/* Share sheet (docs/24 §8.14): the canvas itself is the preview (no blob: image under the CSP). */
+.share-preview { display: block; width: 100%; height: auto; max-height: 50dvh; object-fit: contain; margin: 0 auto 12px; border-radius: 12px; background: var(--surface); }
+#share-tones[hidden] { display: none; }
+.share-credit { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 14px; }
+.share-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.share-actions :is(button, a) { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font-weight: 600; text-decoration: none; cursor: pointer; }
+.share-actions #share-send { border-color: var(--accent); background: var(--accent); color: var(--on-accent, #fff); }
+.share-actions #share-send:disabled { opacity: .5; cursor: default; }
+.share-status { min-height: 1.4em; margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+.selection-more-actions a { min-height: 48px; display: flex; align-items: center; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; color: var(--ink); text-decoration: none; font-weight: 600; }
 .image-viewer { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0; background: rgb(0 0 0 / 92%); }
 .image-viewer::backdrop { background: rgb(0 0 0 / 80%); }
 /* PhotoSwipe draws into the stage (docs/24 §8.18); the actions sit over it at the bottom. */
@@ -174,6 +199,8 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .find-count { min-width: 3.5em; padding: 0 4px; color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
 .find-bar[data-empty="true"] .find-count { color: var(--danger-text); }
 body.find-open .reader-bottom { visibility: hidden; }
+::highlight(redstm-mark) { background-color: var(--ribbon-soft); }
+::highlight(redstm-note) { text-decoration: underline 1px dotted var(--ribbon); }
 ::highlight(redstm-find) { background-color: var(--hl-find); }
 ::highlight(redstm-find-current) { background-color: var(--hl-find-current); color: #1C1B19; text-decoration: underline 2px; }
 @media (prefers-reduced-transparency: reduce) { .find-bar { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }

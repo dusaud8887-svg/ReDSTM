@@ -12,6 +12,8 @@ import {
   sanitizeBookmarkMetadata,
   mergeTextStates,
   mergeUserStates,
+  mergeAnnotationRecords,
+  mergeSessionRecords,
   samePost,
   serializeUserState,
 } from "../public/user-state.js";
@@ -147,7 +149,7 @@ test("plans v2 import with counts without applying it", () => {
   assert.deepEqual(plan.state, state);
   assert.deepEqual(plan.summary, {
     history: 1, bookmarks: 1, scroll: 1, viewModes: 1, textHistory: null, textBookmarks: null, shelves: null,
-    exportedAt: plan.summary.exportedAt, defaultedSettings: [],
+    exportedAt: plan.summary.exportedAt, annotations: null, sessions: null, defaultedSettings: [],
   });
   assert.equal(plan.text, null);
 });
@@ -288,4 +290,77 @@ test("imports v2 files and merges a backup into this browser's records", () => {
   assert.ok(text.history["novel:a:2"] && text.bookmarks["novel:a:2"]);
   assert.deepEqual(text.shelves.map((shelf) => shelf.name), ["BL", "완결"]);
   assert.deepEqual(text.workShelves, { "novel:a": "sbl", "novel:b": "sbl", "novel:c": "sy" });
+});
+
+// R01 (docs/24_frontend_redesign_risk_review.md): times with different zone offsets compare as
+// instants, so the later reading position wins a merge.
+test("a merge compares reading times as instants across time zone offsets", () => {
+  const current = defaultUserState(defaults);
+  current.history["write_free21:62068"] = { readAt: "2026-09-30T00:30:00Z", progress: 0.3 };
+  current.scroll["write_free21:62068"] = 30;
+  const incoming = defaultUserState(defaults);
+  incoming.history["write_free21:62068"] = { readAt: "2026-09-30T09:00:00+09:00", progress: 0.1 };
+  incoming.scroll["write_free21:62068"] = 10;
+  const merged = mergeUserStates(current, incoming);
+  assert.equal(merged.scroll["write_free21:62068"], 30);
+  assert.equal(merged.history["write_free21:62068"].readAt, "2026-09-30T00:30:00Z");
+  const texts = mergeTextStates(
+    { schema_version: 1, history: { "novel:a:1": { readAt: "2026-09-30T00:30:00Z", progress: 0.3, title: "1화" } }, bookmarks: {} },
+    { schema_version: 1, history: { "novel:a:1": { readAt: "2026-09-30T09:00:00+09:00", progress: 0.1, title: "옛 1화" } }, bookmarks: {} },
+  );
+  assert.equal(texts.history["novel:a:1"].title, "1화");
+});
+
+const mark = (id, updatedAt, extra = {}) => ({
+  id, documentId: "typemoon:board_a:2", workId: "", kind: "mark", note: "", tags: [], quote: "문장",
+  locator: { v: 2, tm: 1, rev: "", start: 0, end: 2, exact: "문장", prefix: "", suffix: "" },
+  context: { title: "2편", work: "긴 연재", route: "/read/board_a/2" }, createdAt: "2026-09-01T00:00:00Z", updatedAt, ...extra,
+});
+
+test("a v4 backup carries marks, notes and sessions and plans their import", () => {
+  const records = {
+    annotations: [mark("a", "2026-09-02T00:00:00Z"), mark("b", "2026-09-03T00:00:00Z", { deletedAt: "2026-09-03T00:00:00Z" }), { id: "../bad" }],
+    sessions: [{ id: "s1", day: "2026-09-02", spans: [[1, 61_000]], chars: 120, endOfWork: true, deviceId: "d" }, { id: "s2", day: "x", spans: [] }],
+  };
+  const backup = JSON.parse(exportUserState(defaultUserState(defaults), null, { exportedAt: "2026-10-01T00:00:00Z", records }));
+  assert.equal(backup.schema_version, 4);
+  assert.deepEqual(backup.records.annotations.map((record) => record.id), ["a", "b"]);
+  assert.equal(backup.records.sessions.length, 1);
+  assert.deepEqual(backup.records.sessions[0].spans, [[1, 61_000]]);
+  const plan = planImport(JSON.stringify(backup), defaults);
+  assert.equal(plan.summary.annotations, 1);
+  assert.equal(plan.summary.sessions, 1);
+  assert.equal(plan.records.annotations[1].deletedAt, "2026-09-03T00:00:00Z");
+  // Without records the file stays a v3 backup that older versions read.
+  assert.equal(JSON.parse(exportUserState(defaultUserState(defaults))).schema_version, 3);
+});
+
+test("merging marks keeps deletions permanent and the later edit (T22)", () => {
+  const current = [mark("a", "2026-09-02T00:00:00Z"), mark("b", "2026-09-05T00:00:00Z", { deletedAt: "2026-09-05T00:00:00Z" }), mark("c", "2026-09-02T00:00:00Z")];
+  const incoming = [
+    mark("a", "2026-09-04T09:00:00+09:00", { note: "백업 쪽 메모", kind: "note" }),
+    mark("b", "2026-09-09T00:00:00Z", { note: "되살리면 안 됨" }),
+    mark("c", "2026-09-03T00:00:00Z", { deletedAt: "2026-09-03T00:00:00Z" }),
+    mark("d", "2026-09-01T00:00:00Z"),
+  ];
+  const changes = mergeAnnotationRecords(current, incoming);
+  assert.deepEqual(changes.map((record) => record.id), ["a", "c", "d"]);
+  assert.equal(changes[0].note, "백업 쪽 메모");
+  assert.equal(changes[1].deletedAt, "2026-09-03T00:00:00Z");
+  // An older edit does not replace a newer one.
+  assert.deepEqual(mergeAnnotationRecords([mark("a", "2026-09-05T00:00:00Z")], [mark("a", "2026-09-04T00:00:00Z")]), []);
+  assert.deepEqual(mergeSessionRecords([{ id: "s", end: 10 }], [{ id: "s", end: 5 }, { id: "s", end: 20 }, { id: "t", end: 1 }]).map((session) => session.end), [20, 1]);
+});
+
+test("imported times with a zone offset are kept as the same instant in UTC", () => {
+  const texts = mergeTextStates(
+    { schema_version: 1, history: {}, bookmarks: {} },
+    { schema_version: 1, history: { "novel:a:1": { readAt: "2026-09-30T09:00:00+09:00", progress: 0.1 } }, bookmarks: {} },
+  );
+  assert.equal(texts.history["novel:a:1"].readAt, "2026-09-30T00:00:00.000Z");
+  const state = defaultUserState(defaults);
+  state.history["write_free21:62068"] = { readAt: "2026-09-30T09:00:00+09:00", progress: 0.1 };
+  assert.equal(planImport(exportUserState(state), defaults).state.history["write_free21:62068"].readAt, "2026-09-30T00:00:00.000Z");
+  state.history["write_free21:62068"].readAt = "2026-09-30T00:00:00Z";
+  assert.equal(planImport(exportUserState(state), defaults).state.history["write_free21:62068"].readAt, "2026-09-30T00:00:00Z");
 });

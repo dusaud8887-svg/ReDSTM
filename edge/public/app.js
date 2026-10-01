@@ -2,6 +2,8 @@ import {
   STATE_KEY,
   defaultUserState,
   exportUserState,
+  mergeAnnotationRecords,
+  mergeSessionRecords,
   mergeTextStates,
   mergeUserStates,
   migrateLegacyState,
@@ -39,13 +41,19 @@ import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
 import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
 import { createMiniBar } from "/shell.js";
-import { fillContinueCard, shelfCard } from "/home.js";
+import { excerptOfTheDay, fillContinueCard, fillWeekBars, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
+import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
+import { openStore } from "/store.js";
+import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
+import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
+import { createTextModel, modelOffset } from "/text-model.js";
+import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
@@ -92,6 +100,8 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
+    "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
+    "home-excerpt", "home-excerpt-list", "home-week", "home-week-total", "home-week-bars", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
@@ -846,6 +856,7 @@ function renderCover(
   renderHomeBoards();
   void renderReadingWorks();
   void renderDiscovery();
+  void renderHomeRecords();
   updateShellMode();
 }
 
@@ -1222,6 +1233,7 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    finishReadingSession();
     if (previousSource) readerSession.cancelPendingWork();
     readerNavigation = null;
     listContext = null;
@@ -1264,6 +1276,13 @@ function beginReaderDocument(documentKey, workId, rev) {
   readerSession.adapter = paged.active ? pagedAdapter : scrollAdapter;
   paged.page = 0;
   paged.anchor = null;
+  hideSelectionMenu();
+  finishReadingSession();
+  readerSession.frame(startReadingSession);
+  readerSession.frame(() => void ownerStore().then(() => {
+    paintAnnotations();
+    jumpToPendingExcerpt();
+  }));
 }
 
 // ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
@@ -1917,6 +1936,8 @@ function savedUrl(state = currentSearchState(), view = currentView) {
   const params = new URLSearchParams();
   if (view === "history") params.set("view", "recent");
   if (view === "reading") params.set("view", "reading");
+  if (view === "excerpts") params.set("view", "excerpts");
+  if (view === "stats") params.set("view", "stats");
   if (state.query) params.set("q", state.query);
   const query = params.toString();
   return query ? `/saved?${query}` : "/saved";
@@ -1948,6 +1969,8 @@ function applyCatalogRoute(destination) {
   }
   currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
     destination === "bookmarks" && params.get("view") === "reading" ? "reading" :
+    destination === "bookmarks" && params.get("view") === "excerpts" ? "excerpts" :
+    destination === "bookmarks" && params.get("view") === "stats" ? "stats" :
     destination === "bookmarks" ? "bookmarks" : "all";
 }
 
@@ -1994,6 +2017,12 @@ function updateDestinationLayout() {
     }
   }
   document.querySelector(".saved-tabs").hidden = !saved;
+  elements["excerpts-export"].hidden = !saved || currentView !== "excerpts";
+  elements["stats-panel"].hidden = !saved || currentView !== "stats";
+  elements["result-list"].hidden = saved && currentView === "stats";
+  elements["catalog-search-row"].classList.toggle("stats-view", saved && currentView === "stats");
+  // 검색 범위 내 기록: the same words in 기록 › 발췌 (B4).
+  document.querySelector("[data-records-scope]").hidden = !searching;
   elements["catalog-search-row"].hidden = !searching && !saved && !text;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
   elements["mode-chips"].hidden = saved || collections || searching || text;
@@ -2699,6 +2728,8 @@ function localResults(entries) {
 function renderCurrentView() {
   if (currentDestination === "text") return void textLibrary.searchChanged(elements["search-input"].value);
   if (currentView === "reading") return void renderReadingView();
+  if (currentView === "excerpts") return void renderExcerptsView();
+  if (currentView === "stats") return void renderStatsView();
   if (currentScope === "collections") return void renderCollectionCatalog();
   if (currentView === "all") return requestSearch();
   const entries = currentView === "history" ? historyEntries : bookmarks;
@@ -3208,6 +3239,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
       `읽음 ${finishedEntries.length.toLocaleString("ko-KR")}/${available.length.toLocaleString("ko-KR")}`,
       readingEntries.length ? `읽는 중 ${readingEntries.length}` : null,
     ].filter(Boolean).join(" · ");
+    void showWorkReadingTime(workKey({ source: "typemoon", id: collection.id }), elements["collection-meta"]);
     const skippedUnread = available.filter((entry) =>
       postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) !== "finished");
     const continueEntry = continueTarget.kind === "finished" || continueTarget.kind === "empty" ? null : continueTarget.entry;
@@ -3685,6 +3717,7 @@ function renderPostBody() {
   if (isAa) restoreAaView();
   else requestAnimationFrame(() => updateAaOverflowCue(true));
   applyReadingMode();
+  paintAnnotations();
 }
 
 function normalizeReaderTypography(container) {
@@ -4230,6 +4263,7 @@ elements["result-list"].addEventListener("click", (event) => {
     return;
   }
   const button = event.target.closest(".result-item");
+  if (button?.dataset.excerptId) return void openExcerpt(button.dataset.excerptId);
   if (button) {
     if (currentDestination === "text") {
       textLibrary.activate(button);
@@ -4893,6 +4927,7 @@ elements["reader-pane"].addEventListener("pointerup", (event) => {
     event.timeStamp - start.time <= 500 &&
     Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
   if (!still || String(getSelection() ?? "")) return;
+  if (annotationAtPoint(event.clientX, event.clientY)) return;
   if (currentMode === "aa") return void aaTap(event.timeStamp);
   if (settings.tapPaging === "on" && pageByTap(event)) return;
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
@@ -5219,6 +5254,628 @@ document.addEventListener("fullscreenchange", () => {
   });
 });
 
+// ---- Marks and notes (docs/24 §8.13, §12.4) ---------------------------------------------------
+// Records live in the owner's IndexedDB namespace (redstm:<ownerHash>, from /api/v1/me). Without a
+// verified owner there is no store, and marking says so instead of writing somewhere shared.
+let ownerDb = null;
+let annotationRecords = [];
+let annotationModel = null;
+let placedAnnotations = [];
+
+function ownerStore() {
+  ownerDb ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((me) => (me?.ownerHash ? openStore(me.ownerHash) : null))
+    .then(async (store) => {
+      if (!store) return null;
+      annotationRecords = await store.getAll("annotations");
+      // Another tab's change arrives here too.
+      store.subscribe(async () => {
+        annotationRecords = await store.getAll("annotations");
+        paintAnnotations();
+      });
+      return store;
+    })
+    .catch(() => null);
+  return ownerDb;
+}
+
+// Marks are Custom Highlights over ranges resolved from their locators; the body DOM never changes.
+function paintAnnotations() {
+  const highlights = globalThis.CSS?.highlights;
+  highlights?.delete("redstm-mark");
+  highlights?.delete("redstm-note");
+  annotationModel = null;
+  placedAnnotations = [];
+  if (!readerSource || currentMode === "aa" || !readerSession.documentKey) return;
+  const records = documentAnnotations(annotationRecords, readerSession.documentKey);
+  if (!records.length) return;
+  annotationModel = createTextModel(elements["archive-body"]);
+  placedAnnotations = placeAnnotations(annotationModel, records, readerSession.rev);
+  if (!highlights || !globalThis.Highlight) return;
+  for (const kind of ["mark", "note"]) {
+    const ranges = placedAnnotations.filter((item) => item.range && item.record.kind === kind).map((item) => item.range);
+    if (!ranges.length) continue;
+    const highlight = new Highlight(...ranges);
+    highlight.priority = MARK_PRIORITY;
+    highlights.set(`redstm-${kind}`, highlight);
+  }
+}
+
+function annotationAtPoint(x, y) {
+  if (!annotationModel || !placedAnnotations.length) return null;
+  const caret = document.caretPositionFromPoint?.(x, y);
+  const range = caret ? null : document.caretRangeFromPoint?.(x, y);
+  const node = caret?.offsetNode ?? range?.startContainer;
+  const at = node ? modelOffset(annotationModel, node, caret?.offset ?? range.startOffset) : null;
+  return at === null ? null : annotationAt(placedAnnotations, at);
+}
+
+async function saveAnnotation(record, message) {
+  const store = await ownerStore();
+  if (!store) return void showReaderFeedback("이 기기에 기록을 저장할 수 없어요", 2400);
+  try {
+    await store.commit([{ store: "annotations", value: record }]);
+  } catch {
+    return void showReaderFeedback("저장하지 못했어요. 다시 시도해 주세요", 2400);
+  }
+  annotationRecords = [...annotationRecords.filter((item) => item.id !== record.id), record];
+  paintAnnotations();
+  if (message) showReaderFeedback(message);
+}
+
+function readerSelection({ aa = false } = {}) {
+  const selection = getSelection();
+  if (!readerSource || (currentMode === "aa" && !aa) || !selection?.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  return elements["archive-body"].contains(range.commonAncestorContainer) ? range : null;
+}
+
+// Selection menu: under the selection with Floating UI (kept in place only while open); on a
+// touch screen the same four actions take the dock's place (T26).
+let selectionStop = null;
+let selectionTimer = 0;
+function hideSelectionMenu() {
+  selectionStop?.();
+  selectionStop = null;
+  if (elements["selection-menu"].matches(":popover-open")) elements["selection-menu"].hidePopover();
+}
+
+function updateSelectionMenu() {
+  const range = readerSelection({ aa: true });
+  if (!range) return hideSelectionMenu();
+  const menu = elements["selection-menu"];
+  const aa = currentMode === "aa";
+  for (const button of menu.querySelectorAll("button")) button.hidden = (button.id === "sel-image") !== aa;
+  const fixed = matchMedia("(pointer: coarse)").matches;
+  menu.classList.toggle("fixed", fixed);
+  if (!menu.matches(":popover-open")) menu.showPopover();
+  selectionStop?.();
+  selectionStop = null;
+  if (fixed) {
+    Object.assign(menu.style, { left: "", top: "", visibility: "" });
+    return;
+  }
+  const reference = { getBoundingClientRect: () => range.getBoundingClientRect(), getClientRects: () => range.getClientRects() };
+  selectionStop = autoUpdate(reference, menu, () => {
+    void computePosition(reference, menu, {
+      placement: "bottom", strategy: "fixed", middleware: [inline(), offset(8), flip(), shift({ padding: 8 }), hide()],
+    }).then(({ x, y, middlewareData }) => {
+      Object.assign(menu.style, { left: `${x}px`, top: `${y}px`, visibility: middlewareData.hide?.referenceHidden ? "hidden" : "visible" });
+    });
+  });
+}
+document.addEventListener("selectionchange", () => {
+  clearTimeout(selectionTimer);
+  selectionTimer = setTimeout(updateSelectionMenu, 300);
+});
+elements["reader-pane"].addEventListener("pointerup", () => {
+  clearTimeout(selectionTimer);
+  selectionTimer = setTimeout(updateSelectionMenu, 0);
+});
+// Pressing an action must not take the selection away first.
+elements["selection-menu"].addEventListener("pointerdown", (event) => event.preventDefault());
+
+// The selection as a new record, or null (and why) when it cannot become one.
+function selectionRecord() {
+  const range = readerSelection();
+  if (!range) return null;
+  const model = createTextModel(elements["archive-body"]);
+  const offsets = selectionOffsets(model, range);
+  if (!offsets) return null;
+  try {
+    return annotationRecord({
+      model, ...offsets, rev: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
+      context: {
+        title: elements["reader-title"].textContent, work: currentCollection?.title || elements["reader-kicker"].textContent,
+        route: `${location.pathname}${location.search}`,
+      },
+    });
+  } catch {
+    showReaderFeedback("선택이 너무 길어요", 2200);
+    return null;
+  }
+}
+
+function clearSelection() {
+  getSelection()?.removeAllRanges();
+  hideSelectionMenu();
+}
+
+let noteRecord = null;
+function openNoteEditor(record) {
+  noteRecord = record;
+  elements["note-quote"].textContent = record.quote;
+  elements["note-text"].value = record.note;
+  elements["note-dialog"].showModal();
+}
+
+document.querySelector("#sel-mark").addEventListener("click", () => {
+  const record = selectionRecord();
+  clearSelection();
+  if (record) void saveAnnotation(record, "표시했어요");
+});
+document.querySelector("#sel-note").addEventListener("click", () => {
+  const record = selectionRecord();
+  clearSelection();
+  if (record) openNoteEditor(record);
+});
+document.querySelector("#sel-copy").addEventListener("click", () => {
+  const text = readerSelection()?.toString().trim();
+  clearSelection();
+  if (text) void navigator.clipboard?.writeText(text).then(() => showReaderFeedback("복사했어요"), () => showReaderFeedback("복사하지 못했어요", 2200));
+});
+let moreQuote = "";
+document.querySelector("#sel-more").addEventListener("click", () => {
+  const text = readerSelection()?.toString().trim() ?? "";
+  hideSelectionMenu();
+  if (!text) return;
+  moreQuote = text;
+  elements["selection-more-quote"].textContent = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  elements["selection-namu"].href = `https://namu.wiki/Search?q=${encodeURIComponent(text.slice(0, 100))}`;
+  elements["selection-more"].showModal();
+});
+elements["note-form"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  const record = noteRecord;
+  noteRecord = null;
+  elements["note-dialog"].close();
+  if (record) void saveAnnotation(withNote(record, elements["note-text"].value), "저장했어요");
+});
+for (const button of document.querySelectorAll("[data-note-close]")) button.addEventListener("click", () => elements["note-dialog"].close());
+elements["note-dialog"].addEventListener("close", () => { noteRecord = null; });
+
+// A marked sentence: its note, 메모, 표시 지우기 (hit-tested against the resolved ranges).
+let markMenuRecord = null;
+elements["archive-body"].addEventListener("click", (event) => {
+  if (String(getSelection() ?? "")) return;
+  const item = annotationAtPoint(event.clientX, event.clientY);
+  if (!item) return;
+  markMenuRecord = item.record;
+  const menu = elements["mark-menu"];
+  elements["mark-menu-note"].textContent = item.record.note;
+  elements["mark-menu-note"].hidden = !item.record.note;
+  elements["mark-note"].textContent = item.record.note ? "메모 고치기" : "메모 쓰기";
+  menu.showPopover();
+  const point = { getBoundingClientRect: () => new DOMRect(event.clientX, event.clientY, 0, 0) };
+  void computePosition(point, menu, { placement: "bottom", strategy: "fixed", middleware: [offset(10), flip(), shift({ padding: 8 })] })
+    .then(({ x, y }) => Object.assign(menu.style, { left: `${x}px`, top: `${y}px` }));
+});
+elements["mark-note"].addEventListener("click", () => {
+  elements["mark-menu"].hidePopover();
+  if (markMenuRecord) openNoteEditor(markMenuRecord);
+});
+document.querySelector("#mark-delete").addEventListener("click", () => {
+  elements["mark-menu"].hidePopover();
+  if (markMenuRecord) void saveAnnotation(tombstone(markMenuRecord), "표시를 지웠어요");
+  markMenuRecord = null;
+});
+overlays.watch(elements["mark-menu"], "popover");
+
+// ---- Share images (docs/24 §8.14, T13, T33) ----------------------------------------------------
+// Opening the sheet draws the image and makes its PNG at once; 공유 then only hands the ready file
+// to navigator.share, so the tap's user activation is still there however long the sheet stayed.
+let shareJob = null;
+let shareTone = "work";
+let shareUrl = "";
+
+function documentHue(key) {
+  return workHue(key || readerSession.workId || readerSession.documentKey || "redstm");
+}
+
+async function openShare(job) {
+  shareJob = { ...job, file: null };
+  elements["share-tones"].hidden = job.kind !== "excerpt";
+  elements["share-send"].disabled = true;
+  elements["share-status"].textContent = "이미지를 만드는 중…";
+  if (!elements["share-dialog"].open) elements["share-dialog"].showModal();
+  await renderShare();
+}
+
+async function renderShare() {
+  const job = shareJob;
+  if (!job) return;
+  const context = elements["share-preview"].getContext("2d");
+  try {
+    if (job.kind === "excerpt") {
+      await Promise.all([
+        document.fonts.load("44px MaruBuri", job.quote),
+        document.fonts.load('600 32px "Pretendard Variable"', `${job.work}${job.title}ReDSTM이어짐`),
+      ]);
+      drawExcerptCard(context, { ...job, tone: shareTone });
+    } else if (job.kind === "stats") {
+      await Promise.all([document.fonts.load("96px MaruBuri", job.totalLabel), document.fonts.load('600 32px "Pretendard Variable"', "이번 주 기록 연속 일 월화수목금토일")]);
+      drawStatsCard(context, { days: job.days, total: job.totalLabel, streak: job.streak, finished: job.finished });
+    } else {
+      await document.fonts.load(`${job.fontSize}px Saitamaar`, job.lines.flat().map((run) => run.text).join(""));
+      drawAaScene(context, job);
+    }
+  } catch {
+    elements["share-status"].textContent = "이미지를 만들지 못했어요. 텍스트 복사를 써 주세요";
+    return;
+  }
+  const blob = await canvasBlob(elements["share-preview"]);
+  if (shareJob !== job || !blob) return;
+  job.file = new File([blob], `redstm-${job.kind}.png`, { type: "image/png" });
+  if (shareUrl) URL.revokeObjectURL(shareUrl);
+  shareUrl = URL.createObjectURL(blob);
+  elements["share-download"].href = shareUrl;
+  elements["share-download"].download = job.file.name;
+  elements["share-send"].disabled = false;
+  elements["share-status"].textContent = "";
+}
+
+function shareText() {
+  const job = shareJob;
+  const where = [job.work, job.title].filter(Boolean).join(" › ");
+  const credit = elements["share-credit"].checked ? `\n\n${CREDIT}` : "";
+  if (job.kind === "stats") return `이번 주 ${job.totalLabel} 읽음 · 연속 ${job.streak}일 — ReDSTM`;
+  return job.kind === "excerpt" ? `“${job.quote}”\n— ${where}${credit}` : `${where}${credit}`.trim();
+}
+
+function excerptShare(quote, record = null) {
+  void openShare({
+    kind: "excerpt", quote,
+    work: record?.context?.work ?? (currentCollection?.title || elements["reader-kicker"].textContent),
+    title: record?.context?.title ?? elements["reader-title"].textContent,
+    hue: documentHue(record?.workId || record?.documentId),
+  });
+}
+
+// Whole lines of the selected AA, as runs of text in the colour each one is drawn in on screen.
+function aaSceneLines(range) {
+  const model = createTextModel(elements["archive-body"]);
+  const start = modelOffset(model, range.startContainer, range.startOffset);
+  const end = modelOffset(model, range.endContainer, range.endOffset);
+  if (start === null || end === null || end <= start) return null;
+  const text = model.text;
+  const from = text.lastIndexOf("\n", start - 1) + 1;
+  let to = text.indexOf("\n", Math.max(start, end - 1));
+  if (to < 0) to = text.length;
+  const lines = [[]];
+  let cursor = from;
+  for (const segment of model.segments) {
+    if (segment.end <= from || segment.start >= to) continue;
+    for (const character of text.slice(cursor, Math.max(cursor, segment.start))) if (character === "\n") lines.push([]);
+    const first = Math.max(from, segment.start);
+    const last = Math.min(to, segment.end);
+    const color = getComputedStyle(segment.node.parentElement).color;
+    text.slice(first, last).split("\n").forEach((part, index) => {
+      if (index) lines.push([]);
+      if (part) lines.at(-1).push({ text: part, color });
+    });
+    cursor = last;
+  }
+  return lines.length && lines.length <= 400 ? lines : null;
+}
+
+document.querySelector("#sel-image").addEventListener("click", () => {
+  const range = readerSelection({ aa: true });
+  const lines = range && aaSceneLines(range);
+  clearSelection();
+  if (!lines) return void showReaderFeedback("이미지로 만들 줄을 골라 주세요", 2200);
+  void openShare({
+    kind: "aa", lines, background: settings.aaBackground, fontSize: settings.aaSize,
+    work: currentCollection?.title || elements["reader-kicker"].textContent, title: elements["reader-title"].textContent,
+  });
+});
+document.querySelector("#selection-share").addEventListener("click", () => {
+  elements["selection-more"].close();
+  if (moreQuote) excerptShare(moreQuote);
+});
+document.querySelector("#mark-share").addEventListener("click", () => {
+  elements["mark-menu"].hidePopover();
+  if (markMenuRecord) excerptShare(markMenuRecord.quote, markMenuRecord);
+});
+for (const button of document.querySelectorAll("[data-share-tone]")) {
+  button.addEventListener("click", () => {
+    shareTone = button.dataset.shareTone;
+    for (const choice of document.querySelectorAll("[data-share-tone]")) choice.setAttribute("aria-checked", String(choice === button));
+    elements["share-send"].disabled = true;
+    void renderShare();
+  });
+}
+elements["share-send"].addEventListener("click", () => {
+  const file = shareJob?.file;
+  if (!file) return;
+  const data = { files: [file], text: shareText() };
+  if (navigator.canShare?.(data)) {
+    navigator.share(data).catch((error) => {
+      if (error?.name !== "AbortError") elements["share-status"].textContent = "공유하지 못했어요. 이미지 저장이나 텍스트 복사를 써 주세요";
+    });
+    return;
+  }
+  elements["share-download"].click();
+  elements["share-status"].textContent = "이 브라우저는 이미지 공유를 지원하지 않아 저장했어요";
+});
+document.querySelector("#share-copy").addEventListener("click", () => {
+  if (!shareJob) return;
+  void navigator.clipboard?.writeText(shareText()).then(
+    () => { elements["share-status"].textContent = "텍스트를 복사했어요"; },
+    () => { elements["share-status"].textContent = "복사하지 못했어요"; },
+  );
+});
+elements["share-dialog"].addEventListener("close", () => { shareJob = null; });
+
+// 기록 › 발췌 (docs/24 §8.5): every mark and note of this owner, newest first, searched with the
+// list's own field. A card opens its document and moves to the sentence; one that no longer
+// resolves opens at the reading place and says so instead of jumping to a first match.
+let pendingExcerpt = null;
+async function renderExcerptsView() {
+  const store = await ownerStore();
+  if (currentView !== "excerpts") return;
+  const records = excerptList(annotationRecords, elements["search-input"].value);
+  renderedResults = [];
+  renderedCollections = [];
+  resultTotal = records.length;
+  elements["search-empty"].hidden = true;
+  elements["result-list"].classList.remove("loading");
+  elements["result-list"].replaceChildren(...records.map(excerptElement));
+  elements["excerpts-export"].disabled = !records.length;
+  elements["result-status"].textContent = !store ? "이 기기에서 기록 저장소를 열 수 없습니다"
+    : records.length ? `발췌 ${records.length}건 · 이 기기` : elements["search-input"].value ? "찾는 발췌가 없습니다" : "표시하거나 메모한 문장이 여기에 모입니다";
+  updateLoadMore();
+}
+
+function excerptElement(record) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "result-item excerpt-card";
+  button.dataset.excerptId = record.id;
+  button.dataset.key = `excerpt:${record.id}`;
+  const quote = document.createElement("span");
+  quote.className = "excerpt-quote";
+  quote.textContent = record.quote;
+  button.append(quote);
+  if (record.note) {
+    const note = document.createElement("span");
+    note.className = "excerpt-note";
+    note.textContent = record.note;
+    button.append(note);
+  }
+  const meta = document.createElement("span");
+  meta.className = "result-meta";
+  const where = [record.context?.work, record.context?.title].filter(Boolean).join(" › ");
+  meta.textContent = [where || "제목 없음", formatSourceDate(record.createdAt) || record.createdAt.slice(0, 10), record.kind === "note" ? "메모" : "표시"].join(" · ");
+  button.append(meta);
+  item.append(button);
+  return item;
+}
+
+function openExcerpt(id) {
+  const record = annotationRecords.find((item) => item.id === id);
+  if (!record?.context?.route) return void showReaderFeedback("이 발췌의 원문 위치를 알 수 없어요", 2200);
+  pendingExcerpt = { id: record.id, documentId: record.documentId };
+  if (record.documentId === readerSession.documentKey && readerSource) return void jumpToPendingExcerpt();
+  persistCatalogState();
+  history.pushState({ redstmReader: true, redstmParent: currentRoute() }, "", record.context.route);
+  void handleRoute();
+}
+
+// After the document's own reading place has been restored (two frames on), move to the sentence.
+function jumpToPendingExcerpt() {
+  const pending = pendingExcerpt;
+  if (!pending || pending.documentId !== readerSession.documentKey) return;
+  pendingExcerpt = null;
+  const item = placedAnnotations.find((placed) => placed.record.id === pending.id);
+  readerSession.frame(() => readerSession.frame(() => {
+    if (!item?.range) return void showReaderFeedback("원문에서 이 문장을 찾지 못했어요", 2400);
+    if (readerSession.restore({ loc: item.record.locator, viewportOffset: Math.round(elements["reader-pane"].clientHeight / 3) })) syncScrollBaseline();
+  }));
+}
+
+elements["excerpts-export"].addEventListener("click", () => {
+  const records = excerptList(annotationRecords, elements["search-input"].value);
+  if (!records.length) return;
+  const url = URL.createObjectURL(new Blob([excerptsMarkdown(records, location.origin)], { type: "text/markdown;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `redstm-excerpts-${new Date().toISOString().slice(0, 10)}.md`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+// ---- Reading sessions and statistics (DESIGN §9) -----------------------------------------------
+// A session is one document on screen: spans of activity (an input keeps it active for a minute,
+// leaving the screen stops it), the characters moved through and whether the last preserved
+// chapter of a work was reached. It is written to the owner's store when it pauses or ends.
+let readingSession = null;
+let sessionTimer = 0;
+
+function sessionWorkKey() {
+  if (currentCollection?.id) return workKey({ source: "typemoon", id: currentCollection.id });
+  return readerSession.workId || readerSession.documentKey;
+}
+
+function startReadingSession() {
+  if (!readerSource || !readerSession.documentKey) return;
+  const progress = bodyProgress();
+  readingSession = {
+    id: crypto.randomUUID(), workKey: sessionWorkKey(), documentId: readerSession.documentKey, day: localDay(Date.now()),
+    start: Date.now(), spans: [], length: elements["archive-body"].textContent.length, from: progress, furthest: progress, endOfWork: false,
+  };
+}
+
+function noteReadingActivity() {
+  const session = readingSession;
+  if (!session || document.visibilityState !== "visible" || session.documentId !== readerSession.documentKey) return;
+  extendSpans(session.spans, Date.now());
+  session.furthest = Math.max(session.furthest, bodyProgress());
+  const nav = readerNavigation;
+  if (session.furthest >= 0.98 && nav && !nav.pending && !nav.next && (nav.run || nav.hasToc)) session.endOfWork = true;
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => void saveReadingSession(session), 30_000);
+}
+
+function sessionRecord(session, deviceId, now = Date.now()) {
+  const spans = session.spans.map(([start, end]) => [start, Math.min(end, now)]).filter(([start, end]) => end > start);
+  return {
+    id: session.id, deviceId, workKey: session.workKey, documentId: session.documentId, day: session.day,
+    start: session.start, end: spans.at(-1)?.[1] ?? session.start, spans, activeMs: unionLength(spans),
+    chars: Math.round(Math.max(0, session.furthest - session.from) * session.length), endOfWork: session.endOfWork,
+  };
+}
+
+async function saveReadingSession(session) {
+  if (!session?.spans.length) return;
+  const store = await ownerStore();
+  if (!store) return;
+  try {
+    await store.commit([{ store: "sessions", value: sessionRecord(session, store.deviceId) }]);
+  } catch { /* the next pause tries again */ }
+}
+
+function finishReadingSession() {
+  const session = readingSession;
+  readingSession = null;
+  clearTimeout(sessionTimer);
+  if (!session) return;
+  closeSpans(session.spans, Date.now());
+  void saveReadingSession(session);
+}
+
+for (const type of ["scroll", "pointerdown", "wheel"]) elements["reader-pane"].addEventListener(type, noteReadingActivity, { passive: true });
+document.addEventListener("keydown", () => { if (document.body.classList.contains("reader-open")) noteReadingActivity(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" || !readingSession) return;
+  closeSpans(readingSession.spans, Date.now());
+  void saveReadingSession(readingSession);
+});
+addEventListener("pagehide", () => {
+  if (!readingSession) return;
+  closeSpans(readingSession.spans, Date.now());
+  void saveReadingSession(readingSession);
+});
+
+// Every stored session plus the one being read now.
+async function allSessions() {
+  const store = await ownerStore();
+  if (!store) return null;
+  const sessions = await store.getAll("sessions");
+  if (readingSession) sessions.push(sessionRecord(readingSession, store.deviceId));
+  return sessions;
+}
+
+let statsSummary = null;
+async function renderStatsView() {
+  const sessions = await allSessions();
+  if (currentView !== "stats") return;
+  renderedResults = [];
+  resultTotal = 0;
+  elements["search-empty"].hidden = true;
+  updateLoadMore();
+  if (!sessions) {
+    elements["result-status"].textContent = "이 기기에서 기록 저장소를 열 수 없습니다";
+    elements["stats-panel"].hidden = true;
+    return;
+  }
+  const now = Date.now();
+  const daily = dailyReading(sessions, now);
+  const today = localDay(now);
+  const date = new Date(now);
+  const cells = monthCells(daily, date.getFullYear(), date.getMonth() + 1);
+  const best = Math.max(30 * 60_000, ...cells.filter(Boolean).map((cell) => cell.milliseconds));
+  const todayMs = daily.get(today) ?? 0;
+  elements["stats-today"].textContent = minutesLabel(todayMs);
+  requestAnimationFrame(() => elements["stats-ring"].style.setProperty("--ring", String(Math.min(1, todayMs / best))));
+  const streak = readingStreak(daily, today);
+  const finished = finishedWorks(sessions);
+  elements["stats-streak"].textContent = `${streak}일`;
+  elements["stats-finished"].textContent = finished.toLocaleString("ko-KR");
+  elements["stats-chars"].textContent = `${charactersRead(sessions).toLocaleString("ko-KR")}자`;
+  elements["stats-month-title"].textContent = `${date.getMonth() + 1}월`;
+  elements["stats-heat"].replaceChildren(...cells.map((cell) => {
+    const item = document.createElement("li");
+    if (!cell) {
+      item.className = "empty";
+      item.ariaHidden = "true";
+      return item;
+    }
+    item.className = `level-${cell.level}${cell.day === today ? " today" : ""}`;
+    item.ariaLabel = `${date.getMonth() + 1}월 ${cell.date}일 ${minutesLabel(cell.milliseconds)}`;
+    return item;
+  }));
+  statsSummary = { ...weekSummary(daily, today), streak, finished };
+  elements["stats-share"].disabled = !statsSummary.total;
+  elements["result-status"].textContent = "통계 · 이 기기와 같은 계정 기록";
+}
+
+elements["stats-share"].addEventListener("click", () => {
+  if (!statsSummary?.total) return;
+  void openShare({ kind: "stats", ...statsSummary, totalLabel: minutesLabel(statsSummary.total), work: "", title: "" });
+});
+
+// Home: 오늘의 발췌 and 이번 주 기록, each hidden while it has nothing to show.
+let homeExcerptOffset = 0;
+async function renderHomeRecords() {
+  const sessions = await allSessions();
+  if (currentDestination !== "library") return;
+  const records = excerptList(annotationRecords);
+  const today = localDay(Date.now());
+  const record = excerptOfTheDay(records, today, homeExcerptOffset);
+  elements["home-excerpt"].hidden = !record;
+  elements["home-excerpt-list"].replaceChildren(...(record ? [excerptElement(record)] : []));
+  document.querySelector("#home-excerpt-next").hidden = records.length < 2;
+  const week = sessions ? weekSummary(dailyReading(sessions), today) : null;
+  elements["home-week"].hidden = !week || week.total < 60_000;
+  if (!week) return;
+  elements["home-week-total"].textContent = `${minutesLabel(week.total)} · ${week.activeDays}일 읽음`;
+  fillWeekBars(elements["home-week-bars"], week.days);
+}
+document.querySelector("#home-excerpt-next").addEventListener("click", () => {
+  homeExcerptOffset += 1;
+  void renderHomeRecords();
+});
+elements["home-excerpt-list"].addEventListener("click", (event) => {
+  const card = event.target.closest("[data-excerpt-id]");
+  if (card) openExcerpt(card.dataset.excerptId);
+});
+document.querySelector("#home-week-all").addEventListener("click", () => {
+  history.pushState({ redstmSaved: { view: "stats" } }, "", "/saved?view=stats");
+  void handleRoute();
+});
+
+// The time spent in a work, added to its header line once the sessions are read.
+async function showWorkReadingTime(key, element) {
+  const sessions = await allSessions();
+  const spent = sessions ? workReading(sessions, key) : 0;
+  if (spent < 60_000 || element.dataset.readingTime === key) return;
+  element.dataset.readingTime = key;
+  element.textContent += ` · 읽은 시간(추정) ${minutesLabel(spent)}`;
+}
+
+// Leaving search clears its conditions (showDestination), so the words are put back afterwards.
+document.querySelector("[data-records-scope]").addEventListener("click", async () => {
+  const query = elements["search-input"].value.trim();
+  history.pushState({ redstmSaved: { view: "excerpts" } }, "", "/saved?view=excerpts");
+  await handleRoute();
+  if (!query) return;
+  elements["search-input"].value = query;
+  elements["search-clear"].hidden = false;
+  syncSearchRoute();
+  renderCurrentView();
+});
+
 // Desktop double click keeps its zoom steps; a touch double tap is the judge's above.
 elements["archive-body"].addEventListener("dblclick", () => {
   if (currentMode !== "aa" || lastPointerType === "touch") return;
@@ -5245,15 +5902,21 @@ elements["reset-settings"].addEventListener("click", () => {
   settings = { ...defaultSettings, viewModes: {} };
   saveSettings();
 });
-elements["export-state"].addEventListener("click", () => {
+// Backup v4 (docs/24 §12.4): the reading state, the text library and — when this device has the
+// owner's store — marks, notes and reading sessions, gzip-compressed where the browser can.
+elements["export-state"].addEventListener("click", async () => {
   persistUserState();
-  const blob = new Blob([exportUserState(userState, textLibrary.exportState())], {
-    type: "application/json",
-  });
+  const store = await ownerStore();
+  const records = store ? { annotations: await store.getAll("annotations"), sessions: await store.getAll("sessions") } : null;
+  const json = exportUserState(userState, textLibrary.exportState(), { records });
+  const compressed = typeof CompressionStream === "function";
+  const blob = compressed
+    ? await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"))).blob()
+    : new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `redstm-state-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `redstm-state-${new Date().toISOString().slice(0, 10)}.json${compressed ? ".gz" : ""}`;
   link.click();
   // Some browsers start the download after click() returns; revoking at once can cancel it.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -5280,7 +5943,7 @@ elements["import-state-file"].addEventListener("change", async () => {
   try {
     // Exports are indented, so a full localStorage state (~5MB) can take several MB on disk.
     if (file.size > 16 * 1_048_576) throw new Error("상태 파일은 16MB 이하여야 합니다");
-    pendingImportPlan = planImport(await file.text(), defaultSettings);
+    pendingImportPlan = planImport(await backupText(file), defaultSettings);
     const summary = pendingImportPlan.summary;
     const defaulted = summary.defaultedSettings.length
       ? ` · 기본값 보정 ${summary.defaultedSettings.map((key) => settingLabels[key] ?? key).join(", ")}` : "";
@@ -5290,7 +5953,8 @@ elements["import-state-file"].addEventListener("change", async () => {
       `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}` +
       (summary.textHistory === null ? " · 텍스트 기록 없음(현재 기록 유지)"
         : ` · 텍스트 읽기 ${summary.textHistory} · 텍스트 저장 ${summary.textBookmarks}`) +
-      (summary.shelves ? ` · 분류 ${summary.shelves}` : "") + defaulted;
+      (summary.shelves ? ` · 분류 ${summary.shelves}` : "") +
+      (summary.annotations === null ? "" : ` · 표시·메모 ${summary.annotations} · 독서 기록 ${summary.sessions}(항상 합침)`) + defaulted;
     elements["import-review"].dataset.state = "ready";
     elements["import-review"].hidden = false;
     elements["import-merge"].focus();
@@ -5319,11 +5983,12 @@ async function applyImport(merge) {
     if (pendingImportPlan.text) {
       textLibrary.importState(merge ? mergeTextStates(textLibrary.exportState(), pendingImportPlan.text) : pendingImportPlan.text);
     }
+    const recordsNote = await importRecords(pendingImportPlan.records);
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
     pendingImportPlan = null;
-    elements["import-review-summary"].textContent = merge ? "기록을 합쳐서 가져왔습니다" : "사용자 상태를 가져왔습니다";
+    elements["import-review-summary"].textContent = `${merge ? "기록을 합쳐서 가져왔습니다" : "사용자 상태를 가져왔습니다"}${recordsNote}`;
     elements["import-review"].dataset.state = "success";
     elements["import-apply"].hidden = true;
     elements["import-merge"].hidden = true;
@@ -5334,6 +5999,37 @@ async function applyImport(merge) {
     elements["import-review-summary"].textContent = error.message;
     elements["import-review"].dataset.state = "error";
   }
+}
+// A backup is gzip (.json.gz, v4) or plain JSON (v1–v3, or where CompressionStream was missing).
+async function backupText(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new TextDecoder().decode(bytes);
+  if (typeof DecompressionStream !== "function") throw new Error("이 브라우저는 압축된 백업을 열 수 없습니다");
+  const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  if (text.length > 64 * 1_048_576) throw new Error("백업을 풀면 64MB를 넘습니다");
+  return text;
+}
+
+// Marks, notes and sessions are always merged (T22): a deletion stays deleted, the later edit
+// wins, and nothing here is removed by 덮어쓰기. One transaction, so a failure changes nothing.
+async function importRecords(records) {
+  if (!records || (!records.annotations.length && !records.sessions.length)) return "";
+  const store = await ownerStore();
+  if (!store) return " · 표시·메모·독서 기록은 이 기기 저장소가 없어 가져오지 못했습니다";
+  const annotations = mergeAnnotationRecords(await store.getAll("annotations"), records.annotations);
+  const sessions = mergeSessionRecords(await store.getAll("sessions"), records.sessions);
+  if (!annotations.length && !sessions.length) return " · 표시·메모·독서 기록은 이미 같습니다";
+  try {
+    await store.commit([
+      ...annotations.map((value) => ({ store: "annotations", value })),
+      ...sessions.map((value) => ({ store: "sessions", value })),
+    ]);
+  } catch {
+    return " · 표시·메모·독서 기록을 저장하지 못했습니다(이전 기록은 그대로)";
+  }
+  annotationRecords = await store.getAll("annotations");
+  paintAnnotations();
+  return ` · 표시·메모 ${annotations.length}건 · 독서 기록 ${sessions.length}건 반영`;
 }
 elements["import-apply"].addEventListener("click", () => void applyImport(false));
 elements["import-merge"].addEventListener("click", () => void applyImport(true));
