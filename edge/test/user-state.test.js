@@ -372,3 +372,21 @@ test("imported times with a zone offset are kept as the same instant in UTC", ()
   state.history["write_free21:62068"].readAt = "2026-09-30T00:00:00Z";
   assert.equal(planImport(exportUserState(state), defaults).state.history["write_free21:62068"].readAt, "2026-09-30T00:00:00Z");
 });
+
+test("reading profiles, work exceptions and the auto-scroll speed survive storage and backups", () => {
+  const state = defaultUserState(defaults);
+  state.settings.autoScrollSpeed = 4;
+  state.settings.readingProfiles = [
+    { name: "밤", values: { readerSurface: "ink", readerDim: 30, proseSize: 20, theme: "dark", aaZoom: 2 } },
+    { name: "밤", values: { proseSize: 16 } },
+    { name: "", values: { proseSize: 16 } },
+    { name: "낮", values: { proseSize: 99 } },
+  ];
+  state.settings.workProfiles = { "typemoon:collection:1": "밤", "typemoon:collection:2": "없는 프로필" };
+  const restored = planImport(exportUserState(state), defaults).state.settings;
+  assert.equal(restored.autoScrollSpeed, 4);
+  assert.deepEqual(restored.readingProfiles, [{ name: "밤", values: { proseSize: 20, readerSurface: "ink", readerDim: 30 } }]);
+  assert.deepEqual(restored.workProfiles, { "typemoon:collection:1": "밤" });
+  state.settings.autoScrollSpeed = 11;
+  assert.equal(planImport(exportUserState(state), defaults).state.settings.autoScrollSpeed, undefined);
+});

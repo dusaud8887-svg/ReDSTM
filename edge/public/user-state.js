@@ -38,6 +38,40 @@ function validStablePostId(value) {
   return stablePostIdPattern.test(value);
 }
 
+// A reading profile (DESIGN §10: 낮 · 밤 …) holds these settings; a work may use one by name (이 작품만).
+export const PROFILE_KEYS = [
+  "proseSize", "lineHeight", "proseWidth", "proseMargin", "paragraphSpacing", "textIndent", "proseFont", "proseAlign",
+  "readerSurface", "readerDim", "readerWarm", "readingMode",
+];
+const PROFILE_LIMIT = 6;
+const WORK_PROFILE_LIMIT = 300;
+
+function sanitizeProfiles(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const profiles = [];
+  for (const profile of value) {
+    const name = typeof profile?.name === "string" ? profile.name.trim().slice(0, 12) : "";
+    if (!name || seen.has(name)) continue;
+    const source = isRecord(profile.values) ? profile.values : {};
+    const checked = sanitizeSettings(Object.fromEntries(PROFILE_KEYS.filter((key) => key in source).map((key) => [key, source[key]])));
+    const values = Object.fromEntries(PROFILE_KEYS.filter((key) => key in checked).map((key) => [key, checked[key]]));
+    if (!Object.keys(values).length) continue;
+    seen.add(name);
+    profiles.push({ name, values });
+    if (profiles.length === PROFILE_LIMIT) break;
+  }
+  return profiles;
+}
+
+function sanitizeWorkProfiles(value, profiles) {
+  if (!isRecord(value)) return {};
+  const names = new Set(profiles.map((profile) => profile.name));
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, name]) => key.length > 0 && key.length <= 300 && names.has(name))
+    .slice(0, WORK_PROFILE_LIMIT));
+}
+
 function sanitizeSettings(value, defaults = {}) {
   const source = isRecord(value) ? value : {};
   const fallback = isRecord(defaults) ? defaults : {};
@@ -66,6 +100,13 @@ function sanitizeSettings(value, defaults = {}) {
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),
     (value) => value.toLowerCase());
   pick("aaPreserveStyles", (value) => typeof value === "boolean");
+  pick("autoScrollSpeed", (value) => Number.isInteger(value) && value >= 1 && value <= 10);
+  if ("readingProfiles" in source || "readingProfiles" in fallback) {
+    const profiles = sanitizeProfiles(source.readingProfiles ?? fallback.readingProfiles);
+    if (profiles.length) settings.readingProfiles = profiles;
+    const works = sanitizeWorkProfiles(source.workProfiles ?? fallback.workProfiles, profiles);
+    if (Object.keys(works).length) settings.workProfiles = works;
+  }
   return settings;
 }
 
