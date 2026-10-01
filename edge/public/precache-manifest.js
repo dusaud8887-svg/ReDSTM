@@ -97,6 +97,10 @@ export default [
     "revision": "d3384bb2ed491e9c"
   },
   {
+    "url": "/library.js",
+    "revision": "0279ac09b370d789"
+  },
+  {
     "url": "/list-anchor.js",
     "revision": "672aaa0522624719"
   },
@@ -162,7 +166,7 @@ export default [
   },
   {
     "url": "/store.js",
-    "revision": "f90e8f065682a47b"
+    "revision": "5d73b48d93e89d4e"
   },
   {
     "url": "/styles/aa.css",
@@ -222,7 +226,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "342c7b160ea18837"
+    "revision": "6074387a0cee4ed5"
   },
   {
     "url": "/work-header.js",

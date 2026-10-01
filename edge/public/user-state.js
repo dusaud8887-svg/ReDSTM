@@ -1,4 +1,5 @@
 import { mergeShelfState, sanitizeShelfState } from "./text-shelves.js";
+import { sanitizeLibrary, sanitizeWorkStyle } from "./library.js";
 import { sanitizeLocator } from "./text-model.js";
 
 export const STATE_KEY = "redstm.userState.v2";
@@ -391,7 +392,10 @@ function sanitizeSession(value) {
 export function sanitizeRecords(value) {
   const source = isRecord(value) ? value : {};
   const list = (items, sanitize) => (Array.isArray(items) ? items.map(sanitize).filter(Boolean) : []);
-  return { annotations: list(source.annotations, sanitizeAnnotation), sessions: list(source.sessions, sanitizeSession) };
+  return { annotations: list(source.annotations, sanitizeAnnotation), sessions: list(source.sessions, sanitizeSession),
+    ...(Array.isArray(source.works) ? { works: list(source.works, sanitizeWorkStyle) } : {}),
+    ...(isRecord(source.library) ? { library: sanitizeLibrary(source.library) } : {}),
+  };
 }
 
 // Marks and notes from a backup, merged into this device's (T22). A deletion is permanent: once

@@ -1,4 +1,4 @@
-const KEYS = { annotations: "id", sessions: "id", works: "workKey", offline: "workKey" };
+const KEYS = { annotations: "id", sessions: "id", works: "workKey", offline: "workKey", meta: "key" };
 
 export function storeName(ownerHash) {
   if (typeof ownerHash !== "string" || !/^[a-f0-9]{16}$/.test(ownerHash)) throw new TypeError("검증된 계정 식별자가 필요합니다");
@@ -13,6 +13,7 @@ export function planChanges(changes, createdAt = new Date().toISOString()) {
     const key = change.value === null ? change.key : change.value?.[keyPath];
     if (typeof key !== "string" || !key || key.length > 300) throw new TypeError("잘못된 기록 식별자");
     if (change.baseRev !== undefined && (!Number.isSafeInteger(change.baseRev) || change.baseRev < 0)) throw new TypeError("잘못된 revision");
+    if (change.store === "meta" && key !== "library") throw new TypeError("지원하지 않는 사용자 설정");
     const value = structuredClone(change.value);
     return { store: change.store, key, value, op: {
       opId: crypto.randomUUID(), key: `${change.store}:${key}`, value,
