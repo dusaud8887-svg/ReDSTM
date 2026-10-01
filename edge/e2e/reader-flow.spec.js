@@ -1,3 +1,5 @@
+import { gunzipSync } from "node:zlib";
+
 import { expect, test } from "@playwright/test";
 
 import { arcalivePost, arcaliveWork, novelWork, useTextArchive } from "./text-fixture.js";
@@ -1408,7 +1410,9 @@ test("Backup v3 carries TypeMoon and text records, and 합쳐서 가져오기 me
   });
   await page.goto("/settings");
   const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
-  const backup = JSON.parse(await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks).toString("utf8")));
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  // Without the owner's store there are no records, so the file stays v3; it is still gzip.
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
   expect(backup).toMatchObject({ format: "redstm-backup", schema_version: 3 });
   expect(backup.typemoon.settings).toBeTruthy();
   expect(backup.text.history["novel:novel:toki:1:1-1"].progress).toBe(1);
@@ -1920,6 +1924,47 @@ test("Reading time shows in 기록 › 통계, the Home week and today's excerpt
   await expect(page.locator("#home-week-bars li")).toHaveCount(7);
   await expect(page.locator("#home-excerpt")).toBeVisible();
   await expect(page.locator("#home-excerpt .excerpt-quote")).toHaveText("2편 본문 7");
+});
+
+// P3-5 / T22: a mark made in one tab paints in another; backup v4 is a .json.gz with the marks,
+// notes and sessions; importing it into an empty store brings them back on the page.
+test("Marks reach another tab, ride in a v4 .json.gz backup and come back from it", async ({ page }) => {
+  const me = (target) => target.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await me(page);
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 1);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 2"]);
+  const other = await page.context().newPage();
+  await me(other);
+  await useLongCollection(other, 3);
+  await other.goto("/read/board_a/2");
+  await expect.poll(() => highlightTexts(other, "redstm-mark")).toEqual(["2편 본문 2"]);
+  await selectParagraph(page, 3);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(other, "redstm-mark").then((texts) => texts.sort())).toEqual(["2편 본문 2", "2편 본문 4"]);
+  await other.close();
+
+  await page.goto("/settings");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
+  expect(download.suggestedFilename()).toMatch(/\.json\.gz$/);
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
+  expect(backup.schema_version).toBe(4);
+  expect(backup.records.annotations.map((record) => record.quote).sort()).toEqual(["2편 본문 2", "2편 본문 4"]);
+
+  // A device without these records: the owner's database is gone, then the backup comes in.
+  await page.goto("/settings");
+  await page.evaluate(() => new Promise((resolve) => { indexedDB.deleteDatabase("redstm:0123456789abcdef").onsuccess = resolve; }));
+  await page.reload();
+  await page.locator("#import-state-file").setInputFiles({ name: "redstm-state.json.gz", mimeType: "application/gzip", buffer: raw });
+  await expect(page.locator("#import-review-summary")).toContainText("표시·메모 2");
+  await page.locator("#import-merge").click();
+  await expect(page.locator("#import-review-summary")).toContainText("표시·메모 2건");
+  await page.goto("/read/board_a/2");
+  await expect.poll(() => highlightTexts(page, "redstm-mark").then((texts) => texts.sort())).toEqual(["2편 본문 2", "2편 본문 4"]);
 });
 
 test("Without a verified owner, marking says it cannot store anything", async ({ page }) => {

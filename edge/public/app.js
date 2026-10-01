@@ -2,6 +2,8 @@ import {
   STATE_KEY,
   defaultUserState,
   exportUserState,
+  mergeAnnotationRecords,
+  mergeSessionRecords,
   mergeTextStates,
   mergeUserStates,
   migrateLegacyState,
@@ -5900,15 +5902,21 @@ elements["reset-settings"].addEventListener("click", () => {
   settings = { ...defaultSettings, viewModes: {} };
   saveSettings();
 });
-elements["export-state"].addEventListener("click", () => {
+// Backup v4 (docs/24 §12.4): the reading state, the text library and — when this device has the
+// owner's store — marks, notes and reading sessions, gzip-compressed where the browser can.
+elements["export-state"].addEventListener("click", async () => {
   persistUserState();
-  const blob = new Blob([exportUserState(userState, textLibrary.exportState())], {
-    type: "application/json",
-  });
+  const store = await ownerStore();
+  const records = store ? { annotations: await store.getAll("annotations"), sessions: await store.getAll("sessions") } : null;
+  const json = exportUserState(userState, textLibrary.exportState(), { records });
+  const compressed = typeof CompressionStream === "function";
+  const blob = compressed
+    ? await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"))).blob()
+    : new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `redstm-state-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `redstm-state-${new Date().toISOString().slice(0, 10)}.json${compressed ? ".gz" : ""}`;
   link.click();
   // Some browsers start the download after click() returns; revoking at once can cancel it.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -5935,7 +5943,7 @@ elements["import-state-file"].addEventListener("change", async () => {
   try {
     // Exports are indented, so a full localStorage state (~5MB) can take several MB on disk.
     if (file.size > 16 * 1_048_576) throw new Error("상태 파일은 16MB 이하여야 합니다");
-    pendingImportPlan = planImport(await file.text(), defaultSettings);
+    pendingImportPlan = planImport(await backupText(file), defaultSettings);
     const summary = pendingImportPlan.summary;
     const defaulted = summary.defaultedSettings.length
       ? ` · 기본값 보정 ${summary.defaultedSettings.map((key) => settingLabels[key] ?? key).join(", ")}` : "";
@@ -5945,7 +5953,8 @@ elements["import-state-file"].addEventListener("change", async () => {
       `읽기 ${summary.history} · 저장 ${summary.bookmarks} · 위치 ${summary.scroll} · 보기 ${summary.viewModes}` +
       (summary.textHistory === null ? " · 텍스트 기록 없음(현재 기록 유지)"
         : ` · 텍스트 읽기 ${summary.textHistory} · 텍스트 저장 ${summary.textBookmarks}`) +
-      (summary.shelves ? ` · 분류 ${summary.shelves}` : "") + defaulted;
+      (summary.shelves ? ` · 분류 ${summary.shelves}` : "") +
+      (summary.annotations === null ? "" : ` · 표시·메모 ${summary.annotations} · 독서 기록 ${summary.sessions}(항상 합침)`) + defaulted;
     elements["import-review"].dataset.state = "ready";
     elements["import-review"].hidden = false;
     elements["import-merge"].focus();
@@ -5974,11 +5983,12 @@ async function applyImport(merge) {
     if (pendingImportPlan.text) {
       textLibrary.importState(merge ? mergeTextStates(textLibrary.exportState(), pendingImportPlan.text) : pendingImportPlan.text);
     }
+    const recordsNote = await importRecords(pendingImportPlan.records);
     await hydrateSavedEntries();
     applySettings();
     renderCurrentView();
     pendingImportPlan = null;
-    elements["import-review-summary"].textContent = merge ? "기록을 합쳐서 가져왔습니다" : "사용자 상태를 가져왔습니다";
+    elements["import-review-summary"].textContent = `${merge ? "기록을 합쳐서 가져왔습니다" : "사용자 상태를 가져왔습니다"}${recordsNote}`;
     elements["import-review"].dataset.state = "success";
     elements["import-apply"].hidden = true;
     elements["import-merge"].hidden = true;
@@ -5989,6 +5999,37 @@ async function applyImport(merge) {
     elements["import-review-summary"].textContent = error.message;
     elements["import-review"].dataset.state = "error";
   }
+}
+// A backup is gzip (.json.gz, v4) or plain JSON (v1–v3, or where CompressionStream was missing).
+async function backupText(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new TextDecoder().decode(bytes);
+  if (typeof DecompressionStream !== "function") throw new Error("이 브라우저는 압축된 백업을 열 수 없습니다");
+  const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  if (text.length > 64 * 1_048_576) throw new Error("백업을 풀면 64MB를 넘습니다");
+  return text;
+}
+
+// Marks, notes and sessions are always merged (T22): a deletion stays deleted, the later edit
+// wins, and nothing here is removed by 덮어쓰기. One transaction, so a failure changes nothing.
+async function importRecords(records) {
+  if (!records || (!records.annotations.length && !records.sessions.length)) return "";
+  const store = await ownerStore();
+  if (!store) return " · 표시·메모·독서 기록은 이 기기 저장소가 없어 가져오지 못했습니다";
+  const annotations = mergeAnnotationRecords(await store.getAll("annotations"), records.annotations);
+  const sessions = mergeSessionRecords(await store.getAll("sessions"), records.sessions);
+  if (!annotations.length && !sessions.length) return " · 표시·메모·독서 기록은 이미 같습니다";
+  try {
+    await store.commit([
+      ...annotations.map((value) => ({ store: "annotations", value })),
+      ...sessions.map((value) => ({ store: "sessions", value })),
+    ]);
+  } catch {
+    return " · 표시·메모·독서 기록을 저장하지 못했습니다(이전 기록은 그대로)";
+  }
+  annotationRecords = await store.getAll("annotations");
+  paintAnnotations();
+  return ` · 표시·메모 ${annotations.length}건 · 독서 기록 ${sessions.length}건 반영`;
 }
 elements["import-apply"].addEventListener("click", () => void applyImport(false));
 elements["import-merge"].addEventListener("click", () => void applyImport(true));
