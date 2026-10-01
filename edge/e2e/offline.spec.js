@@ -143,3 +143,14 @@ test("Another account's namespace stays closed and can be deleted from settings"
   expect(left).not.toContain("redstm:0123456789abcdef");
   expect(Object.keys(await cachedPaths(page)).filter((name) => name.endsWith("-0123456789abcdef"))).toEqual([]);
 });
+
+// P4-4 / T24: 앱 캐시 지우기 removes the worker and every cache it filled; the records stay.
+test("앱 캐시 지우기 unregisters the worker and empties its caches", async ({ page, context }) => {
+  await saveCollection(page, context, "0123456789abcdef");
+  await page.goto("/settings");
+  page.once("dialog", (dialog) => dialog.accept());
+  await Promise.all([page.waitForEvent("load"), page.locator("#reset-app-cache").click()]);
+  await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter((name) => name.includes("offline-v1")).length)).toBe(0);
+  // The owner's database (marks, notes, the saved-work records) is not part of the cache.
+  expect(await page.evaluate(async () => (await indexedDB.databases()).map((database) => database.name))).toContain("redstm:0123456789abcdef");
+});

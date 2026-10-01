@@ -1478,7 +1478,8 @@ test("restores collection navigation and keeps list fallback", async ({ page }) 
   await expect(page.locator("#collection-context")).toHaveText("테스트 연작 · 3/3 · 1편 보존 불가");
 });
 
-test("publishes install metadata without registering offline behavior", async ({ page }) => {
+// The service worker itself is covered in offline.spec.js (this project blocks workers).
+test("publishes install metadata and shortcuts", async ({ page }) => {
   await useCollectionFixture(page);
   await page.goto("/");
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "/manifest.webmanifest");
@@ -1488,9 +1489,9 @@ test("publishes install metadata without registering offline behavior", async ({
   const manifest = await response.json();
   expect(manifest.display).toBe("standalone");
   expect(manifest.icons.map((icon) => icon.sizes)).toEqual(expect.arrayContaining(["192x192", "512x512", "any"]));
-  expect(manifest.shortcuts.map((shortcut) => shortcut.url)).toEqual(["/?continue=1", "/search", "/saved", "/text"]);
-  expect(await page.evaluate(async () => "serviceWorker" in navigator
-    ? (await navigator.serviceWorker.getRegistrations()).length : 0)).toBe(0);
+  expect(manifest.shortcuts.map((shortcut) => shortcut.url)).toEqual(["/?continue=1", "/search", "/saved", "/saved?view=excerpts", "/text"]);
+  expect(manifest.shortcuts.map((shortcut) => shortcut.name)).toContain("기록");
+  expect(manifest.theme_color).toBe("#1e6b5f");
 });
 
 test("searches selected fields with AND or OR token matching and preserves the URL", async ({ page }) => {

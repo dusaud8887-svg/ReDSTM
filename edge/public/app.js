@@ -2340,6 +2340,7 @@ function cancelReaderSelection() {
 }
 
 function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true } = {}) {
+  if (destination === "library") applyUpdateAtSafePoint();
   if (destination === "settings") {
     openSettings();
     document.title = "읽기 설정 — ReDSTM";
@@ -3612,6 +3613,7 @@ async function updateCollection() {
 // navigation: "push" enters the Reader from a list or Home, "replace" moves within the same
 // reading session (previous/next, another row of a visible side list), "route" follows history.
 async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
+  if (navigation === "push") applyUpdateAtSafePoint();
   const viewId = ++readerViewId;
   if (currentSummary) persistReadingPosition();
   readerSession.cancelPendingWork();
@@ -6100,6 +6102,25 @@ async function renderOfflineStorage() {
   line.textContent = `이 기기에 저장한 작품 ${works.length}개${used}. 저장한 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
 }
 
+// A new version never replaces the running one by itself (no automatic skipWaiting): it is
+// applied at a safe point — going to 서재 or opening another document — after the reading place is
+// saved, or at once from the toast; the page then reloads, so old and new modules never mix (T23).
+let updateReady = false;
+function applyUpdateAtSafePoint() {
+  if (!updateReady) return false;
+  if (currentSummary) persistReadingPosition();
+  persistUserState();
+  return offline.applyUpdate();
+}
+document.querySelector("#update-apply").addEventListener("click", () => {
+  overlays.hideToast(document.querySelector("#update-ready"));
+  applyUpdateAtSafePoint();
+});
+document.querySelector("#reset-app-cache").addEventListener("click", async () => {
+  if (!confirm("앱 캐시와 이 기기에 저장한 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
+  await offline.reset();
+  location.reload();
+});
 let authSheetClosed = false;
 elements["auth-dialog"].addEventListener("close", () => { authSheetClosed = true; });
 document.querySelector("#auth-login").addEventListener("click", () => location.reload());
@@ -6420,6 +6441,10 @@ const offline = createOffline({
     if (!authSheetClosed && !elements["auth-dialog"].open) elements["auth-dialog"].showModal();
   },
   onSave: (message) => void offlineProgress(message),
+  onUpdateReady: () => {
+    updateReady = true;
+    overlays.showToast(document.querySelector("#update-ready"));
+  },
 });
 const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
 if (document.readyState === "complete") startOffline();
