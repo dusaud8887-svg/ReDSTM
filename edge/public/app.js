@@ -39,7 +39,7 @@ import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
 import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
 import { createMiniBar } from "/shell.js";
-import { fillContinueCard, shelfCard } from "/home.js";
+import { excerptOfTheDay, fillContinueCard, fillWeekBars, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
@@ -48,7 +48,8 @@ import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
-import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard } from "/share-canvas.js";
+import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
+import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
 import { createTextModel, modelOffset } from "/text-model.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
@@ -97,7 +98,8 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "excerpts-export", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
+    "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
+    "home-excerpt", "home-excerpt-list", "home-week", "home-week-total", "home-week-bars", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
@@ -852,6 +854,7 @@ function renderCover(
   renderHomeBoards();
   void renderReadingWorks();
   void renderDiscovery();
+  void renderHomeRecords();
   updateShellMode();
 }
 
@@ -1228,6 +1231,7 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    finishReadingSession();
     if (previousSource) readerSession.cancelPendingWork();
     readerNavigation = null;
     listContext = null;
@@ -1271,7 +1275,9 @@ function beginReaderDocument(documentKey, workId, rev) {
   paged.page = 0;
   paged.anchor = null;
   hideSelectionMenu();
-  readerSession.frame(() => void annotationStore().then(() => {
+  finishReadingSession();
+  readerSession.frame(startReadingSession);
+  readerSession.frame(() => void ownerStore().then(() => {
     paintAnnotations();
     jumpToPendingExcerpt();
   }));
@@ -1929,6 +1935,7 @@ function savedUrl(state = currentSearchState(), view = currentView) {
   if (view === "history") params.set("view", "recent");
   if (view === "reading") params.set("view", "reading");
   if (view === "excerpts") params.set("view", "excerpts");
+  if (view === "stats") params.set("view", "stats");
   if (state.query) params.set("q", state.query);
   const query = params.toString();
   return query ? `/saved?${query}` : "/saved";
@@ -1961,6 +1968,7 @@ function applyCatalogRoute(destination) {
   currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
     destination === "bookmarks" && params.get("view") === "reading" ? "reading" :
     destination === "bookmarks" && params.get("view") === "excerpts" ? "excerpts" :
+    destination === "bookmarks" && params.get("view") === "stats" ? "stats" :
     destination === "bookmarks" ? "bookmarks" : "all";
 }
 
@@ -2008,6 +2016,9 @@ function updateDestinationLayout() {
   }
   document.querySelector(".saved-tabs").hidden = !saved;
   elements["excerpts-export"].hidden = !saved || currentView !== "excerpts";
+  elements["stats-panel"].hidden = !saved || currentView !== "stats";
+  elements["result-list"].hidden = saved && currentView === "stats";
+  elements["catalog-search-row"].classList.toggle("stats-view", saved && currentView === "stats");
   // 검색 범위 내 기록: the same words in 기록 › 발췌 (B4).
   document.querySelector("[data-records-scope]").hidden = !searching;
   elements["catalog-search-row"].hidden = !searching && !saved && !text;
@@ -2716,6 +2727,7 @@ function renderCurrentView() {
   if (currentDestination === "text") return void textLibrary.searchChanged(elements["search-input"].value);
   if (currentView === "reading") return void renderReadingView();
   if (currentView === "excerpts") return void renderExcerptsView();
+  if (currentView === "stats") return void renderStatsView();
   if (currentScope === "collections") return void renderCollectionCatalog();
   if (currentView === "all") return requestSearch();
   const entries = currentView === "history" ? historyEntries : bookmarks;
@@ -3225,6 +3237,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
       `읽음 ${finishedEntries.length.toLocaleString("ko-KR")}/${available.length.toLocaleString("ko-KR")}`,
       readingEntries.length ? `읽는 중 ${readingEntries.length}` : null,
     ].filter(Boolean).join(" · ");
+    void showWorkReadingTime(workKey({ source: "typemoon", id: collection.id }), elements["collection-meta"]);
     const skippedUnread = available.filter((entry) =>
       postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) !== "finished");
     const continueEntry = continueTarget.kind === "finished" || continueTarget.kind === "empty" ? null : continueTarget.entry;
@@ -5242,13 +5255,13 @@ document.addEventListener("fullscreenchange", () => {
 // ---- Marks and notes (docs/24 §8.13, §12.4) ---------------------------------------------------
 // Records live in the owner's IndexedDB namespace (redstm:<ownerHash>, from /api/v1/me). Without a
 // verified owner there is no store, and marking says so instead of writing somewhere shared.
-let annotationDb = null;
+let ownerDb = null;
 let annotationRecords = [];
 let annotationModel = null;
 let placedAnnotations = [];
 
-function annotationStore() {
-  annotationDb ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
+function ownerStore() {
+  ownerDb ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
     .then((response) => (response.ok ? response.json() : null))
     .then((me) => (me?.ownerHash ? openStore(me.ownerHash) : null))
     .then(async (store) => {
@@ -5262,7 +5275,7 @@ function annotationStore() {
       return store;
     })
     .catch(() => null);
-  return annotationDb;
+  return ownerDb;
 }
 
 // Marks are Custom Highlights over ranges resolved from their locators; the body DOM never changes.
@@ -5297,7 +5310,7 @@ function annotationAtPoint(x, y) {
 }
 
 async function saveAnnotation(record, message) {
-  const store = await annotationStore();
+  const store = await ownerStore();
   if (!store) return void showReaderFeedback("이 기기에 기록을 저장할 수 없어요", 2400);
   try {
     await store.commit([{ store: "annotations", value: record }]);
@@ -5488,6 +5501,9 @@ async function renderShare() {
         document.fonts.load('600 32px "Pretendard Variable"', `${job.work}${job.title}ReDSTM이어짐`),
       ]);
       drawExcerptCard(context, { ...job, tone: shareTone });
+    } else if (job.kind === "stats") {
+      await Promise.all([document.fonts.load("96px MaruBuri", job.totalLabel), document.fonts.load('600 32px "Pretendard Variable"', "이번 주 기록 연속 일 월화수목금토일")]);
+      drawStatsCard(context, { days: job.days, total: job.totalLabel, streak: job.streak, finished: job.finished });
     } else {
       await document.fonts.load(`${job.fontSize}px Saitamaar`, job.lines.flat().map((run) => run.text).join(""));
       drawAaScene(context, job);
@@ -5511,6 +5527,7 @@ function shareText() {
   const job = shareJob;
   const where = [job.work, job.title].filter(Boolean).join(" › ");
   const credit = elements["share-credit"].checked ? `\n\n${CREDIT}` : "";
+  if (job.kind === "stats") return `이번 주 ${job.totalLabel} 읽음 · 연속 ${job.streak}일 — ReDSTM`;
   return job.kind === "excerpt" ? `“${job.quote}”\n— ${where}${credit}` : `${where}${credit}`.trim();
 }
 
@@ -5603,7 +5620,7 @@ elements["share-dialog"].addEventListener("close", () => { shareJob = null; });
 // resolves opens at the reading place and says so instead of jumping to a first match.
 let pendingExcerpt = null;
 async function renderExcerptsView() {
-  const store = await annotationStore();
+  const store = await ownerStore();
   if (currentView !== "excerpts") return;
   const records = excerptList(annotationRecords, elements["search-input"].value);
   renderedResults = [];
@@ -5676,6 +5693,175 @@ elements["excerpts-export"].addEventListener("click", () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+// ---- Reading sessions and statistics (DESIGN §9) -----------------------------------------------
+// A session is one document on screen: spans of activity (an input keeps it active for a minute,
+// leaving the screen stops it), the characters moved through and whether the last preserved
+// chapter of a work was reached. It is written to the owner's store when it pauses or ends.
+let readingSession = null;
+let sessionTimer = 0;
+
+function sessionWorkKey() {
+  if (currentCollection?.id) return workKey({ source: "typemoon", id: currentCollection.id });
+  return readerSession.workId || readerSession.documentKey;
+}
+
+function startReadingSession() {
+  if (!readerSource || !readerSession.documentKey) return;
+  const progress = bodyProgress();
+  readingSession = {
+    id: crypto.randomUUID(), workKey: sessionWorkKey(), documentId: readerSession.documentKey, day: localDay(Date.now()),
+    start: Date.now(), spans: [], length: elements["archive-body"].textContent.length, from: progress, furthest: progress, endOfWork: false,
+  };
+}
+
+function noteReadingActivity() {
+  const session = readingSession;
+  if (!session || document.visibilityState !== "visible" || session.documentId !== readerSession.documentKey) return;
+  extendSpans(session.spans, Date.now());
+  session.furthest = Math.max(session.furthest, bodyProgress());
+  const nav = readerNavigation;
+  if (session.furthest >= 0.98 && nav && !nav.pending && !nav.next && (nav.run || nav.hasToc)) session.endOfWork = true;
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => void saveReadingSession(session), 30_000);
+}
+
+function sessionRecord(session, deviceId, now = Date.now()) {
+  const spans = session.spans.map(([start, end]) => [start, Math.min(end, now)]).filter(([start, end]) => end > start);
+  return {
+    id: session.id, deviceId, workKey: session.workKey, documentId: session.documentId, day: session.day,
+    start: session.start, end: spans.at(-1)?.[1] ?? session.start, spans, activeMs: unionLength(spans),
+    chars: Math.round(Math.max(0, session.furthest - session.from) * session.length), endOfWork: session.endOfWork,
+  };
+}
+
+async function saveReadingSession(session) {
+  if (!session?.spans.length) return;
+  const store = await ownerStore();
+  if (!store) return;
+  try {
+    await store.commit([{ store: "sessions", value: sessionRecord(session, store.deviceId) }]);
+  } catch { /* the next pause tries again */ }
+}
+
+function finishReadingSession() {
+  const session = readingSession;
+  readingSession = null;
+  clearTimeout(sessionTimer);
+  if (!session) return;
+  closeSpans(session.spans, Date.now());
+  void saveReadingSession(session);
+}
+
+for (const type of ["scroll", "pointerdown", "wheel"]) elements["reader-pane"].addEventListener(type, noteReadingActivity, { passive: true });
+document.addEventListener("keydown", () => { if (document.body.classList.contains("reader-open")) noteReadingActivity(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" || !readingSession) return;
+  closeSpans(readingSession.spans, Date.now());
+  void saveReadingSession(readingSession);
+});
+addEventListener("pagehide", () => {
+  if (!readingSession) return;
+  closeSpans(readingSession.spans, Date.now());
+  void saveReadingSession(readingSession);
+});
+
+// Every stored session plus the one being read now.
+async function allSessions() {
+  const store = await ownerStore();
+  if (!store) return null;
+  const sessions = await store.getAll("sessions");
+  if (readingSession) sessions.push(sessionRecord(readingSession, store.deviceId));
+  return sessions;
+}
+
+let statsSummary = null;
+async function renderStatsView() {
+  const sessions = await allSessions();
+  if (currentView !== "stats") return;
+  renderedResults = [];
+  resultTotal = 0;
+  elements["search-empty"].hidden = true;
+  updateLoadMore();
+  if (!sessions) {
+    elements["result-status"].textContent = "이 기기에서 기록 저장소를 열 수 없습니다";
+    elements["stats-panel"].hidden = true;
+    return;
+  }
+  const now = Date.now();
+  const daily = dailyReading(sessions, now);
+  const today = localDay(now);
+  const date = new Date(now);
+  const cells = monthCells(daily, date.getFullYear(), date.getMonth() + 1);
+  const best = Math.max(30 * 60_000, ...cells.filter(Boolean).map((cell) => cell.milliseconds));
+  const todayMs = daily.get(today) ?? 0;
+  elements["stats-today"].textContent = minutesLabel(todayMs);
+  requestAnimationFrame(() => elements["stats-ring"].style.setProperty("--ring", String(Math.min(1, todayMs / best))));
+  const streak = readingStreak(daily, today);
+  const finished = finishedWorks(sessions);
+  elements["stats-streak"].textContent = `${streak}일`;
+  elements["stats-finished"].textContent = finished.toLocaleString("ko-KR");
+  elements["stats-chars"].textContent = `${charactersRead(sessions).toLocaleString("ko-KR")}자`;
+  elements["stats-month-title"].textContent = `${date.getMonth() + 1}월`;
+  elements["stats-heat"].replaceChildren(...cells.map((cell) => {
+    const item = document.createElement("li");
+    if (!cell) {
+      item.className = "empty";
+      item.ariaHidden = "true";
+      return item;
+    }
+    item.className = `level-${cell.level}${cell.day === today ? " today" : ""}`;
+    item.ariaLabel = `${date.getMonth() + 1}월 ${cell.date}일 ${minutesLabel(cell.milliseconds)}`;
+    return item;
+  }));
+  statsSummary = { ...weekSummary(daily, today), streak, finished };
+  elements["stats-share"].disabled = !statsSummary.total;
+  elements["result-status"].textContent = "통계 · 이 기기와 같은 계정 기록";
+}
+
+elements["stats-share"].addEventListener("click", () => {
+  if (!statsSummary?.total) return;
+  void openShare({ kind: "stats", ...statsSummary, totalLabel: minutesLabel(statsSummary.total), work: "", title: "" });
+});
+
+// Home: 오늘의 발췌 and 이번 주 기록, each hidden while it has nothing to show.
+let homeExcerptOffset = 0;
+async function renderHomeRecords() {
+  const sessions = await allSessions();
+  if (currentDestination !== "library") return;
+  const records = excerptList(annotationRecords);
+  const today = localDay(Date.now());
+  const record = excerptOfTheDay(records, today, homeExcerptOffset);
+  elements["home-excerpt"].hidden = !record;
+  elements["home-excerpt-list"].replaceChildren(...(record ? [excerptElement(record)] : []));
+  document.querySelector("#home-excerpt-next").hidden = records.length < 2;
+  const week = sessions ? weekSummary(dailyReading(sessions), today) : null;
+  elements["home-week"].hidden = !week || week.total < 60_000;
+  if (!week) return;
+  elements["home-week-total"].textContent = `${minutesLabel(week.total)} · ${week.activeDays}일 읽음`;
+  fillWeekBars(elements["home-week-bars"], week.days);
+}
+document.querySelector("#home-excerpt-next").addEventListener("click", () => {
+  homeExcerptOffset += 1;
+  void renderHomeRecords();
+});
+elements["home-excerpt-list"].addEventListener("click", (event) => {
+  const card = event.target.closest("[data-excerpt-id]");
+  if (card) openExcerpt(card.dataset.excerptId);
+});
+document.querySelector("#home-week-all").addEventListener("click", () => {
+  history.pushState({ redstmSaved: { view: "stats" } }, "", "/saved?view=stats");
+  void handleRoute();
+});
+
+// The time spent in a work, added to its header line once the sessions are read.
+async function showWorkReadingTime(key, element) {
+  const sessions = await allSessions();
+  const spent = sessions ? workReading(sessions, key) : 0;
+  if (spent < 60_000 || element.dataset.readingTime === key) return;
+  element.dataset.readingTime = key;
+  element.textContent += ` · 읽은 시간(추정) ${minutesLabel(spent)}`;
+}
+
 // Leaving search clears its conditions (showDestination), so the words are put back afterwards.
 document.querySelector("[data-records-scope]").addEventListener("click", async () => {
   const query = elements["search-input"].value.trim();

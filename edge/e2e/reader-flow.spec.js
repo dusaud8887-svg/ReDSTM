@@ -1881,6 +1881,47 @@ test("Share cards are drawn ahead and still share after waiting; AA lines become
   })).toBe(true);
 });
 
+// P3-4 (DESIGN §9): five minutes of reading become today's 읽은 시간(추정), a streak, the month's
+// heat map, the Home week and 오늘의 발췌; the stats card shares through the same sheet.
+test("Reading time shows in 기록 › 통계, the Home week and today's excerpt", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-10-01T09:00:00") });
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 6);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 7"]);
+  for (let step = 0; step < 10; step += 1) {
+    await page.locator("#reader-pane").evaluate((pane) => pane.scrollBy(0, 30));
+    await page.clock.fastForward(30_000);
+  }
+  const go = (path) => page.evaluate((target) => {
+    history.pushState({}, "", target);
+    dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+  }, path);
+  await go("/saved?view=stats");
+  await expect(page.locator("#stats-panel")).toBeVisible();
+  await expect(page.locator("#result-list")).toBeHidden();
+  await expect(page.locator("#stats-today")).toHaveText(/^[56]분$/);
+  await expect(page.locator("#stats-streak")).toHaveText("1일");
+  await expect(page.locator("#stats-month-title")).toHaveText("10월");
+  await expect(page.locator("#stats-heat li.today")).toHaveClass(/level-1/);
+  await expect(page.locator("#stats-heat li.today")).toHaveAttribute("aria-label", /10월 1일 [56]분/);
+  await expect(page.locator(".stats-note")).toHaveText("보존된 회차 기준");
+  await page.locator("#stats-share").click();
+  await expect(page.locator("#share-dialog")).toBeVisible();
+  await expect(page.locator("#share-send")).toBeEnabled();
+  await expect(page.locator("#share-tones")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await go("/");
+  await expect(page.locator("#home-week")).toBeVisible();
+  await expect(page.locator("#home-week-total")).toHaveText(/^[56]분 · 1일 읽음$/);
+  await expect(page.locator("#home-week-bars li")).toHaveCount(7);
+  await expect(page.locator("#home-excerpt")).toBeVisible();
+  await expect(page.locator("#home-excerpt .excerpt-quote")).toHaveText("2편 본문 7");
+});
+
 test("Without a verified owner, marking says it cannot store anything", async ({ page }) => {
   await useLongCollection(page, 3);
   await page.goto("/read/board_a/2");

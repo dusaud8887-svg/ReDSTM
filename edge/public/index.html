@@ -138,6 +138,7 @@
             <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장</button>
             <button type="button" data-view="history" aria-pressed="false">최근</button>
             <button type="button" data-view="excerpts" aria-pressed="false">발췌</button>
+            <button type="button" data-view="stats" aria-pressed="false">통계</button>
           </nav>
           <button class="excerpts-export" id="excerpts-export" type="button" hidden>Markdown으로 내보내기</button>
           <div class="catalog-search-row" id="catalog-search-row" hidden>
@@ -203,6 +204,20 @@
             <button type="button" id="search-empty-browse" data-destination="browse">둘러보기에서 훑기</button>
             <ol class="recent-queries" id="recent-queries" hidden></ol>
           </div>
+          <section class="stats-panel" id="stats-panel" aria-label="독서 통계" hidden>
+            <div class="stats-top">
+              <div class="stats-ring" id="stats-ring"><strong id="stats-today">0분</strong><small>오늘 읽은 시간(추정)</small></div>
+              <dl class="stats-figures">
+                <div><dt>연속</dt><dd id="stats-streak">0일</dd></div>
+                <div><dt>끝까지 읽은 작품</dt><dd id="stats-finished">0</dd><dd class="stats-note">보존된 회차 기준</dd></div>
+                <div><dt>읽은 글자</dt><dd id="stats-chars">0자</dd></div>
+              </dl>
+            </div>
+            <h3 class="stats-month" id="stats-month-title"></h3>
+            <ol class="stats-heat" id="stats-heat" aria-labelledby="stats-month-title"></ol>
+            <p class="stats-help">읽은 시간은 본문이 화면에 있고 1분 안에 스크롤·탭·키 입력이 있던 시간을 더한 추정치입니다. 같은 시각의 여러 탭·기기는 한 번만 셉니다. 하루는 이 기기의 자정 기준이고, 읽기를 시작한 날에 넣습니다.</p>
+            <button class="stats-share" id="stats-share" type="button">기록 카드 공유</button>
+          </section>
           <ol class="result-list" id="result-list"></ol>
           <div class="search-widen" id="search-widen" hidden></div>
           <button class="result-more" id="result-more" type="button" hidden>더 보기</button>
@@ -261,6 +276,15 @@
               <h3 id="discover-day-title">이날의 기록</h3>
               <ol id="discover-day"></ol>
             </div>
+          </section>
+          <section class="home-excerpt" id="home-excerpt" aria-labelledby="home-excerpt-title" hidden>
+            <header><h2 id="home-excerpt-title">오늘의 발췌</h2><button id="home-excerpt-next" type="button">다른 발췌</button></header>
+            <ol class="home-excerpt-list" id="home-excerpt-list"></ol>
+          </section>
+          <section class="home-week" id="home-week" aria-labelledby="home-week-title" hidden>
+            <header><h2 id="home-week-title">이번 주 기록</h2><button id="home-week-all" type="button">통계</button></header>
+            <p class="home-week-total" id="home-week-total"></p>
+            <ol class="week-bars" id="home-week-bars"></ol>
           </section>
           <div class="home-grid">
             <section><header><h2>최근 게시된 글</h2><button id="browse-all" type="button">둘러보기</button></header><ol id="latest-list"></ol></section>

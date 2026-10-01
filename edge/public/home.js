@@ -36,6 +36,32 @@ export function fillContinueCard({ cover, quote, when }, { title, source, hueKey
 }
 
 const relative = new Intl.RelativeTimeFormat("ko", { numeric: "auto" });
+// 이번 주 기록: one bar per day, Monday first, heights relative to the week's longest day.
+export function fillWeekBars(list, days) {
+  const longest = Math.max(1, ...days.map((day) => day.milliseconds));
+  const labels = ["월", "화", "수", "목", "금", "토", "일"];
+  list.replaceChildren(...days.map((day, index) => {
+    const item = document.createElement("li");
+    item.classList.toggle("none", !day.milliseconds);
+    item.ariaLabel = `${labels[index]}요일 ${Math.round(day.milliseconds / 60_000)}분`;
+    const bar = document.createElement("span");
+    bar.style.height = `${Math.max(3, Math.round((day.milliseconds / longest) * 44))}px`;
+    const label = document.createElement("small");
+    label.textContent = labels[index];
+    label.ariaHidden = "true";
+    item.append(bar, label);
+    return item;
+  }));
+}
+
+// 오늘의 발췌: the same card for the whole day, then the next one on 다른 발췌.
+export function excerptOfTheDay(records, day, offset = 0) {
+  if (!records.length) return null;
+  let hash = 0;
+  for (const character of day) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return records[(hash + offset) % records.length];
+}
+
 export function relativeTime(iso, now = Date.now()) {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return "";
