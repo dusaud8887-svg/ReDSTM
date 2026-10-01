@@ -452,6 +452,28 @@
       </form>
     </dialog>
 
+    <div class="selection-menu" id="selection-menu" popover="manual" role="toolbar" aria-label="선택한 문장">
+      <button type="button" id="sel-mark">표시</button><button type="button" id="sel-note">메모</button><button type="button" id="sel-copy">복사</button><button type="button" id="sel-more" aria-label="더보기">⋯</button>
+    </div>
+    <div class="mark-menu" id="mark-menu" popover="auto" role="dialog" aria-label="표시한 문장">
+      <p class="mark-menu-note" id="mark-menu-note" hidden></p>
+      <div class="mark-menu-actions"><button type="button" id="mark-note">메모 쓰기</button><button type="button" id="mark-delete">표시 지우기</button></div>
+    </div>
+    <dialog id="note-dialog" aria-labelledby="note-dialog-title">
+      <form id="note-form">
+        <header><div><p>이 기기에 저장됩니다</p><h2 id="note-dialog-title">메모</h2></div><button class="icon-button" type="button" data-note-close aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <blockquote class="note-quote" id="note-quote"></blockquote>
+        <label>메모<textarea id="note-text" maxlength="1000" rows="5" placeholder="이 문장에 대한 생각을 적어 두세요"></textarea></label>
+        <div class="bookmark-dialog-actions"><span></span><button type="button" data-note-close>취소</button><button id="note-save" type="submit">저장</button></div>
+      </form>
+    </dialog>
+    <dialog id="selection-more" aria-labelledby="selection-more-title">
+      <form method="dialog">
+        <header><div><p id="selection-more-quote"></p><h2 id="selection-more-title">선택한 문장</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <div class="selection-more-actions"><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
+      </form>
+    </dialog>
+
     <dialog class="image-viewer" id="image-viewer" aria-label="이미지 보기">
       <div class="image-viewer-stage" id="image-viewer-stage"></div>
       <form method="dialog" class="image-viewer-actions">

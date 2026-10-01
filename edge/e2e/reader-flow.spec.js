@@ -1684,6 +1684,73 @@ test("Paragraph spacing and indent change prose but never an AA picture", async 
   await expect(aa).toHaveCSS("margin-bottom", "0px");
 });
 
+// P3-1 (docs/24 §8.13): a selection becomes a mark or a note in the owner's store, painted as a
+// Custom Highlight without touching the body, kept across a reload and cleared from its menu.
+// T21: marks sit below find; T26: on a touch screen the menu is the fixed bar in the dock's place.
+const selectParagraph = (page, index) => page.evaluate((at) => {
+  const node = document.querySelectorAll("#archive-body p")[at].firstChild;
+  getSelection().setBaseAndExtent(node, 0, node, node.data.length);
+}, index);
+const highlightTexts = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((range) => range.toString()), name);
+
+test("A selection is marked, noted and cleared, and marks survive a reload", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  const before = await page.locator("#archive-body").innerHTML();
+  const menu = page.locator("#selection-menu");
+  await selectParagraph(page, 2);
+  await expect(menu).toBeVisible();
+  if (await page.evaluate(() => matchMedia("(pointer: coarse)").matches)) {
+    await expect(menu).toHaveClass(/fixed/);
+    const box = await menu.boundingBox();
+    expect(box.y + box.height).toBeGreaterThan(page.viewportSize().height - 80);
+  }
+  await expect(menu.locator("button")).toHaveText(["표시", "메모", "복사", "⋯"]);
+  await page.locator("#sel-mark").click();
+  await expect(menu).toBeHidden();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 3"]);
+  expect(await page.evaluate(() => CSS.highlights.get("redstm-mark").priority)).toBeLessThan(0);
+  await selectParagraph(page, 4);
+  await page.locator("#sel-note").click();
+  const dialog = page.locator("#note-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#note-quote")).toHaveText("2편 본문 5");
+  await page.locator("#note-text").fill("다시 볼 장면");
+  await page.locator("#note-save").click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  // The body DOM is the same: no <mark> or <span> went in.
+  expect(await page.locator("#archive-body").innerHTML()).toBe(before);
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 3"]);
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  // A marked sentence opens its menu; the note shows there.
+  await page.locator("#archive-body p").nth(4).click({ position: { x: 12, y: 8 } });
+  await expect(page.locator("#mark-menu")).toBeVisible();
+  await expect(page.locator("#mark-menu-note")).toHaveText("다시 볼 장면");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#mark-menu")).toBeHidden();
+  await page.locator("#archive-body p").nth(2).click({ position: { x: 12, y: 8 } });
+  await page.locator("#mark-delete").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual([]);
+  await page.reload();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  expect(await highlightTexts(page, "redstm-mark")).toEqual([]);
+});
+
+test("Without a verified owner, marking says it cannot store anything", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 1);
+  await page.locator("#sel-mark").click();
+  await expect(page.locator("#aa-zoom-indicator")).toHaveText("이 기기에 기록을 저장할 수 없어요");
+  expect(await highlightTexts(page, "redstm-mark")).toEqual([]);
+});
+
 // Page mode tap zones (DESIGN §8.2 오른손) and the edge guard for system Back.
 test("Page mode taps turn pages by zone, the middle shows the tools and edge swipes stay with Back", async ({ page }) => {
   test.skip(!mobileWidth(page), "tap zones are a touch layout");

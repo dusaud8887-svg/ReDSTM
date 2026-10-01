@@ -46,6 +46,10 @@ import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
+import { annotationAt, annotationRecord, documentAnnotations, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
+import { openStore } from "/store.js";
+import { createTextModel, modelOffset } from "/text-model.js";
+import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
@@ -92,6 +96,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
+    "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
@@ -1264,6 +1269,8 @@ function beginReaderDocument(documentKey, workId, rev) {
   readerSession.adapter = paged.active ? pagedAdapter : scrollAdapter;
   paged.page = 0;
   paged.anchor = null;
+  hideSelectionMenu();
+  readerSession.frame(() => void annotationStore().then(paintAnnotations));
 }
 
 // ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
@@ -3685,6 +3692,7 @@ function renderPostBody() {
   if (isAa) restoreAaView();
   else requestAnimationFrame(() => updateAaOverflowCue(true));
   applyReadingMode();
+  paintAnnotations();
 }
 
 function normalizeReaderTypography(container) {
@@ -4893,6 +4901,7 @@ elements["reader-pane"].addEventListener("pointerup", (event) => {
     event.timeStamp - start.time <= 500 &&
     Math.abs(elements["reader-pane"].scrollTop - start.scroll) <= 4;
   if (!still || String(getSelection() ?? "")) return;
+  if (annotationAtPoint(event.clientX, event.clientY)) return;
   if (currentMode === "aa") return void aaTap(event.timeStamp);
   if (settings.tapPaging === "on" && pageByTap(event)) return;
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
@@ -5218,6 +5227,214 @@ document.addEventListener("fullscreenchange", () => {
     updateAaOverflowCue();
   });
 });
+
+// ---- Marks and notes (docs/24 §8.13, §12.4) ---------------------------------------------------
+// Records live in the owner's IndexedDB namespace (redstm:<ownerHash>, from /api/v1/me). Without a
+// verified owner there is no store, and marking says so instead of writing somewhere shared.
+let annotationDb = null;
+let annotationRecords = [];
+let annotationModel = null;
+let placedAnnotations = [];
+
+function annotationStore() {
+  annotationDb ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((me) => (me?.ownerHash ? openStore(me.ownerHash) : null))
+    .then(async (store) => {
+      if (!store) return null;
+      annotationRecords = await store.getAll("annotations");
+      // Another tab's change arrives here too.
+      store.subscribe(async () => {
+        annotationRecords = await store.getAll("annotations");
+        paintAnnotations();
+      });
+      return store;
+    })
+    .catch(() => null);
+  return annotationDb;
+}
+
+// Marks are Custom Highlights over ranges resolved from their locators; the body DOM never changes.
+function paintAnnotations() {
+  const highlights = globalThis.CSS?.highlights;
+  highlights?.delete("redstm-mark");
+  highlights?.delete("redstm-note");
+  annotationModel = null;
+  placedAnnotations = [];
+  if (!readerSource || currentMode === "aa" || !readerSession.documentKey) return;
+  const records = documentAnnotations(annotationRecords, readerSession.documentKey);
+  if (!records.length) return;
+  annotationModel = createTextModel(elements["archive-body"]);
+  placedAnnotations = placeAnnotations(annotationModel, records, readerSession.rev);
+  if (!highlights || !globalThis.Highlight) return;
+  for (const kind of ["mark", "note"]) {
+    const ranges = placedAnnotations.filter((item) => item.range && item.record.kind === kind).map((item) => item.range);
+    if (!ranges.length) continue;
+    const highlight = new Highlight(...ranges);
+    highlight.priority = MARK_PRIORITY;
+    highlights.set(`redstm-${kind}`, highlight);
+  }
+}
+
+function annotationAtPoint(x, y) {
+  if (!annotationModel || !placedAnnotations.length) return null;
+  const caret = document.caretPositionFromPoint?.(x, y);
+  const range = caret ? null : document.caretRangeFromPoint?.(x, y);
+  const node = caret?.offsetNode ?? range?.startContainer;
+  const at = node ? modelOffset(annotationModel, node, caret?.offset ?? range.startOffset) : null;
+  return at === null ? null : annotationAt(placedAnnotations, at);
+}
+
+async function saveAnnotation(record, message) {
+  const store = await annotationStore();
+  if (!store) return void showReaderFeedback("이 기기에 기록을 저장할 수 없어요", 2400);
+  try {
+    await store.commit([{ store: "annotations", value: record }]);
+  } catch {
+    return void showReaderFeedback("저장하지 못했어요. 다시 시도해 주세요", 2400);
+  }
+  annotationRecords = [...annotationRecords.filter((item) => item.id !== record.id), record];
+  paintAnnotations();
+  if (message) showReaderFeedback(message);
+}
+
+function readerSelection() {
+  const selection = getSelection();
+  if (!readerSource || currentMode === "aa" || !selection?.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  return elements["archive-body"].contains(range.commonAncestorContainer) ? range : null;
+}
+
+// Selection menu: under the selection with Floating UI (kept in place only while open); on a
+// touch screen the same four actions take the dock's place (T26).
+let selectionStop = null;
+let selectionTimer = 0;
+function hideSelectionMenu() {
+  selectionStop?.();
+  selectionStop = null;
+  if (elements["selection-menu"].matches(":popover-open")) elements["selection-menu"].hidePopover();
+}
+
+function updateSelectionMenu() {
+  const range = readerSelection();
+  if (!range) return hideSelectionMenu();
+  const menu = elements["selection-menu"];
+  const fixed = matchMedia("(pointer: coarse)").matches;
+  menu.classList.toggle("fixed", fixed);
+  if (!menu.matches(":popover-open")) menu.showPopover();
+  selectionStop?.();
+  selectionStop = null;
+  if (fixed) {
+    Object.assign(menu.style, { left: "", top: "", visibility: "" });
+    return;
+  }
+  const reference = { getBoundingClientRect: () => range.getBoundingClientRect(), getClientRects: () => range.getClientRects() };
+  selectionStop = autoUpdate(reference, menu, () => {
+    void computePosition(reference, menu, {
+      placement: "bottom", strategy: "fixed", middleware: [inline(), offset(8), flip(), shift({ padding: 8 }), hide()],
+    }).then(({ x, y, middlewareData }) => {
+      Object.assign(menu.style, { left: `${x}px`, top: `${y}px`, visibility: middlewareData.hide?.referenceHidden ? "hidden" : "visible" });
+    });
+  });
+}
+document.addEventListener("selectionchange", () => {
+  clearTimeout(selectionTimer);
+  selectionTimer = setTimeout(updateSelectionMenu, 300);
+});
+elements["reader-pane"].addEventListener("pointerup", () => {
+  clearTimeout(selectionTimer);
+  selectionTimer = setTimeout(updateSelectionMenu, 0);
+});
+// Pressing an action must not take the selection away first.
+elements["selection-menu"].addEventListener("pointerdown", (event) => event.preventDefault());
+
+// The selection as a new record, or null (and why) when it cannot become one.
+function selectionRecord() {
+  const range = readerSelection();
+  if (!range) return null;
+  const model = createTextModel(elements["archive-body"]);
+  const offsets = selectionOffsets(model, range);
+  if (!offsets) return null;
+  try {
+    return annotationRecord({ model, ...offsets, rev: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId });
+  } catch {
+    showReaderFeedback("선택이 너무 길어요", 2200);
+    return null;
+  }
+}
+
+function clearSelection() {
+  getSelection()?.removeAllRanges();
+  hideSelectionMenu();
+}
+
+let noteRecord = null;
+function openNoteEditor(record) {
+  noteRecord = record;
+  elements["note-quote"].textContent = record.quote;
+  elements["note-text"].value = record.note;
+  elements["note-dialog"].showModal();
+}
+
+document.querySelector("#sel-mark").addEventListener("click", () => {
+  const record = selectionRecord();
+  clearSelection();
+  if (record) void saveAnnotation(record, "표시했어요");
+});
+document.querySelector("#sel-note").addEventListener("click", () => {
+  const record = selectionRecord();
+  clearSelection();
+  if (record) openNoteEditor(record);
+});
+document.querySelector("#sel-copy").addEventListener("click", () => {
+  const text = readerSelection()?.toString().trim();
+  clearSelection();
+  if (text) void navigator.clipboard?.writeText(text).then(() => showReaderFeedback("복사했어요"), () => showReaderFeedback("복사하지 못했어요", 2200));
+});
+document.querySelector("#sel-more").addEventListener("click", () => {
+  const text = readerSelection()?.toString().trim() ?? "";
+  hideSelectionMenu();
+  if (!text) return;
+  elements["selection-more-quote"].textContent = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  elements["selection-namu"].href = `https://namu.wiki/Search?q=${encodeURIComponent(text.slice(0, 100))}`;
+  elements["selection-more"].showModal();
+});
+elements["note-form"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  const record = noteRecord;
+  noteRecord = null;
+  elements["note-dialog"].close();
+  if (record) void saveAnnotation(withNote(record, elements["note-text"].value), "저장했어요");
+});
+for (const button of document.querySelectorAll("[data-note-close]")) button.addEventListener("click", () => elements["note-dialog"].close());
+elements["note-dialog"].addEventListener("close", () => { noteRecord = null; });
+
+// A marked sentence: its note, 메모, 표시 지우기 (hit-tested against the resolved ranges).
+let markMenuRecord = null;
+elements["archive-body"].addEventListener("click", (event) => {
+  if (String(getSelection() ?? "")) return;
+  const item = annotationAtPoint(event.clientX, event.clientY);
+  if (!item) return;
+  markMenuRecord = item.record;
+  const menu = elements["mark-menu"];
+  elements["mark-menu-note"].textContent = item.record.note;
+  elements["mark-menu-note"].hidden = !item.record.note;
+  elements["mark-note"].textContent = item.record.note ? "메모 고치기" : "메모 쓰기";
+  menu.showPopover();
+  const point = { getBoundingClientRect: () => new DOMRect(event.clientX, event.clientY, 0, 0) };
+  void computePosition(point, menu, { placement: "bottom", strategy: "fixed", middleware: [offset(10), flip(), shift({ padding: 8 })] })
+    .then(({ x, y }) => Object.assign(menu.style, { left: `${x}px`, top: `${y}px` }));
+});
+elements["mark-note"].addEventListener("click", () => {
+  elements["mark-menu"].hidePopover();
+  if (markMenuRecord) openNoteEditor(markMenuRecord);
+});
+document.querySelector("#mark-delete").addEventListener("click", () => {
+  elements["mark-menu"].hidePopover();
+  if (markMenuRecord) void saveAnnotation(tombstone(markMenuRecord), "표시를 지웠어요");
+  markMenuRecord = null;
+});
+overlays.watch(elements["mark-menu"], "popover");
 
 // Desktop double click keeps its zoom steps; a touch double tap is the judge's above.
 elements["archive-body"].addEventListener("dblclick", () => {
