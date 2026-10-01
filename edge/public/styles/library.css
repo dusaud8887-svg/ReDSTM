@@ -176,6 +176,12 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .offline-control[hidden] { display: none; }
 .offline-control button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .offline-state { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.offline-works { display: grid; gap: 8px; }
+.offline-works p { margin: 0; color: var(--muted); font-size: 13px; }
+.offline-works-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.offline-works-list button { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font-weight: 600; text-align: start; cursor: pointer; }
+.settings-account { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 12px; }
+.settings-account p { margin: 0; font-size: 13px; }
 .excerpts-export { justify-self: start; min-height: 40px; margin: 4px 0 8px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .result-action { color: var(--accent); font-weight: 650; }

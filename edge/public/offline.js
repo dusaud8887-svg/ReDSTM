@@ -1,6 +1,16 @@
 // The page side of the service worker (docs/24 §12.6): registration as a module worker (browsers
 // without module workers stay online-only), the owner whose caches it uses, and its messages.
 
+// Everything this device keeps for one owner: the IndexedDB namespace and the caches named with
+// that owner (§12.6.3). Shared, versioned assets (shell, fonts, vendor) stay.
+export async function deleteNamespace(owner) {
+  await new Promise((resolve) => {
+    const request = indexedDB.deleteDatabase(`redstm:${owner}`);
+    request.onsuccess = request.onerror = request.onblocked = () => resolve();
+  });
+  for (const name of await caches.keys()) if (name.endsWith(`-${owner}`)) await caches.delete(name);
+}
+
 export function createOffline({ onAuthExpired = () => {}, onUpdateReady = () => {}, onSave = () => {} } = {}) {
   const container = globalThis.navigator?.serviceWorker;
   let registration = null;
