@@ -938,6 +938,55 @@ test("AA pinch settles on a continuous zoom and a double tap switches 맞춤 and
   await expect.poll(async () => (await saved())?.fit).toBeUndefined();
 });
 
+// T05 (docs/24 §8.17) and the minimap (DESIGN §8.4): the AA host goes full screen with its tools,
+// takes zoom changes and messages inside it, and leaving — by the button or by Back/Esc, which
+// arrive as fullscreenchange — brings back the zoom and sideways place from before.
+test("AA full screen keeps its tools inside and returns to the same view; the minimap moves a wide picture", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.route(`**/archive/${aaKey}`, (route) => {
+    const payload = aaPostPayload(1, "첫째");
+    payload.post.body_html = `<div class="AA_Text"><p>${"＿".repeat(240)}</p><p>（　´∀｀）</p></div>`;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await openPost(page, aaKey);
+  const body = page.locator("#archive-body");
+  const map = page.locator("#aa-minimap");
+  await expect(map).toBeVisible();
+  const windowLeft = () => map.evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--window-left")));
+  expect(await windowLeft()).toBe(0);
+  const box = await map.boundingBox();
+  await page.mouse.click(box.x + box.width * 0.75, box.y + box.height / 2);
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await expect.poll(windowLeft).toBeGreaterThan(40);
+  await map.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBe(0);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  const left = await body.evaluate((element) => element.scrollLeft);
+
+  const button = page.locator("#aa-fullscreen");
+  await expect(button).toBeVisible();
+  await button.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe("aa-host");
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#aa-controls")).toBeVisible();
+  await page.locator('[data-aa-zoom-delta="0.25"]').click();
+  await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
+  // The zoom message is in the top layer, over the full-screen host.
+  await expect(page.locator("#aa-zoom-indicator")).toBeVisible();
+  // Back/Esc leave full screen outside the page; only fullscreenchange tells it.
+  await page.evaluate(() => document.exitFullscreen());
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#aa-zoom-output")).toHaveText("100%");
+  await expect.poll(() => body.evaluate((element) => element.scrollLeft)).toBe(left);
+  // The button leaves too.
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await button.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+});
+
 test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);

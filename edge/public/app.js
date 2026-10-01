@@ -45,10 +45,10 @@ import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
-import { clampAaZoom, createTapJudge, fitAaZoomValue, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
-import { PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js";
+import { DragGesture, PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
 const readerSession = createDocumentSession();
@@ -98,7 +98,7 @@ const elements = Object.fromEntries(
     "text-sort-chips",
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
-    "aa-source-styles", "aa-color", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit",
+    "aa-source-styles", "aa-color", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit", "aa-host", "aa-fullscreen", "aa-minimap",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
@@ -714,6 +714,7 @@ function updateAaOverflowCue(showHint = false) {
   const overflow = currentMode === "aa" && body.scrollWidth > body.clientWidth + 1;
   const canScrollRight = overflow && body.scrollLeft < body.scrollWidth - body.clientWidth - 2;
   body.classList.toggle("aa-can-scroll", canScrollRight);
+  updateAaMinimap();
   if (showHint && overflow && !aaHintShown) {
     aaHintShown = true;
     showReaderFeedback("↔ 가로로 이동", 2200);
@@ -721,6 +722,18 @@ function updateAaOverflowCue(showHint = false) {
 }
 
 // `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
+// The minimap under a picture wider than the stage: where the view is across it (DESIGN §8.4).
+function updateAaMinimap() {
+  const body = elements["archive-body"];
+  const map = elements["aa-minimap"];
+  const view = currentMode === "aa" ? minimapWindow(body) : null;
+  map.hidden = !view;
+  if (!view) return;
+  map.style.setProperty("--window-left", `${view.left * 100}%`);
+  map.style.setProperty("--window-width", `${view.width * 100}%`);
+  map.ariaValueNow = String(Math.round((view.left / Math.max(0.001, 1 - view.width)) * 100));
+}
+
 function setAaZoom(value, debounce = false, { remember = true, fit = false } = {}) {
   const zoom = clampAaZoom(value);
   if (!currentAaKey()) settings.aaZoom = zoom;
@@ -3650,6 +3663,7 @@ function renderPostBody() {
   elements["archive-body"].classList.toggle("aa", isAa);
   elements["archive-body"].ariaLabel = isAa ? "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다" : "글 본문";
   elements["aa-controls"].hidden = !isAa;
+  if (!isAa && document.fullscreenElement === elements["aa-host"]) void document.exitFullscreen().catch(() => {});
   elements["mode-toggle"].textContent = isAa ? "소설로 보기" : "AA로 보기";
   elements["mode-reset"].hidden = !override;
   elements["archive-body"].classList.remove("plain-text");
@@ -5128,6 +5142,69 @@ const aaTap = createTapJudge({
     if (key && aaViews[key]?.fit) setAaZoom(1);
     else fitAaZoom();
   },
+});
+
+// Minimap: drag or tap a point to bring that part of the picture to the middle; arrows step.
+new DragGesture(elements["aa-minimap"], ({ xy: [x] }) => {
+  const box = elements["aa-minimap"].getBoundingClientRect();
+  elements["archive-body"].scrollLeft = minimapScroll((x - box.left) / box.width, elements["archive-body"]);
+}, { pointer: { capture: true } });
+elements["aa-minimap"].addEventListener("keydown", (event) => {
+  const body = elements["archive-body"];
+  const step = { ArrowLeft: -0.25, ArrowRight: 0.25 }[event.key];
+  if (step) body.scrollLeft += step * body.clientWidth;
+  else if (event.key === "Home") body.scrollLeft = 0;
+  else if (event.key === "End") body.scrollLeft = body.scrollWidth;
+  else return;
+  event.preventDefault();
+  event.stopPropagation();
+});
+new ResizeObserver(() => updateAaOverflowCue()).observe(elements["archive-body"]);
+
+// 가로 전체화면 (docs/24 §8.17): the AA host goes full screen and asks for landscape (a refused
+// lock keeps the full screen). Its state follows fullscreenchange alone, so Back, Esc and the
+// button agree; leaving restores the zoom and sideways place the picture had before.
+let aaFullscreenReturn = null;
+elements["aa-fullscreen"].hidden = !document.fullscreenEnabled;
+elements["aa-fullscreen"].addEventListener("click", async () => {
+  if (document.fullscreenElement) return void document.exitFullscreen().catch(() => {});
+  const key = currentAaKey();
+  aaFullscreenReturn = {
+    key, view: key && aaViews[key] ? { ...aaViews[key] } : null, auto: aaAutoZoom, zoom: settings.aaZoom,
+    left: elements["archive-body"].scrollLeft,
+  };
+  try {
+    await elements["aa-host"].requestFullscreen({ navigationUI: "hide" });
+  } catch {
+    aaFullscreenReturn = null;
+    showReaderFeedback("전체화면을 열 수 없습니다", 2200);
+    return;
+  }
+  try {
+    await screen.orientation?.lock?.("landscape");
+  } catch { /* the full screen stays without turning */ }
+});
+document.addEventListener("fullscreenchange", () => {
+  const active = document.fullscreenElement === elements["aa-host"];
+  elements["aa-fullscreen"].setAttribute("aria-pressed", String(active));
+  elements["aa-fullscreen"].textContent = active ? "⟲ 나가기" : "⟲ 가로 전체화면";
+  if (active) return;
+  const back = aaFullscreenReturn;
+  aaFullscreenReturn = null;
+  try {
+    screen.orientation?.unlock?.();
+  } catch { /* nothing was locked */ }
+  if (!back || back.key !== currentAaKey()) return;
+  if (back.key && back.view) aaViews[back.key] = back.view;
+  else if (back.key) delete aaViews[back.key];
+  aaAutoZoom = back.auto;
+  settings.aaZoom = back.zoom;
+  applySettings();
+  persistUserState();
+  requestAnimationFrame(() => {
+    elements["archive-body"].scrollLeft = back.left;
+    updateAaOverflowCue();
+  });
 });
 
 // Desktop double click keeps its zoom steps; a touch double tap is the judge's above.
