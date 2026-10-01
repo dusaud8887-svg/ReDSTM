@@ -133,6 +133,12 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .result-title mark { padding: 0; background: var(--hl-find); color: inherit; font: inherit; }
 .result-badges { flex: 0 0 auto; display: inline-flex; gap: 4px; }
 .result-badges span { max-width: 6rem; overflow: hidden; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--muted); font-size: 11px; font-weight: 680; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+/* 기록 › 발췌 (DESIGN §7.8): the quote in the reading face with a ribbon edge, then the note
+   and where it came from. */
+.excerpt-card { border-left: 3px solid var(--ribbon); }
+.excerpt-quote { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; color: var(--ink); font-family: var(--prose-font); font-size: 15px; line-height: 1.7; white-space: pre-line; overflow-wrap: anywhere; }
+.excerpt-note { color: var(--ink-2, var(--muted)); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.excerpts-export { justify-self: start; min-height: 40px; margin: 4px 0 8px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .result-action { color: var(--accent); font-weight: 650; }
 .result-board { color: var(--muted); font-weight: 650; }

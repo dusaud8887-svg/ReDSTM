@@ -110,6 +110,7 @@
           <nav class="view-tabs scope-tabs" id="scope-tabs" aria-label="탐색 범위" hidden>
             <button type="button" class="active" data-scope="posts" aria-pressed="true">게시판 글</button>
             <button type="button" data-scope="collections" aria-pressed="false">작품</button>
+            <button type="button" data-records-scope hidden>내 기록</button>
           </nav>
           <div class="board-dock" id="board-dock" hidden>
             <button class="board-dock-button" id="board-dock-button" type="button" aria-haspopup="dialog" aria-controls="board-dialog">
@@ -136,7 +137,9 @@
             <button type="button" data-view="reading" aria-pressed="false">읽는 중</button>
             <button type="button" class="active" data-view="bookmarks" aria-pressed="true">저장</button>
             <button type="button" data-view="history" aria-pressed="false">최근</button>
+            <button type="button" data-view="excerpts" aria-pressed="false">발췌</button>
           </nav>
+          <button class="excerpts-export" id="excerpts-export" type="button" hidden>Markdown으로 내보내기</button>
           <div class="catalog-search-row" id="catalog-search-row" hidden>
             <label class="search-field">
               <span class="sr-only">검색</span>

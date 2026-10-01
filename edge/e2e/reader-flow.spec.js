@@ -1688,7 +1688,9 @@ test("Paragraph spacing and indent change prose but never an AA picture", async 
 // Custom Highlight without touching the body, kept across a reload and cleared from its menu.
 // T21: marks sit below find; T26: on a touch screen the menu is the fixed bar in the dock's place.
 const selectParagraph = (page, index) => page.evaluate((at) => {
-  const node = document.querySelectorAll("#archive-body p")[at].firstChild;
+  const paragraph = document.querySelectorAll("#archive-body p")[at];
+  paragraph.scrollIntoView({ block: "center" });
+  const node = paragraph.firstChild;
   getSelection().setBaseAndExtent(node, 0, node, node.data.length);
 }, index);
 const highlightTexts = (page, name) => page.evaluate((key) => [...(CSS.highlights.get(key) ?? [])].map((range) => range.toString()), name);
@@ -1739,6 +1741,57 @@ test("A selection is marked, noted and cleared, and marks survive a reload", asy
   await page.reload();
   await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
   expect(await highlightTexts(page, "redstm-mark")).toEqual([]);
+});
+
+// P3-2 (docs/24 §8.5, F2/F4, B4): 기록 › 발췌 lists marks and notes newest first, searches them,
+// exports them as Markdown and opens a card at its sentence; search's 내 기록 hands the words over.
+test("기록 › 발췌 lists, searches, exports and opens marks at their sentence", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await selectParagraph(page, 30);
+  await page.locator("#sel-mark").click();
+  await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 31"]);
+  await selectParagraph(page, 4);
+  await page.locator("#sel-note").click();
+  await page.locator("#note-text").fill("다시 볼 장면");
+  await page.locator("#note-save").click();
+  await expect.poll(() => highlightTexts(page, "redstm-note")).toEqual(["2편 본문 5"]);
+  // Leave the reading place at the top, so opening the far card has to move.
+  await page.locator("#reader-pane").evaluate((pane) => pane.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+
+  await page.goto("/saved?view=excerpts");
+  const cards = page.locator(".excerpt-card");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0).locator(".excerpt-quote")).toHaveText("2편 본문 5");
+  await expect(cards.nth(0).locator(".excerpt-note")).toHaveText("다시 볼 장면");
+  await expect(cards.nth(0).locator(".result-meta")).toContainText("2편 제목");
+  await expect(page.locator('[data-view="excerpts"]')).toHaveAttribute("aria-pressed", "true");
+  const download = page.waitForEvent("download");
+  await page.locator("#excerpts-export").click();
+  const file = await download;
+  const markdown = await (await file.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks).toString("utf8"));
+  expect(markdown).toContain("> 2편 본문 5\n\n다시 볼 장면\n\n— ");
+  expect(markdown).toContain("/read/board_a/2");
+  await page.locator("#search-input").fill("장면");
+  await expect(cards).toHaveCount(1);
+  await page.locator("#search-input").fill("");
+  await expect(cards).toHaveCount(2);
+  // The far mark opens its post at that sentence, not at the top.
+  await cards.nth(1).click();
+  await expect(page).toHaveURL(/\/read\/board_a\/2$/);
+  await expect(page.locator("#archive-body p").nth(30)).toBeInViewport();
+  // 검색's 내 기록 opens the same words in 기록 › 발췌.
+  await page.goto("/search");
+  await page.locator("#search-input").fill("본문 31");
+  const records = page.locator("[data-records-scope]");
+  await expect(records).toBeVisible();
+  await records.click();
+  await expect(page).toHaveURL(/\/saved\?view=excerpts&q=/);
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first().locator(".excerpt-quote")).toHaveText("2편 본문 31");
 });
 
 test("Without a verified owner, marking says it cannot store anything", async ({ page }) => {

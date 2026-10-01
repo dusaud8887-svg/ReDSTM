@@ -46,7 +46,7 @@ import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
-import { annotationAt, annotationRecord, documentAnnotations, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
+import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
 import { createTextModel, modelOffset } from "/text-model.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
@@ -96,7 +96,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
+    "excerpts-export", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
@@ -1270,7 +1270,10 @@ function beginReaderDocument(documentKey, workId, rev) {
   paged.page = 0;
   paged.anchor = null;
   hideSelectionMenu();
-  readerSession.frame(() => void annotationStore().then(paintAnnotations));
+  readerSession.frame(() => void annotationStore().then(() => {
+    paintAnnotations();
+    jumpToPendingExcerpt();
+  }));
 }
 
 // ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
@@ -1924,6 +1927,7 @@ function savedUrl(state = currentSearchState(), view = currentView) {
   const params = new URLSearchParams();
   if (view === "history") params.set("view", "recent");
   if (view === "reading") params.set("view", "reading");
+  if (view === "excerpts") params.set("view", "excerpts");
   if (state.query) params.set("q", state.query);
   const query = params.toString();
   return query ? `/saved?${query}` : "/saved";
@@ -1955,6 +1959,7 @@ function applyCatalogRoute(destination) {
   }
   currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
     destination === "bookmarks" && params.get("view") === "reading" ? "reading" :
+    destination === "bookmarks" && params.get("view") === "excerpts" ? "excerpts" :
     destination === "bookmarks" ? "bookmarks" : "all";
 }
 
@@ -2001,6 +2006,9 @@ function updateDestinationLayout() {
     }
   }
   document.querySelector(".saved-tabs").hidden = !saved;
+  elements["excerpts-export"].hidden = !saved || currentView !== "excerpts";
+  // 검색 범위 내 기록: the same words in 기록 › 발췌 (B4).
+  document.querySelector("[data-records-scope]").hidden = !searching;
   elements["catalog-search-row"].hidden = !searching && !saved && !text;
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
   elements["mode-chips"].hidden = saved || collections || searching || text;
@@ -2706,6 +2714,7 @@ function localResults(entries) {
 function renderCurrentView() {
   if (currentDestination === "text") return void textLibrary.searchChanged(elements["search-input"].value);
   if (currentView === "reading") return void renderReadingView();
+  if (currentView === "excerpts") return void renderExcerptsView();
   if (currentScope === "collections") return void renderCollectionCatalog();
   if (currentView === "all") return requestSearch();
   const entries = currentView === "history" ? historyEntries : bookmarks;
@@ -4238,6 +4247,7 @@ elements["result-list"].addEventListener("click", (event) => {
     return;
   }
   const button = event.target.closest(".result-item");
+  if (button?.dataset.excerptId) return void openExcerpt(button.dataset.excerptId);
   if (button) {
     if (currentDestination === "text") {
       textLibrary.activate(button);
@@ -5356,7 +5366,13 @@ function selectionRecord() {
   const offsets = selectionOffsets(model, range);
   if (!offsets) return null;
   try {
-    return annotationRecord({ model, ...offsets, rev: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId });
+    return annotationRecord({
+      model, ...offsets, rev: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
+      context: {
+        title: elements["reader-title"].textContent, work: currentCollection?.title || elements["reader-kicker"].textContent,
+        route: `${location.pathname}${location.search}`,
+      },
+    });
   } catch {
     showReaderFeedback("선택이 너무 길어요", 2200);
     return null;
@@ -5435,6 +5451,96 @@ document.querySelector("#mark-delete").addEventListener("click", () => {
   markMenuRecord = null;
 });
 overlays.watch(elements["mark-menu"], "popover");
+
+// 기록 › 발췌 (docs/24 §8.5): every mark and note of this owner, newest first, searched with the
+// list's own field. A card opens its document and moves to the sentence; one that no longer
+// resolves opens at the reading place and says so instead of jumping to a first match.
+let pendingExcerpt = null;
+async function renderExcerptsView() {
+  const store = await annotationStore();
+  if (currentView !== "excerpts") return;
+  const records = excerptList(annotationRecords, elements["search-input"].value);
+  renderedResults = [];
+  renderedCollections = [];
+  resultTotal = records.length;
+  elements["search-empty"].hidden = true;
+  elements["result-list"].classList.remove("loading");
+  elements["result-list"].replaceChildren(...records.map(excerptElement));
+  elements["excerpts-export"].disabled = !records.length;
+  elements["result-status"].textContent = !store ? "이 기기에서 기록 저장소를 열 수 없습니다"
+    : records.length ? `발췌 ${records.length}건 · 이 기기` : elements["search-input"].value ? "찾는 발췌가 없습니다" : "표시하거나 메모한 문장이 여기에 모입니다";
+  updateLoadMore();
+}
+
+function excerptElement(record) {
+  const item = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "result-item excerpt-card";
+  button.dataset.excerptId = record.id;
+  button.dataset.key = `excerpt:${record.id}`;
+  const quote = document.createElement("span");
+  quote.className = "excerpt-quote";
+  quote.textContent = record.quote;
+  button.append(quote);
+  if (record.note) {
+    const note = document.createElement("span");
+    note.className = "excerpt-note";
+    note.textContent = record.note;
+    button.append(note);
+  }
+  const meta = document.createElement("span");
+  meta.className = "result-meta";
+  const where = [record.context?.work, record.context?.title].filter(Boolean).join(" › ");
+  meta.textContent = [where || "제목 없음", formatSourceDate(record.createdAt) || record.createdAt.slice(0, 10), record.kind === "note" ? "메모" : "표시"].join(" · ");
+  button.append(meta);
+  item.append(button);
+  return item;
+}
+
+function openExcerpt(id) {
+  const record = annotationRecords.find((item) => item.id === id);
+  if (!record?.context?.route) return void showReaderFeedback("이 발췌의 원문 위치를 알 수 없어요", 2200);
+  pendingExcerpt = { id: record.id, documentId: record.documentId };
+  if (record.documentId === readerSession.documentKey && readerSource) return void jumpToPendingExcerpt();
+  persistCatalogState();
+  history.pushState({ redstmReader: true, redstmParent: currentRoute() }, "", record.context.route);
+  void handleRoute();
+}
+
+// After the document's own reading place has been restored (two frames on), move to the sentence.
+function jumpToPendingExcerpt() {
+  const pending = pendingExcerpt;
+  if (!pending || pending.documentId !== readerSession.documentKey) return;
+  pendingExcerpt = null;
+  const item = placedAnnotations.find((placed) => placed.record.id === pending.id);
+  readerSession.frame(() => readerSession.frame(() => {
+    if (!item?.range) return void showReaderFeedback("원문에서 이 문장을 찾지 못했어요", 2400);
+    if (readerSession.restore({ loc: item.record.locator, viewportOffset: Math.round(elements["reader-pane"].clientHeight / 3) })) syncScrollBaseline();
+  }));
+}
+
+elements["excerpts-export"].addEventListener("click", () => {
+  const records = excerptList(annotationRecords, elements["search-input"].value);
+  if (!records.length) return;
+  const url = URL.createObjectURL(new Blob([excerptsMarkdown(records, location.origin)], { type: "text/markdown;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `redstm-excerpts-${new Date().toISOString().slice(0, 10)}.md`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+// Leaving search clears its conditions (showDestination), so the words are put back afterwards.
+document.querySelector("[data-records-scope]").addEventListener("click", async () => {
+  const query = elements["search-input"].value.trim();
+  history.pushState({ redstmSaved: { view: "excerpts" } }, "", "/saved?view=excerpts");
+  await handleRoute();
+  if (!query) return;
+  elements["search-input"].value = query;
+  elements["search-clear"].hidden = false;
+  syncSearchRoute();
+  renderCurrentView();
+});
 
 // Desktop double click keeps its zoom steps; a touch double tap is the judge's above.
 elements["archive-body"].addEventListener("dblclick", () => {
