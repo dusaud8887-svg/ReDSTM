@@ -495,12 +495,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     findWork.textContent = "작품에서 찾기";
     findWork.addEventListener("click", () => shell.workSearch());
     actions.append(findWork);
-    if (lane === "novel") {
+    if (lane === "novel" || lane === "arcalive") {
       const shelf = document.createElement("button");
       shelf.type = "button";
       shelf.className = "shelf-summary";
       shelf.dataset.workId = work.work_id;
-      shelf.textContent = `분류: ${shelfName(history, shelfOf(history, work.work_id))}`;
+      shelf.textContent = lane === "novel" ? `분류: ${shelfName(history, shelfOf(history, work.work_id))}` : "분류·고정";
       actions.append(shelf);
     }
     if (total > LIST_PAGE) {
@@ -1786,9 +1786,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     event.preventDefault();
     addShelfFromDialog();
   });
-  for (const host of [list, document.querySelector("#text-work-summary")]) host.addEventListener("click", (event) => {
+  for (const host of [list, document.querySelector("#text-work-summary")]) host.addEventListener("click", async (event) => {
     const button = event.target.closest(".shelf-edit, .shelf-summary");
-    if (button && active) openShelfDialog(button.dataset.workId);
+    if (!button || !active) return;
+    const item = currentWorks().find((item) => item.work_id === button.dataset.workId) || work;
+    if (item && await shell.classifyWork({ key: workKey({ source: lane, id: item.work_id, board: item.board || "" }), title: item.title, source: lane })) return;
+    if (lane === "novel") openShelfDialog(button.dataset.workId);
   });
   document.querySelector("#novel-shelf-manage").addEventListener("click", () => openShelfDialog(""));
   document.querySelector("#novel-views").addEventListener("click", (event) => {
@@ -1943,6 +1946,40 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     }
   }
 
+  async function metadataWorks() {
+    await Promise.all(["novel", "arcalive"].map((source) => catalogs.has(source) ? null : loadCatalog(source).catch(() => null)));
+    const novelProgress = workProgress();
+    const arcaProgress = arcaliveWorkProgress();
+    return ["novel", "arcalive"].flatMap((source) => {
+      const items = source === "novel" ? catalogs.get(source)?.items || [] : catalogs.get(source)?.works || [];
+      const progress = source === "novel" ? novelProgress : arcaProgress;
+      return items.map((item) => {
+        const state = workState(item, progress.get(item.work_id));
+        return {
+          key: workKey({ source, id: item.work_id, board: item.board || "" }), source,
+          title: item.title, author: item.author, sourceLabel: source === "novel" ? "소설" : "아카라이브",
+          chapters: item.chapter_count || 0, read: state.state, fresh: state.newCount > 0, aa: item.is_aa === true,
+          route: `/text?${new URLSearchParams({ lane: source, ...(source === "arcalive" ? { view: "works" } : {}), work: item.work_id })}`,
+        };
+      });
+    });
+  }
+  function styleWork() {
+    const item = current?.work || work;
+    const source = current?.lane || lane;
+    return item ? { key: workKey({ source, id: item.work_id, board: item.board || "" }), title: item.title, source } : null;
+  }
+  function shelfState() { return { shelves: history.shelves, workShelves: history.workShelves }; }
+  function applyLibraryShelves(config, styles) {
+    history.shelves = config.shelves.map((shelf) => ({ ...shelf }));
+    history.workShelves = {};
+    for (const value of styles.values()) {
+      if (!value.deletedAt && value.workKey.startsWith("novel:") && value.shelfId) history.workShelves[value.workKey.slice(6)] = value.shelfId;
+    }
+    persist();
+    if (active && !current) renderCatalog();
+  }
+
   function kwicContext() {
     const itemWork = current?.work || work;
     const sourceLane = current?.lane || lane;
@@ -1992,6 +2029,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult,
+    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves,
   };
 }

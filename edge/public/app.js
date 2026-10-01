@@ -47,6 +47,7 @@ import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
+import { createPersonalLibrary, mergeLibrary, mergeWorkStyles, sanitizeLibrary, sanitizeWorkStyle } from "/library.js";
 import { createKwic } from "/kwic.js";
 import { arcaliveBody, novelBody } from "/text-work.js";
 import { renderChapterRun } from "/reader-chrome.js";
@@ -67,6 +68,7 @@ import { DragGesture, PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/us
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
 const readerSession = createDocumentSession();
+let personalLibrary = null;
 let fontGeneration = 0;
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
@@ -244,6 +246,7 @@ const textLibrary = createTextLibrary({
     syncScroll: syncScrollBaseline,
     setList: renderReaderList,
     workSearch: () => void openWorkSearch(),
+    classifyWork: (work) => personalLibrary.openWork(work),
     captureAnchor: () => readerSession.capture(),
     readingPosition: () => readingPosition(),
     canSavePosition: () => readerSession.canSave,
@@ -865,6 +868,7 @@ function renderCover(
   elements["empty-reader"].classList.toggle("home-alert", Boolean(actionLabel) || title !== "내 장서");
   renderHomeBoards();
   void renderReadingWorks();
+  void personalLibrary?.renderHome().catch(() => {});
   void renderDiscovery();
   void renderHomeRecords();
   updateShellMode();
@@ -2402,14 +2406,14 @@ function restoreCatalogPosition() {
   });
 }
 
-function cancelReaderSelection() {
-  overlays.closeAll("navigate");
+function cancelReaderSelection(preserveOverlays = false) {
+  if (!preserveOverlays) overlays.closeAll("navigate");
   readerViewId += 1;
   postController?.abort();
   readerSession.cancelPendingWork();
 }
 
-function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true } = {}) {
+function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true, preserveOverlays = false } = {}) {
   if (destination === "library") applyUpdateAtSafePoint();
   if (destination === "settings") {
     openSettings();
@@ -2424,7 +2428,7 @@ function showDestination(destination, navigate = true, view = destination === "b
   if (wasText && destination !== "text") textLibrary.leave();
   if (currentSummary) persistReadingPosition();
   else if (currentDestination !== "library") persistCatalogState();
-  cancelReaderSelection();
+  cancelReaderSelection(preserveOverlays);
   setImmersive(false, false);
   const leavingCatalog = ["browse", "search"].includes(currentDestination);
   if (!["browse", "search"].includes(destination)) setScope("posts");
@@ -2587,12 +2591,14 @@ function returnToList() {
 }
 
 async function handleRoute() {
+  const initializedRoute = routeHandled;
   if (!routeHandled) {
     routeHandled = true;
     synthesizeParentEntry();
   }
   closeReaderMore();
   kwic.close();
+  if (initializedRoute) personalLibrary?.close();
   const summary = routeSummary();
   if (summary && currentDestination === "text") {
     textLibrary.leave();
@@ -2613,7 +2619,7 @@ async function handleRoute() {
         currentDestination = ["browse", "search"].includes(destination) ? destination : "browse";
         await openCollectionDetail(collectionId, "route");
       } else {
-        await showDestination(destination, false, currentView);
+        await showDestination(destination, false, currentView, { preserveOverlays: !initializedRoute });
         if (destination !== "library") syncSearchRoute();
         // The installed app's 이어서 읽기 shortcut (manifest) resumes straight away.
         if (destination === "library" && new URLSearchParams(location.search).has("continue")) {
@@ -3317,6 +3323,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     elements["collection-view"].hidden = false;
     document.body.classList.add("collection-detail-open");
     elements["collection-title"].textContent = collection.title;
+    document.querySelector("#collection-classify").onclick = () => void personalLibrary.openWork({ key: workKey({ source: "typemoon", id: collection.id }), title: collection.title, source: "typemoon" }).then((opened) => { if (!opened) showReaderFeedback("이 기기에 기록을 저장할 수 없어요", 2200); });
     const unavailable = collection.entries.filter((entry) => !entry.object_key).length;
     void collectionIndex().then((index) => {
       const summary = index.summaryById?.get(collection.id) ?? index.summaries.find((item) => item.id === collection.id);
@@ -4598,15 +4605,20 @@ function scheduleSearch() {
 
 // Suggestions: TypeMoon works and boards, rebuilt only when the archive's index changes.
 let suggestSource = null;
+let suggestTextSource = "";
 let suggestIndex = null;
 const suggester = createSuggester(async () => {
   const index = await collectionIndex().catch(() => null);
   if (!index) return null;
-  if (suggestSource !== index) {
+  const textWorks = await textLibrary.metadataWorks();
+  const source = JSON.stringify(textWorks.map((work) => [work.key, work.title, work.author]));
+  if (suggestSource !== index || suggestTextSource !== source) {
     suggestSource = index;
+    suggestTextSource = source;
     suggestIndex = createSuggestIndex([
       ...index.summaries.map((collection) => ({ key: `c:${collection.id}`, title: collection.title, kind: "work", id: collection.id,
         meta: [boardLabel(collection.board_id), `${collection.entry_count ?? collection.entries?.length ?? 0}편`] })),
+      ...textWorks.map((work) => ({ key: work.key, title: work.title, kind: "text-work", id: work.route, meta: [work.sourceLabel, work.author] })),
       ...[...boardById.values()].map((board) => ({ key: `b:${board.board_id}`, title: boardDisplayName(board, board.board_id), kind: "board", id: board.board_id,
         meta: ["게시판", boardGroupLabel(board.group_name)] })),
     ], { hangul, UFuzzy });
@@ -4690,6 +4702,7 @@ elements["search-suggest"].addEventListener("click", (event) => {
   if (!row) return;
   const id = row.dataset.suggestId;
   if (row.dataset.suggestKind === "work") void openCollectionDetail(/^\d+$/.test(id) ? Number(id) : id);
+  else if (row.dataset.suggestKind === "text-work") void openPersonalWork({ route: id });
   else {
     elements["search-input"].value = "";
     updateSuggestions();
@@ -6470,7 +6483,7 @@ elements["reset-settings"].addEventListener("click", () => {
 elements["export-state"].addEventListener("click", async () => {
   persistUserState();
   const store = await ownerStore();
-  const records = store ? { annotations: await store.getAll("annotations"), sessions: await store.getAll("sessions") } : null;
+  const records = store ? { annotations: await store.getAll("annotations"), sessions: await store.getAll("sessions"), works: await store.getAll("works"), library: await store.get("meta", "library") } : null;
   const json = exportUserState(userState, textLibrary.exportState(), { records });
   const compressed = typeof CompressionStream === "function";
   const blob = compressed
@@ -6576,29 +6589,40 @@ async function backupText(file) {
 // Marks, notes and sessions are always merged (T22): a deletion stays deleted, the later edit
 // wins, and nothing here is removed by 덮어쓰기. One transaction, so a failure changes nothing.
 async function importRecords(records) {
-  if (!records || (!records.annotations.length && !records.sessions.length)) return "";
+  if (!records || (!records.annotations.length && !records.sessions.length && !records.works?.length && !records.library)) return "";
   const store = await ownerStore();
   if (!store) return " · 표시·메모·독서 기록은 이 기기 저장소가 없어 가져오지 못했습니다";
   const annotations = mergeAnnotationRecords(await store.getAll("annotations"), records.annotations);
   const sessions = mergeSessionRecords(await store.getAll("sessions"), records.sessions);
-  if (!annotations.length && !sessions.length) return " · 표시·메모·독서 기록은 이미 같습니다";
+  const works = mergeWorkStyles(await store.getAll("works"), records.works || []);
+  const previousLibrary = await store.get("meta", "library");
+  const library = records.library ? mergeLibrary(previousLibrary, records.library) : null;
+  const libraryChanged = library && JSON.stringify(library) !== JSON.stringify(previousLibrary);
+  if (!annotations.length && !sessions.length && !works.length && !libraryChanged) return " · 표시·메모·독서 기록은 이미 같습니다";
   try {
     await store.commit([
       ...annotations.map((value) => ({ store: "annotations", value })),
       ...sessions.map((value) => ({ store: "sessions", value })),
+      ...works.map((value) => ({ store: "works", value })),
+      ...(libraryChanged ? [{ store: "meta", value: library }] : []),
     ]);
   } catch {
     return " · 표시·메모·독서 기록을 저장하지 못했습니다(이전 기록은 그대로)";
   }
   annotationRecords = await store.getAll("annotations");
   paintAnnotations();
+  if (libraryChanged || works.length) await personalLibraryChanged(await loadPersonalLibrary());
   const copies = annotations.filter((record) => record.conflictOf).length;
-  return ` · 표시·메모 ${annotations.length - copies}건 · 독서 기록 ${sessions.length}건 반영${copies ? ` · 서로 다르게 고친 ${copies}건은 충돌 사본으로 남김(기록 › 발췌)` : ""}`;
+  return ` · 표시·메모 ${annotations.length - copies}건 · 독서 기록 ${sessions.length}건 반영${works.length ? ` · 작품 정보 ${works.length}건` : ""}${libraryChanged ? " · 스마트 서재 반영" : ""}${copies ? ` · 서로 다르게 고친 ${copies}건은 충돌 사본으로 남김(기록 › 발췌)` : ""}`;
 }
 elements["import-apply"].addEventListener("click", () => void applyImport(false));
 elements["import-merge"].addEventListener("click", () => void applyImport(true));
 
 document.addEventListener("keydown", (event) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") {
+    event.preventDefault(); personalLibrary.openPalette(); return;
+  }
   if (overlays.handleEscape(event)) return;
   const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");
   if (catalogArrow && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
@@ -6706,6 +6730,78 @@ elements["reader-pane"].addEventListener("keydown", (event) => {
   if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Home", "End"].includes(event.key) &&
       !event.target.closest("input, textarea, [contenteditable]")) readerSession.markUserScroll();
 });
+async function personalWorkData() {
+  const [index, textWorks] = await Promise.all([collectionIndex().catch(() => null), textLibrary.metadataWorks()]);
+  const reading = index ? await collectionReadingProgress(index).catch(() => ({ progress: new Map(), failedBoards: new Set() })) : null;
+  return [
+    ...(index?.summaries || []).map((item) => {
+      const state = reading.progress.get(item.id);
+      return {
+        key: workKey({ source: "typemoon", id: item.id }), title: item.title, author: item.author, source: "typemoon", sourceLabel: "타입문넷",
+        chapters: item.entry_count ?? item.entries?.length ?? 0,
+        read: reading.failedBoards.has(item.board_id) ? "unknown" : collectionOccupancy({ availableCount: collectionAvailableCount(item), finishedCount: state?.finished || 0, readingCount: state?.reading || 0 }),
+        fresh: hasNewEpisodes(item, state), aa: item.is_aa === true || boardById.get(item.board_id)?.is_aa === true,
+        collectionId: item.id,
+      };
+    }), ...textWorks,
+  ];
+}
+async function loadPersonalLibrary() {
+  const store = await ownerStore();
+  const legacy = textLibrary.shelfState();
+  const raw = store ? await store.get("meta", "library") : null;
+  const config = sanitizeLibrary(raw || { shelves: otherOwners().length ? [] : legacy.shelves });
+  const records = store ? await store.getAll("works") : [];
+  if (!raw && !otherOwners().length) {
+    for (const [id, shelfId] of Object.entries(legacy.workShelves || {})) {
+      if (!records.some((record) => record.workKey === `novel:${id}`)) records.push({ workKey: `novel:${id}`, shelfId, updatedAt: "1970-01-01T00:00:00.000Z" });
+    }
+  }
+  return { config, styles: new Map(records.map(sanitizeWorkStyle).filter(Boolean).map((record) => [record.workKey, record])), canSave: Boolean(store) };
+}
+async function personalLibraryChanged(state) {
+  textLibrary.applyLibraryShelves(state.config, state.styles);
+  if (currentDestination === "library") void personalLibrary.renderHome();
+}
+async function openPersonalWork(work) {
+  if (work.collectionId !== undefined) return openCollectionDetail(work.collectionId);
+  persistReadingPosition();
+  history.pushState({ redstmText: true, redstmParent: currentRoute() }, "", work.route);
+  await handleRoute();
+}
+const classifyButton = document.createElement("button");
+classifyButton.id = "collection-classify"; classifyButton.type = "button"; classifyButton.textContent = "분류·고정";
+document.querySelector(".collection-actions").append(classifyButton);
+const readerClassify = document.createElement("button"); readerClassify.id = "reader-work-classify"; readerClassify.type = "button"; readerClassify.textContent = "작품 분류·고정";
+document.querySelector("#reader-work-find").after(readerClassify);
+readerClassify.addEventListener("click", async () => {
+  closeReaderMore();
+  const work = readerSource === "text" ? textLibrary.styleWork() : currentCollection ? {
+    key: workKey({ source: "typemoon", id: currentCollection.collection.id }), title: currentCollection.collection.title, source: "typemoon",
+  } : null;
+  if (!work || !await personalLibrary.openWork(work)) showReaderFeedback("작품 분류를 저장할 수 없어요", 2200);
+});
+personalLibrary = createPersonalLibrary({
+  host: elements["reading-works"], overlays, getData: personalWorkData, load: loadPersonalLibrary,
+  async save(config, styles) {
+    const store = await ownerStore();
+    if (!store) throw new Error("owner_unavailable");
+    const changes = new Map();
+    if (!await store.get("meta", "library")) for (const value of (await loadPersonalLibrary()).styles.values()) changes.set(value.workKey, value);
+    for (const value of styles) changes.set(value.workKey, value);
+    await store.commit([{ store: "meta", value: config }, ...[...changes.values()].map((value) => ({ store: "works", value }))]);
+  },
+  onChanged: personalLibraryChanged, onOpen: openPersonalWork,
+  makeCard: (work) => shelfCard({ title: work.title, source: work.sourceLabel, hueKey: work.key, meta: [work.sourceLabel], open: () => void openPersonalWork(work) }),
+  libraries: { hangul, UFuzzy }, feedback: (message) => showReaderFeedback(message, 2400), visible: () => currentDestination === "library",
+  commands: () => [
+    { title: "서재로", run: () => showDestination("library") }, { title: "둘러보기", run: () => showDestination("browse") },
+    { title: "검색", run: () => showDestination("search") }, { title: "기록", run: () => showDestination("bookmarks") },
+    { title: "설정", run: openSettings },
+    ...(readerSource ? [{ title: "본문 찾기", run: openFind }, { title: "작품에서 찾기", run: () => void openWorkSearch() }] : []),
+  ],
+});
+
 applySettings();
 // Text archive routes do not depend on the TypeMoon search index; start them immediately.
 if (location.pathname === "/text") void handleRoute();

@@ -1,5 +1,6 @@
 import { gunzipSync } from "node:zlib";
 
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 import { arcalivePost, arcaliveWork, novelWork, useTextArchive } from "./text-fixture.js";
@@ -2326,4 +2327,99 @@ test("T16/T17 Arcalive work search returns to its filtered chapter list", async 
   await expect(page.locator("#kwic-dialog")).toBeVisible();
   expect(new URL(page.url()).searchParams.get("sort")).toBe("latest");
   await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+});
+
+
+test("P6-4 palette finds metadata across sources and keeps IME and settings commands separate", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const posts = [4, 5].map((id) => arcalivePost({ id, title: `${id}편` }));
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "세이버 소설", author: "카나", chapters: 3 })], posts,
+    works: [arcaliveWork({ key: "garden", title: "정원 연재", posts })] });
+  await page.goto("/");
+  const open = () => page.keyboard.press("Control+k");
+  await open();
+  await page.locator("#palette-input").fill("ㅅㅇㅂ");
+  await expect(page.locator('#palette-results button[data-work-key="novel:novel:toki:1"]')).toHaveText(/세이버 소설/);
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+  await page.locator("#palette-input").press("Enter");
+  await expect(page.locator("#text-work-summary")).toContainText("세이버 소설");
+  await open();
+  await page.locator("#palette-input").fill("카나");
+  await expect(page.locator("#palette-results button")).toHaveCount(1);
+  await page.locator("#palette-input").fill("정원");
+  await expect(page.locator("#palette-results button")).toHaveText(/정원 연재/);
+  await page.locator("#palette-input").press("Enter");
+  await expect(page.locator("#text-work-summary")).toContainText("정원 연재");
+  await open();
+  await page.locator("#palette-input").fill("설정");
+  await expect(page.locator("#palette-results button")).toHaveText(/설정/);
+  await page.locator("#palette-input").press("Enter");
+  await expect(page.locator("#settings-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator("body").dispatchEvent("keydown", { key: "k", ctrlKey: true, isComposing: true });
+  await expect(page.locator("#command-palette")).toBeHidden();
+});
+
+test("P6-4 classifications cover all sources and named condition combinations survive a v4 backup", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  const posts = [4, 5].map((id) => arcalivePost({ id, title: `${id}편` }));
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "세이버 소설", chapters: 3 })], posts,
+    works: [arcaliveWork({ key: "garden", title: "정원 연재", posts })] });
+  await page.goto("/collections/1");
+  await page.locator("#collection-classify").click();
+  await expect(page.locator("#work-style-dialog")).toBeVisible();
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+  page.once("dialog", (dialog) => dialog.accept("기억"));
+  await page.locator("#library-shelf-add").click();
+  const style = page.locator("#work-style-form");
+  await expect(style.locator('select option:checked')).toHaveText("기억");
+  const shelfId = await style.locator("select").inputValue();
+  await style.locator('[name="pinned"]').check();
+  await style.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator("#work-style-dialog")).toBeHidden();
+  const paletteWork = async (query) => {
+    await page.keyboard.press("Control+k"); await page.locator("#palette-input").fill(query);
+    await expect(page.locator("#palette-results button")).toHaveCount(1);
+    await page.locator("#palette-input").press("Enter");
+    await expect(page.locator("#text-work-summary")).toContainText(query);
+    await page.locator("#text-work-summary .shelf-summary").click();
+    await expect(page.locator("#work-style-dialog")).toBeVisible();
+    await style.locator("select").selectOption(shelfId);
+  };
+  await paletteWork("세이버");
+  await style.locator('[name="pinned"]').check();
+  await style.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator("#work-style-dialog")).toBeHidden();
+  await paletteWork("정원");
+  await style.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator("#work-style-dialog")).toBeHidden();
+  await page.evaluate(() => { history.pushState({}, "", "/"); dispatchEvent(new PopStateEvent("popstate", { state: {} })); });
+  await expect(page.locator("#smart-library")).toBeVisible();
+  await expect(page.locator("#library-pinned .shelf-card")).toHaveCount(2);
+  await page.locator("#smart-library-edit").click();
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+  const form = page.locator("#library-view-form");
+  await form.locator('[name="name"]').fill("기억한 작품");
+  await form.locator('[name="shelfId"]').selectOption(shelfId);
+  await form.locator('[name="pinned"]').check();
+  await form.getByRole("button", { name: "조건 조합 저장" }).click();
+  await expect(page.locator("#library-editor-status")).toHaveText("저장했어요");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#smart-library-chips button", { hasText: "기억한 작품" })).toHaveText("기억한 작품 2");
+  await page.locator("#smart-library-chips button", { hasText: "기억한 작품" }).click();
+  await expect(page.locator("#library-view-works li")).toHaveCount(2);
+  await expect(page.locator("#library-view-works")).toContainText("긴 연재");
+  await expect(page.locator("#library-view-works")).toContainText("세이버 소설");
+  await expect(page.locator("#library-view-works")).not.toContainText("정원 연재");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(page.locator("#smart-library-chips button", { hasText: "기억한 작품" })).toHaveText("기억한 작품 2");
+  await page.goto("/settings");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
+  expect(backup.schema_version).toBe(4);
+  expect(backup.records.library.views.find((view) => view.name === "기억한 작품").conditions).toEqual({ pinned: true, shelfId });
+  expect(backup.records.works.filter((work) => work.shelfId === shelfId)).toHaveLength(3);
 });
