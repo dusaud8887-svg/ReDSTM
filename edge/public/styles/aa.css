@@ -26,6 +26,19 @@
 .archive-body.aa :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; display: block; margin: 0; padding: 0; white-space: nowrap !important; font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; background: transparent !important; }
 .archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
 
+/* AA host (docs/24 §8.17): the toolbar, the picture, its minimap and the zoom message go full
+   screen together, with 밝기 · 따뜻하게 drawn inside it because the page's shade stays outside. */
+.aa-host:fullscreen { display: flex; flex-direction: column; overflow: auto; background: var(--aa-background); }
+.aa-host:fullscreen .aa-controls { top: 0; flex: 0 0 auto; }
+.aa-host:fullscreen .archive-body.aa { flex: 1 0 auto; padding-block: 16px 24px; }
+.aa-host:fullscreen::before, .aa-host:fullscreen::after { content: ""; position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.aa-host:fullscreen::before { background: #000; opacity: var(--reader-dim, 0); }
+.aa-host:fullscreen::after { background: #FF9E4A; opacity: var(--reader-warm, 0); mix-blend-mode: multiply; }
+.aa-minimap { position: sticky; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 6; height: 48px; margin: 0 16px; display: flex; align-items: center; cursor: pointer; touch-action: none; }
+.aa-minimap::before { content: ""; position: absolute; inset: 21px 0; border-radius: 3px; background: color-mix(in srgb, var(--aa-ink) 18%, transparent); }
+.aa-minimap-window { position: absolute; top: 18px; bottom: 18px; left: var(--window-left, 0%); width: var(--window-width, 100%); border-radius: 6px; background: color-mix(in srgb, var(--aa-ink) 55%, transparent); }
+.aa-minimap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .comment-body.aa-comment { overflow-x: auto; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; }
 .comment-body.aa-comment :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; min-width: 100%; margin: 0; padding: 0; white-space: pre !important; font: inherit !important; background: transparent !important; }
 .comment-body.aa-comment.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
@@ -39,4 +52,6 @@
   .aa-control-group { flex: 0 0 auto; }
   .aa-zoom-indicator { left: 50%; }
   .archive-body.aa { width: 100%; padding: 28px 8px 52px; }
+  /* Above the floating dock while the tools show. */
+  body:not(.reader-controls-hidden) .aa-minimap { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }

@@ -39,3 +39,16 @@ export function createTapJudge({ onTap, onDoubleTap, delay = 300 }) {
     return "single";
   };
 }
+
+// Minimap (DESIGN §8.4): the visible part of a wide picture as a share of its whole width.
+export function minimapWindow({ scrollLeft, clientWidth, scrollWidth }) {
+  if (!(scrollWidth > clientWidth + 1)) return null;
+  const width = clientWidth / scrollWidth;
+  return { left: Math.min(1 - width, Math.max(0, scrollLeft / scrollWidth)), width };
+}
+
+// A point on the minimap (0–1 across it) becomes the scroll that centres the view there.
+export function minimapScroll(ratio, { clientWidth, scrollWidth }) {
+  const max = Math.max(0, scrollWidth - clientWidth);
+  return Math.round(Math.min(max, Math.max(0, ratio * scrollWidth - clientWidth / 2)));
+}

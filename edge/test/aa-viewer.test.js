@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampAaZoom, createTapJudge, fitAaZoomValue, pinchAaZoom, scrollKeepingPoint } from "../public/aa-viewer.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "../public/aa-viewer.js";
 
 test("AA zoom keeps its 10–300% range and three decimals", () => {
   assert.equal(clampAaZoom(0.01), 0.1);
@@ -37,4 +37,13 @@ test("a tap acts at once and a quick second tap undoes it into a double tap (T31
   assert.deepEqual(calls, ["tap", "tap", "double"]);
   assert.equal(judge(400), "single");
   assert.equal(judge(800), "single");
+});
+
+test("the minimap shows the visible part of a wide picture and moves it", () => {
+  assert.equal(minimapWindow({ scrollLeft: 0, clientWidth: 400, scrollWidth: 400 }), null);
+  assert.deepEqual(minimapWindow({ scrollLeft: 400, clientWidth: 400, scrollWidth: 1600 }), { left: 0.25, width: 0.25 });
+  assert.deepEqual(minimapWindow({ scrollLeft: 1300, clientWidth: 400, scrollWidth: 1600 }), { left: 0.75, width: 0.25 });
+  assert.equal(minimapScroll(0.5, { clientWidth: 400, scrollWidth: 1600 }), 600);
+  assert.equal(minimapScroll(0, { clientWidth: 400, scrollWidth: 1600 }), 0);
+  assert.equal(minimapScroll(1, { clientWidth: 400, scrollWidth: 1600 }), 1200);
 });
