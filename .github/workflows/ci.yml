@@ -57,9 +57,10 @@ jobs:
       - run: npm run check
       - run: npm run lint
       - run: npx playwright install --with-deps chrome
-      - name: Generate initial Linux visual baselines
-        if: hashFiles('edge/e2e/visual.spec.js-snapshots/*.png') == ''
-        run: npx playwright test --project visual --update-snapshots
+      # Only screens without a committed baseline get one (a new or intentionally changed screen,
+      # whose old PNG was removed); the run's artifact carries them to commit.
+      - name: Generate missing Linux visual baselines
+        run: npx playwright test --project visual --update-snapshots=missing
         env:
           VISUAL: "1"
       - run: npm run test:e2e
