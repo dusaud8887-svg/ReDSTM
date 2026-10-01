@@ -2207,3 +2207,33 @@ test("Auto scroll flows and pauses, and reading profiles apply globally or to on
   await page.locator("#quick-profile-work-check").uncheck();
   await expect.poll(surface).toBe("default");
 });
+
+test("KWIC worker returns original locators and reports unreadable episodes separately", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/");
+  const results = await page.evaluate(async () => {
+    const { createTextModel } = await import("/text-model.js");
+    const worker = new Worker("/kwic-worker.js", { type: "module" });
+    try {
+      return await new Promise((resolve, reject) => {
+        const found = [];
+        worker.onerror = reject;
+        worker.onmessage = ({ data }) => {
+          if (data.type === "parse") {
+            const body = new DOMParser().parseFromString(JSON.parse(data.raw).post.body_html, "text/html").body;
+            worker.postMessage({ type: "parsed", queryId: data.queryId, parseId: data.parseId, text: createTextModel(body).text });
+          } else if (data.type === "result") found.push(data);
+          else if (data.type === "done") resolve(found);
+        };
+        worker.postMessage({ type: "search", queryId: 1, query: "본문 1", entries: [
+          { documentId: "1", type: "typemoon", url: `/archive/posts/board_a/1-${"1".padStart(64, "0")}.json.zst` },
+          { documentId: "missing", type: "typemoon", url: "/archive/missing.json" },
+        ] });
+      });
+    } finally { worker.terminate(); }
+  });
+  expect(results).toHaveLength(2);
+  expect(results.find((result) => result.entry.documentId === "1").matches[0].locator.exact).toBe("본문 1");
+  expect(results.at(-1).failed).toBe(1);
+  expect(results.find((result) => result.entry.documentId === "missing").error).toBe(true);
+});

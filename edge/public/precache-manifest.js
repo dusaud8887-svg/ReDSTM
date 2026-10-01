@@ -85,6 +85,14 @@ export default [
     "revision": "7852059e72eb0b08"
   },
   {
+    "url": "/kwic-core.js",
+    "revision": "9572686f6d4dc2ce"
+  },
+  {
+    "url": "/kwic-worker.js",
+    "revision": "396c5def3c4d182f"
+  },
+  {
     "url": "/list-anchor.js",
     "revision": "672aaa0522624719"
   },
