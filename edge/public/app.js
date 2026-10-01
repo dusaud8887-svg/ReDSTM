@@ -50,6 +50,7 @@ import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
+import { createOffline } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
 import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
 import { createTextModel, modelOffset } from "/text-model.js";
@@ -5262,10 +5263,19 @@ let annotationRecords = [];
 let annotationModel = null;
 let placedAnnotations = [];
 
-function ownerStore() {
-  ownerDb ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
+// The verified owner (Access email hash from /api/v1/me), or null when there is none (Basic auth).
+let ownerRequest = null;
+function ownerIdentity() {
+  ownerRequest ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
     .then((response) => (response.ok ? response.json() : null))
-    .then((me) => (me?.ownerHash ? openStore(me.ownerHash) : null))
+    .then((me) => (/^[a-f0-9]{16}$/.test(me?.ownerHash ?? "") ? me.ownerHash : null))
+    .catch(() => null);
+  return ownerRequest;
+}
+
+function ownerStore() {
+  ownerDb ??= ownerIdentity()
+    .then((hash) => (hash ? openStore(hash) : null))
     .then(async (store) => {
       if (!store) return null;
       annotationRecords = await store.getAll("annotations");
@@ -6141,3 +6151,11 @@ elements["reader-pane"].addEventListener("keydown", (event) => {
 applySettings();
 // Text archive routes do not depend on the TypeMoon search index; start them immediately.
 if (location.pathname === "/text") void handleRoute();
+
+// Service worker (docs/24 §12.6): registered once the page has settled; its caches are the owner's.
+const offline = createOffline({
+  onAuthExpired: () => showReaderFeedback("로그인이 만료됐어요. 페이지를 다시 열어 로그인해 주세요", 3600),
+});
+const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
+if (document.readyState === "complete") startOffline();
+else addEventListener("load", startOffline, { once: true });

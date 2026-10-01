@@ -21,6 +21,8 @@ export default defineConfig({
       password: process.env.REDSTM_E2E_PASSWORD || "test-secret",
     },
     channel: "chrome",
+    // Requests a service worker makes bypass page.route mocks, so only offline.spec.js allows it.
+    serviceWorkers: "block",
     trace: "retain-on-failure",
   },
   projects: [

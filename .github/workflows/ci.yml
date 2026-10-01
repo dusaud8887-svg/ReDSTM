@@ -60,6 +60,8 @@ jobs:
       # Only screens without a committed baseline get one (a new or intentionally changed screen,
       # whose old PNG was removed); the run's artifact carries them to commit.
       - name: Generate missing Linux visual baselines
+        # Writing a missing baseline marks that test failed; the comparison run below decides.
+        continue-on-error: true
         run: npx playwright test --project visual --update-snapshots=missing
         env:
           VISUAL: "1"
