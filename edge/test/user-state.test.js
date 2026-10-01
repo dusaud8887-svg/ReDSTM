@@ -240,6 +240,8 @@ test("keeps each AA picture's zoom and sideways position, newest 300", () => {
   assert.deepEqual(plan.state.aaViews["aa_19:1304"], { left: 304, at: 404 });
   const small = planImport(exportUserState({ ...defaultUserState(defaults), aaViews: state.aaViews && { "aa_19:12": { zoom: 0.75, left: 120.4, at: 5 } } }), defaults);
   assert.deepEqual(small.state.aaViews, { "aa_19:12": { zoom: 0.75, left: 120, at: 5 } });
+  const fitted = planImport(exportUserState({ ...defaultUserState(defaults), aaViews: { "aa_19:12": { zoom: 0.6, fit: true, at: 5 }, "aa_19:13": { left: 3, fit: true, at: 6 } } }), defaults);
+  assert.deepEqual(fitted.state.aaViews, { "aa_19:13": { left: 3, at: 6 }, "aa_19:12": { zoom: 0.6, fit: true, at: 5 } });
 });
 
 test("imports v2 files and merges a backup into this browser's records", () => {

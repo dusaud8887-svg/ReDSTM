@@ -145,6 +145,8 @@ function aaViewMap(value) {
     if (!validStablePostId(identity) || !isRecord(view)) continue;
     const kept = {};
     if (Number.isFinite(view.zoom) && view.zoom >= 0.1 && view.zoom <= 3) kept.zoom = view.zoom;
+    // 맞춤 (an automatic fit) and a manual zoom are kept apart (docs/24 §8.16).
+    if (kept.zoom !== undefined && view.fit === true) kept.fit = true;
     if (Number.isFinite(view.left) && view.left >= 0) kept.left = Math.round(view.left);
     if (!Object.keys(kept).length) continue;
     kept.at = Number.isFinite(view.at) && view.at > 0 ? Math.round(view.at) : 0;
