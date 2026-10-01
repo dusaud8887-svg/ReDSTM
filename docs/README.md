@@ -24,6 +24,8 @@
 
 프론트 개편 M0 진행: Linux 시각 회귀 기준 48개를 CI에서 생성·검증했다. Access 사용자 전용 `GET /api/v1/me`의 `ownerHash`가 이후 로컬 기록 namespace의 기준이며 응답은 저장하지 않는다. 버전 글꼴·vendor 자산에는 1년 immutable 헤더를 적용한다. 구현·검증 기록과 실기기 확인 대기는 [`24 §19`](24_frontend_redesign_spec.md#19-변경-기록).
 
+작품 안 KWIC 찾기(P6-3)는 TypeMoon·소설·아카라이브에 연결됐다. 기본 범위는 실제 열어 본 회차+현재 회차이며 작품 전체는 명시적으로 선택한다. 결과 문장으로 이동한 뒤 Back에서 검색어·범위·텍스트 작품 정렬을 복원한다. 전체 E2E 689 pass/23 조건부 skip, 실기기 확인은 대기 중이다.
+
 | 문서 | 용도 |
 |---|---|
 | [`00`](00_initial_product_architecture.md), [`04`](04_implementation_plan.md) | 제품 경계·결정 기록, 남은 출시 조건 |

@@ -1341,6 +1341,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 
 - P6-3c 전체 검증: 모든 4폭 Playwright 689 pass/0 fail/23 조건부 skip(9.5분), axe 포함. 최종 unit 187 pass, check·lint 0 error. Linux visual은 M6 마일스톤 종료 때 판정한다. 편집 5파일 + 생성 precache 목록.
 
+- P6-3d: 파일 제한을 지키기 위해 공개 동작 문서(`docs/19` §13·`docs/README`) 갱신을 별도 커밋으로 분리. 코드 커밋 `d7452b9`의 전체 검증과 실제 연결을 기준으로 기록했다.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
