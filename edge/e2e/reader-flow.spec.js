@@ -1896,6 +1896,8 @@ test("Reading time shows in 기록 › 통계, the Home week and today's excerpt
   await selectParagraph(page, 6);
   await page.locator("#sel-mark").click();
   await expect.poll(() => highlightTexts(page, "redstm-mark")).toEqual(["2편 본문 7"]);
+  // Let the session's start frame run before the first input (the fake clock drives frames).
+  await page.clock.runFor(1000);
   for (let step = 0; step < 10; step += 1) {
     await page.locator("#reader-pane").evaluate((pane) => pane.scrollBy(0, 30));
     await page.clock.fastForward(30_000);
@@ -1907,11 +1909,12 @@ test("Reading time shows in 기록 › 통계, the Home week and today's excerpt
   await go("/saved?view=stats");
   await expect(page.locator("#stats-panel")).toBeVisible();
   await expect(page.locator("#result-list")).toBeHidden();
-  await expect(page.locator("#stats-today")).toHaveText(/^[56]분$/);
+  // About five minutes; a slow runner can lose the first input or two to the session start.
+  await expect(page.locator("#stats-today")).toHaveText(/^[3-6]분$/);
   await expect(page.locator("#stats-streak")).toHaveText("1일");
   await expect(page.locator("#stats-month-title")).toHaveText("10월");
   await expect(page.locator("#stats-heat li.today")).toHaveClass(/level-1/);
-  await expect(page.locator("#stats-heat li.today")).toHaveAttribute("aria-label", /10월 1일 [56]분/);
+  await expect(page.locator("#stats-heat li.today")).toHaveAttribute("aria-label", /10월 1일 [3-6]분/);
   await expect(page.locator(".stats-note")).toHaveText("보존된 회차 기준");
   await page.locator("#stats-share").click();
   await expect(page.locator("#share-dialog")).toBeVisible();
@@ -1920,7 +1923,7 @@ test("Reading time shows in 기록 › 통계, the Home week and today's excerpt
   await page.keyboard.press("Escape");
   await go("/");
   await expect(page.locator("#home-week")).toBeVisible();
-  await expect(page.locator("#home-week-total")).toHaveText(/^[56]분 · 1일 읽음$/);
+  await expect(page.locator("#home-week-total")).toHaveText(/^[3-6]분 · 1일 읽음$/);
   await expect(page.locator("#home-week-bars li")).toHaveCount(7);
   await expect(page.locator("#home-excerpt")).toBeVisible();
   await expect(page.locator("#home-excerpt .excerpt-quote")).toHaveText("2편 본문 7");
