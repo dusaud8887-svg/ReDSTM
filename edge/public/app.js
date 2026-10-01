@@ -76,7 +76,7 @@ const elements = Object.fromEntries(
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "scope-tabs", "source-switch", "search-suggest", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
-    "archive-body", "page-hint", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
+    "archive-body", "page-hint", "comments", "comment-count", "comment-list", "comments-toggle", "comments-return", "end-comments", "end-comments-count", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
@@ -1216,6 +1216,7 @@ function setReaderSource(source) {
   document.body.classList.remove("collection-detail-open");
   const text = source === "text";
   elements.comments.hidden = text;
+  if (text) elements["end-comments"].hidden = true;
   elements["mode-toggle"].hidden = text;
   if (text) {
     elements["mode-reset"].hidden = true;
@@ -3727,7 +3728,31 @@ function renderComments(comments) {
     fragment.append(item);
   }
   elements["comment-list"].append(fragment);
+  elements["end-comments-count"].textContent = elements["comment-count"].textContent;
+  elements["end-comments"].hidden = !comments.length;
+  setCommentsOpen(false);
   applySettings();
+}
+
+// Comments are one DOM below the body (docs/24 §8.7 D14), folded with hidden="until-found" so the
+// browser's find still reaches them; where that is not supported the value acts as plain hidden
+// and the heading button unfolds them.
+function setCommentsOpen(open) {
+  if (open) elements["comment-list"].hidden = false;
+  else elements["comment-list"].setAttribute("hidden", "until-found");
+  elements["comments-toggle"].setAttribute("aria-expanded", String(open));
+  if (!open) elements["comments-return"].hidden = true;
+}
+
+// 댓글 N on the chapter end: unfold in place, go there, and offer the way back to the text.
+function showComments() {
+  const anchor = readerSession.capture();
+  rememberReturn(anchor, "댓글 전 위치");
+  setCommentsOpen(true);
+  const pane = elements["reader-pane"];
+  readerSession.markUserScroll();
+  pane.scrollTop += elements.comments.getBoundingClientRect().top - pane.getBoundingClientRect().top - readerTopInset();
+  elements["comments-return"].hidden = !anchor;
 }
 
 function rememberHistory(summary) {
@@ -4887,6 +4912,18 @@ for (const choice of document.querySelectorAll("button[data-reading-mode]")) {
     applyReadingMode();
   });
 }
+elements["comments-toggle"].addEventListener("click", () => setCommentsOpen(Boolean(elements["comment-list"].hidden)));
+elements["comment-list"].addEventListener("beforematch", () => elements["comments-toggle"].setAttribute("aria-expanded", "true"));
+elements["end-comments"].addEventListener("click", showComments);
+elements["comments-return"].addEventListener("click", () => {
+  const target = readerReturn;
+  elements["comments-return"].hidden = true;
+  if (target?.generation === readerSession.generation && readerSession.restore(target.anchor)) syncScrollBaseline();
+});
+// Scrolled back above the comments: the way back has done its job.
+new IntersectionObserver(([entry]) => {
+  if (!entry.isIntersecting && entry.boundingClientRect.top > 0) elements["comments-return"].hidden = true;
+}, { root: elements["reader-pane"] }).observe(elements.comments);
 elements["page-hint"].addEventListener("click", () => {
   elements["page-hint"].hidden = true;
   try {

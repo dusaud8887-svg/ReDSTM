@@ -106,6 +106,10 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .comments { border-top: 1px solid var(--line); padding: 36px max(32px, calc((100% - var(--prose-width)) / 2)) 72px; }
 .comments h2 { margin: 0 0 20px; font-size: 20px; font-weight: 680; }
 .comments h2 span { color: var(--muted); font-weight: 450; }
+.comments-toggle { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.comments-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; transition: transform 160ms var(--ease-out); }
+.comments-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.comments-return { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 21; min-height: 44px; padding: 0 18px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-raised); box-shadow: var(--shadow); color: var(--ink); font: 600 14px/1 var(--font-ui); cursor: pointer; transform: translateX(-50%); }
 .comments ol { margin: 0; padding: 0; list-style: none; }
 .comment { margin-left: calc(min(var(--depth), 4) * 14px); padding: 14px 0 14px 12px; border-left: 2px solid var(--line); border-bottom: 1px solid var(--line); }
 .comment header { display: flex; gap: 10px; margin-bottom: 6px; color: var(--muted); font-size: 11px; }

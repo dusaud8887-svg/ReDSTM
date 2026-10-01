@@ -987,6 +987,51 @@ test("prose settings and theme never change an AA picture", async ({ page }) => 
   expect(after.pixels.equals(before.pixels)).toBe(true);
 });
 
+// T29 (docs/24 §8.7 D14): comments stay one DOM below the body, folded until asked for; the
+// chapter-end shortcut unfolds them in place and 본문으로 returns to the reading place.
+test("comments unfold in place from the chapter end and 본문으로 returns to the text", async ({ page }) => {
+  await useCollectionFixture(page);
+  await openPost(page, firstKey);
+  const list = page.locator("#comment-list");
+  const toggle = page.locator("#comments-toggle");
+  await expect(list).toBeHidden();
+  await expect(list).toHaveAttribute("hidden", "until-found");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("댓글 2");
+  const shortcut = page.locator("#end-comments");
+  await expect(shortcut).toContainText("댓글 2");
+  const pane = page.locator("#reader-pane");
+  await shortcut.scrollIntoViewIfNeeded();
+  const before = await pane.evaluate((element) => element.scrollTop);
+  await shortcut.click();
+  await expect(list).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".comment")).toHaveCount(2);
+  await expect(page.locator("#comments-title")).toBeInViewport();
+  const back = page.locator("#comments-return");
+  await expect(back).toBeVisible();
+  await expect(back).toHaveText("본문으로");
+  // One DOM: nothing was copied into a sheet, so no id appears twice.
+  expect(await page.evaluate(() => {
+    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
+    return ids.length - new Set(ids).size;
+  })).toBe(0);
+  await back.click();
+  await expect(back).toBeHidden();
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(before + 80);
+  // The heading folds them again; browser find (beforematch) unfolds and the heading follows.
+  await toggle.click();
+  await expect(list).toBeHidden();
+  await list.evaluate((element) => {
+    element.removeAttribute("hidden");
+    element.dispatchEvent(new Event("beforematch"));
+  });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  // A new post starts folded.
+  await openPost(page, secondKey);
+  await expect(list).toHaveAttribute("hidden", "until-found");
+});
+
 test("applies and persists prose typography over legacy source styles", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, proseKey);
