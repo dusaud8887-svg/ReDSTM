@@ -471,6 +471,7 @@
       <button class="icon-button" id="find-next" type="button" aria-label="다음 결과"><svg aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
       <button class="icon-button" id="find-close" type="button" aria-label="찾기 닫기"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
+    <div class="action-toast" id="update-ready" role="status" popover="manual" hidden><span>새 버전이 있어요</span><button type="button" id="update-apply">지금 적용</button></div>
     <div class="action-toast" id="find-return" role="status" popover="manual" hidden><span>찾기 전 위치</span><button type="button" id="find-return-button">돌아가기</button></div>
 
     <button class="immersive-exit" id="immersive-exit" type="button" hidden>집중 종료</button>
@@ -661,7 +662,7 @@
           <p class="settings-note">읽기 기록과 저장한 글은 이 브라우저에만 보관됩니다.</p>
           <p class="settings-note" id="offline-storage" hidden></p>
           <div class="settings-account" id="other-account" hidden><p>이 기기에 다른 계정 기록이 있어요. 지금 계정에서는 열지 않습니다.</p><button class="text-command" id="other-account-delete" type="button">그 기록 삭제</button></div>
-          <div class="settings-actions"><button class="text-command" id="clear-device" type="button">이 기기 기록 지우기</button></div>
+          <div class="settings-actions"><button class="text-command" id="clear-device" type="button">이 기기 기록 지우기</button><button class="text-command" id="reset-app-cache" type="button">앱 캐시 지우기</button></div>
           <details class="settings-keys" id="settings-keys">
             <summary>키보드 단축키</summary>
             <dl>

@@ -57,5 +57,18 @@ export function createOffline({ onAuthExpired = () => {}, onUpdateReady = () => 
     save(id, urls, requires = []) { send({ type: "SAVE_OFFLINE", id, urls, requires }); },
     remove(id, urls) { send({ type: "DELETE_OFFLINE", id, urls }); },
     cancel(id) { send({ type: "CANCEL_OFFLINE", id }); },
+    // The waiting version takes over and the page reloads once it controls (T23).
+    applyUpdate() {
+      const waiting = registration?.waiting;
+      if (!waiting) return false;
+      container.addEventListener("controllerchange", () => location.reload(), { once: true });
+      waiting.postMessage({ type: "SKIP_WAITING" });
+      return true;
+    },
+    // 앱 캐시 지우기 (T24): the worker goes and the caches it filled with it; saved works go too.
+    async reset() {
+      await registration?.unregister();
+      for (const name of await caches.keys()) await caches.delete(name);
+    },
   };
 }
