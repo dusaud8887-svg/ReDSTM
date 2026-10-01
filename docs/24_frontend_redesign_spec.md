@@ -741,7 +741,7 @@ DB "redstm" v1   (owner namespace: 로그인 사용자별 DB 이름 "redstm:<own
   annotations  keyPath id   idx byDocument, byWork, byUpdated
     { id(uuid), locator, quote, note, tags[], kind:"mark"|"note", createdAt, updatedAt, deletedAt?, serverRev? }
   sessions     keyPath id   idx byDay, byWork
-    { id(uuid), deviceId, workKey, documentId, day, start, end, activeMs, listenMs, chars }
+    { id(uuid), deviceId, workKey, documentId, day, start, end, spans[[start,end]], activeMs, chars, endOfWork }
   works        keyPath workKey  { workKey, hue?, note?, pinned?, shelfId?, updatedAt }
   offline      keyPath workKey  (§12.6.2 snapshot)
   outbox       keyPath opId     { opId(uuid), key, value|null, baseRev, createdAt, attempts, state:"pending"|"sent"|"acked" }
@@ -1310,6 +1310,8 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P3-2 검증: unit 164, check·lint 0 error(기존 warning 8), 전체 E2E 617 pass/0 fail/23 skip.
 - P3-3: `share-canvas.js` — DOM 캡처 없이 Canvas 2D로 그린다(CSP `img-src`에 `blob:`이 없으므로 미리보기도 `<img>`가 아니라 시트 안 canvas 자체, CSP 변경 없음). 발췌 카드 1080×1350: 작품색 띠, 인용 MaruBuri 44px/70px, `Intl.Segmenter` 낱말 경계 + `measureText` 줄바꿈(한 낱말이 줄보다 길면 글자 단위), 9줄 넘으면 `…`와 `이어짐`, 작품·회차, `ReDSTM`. 배경 `작품색 · 밝게 · 어둡게`(tokens.css hue 값). 시트를 열 때 `document.fonts.load` 후 그리고 PNG blob·File까지 미리 만들어, `공유`는 준비된 파일로 `navigator.share({files,text})`만 호출(T33, 사용자 활성화 유지). 미지원이면 이미지 저장으로, 실패면 안내, `텍스트 복사`는 인용·출처(+ 끌 수 있는 문구 `개인 기록용 인용 — 원문 저작권은 작가에게 있습니다`). 진입: 선택 `⋯ › 이미지로 공유`, 표시 문장 메뉴 `공유`. AA 장면(E6): AA 글에서는 선택 메뉴가 `이미지로 공유` 하나만 보이고, 선택이 걸친 원본 줄 전체를 화면의 글자색(원본색/단색 설정 그대로)·AA 기본 크기(확대와 무관)·1.125 행간·AA 배경으로 줄 단위 `fillText`, 4,096px 넘으면 축소. `기록 카드`(통계)는 P3-4에서 같은 모듈로. 검증 중 수정: P3-1 E2E가 숨은 AA 전용 버튼까지 세던 것(`:visible`), Biome의 forEach 반환 경고(error). 편집: P3-3a(`share-canvas.js`·단위 테스트·`package.json`), P3-3b(`app.js`·`index.html`·`reader.css`·E2E), P3-3c(기록).
 - P3-3 검증: unit 169, check·lint 0 error(기존 warning 8). 전체 E2E 617 pass/4 fail/23 skip — 실패 4건은 위 P3-1 E2E 선택자(4 project)였고, 고친 뒤 해당 테스트와 공유·발췌 테스트를 4 project에서 다시 실행해 12/12 통과. 실제 공유 시트·사용자 활성화는 실기기 확인(T13/T33, §14.5 M3).
+- P3-4: `stats.js`(순수) — 입력마다 [t, t+60초] 구간을 더하고(겹치면 연장) Reader가 화면을 떠나면(가려진 탭·Reader 닫힘·다른 문서·pagehide) 거기서 끊는다. 하루는 세션 시작 시각의 기기 현지 날짜, 같은 날 여러 세션(탭·기기)은 구간 합집합으로 한 번만 센다. 연속 일수는 오늘(오늘 기록이 아직 없으면 어제)부터 거꾸로, 월 히트맵은 월요일 시작·분 단위 5단계(heat-0…4), 주간 요약, 끝까지 읽은 작품(보존된 마지막 회차 끝까지 — 작품에 속한 문서에서 본문 98% 이상, 다음 회차 없음), 읽은 글자(세션 중 가장 멀리 간 진행 − 시작 진행 × 본문 길이), 작품별 시간. 세션 기록 `sessions`(§12.4: spans·activeMs·chars·endOfWork; 듣기 제거로 listenMs 없음)은 owner 저장소에만, 멈출 때·30초 무입력·문서 전환·pagehide에 쓴다. 기록 › `통계` 탭(`/saved?view=stats`): 오늘 읽은 시간(추정) 링(`@property --ring`, 이번 달 가장 많이 읽은 날 또는 30분 대비), 연속·끝까지 읽은 작품(`보존된 회차 기준`)·읽은 글자, 월 히트맵(날짜별 aria-label), 수치 정의 문구, `기록 카드 공유`(share-canvas `drawStatsCard` 1080×1350, 같은 공유 시트). 목표 설정은 넣지 않았다(DESIGN: 선택). 서재: `오늘의 발췌`(하루 동안 같은 카드, `다른 발췌`)·`이번 주 기록`(분·읽은 날·요일 막대, `통계`) — 비면 숨김. 작품 상세 머리에 `읽은 시간(추정) N분`(TypeMoon 작품; 세션 작품 키는 열린 작품 목차가 있으면 그 작품). 발견한 결함: 통계 패널이 목록과 달리 스스로 스크롤하지 않아 폰에서 아래쪽(공유 버튼)이 하단 탭바에 가려졌다 — 목록처럼 칼럼 안에서 스크롤. `annotationStore`는 세션도 담으므로 `ownerStore`로 이름을 바꿨다(호출부 전부, 테스트 참조 없음). 위험: 동기화 보류 중에도 `store.commit`이 outbox에 op를 쌓으므로 세션 저장이 잦으면 outbox가 계속 커진다(키별 병합 없음) — 동기화 재개 또는 P6-6 이전 때 정리 필요. DESIGN §9의 `들은 시간` 문구를 듣기 제거에 맞춰 지웠다. 편집: P3-4a(`stats.js`·단위 테스트·`share-canvas.js` 기록 카드·`package.json`), P3-4b(`app.js`·`index.html`·`library.css`·`home.js`·E2E), P3-4c(기록·DESIGN).
+- P3-4 검증: unit 176, check·lint 0 error(기존 warning 8), 전체 E2E 625 pass/0 fail/23 skip(가짜 시계로 5분 읽기 → 통계·서재 모듈).
 
 | 날짜 | 내용 |
 |---|---|
@@ -1436,7 +1438,7 @@ const idxs = uf.filter(haystack, disassemble(query)); // 세이바 → 세이버
 | 8.3 | 선택 메뉴 5개 빡빡, 도크 동시 상태 | 수용 | 4항목 + 고정 바 정식 대체, DESIGN §7.11 점유 표 |
 | 8.4 | 돌아가기 토스트만 | 수용 | 스크러버·더보기에 세션 유지 |
 | 8.5 | 먹 독립성 모순 | 수용 | 앱 테마와 무관하게 먹 허용 |
-| 8.6 | 통계 정의 | 수용 | DESIGN §9(추정 라벨, 합집합, 들은 시간 분리, 끝까지 읽음 ≠ 완결) |
+| 8.6 | 통계 정의 | 수용 | DESIGN §9(추정 라벨, 합집합, 끝까지 읽음 ≠ 완결; 들은 시간은 듣기 제거로 없음) |
 | 8.7 | AA 핀치 경계 | 수용 | 허용 단계 목록 snap, 중점 보정 |
 | 8.8 | 댓글 두 사본 | 수용 | 단일 DOM 펼침(시트 폐기) |
 | §9 | 파일 5개 제한을 절대 규칙으로 쓰지 말 것 | 반려 | 저장소 소유자의 상시 규칙. 대신 테스트·문서 포함 계산과 생성 자산 제외를 명확히 하고, 넘치면 티켓 분할 |
