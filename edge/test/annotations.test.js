@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { annotationAt, annotationRecord, documentAnnotations, NOTE_LIMIT, tombstone, withNote } from "../public/annotations.js";
+import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, NOTE_LIMIT, tombstone, withNote } from "../public/annotations.js";
 
 // A text model with only what records need (text), as createTextModel would produce.
 const model = { tm: 1, text: "첫 문장입니다.\n둘째 문장입니다.\n첫 문장입니다.\n", segments: [], positions: new WeakMap() };
@@ -44,4 +44,18 @@ test("the record under a point is the latest of overlapping marks", () => {
   assert.equal(annotationAt(placed, 2).record.id, "old");
   assert.equal(annotationAt(placed, 6).record.id, "new");
   assert.equal(annotationAt(placed, 10), null);
+});
+
+test("excerpts list newest first and narrow by every word across quote, note and source", () => {
+  const make = (start, end, note, now, id, context) => withNote(annotationRecord({ model, start, end, documentId: "d", now, id, context }), note, now);
+  const first = make(0, 8, "", "2026-09-01T00:00:00Z", "a", { title: "1화", work: "긴 연재", route: "/read/board_a/1" });
+  const second = make(9, 18, "다시 볼 장면", "2026-09-02T00:00:00Z", "b", { title: "2화", work: "다른 작품", route: "javascript:x" });
+  assert.equal(second.context.route, "");
+  assert.deepEqual(excerptList([first, second]).map((record) => record.id), ["b", "a"]);
+  assert.deepEqual(excerptList([first, second], "장면 둘째").map((record) => record.id), ["b"]);
+  assert.deepEqual(excerptList([first, second], "긴 연재").map((record) => record.id), ["a"]);
+  assert.deepEqual(excerptList([tombstone(first), second], "").map((record) => record.id), ["b"]);
+  const markdown = excerptsMarkdown([first, second], "https://redstm.example");
+  assert.match(markdown, /^# ReDSTM 발췌\n\n> 첫 문장입니다\.\n\n— 긴 연재 › 1화 · 2026-09-01 \(https:\/\/redstm\.example\/read\/board_a\/1\)/);
+  assert.match(markdown, /> 둘째 문장입니다\.\n\n다시 볼 장면\n\n— 다른 작품 › 2화 · 2026-09-02\n/);
 });

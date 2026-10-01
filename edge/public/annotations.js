@@ -21,14 +21,48 @@ export function selectionOffsets(model, range) {
   return end - trail > start + lead ? { start: start + lead, end: end - trail } : null;
 }
 
-export function annotationRecord({ model, start, end, rev = "", documentId, workId = "", kind = "mark", note = "", now = new Date().toISOString(), id = crypto.randomUUID() }) {
+// `context` is what an excerpt list shows and opens: { title, work, route } of the document.
+export function annotationRecord({ model, start, end, rev = "", documentId, workId = "", context = {}, kind = "mark", note = "", now = new Date().toISOString(), id = crypto.randomUUID() }) {
   if (kind !== "mark" && kind !== "note") throw new TypeError("지원하지 않는 기록 종류");
   if (end - start > QUOTE_LIMIT) throw new RangeError("선택이 너무 깁니다");
   const locator = createLocator(model, start, end, rev);
   return {
     id, documentId, workId, locator, quote: locator.exact, note: String(note).slice(0, NOTE_LIMIT), tags: [], kind,
+    context: {
+      title: String(context.title ?? "").slice(0, 300), work: String(context.work ?? "").slice(0, 300),
+      route: typeof context.route === "string" && context.route.startsWith("/") ? context.route.slice(0, 1000) : "",
+    },
     createdAt: now, updatedAt: now,
   };
+}
+
+// 기록 › 발췌: every live record, newest first, narrowed by words found in its quote, note, tags,
+// title or work (each word must appear; case and width do not matter).
+export function excerptList(records, query = "") {
+  const words = query.normalize("NFKC").toLowerCase().split(/\s+/).filter(Boolean);
+  return records
+    .filter((record) => !record.deletedAt && sanitizeLocator(record.locator))
+    .filter((record) => {
+      if (!words.length) return true;
+      const haystack = [record.quote, record.note, ...(record.tags ?? []), record.context?.title, record.context?.work]
+        .join("\n").normalize("NFKC").toLowerCase();
+      return words.every((word) => haystack.includes(word));
+    })
+    .sort((left, right) => (right.createdAt > left.createdAt ? 1 : right.createdAt < left.createdAt ? -1 : 0));
+}
+
+// Excerpts as Markdown for keeping elsewhere (F4): one quote block per record with its note
+// and where it came from.
+export function excerptsMarkdown(records, origin = "") {
+  const lines = ["# ReDSTM 발췌", ""];
+  for (const record of records) {
+    const where = [record.context?.work, record.context?.title].filter(Boolean).join(" › ") || "제목 없음";
+    lines.push(...record.quote.split("\n").map((line) => `> ${line}`), "");
+    if (record.note) lines.push(record.note, "");
+    const link = record.context?.route ? ` (${origin}${record.context.route})` : "";
+    lines.push(`— ${where} · ${record.createdAt.slice(0, 10)}${link}`, "", "---", "");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
 }
 
 // A note is edited in place; clearing its text turns it back into a plain mark.
