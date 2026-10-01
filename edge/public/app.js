@@ -47,6 +47,8 @@ import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
+import { createKwic } from "/kwic.js";
+import { arcaliveBody, novelBody } from "/text-work.js";
 import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
@@ -241,6 +243,7 @@ const textLibrary = createTextLibrary({
     progress: bodyProgress,
     syncScroll: syncScrollBaseline,
     setList: renderReaderList,
+    workSearch: () => void openWorkSearch(),
     captureAnchor: () => readerSession.capture(),
     readingPosition: () => readingPosition(),
     canSavePosition: () => readerSession.canSave,
@@ -1313,6 +1316,63 @@ function beginReaderDocument(documentKey, workId, rev) {
   }));
 }
 
+// Work search shares the Reader's original-text extraction and its parent route.
+const kwic = createKwic({
+  overlays,
+  parse(entry, raw) {
+    const body = document.createElement("div");
+    if (entry.type === "typemoon") body.innerHTML = JSON.parse(raw).post.body_html;
+    else body.textContent = (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text;
+    return createTextModel(body).text;
+  },
+  async onOpen(hit, parent) {
+    persistReadingPosition();
+    history.replaceState({ ...(history.state ?? {}), redstmReader: false }, "", parent);
+    if (hit.entry.type === "typemoon") await loadPost(hit.entry.summary);
+    else await textLibrary.openKwicResult(hit.entry);
+    readerSession.frame(() => readerSession.frame(() => {
+      if (readerSession.restore({ loc: hit.locator, viewportOffset: Math.round(elements["reader-pane"].clientHeight / 3) })) syncScrollBaseline();
+      else showReaderFeedback("원문에서 이 문장을 찾지 못했어요", 2400);
+    }));
+  },
+});
+async function openWorkSearch(query = "", all = false) {
+  const route = currentRoute();
+  closeReaderMore();
+  find.close();
+  pauseAutoScroll();
+  let context;
+  if (readerSource === "text" || currentDestination === "text") context = textLibrary.kwicContext();
+  else {
+    const collection = currentSummary ? (currentCollection?.collection || (await findCollection(currentSummary))?.collection)
+      : activeCollectionId === null ? null : await loadCollectionDetail(activeCollectionId);
+    if (collection) {
+      const records = historyByIdentityMap();
+      context = {
+        title: collection.title, from: location.pathname.startsWith("/collections/") ? currentRoute()
+          : history.state?.redstmParent?.startsWith("/collections/") ? history.state.redstmParent : `/collections/${collection.id}`,
+        current: currentSummary ? postIdentity(currentSummary) : "",
+        read: collection.entries.filter((entry) => records.has(postIdentity(entry))).map(postIdentity),
+        entries: collection.entries.filter((entry) => entry.object_key).map((entry) => ({
+          documentId: postIdentity(entry), title: `${entry.position}편 · ${entry.title}`, type: "typemoon",
+          url: `/archive/${entry.object_key}`, summary: entry,
+          rev: entry.object_key.match(/-([a-f0-9]{64})\.json/)?.[1] || "",
+        })),
+      };
+    }
+  }
+  if (route !== currentRoute()) return;
+  if (!context) return void showReaderFeedback("작품의 회차 목록에서 찾을 수 있어요", 2200);
+  kwic.open(context, query, all);
+}
+for (const id of ["collection-find", "reader-work-find", "find-work"]) {
+  document.querySelector(`#${id}`).addEventListener("click", () => void openWorkSearch(id === "find-work" ? document.querySelector("#find-input").value : ""));
+}
+document.querySelector("#selection-work-find").addEventListener("click", () => {
+  elements["selection-more"].close();
+  void openWorkSearch(moreQuote || "");
+});
+
 // ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
 let scrollAdapter = null;
 // `anchor` is the sentence the current page was reached by (a turn, a restore or a find). Every
@@ -2359,6 +2419,7 @@ function showDestination(destination, navigate = true, view = destination === "b
     }
     return;
   }
+  let textReady;
   const wasText = currentDestination === "text";
   if (wasText && destination !== "text") textLibrary.leave();
   if (currentSummary) persistReadingPosition();
@@ -2398,7 +2459,7 @@ function showDestination(destination, navigate = true, view = destination === "b
   closeMobileReader(destination === "search" && navigate && focusSearch);
   if (destination === "text") {
     const params = navigate && !wasText ? new URLSearchParams() : new URLSearchParams(location.search);
-    void textLibrary.open(params);
+    textReady = textLibrary.open(params);
   } else if (destination === "bookmarks") {
     updateTabs();
     renderCurrentView();
@@ -2420,6 +2481,7 @@ function showDestination(destination, navigate = true, view = destination === "b
       destination === "bookmarks" ? { redstmSaved: { ...currentSearchState(), view: currentView } } : null;
     history.pushState(state, "", path);
   }
+  return textReady;
 }
 
 function setImmersive(active, restoreFocus = true) {
@@ -2530,6 +2592,7 @@ async function handleRoute() {
     synthesizeParentEntry();
   }
   closeReaderMore();
+  kwic.close();
   const summary = routeSummary();
   if (summary && currentDestination === "text") {
     textLibrary.leave();
@@ -2550,7 +2613,7 @@ async function handleRoute() {
         currentDestination = ["browse", "search"].includes(destination) ? destination : "browse";
         await openCollectionDetail(collectionId, "route");
       } else {
-        showDestination(destination, false, currentView);
+        await showDestination(destination, false, currentView);
         if (destination !== "library") syncSearchRoute();
         // The installed app's 이어서 읽기 shortcut (manifest) resumes straight away.
         if (destination === "library" && new URLSearchParams(location.search).has("continue")) {
@@ -2562,6 +2625,8 @@ async function handleRoute() {
         }
       }
     }
+    const searchParams = new URLSearchParams(location.search);
+    if (searchParams.has("kwic")) await openWorkSearch(searchParams.get("kwic"), searchParams.get("kwicAll") === "1");
     if (settingsRoute) {
       openSettings();
       document.title = "읽기 설정 — ReDSTM";

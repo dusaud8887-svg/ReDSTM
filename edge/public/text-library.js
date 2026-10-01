@@ -489,6 +489,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     // Shelf and 몇 화? share one row under the title.
     const actions = document.createElement("div");
     actions.className = "text-work-actions";
+    const findWork = document.createElement("button");
+    findWork.type = "button";
+    findWork.className = "text-work-find";
+    findWork.textContent = "작품에서 찾기";
+    findWork.addEventListener("click", () => shell.workSearch());
+    actions.append(findWork);
     if (lane === "novel") {
       const shelf = document.createElement("button");
       shelf.type = "button";
@@ -1937,6 +1943,28 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     }
   }
 
+  function kwicContext() {
+    const itemWork = current?.work || work;
+    const sourceLane = current?.lane || lane;
+    const entries = sequence?.toc ? sequence.entries : chapterSource;
+    if (!itemWork || !entries.length) return null;
+    return {
+      title: itemWork.title,
+      from: listRoute(),
+      current: current?.identity || "",
+      read: entries.filter((entry) => history.history[identity(entry, sourceLane, itemWork)]).map((entry) => identity(entry, sourceLane, itemWork)),
+      entries: entries.filter((entry) => HASH.test(entry.sha256 || "")).map((entry) => ({
+        documentId: identity(entry, sourceLane, itemWork), title: entry.label || entry.title,
+        type: sourceLane, url: `/api/v1/text/object/${entry.sha256}`, rev: entry.sha256,
+        entry, work: itemWork,
+      })),
+    };
+  }
+  async function openKwicResult(hit) {
+    lane = hit.type; work = hit.work;
+    await openBody(hit.entry, { sourceLane: hit.type, sourceWork: hit.work });
+  }
+
   function isReading() { return Boolean(current); }
   function inWork() { return Boolean(work); }
   function currentRoute() { return route(); }
@@ -1964,6 +1992,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount, markPreviousRead, savedItems,
+    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult,
   };
 }

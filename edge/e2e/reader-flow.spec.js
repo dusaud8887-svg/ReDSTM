@@ -2245,6 +2245,7 @@ test("KWIC sheet filters before counts, widens explicitly and opens an original 
     const { createKwic } = await import("/kwic.js");
     const { createTextModel } = await import("/text-model.js");
     const { createOverlayManager } = await import("/overlay-manager.js");
+    document.querySelector("#kwic-dialog").remove();
     const kwic = createKwic({
       overlays: createOverlayManager(),
       parse: (_entry, raw) => createTextModel(new DOMParser().parseFromString(JSON.parse(raw).post.body_html, "text/html").body).text,
@@ -2262,4 +2263,67 @@ test("KWIC sheet filters before counts, widens explicitly and opens an original 
   expect(opened.hit.entry.documentId).toBe("3");
   expect(opened.hit.locator.exact).toBe("본문 40");
   expect(opened.parent).toBe("/collections/1?kwic=%EB%B3%B8%EB%AC%B8+40&kwicAll=1");
+});
+
+
+test("T16/T17 work search opens a sentence and Back restores the scoped results", async ({ page }) => {
+  await useLongCollection(page, 200);
+  await page.goto("/read/board_a/200");
+  await expect(page.locator("#collection-context")).toBeVisible();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#reader-work-find").click();
+  await page.locator("#kwic-input").fill("본문 40");
+  await page.locator("#kwic-search").getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐 1곳");
+  await expect(page.locator("#kwic-results button")).toHaveCount(1);
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("200화에 걸쳐 200곳");
+  await page.locator("#kwic-results button").first().click();
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+  await page.goBack();
+  await expect(page.locator("#kwic-dialog")).toBeVisible();
+  await expect(page.locator("#kwic-input")).toHaveValue("본문 40");
+  await expect(page.locator("#kwic-all")).toBeChecked();
+  await expect(page.locator("#kwic-status")).toContainText("200화에 걸쳐 200곳");
+});
+
+test("T16/T17 novel work search uses original text and returns to its work", async ({ page }) => {
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "검색 소설", chapters: 3 })] });
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent("novel:toki:1")}&chapter=1-1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#reader-work-find").click();
+  await page.locator("#kwic-input").fill("본문 줄");
+  await page.locator("#kwic-search").getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐");
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+  await page.locator("#kwic-results button").last().click();
+  await expect(page.locator("#reader-title")).toHaveText("3화");
+  await page.goBack();
+  await expect(page.locator("#kwic-dialog")).toBeVisible();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+});
+
+
+test("T16/T17 Arcalive work search returns to its filtered chapter list", async ({ page }) => {
+  const posts = [1, 2, 3].map((id) => arcalivePost({ id, title: `${id}편` }));
+  const item = arcaliveWork({ key: "search", title: "검색 연재", posts });
+  await useTextArchive(page, { posts, works: [item] });
+  await page.goto(`/text?lane=arcalive&view=works&work=${encodeURIComponent(item.item.work_id)}&sort=latest&item=${encodeURIComponent(posts[0].identity)}`);
+  await expect(page.locator("#reader-title")).toHaveText("1편");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#reader-work-find").click();
+  await page.locator("#kwic-input").fill("본문 줄");
+  await page.locator("#kwic-search").getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐");
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+  await page.locator("#kwic-results button").last().click();
+  await expect(page.locator("#reader-title")).toHaveText("3편");
+  await page.goBack();
+  await expect(page.locator("#kwic-dialog")).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("sort")).toBe("latest");
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
 });

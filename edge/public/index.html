@@ -318,6 +318,7 @@
               </div>
             </div>
             <div class="collection-actions">
+              <button type="button" id="collection-find">작품에서 찾기</button>
               <button class="collection-continue" id="collection-continue" type="button" hidden></button>
               <div class="offline-control" id="collection-offline" hidden>
                 <button type="button" id="offline-save">이 기기에 저장</button>
@@ -478,6 +479,7 @@
     <div class="find-bar" id="find-bar" role="search" aria-label="본문 찾기" hidden>
       <div class="find-band" id="find-band" aria-hidden="true"></div>
       <label class="find-field"><span class="sr-only">이 회차에서 찾을 말</span><svg aria-hidden="true"><use href="#i-search"/></svg><input id="find-input" type="text" enterkeyhint="search" autocomplete="off" placeholder="이 회차에서 찾기"></label>
+      <button type="button" id="find-work">작품 전체</button>
       <output class="find-count" id="find-count" aria-live="polite"></output>
       <button class="icon-button" id="find-previous" type="button" aria-label="이전 결과"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
       <button class="icon-button" id="find-next" type="button" aria-label="다음 결과"><svg aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
@@ -520,7 +522,7 @@
     <dialog id="selection-more" aria-labelledby="selection-more-title">
       <form method="dialog">
         <header><div><p id="selection-more-quote"></p><h2 id="selection-more-title">선택한 문장</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
-        <div class="selection-more-actions"><button type="button" id="selection-share">이미지로 공유</button><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
+        <div class="selection-more-actions"><button type="button" id="selection-work-find">작품에서 찾기</button><button type="button" id="selection-share">이미지로 공유</button><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
       </form>
     </dialog>
 
@@ -719,6 +721,7 @@
     <dialog id="reader-more" aria-labelledby="reader-more-title">
       <form method="dialog">
         <header><div><p id="reader-more-context"></p><h2 id="reader-more-title">더보기</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <button type="button" id="reader-work-find">작품에서 찾기</button>
         <label class="more-position">읽은 위치 <span class="more-position-values"><small id="more-remaining"></small><output id="more-position-output">0%</output></span><input id="more-position" type="range" min="0" max="100" step="1" value="0"></label>
         <div class="more-actions">
           <button id="more-toc" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>작품 목차</span></button>

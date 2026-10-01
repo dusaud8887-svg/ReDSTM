@@ -1335,6 +1335,12 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P6-2b: 프로필 퀵 전환·작품별 적용과 기본 설정 보존, 자동 스크롤 1–10(12–120px/s). 터치·휠·키·찾기·숨은 탭에서 멈춤, Reader 종료·회차 이동에서 정리. 찾기 중 자동 스크롤 바 숨김 후 멈춘 상태로 복귀. 퀵 패널 최대 320px와 내부 스크롤. 실기기 확인 대기: S22+ 120Hz 흐름, 찾기/시스템 Back으로 바 닫기, 프로필 전환 뒤 같은 문장(T01/T34). P6-1은 S4 실기기 미확인과 §17 A9에 따라 구현하지 않는다.
 - P6-2 검증: unit 183 pass, check·lint 0 error(기존 warning 8). Reader spec desktop/mobile 136 pass/10 skip. 전체 668 pass/1 fail/23 skip(axe 포함), medium 레거시 목차 연결 대기 실패는 `--last-failed` 1/1 통과. trace는 `edge/.wrangler/redesign-traces/p6-2-first/`에 보존했다. 마지막 보완의 자동 스크롤→찾기→멈춘 바 복귀와 작품 예외 해제는 desktop/mobile 2/2 재검증 통과. 병렬 실행 중 T27 시간 예산 unit 1회 실패 뒤 전체 unit 재실행 183/183 통과(테스트 기준 변경 없음).
 
+- 2026-10-02 재개 확인: HEAD `d54671e`(P6-3b), M0~M5 및 P6-2는 기존 커밋에 반영돼 있었다. F0-2b의 expectedTop/observeScroll·단위·T20을 다시 구현하지 않는다. 제외 경로의 기존 변경은 유지했다. M5 main CI [36882055563](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36882055563) 성공을 확인했다.
+- P6-3c: KWIC를 실제 TypeMoon 작품 상세·Reader 더보기·본문 찾기 범위 버튼·선택 문장 메뉴와 소설/아카라이브 작품 상세·Reader에 연결. 본문은 Reader와 같은 text-model 및 원본 wrapper 제거를 사용한다. 기본 범위는 열어 본 회차+현재 회차, 작품 전체는 명시적으로 켰을 때만 받는다. 결과를 열기 전에 검색어·범위를 부모 작품 URL에 기록하고, 원문 locator로 이동하며 Back에서 검색 결과와 텍스트 작품 정렬 조건을 복원한다. 작품에 속하지 않는 글은 이전 작품을 검색하지 않는다. 텍스트 직접 진입의 초기 로드도 기다린 뒤 KWIC를 연다. 늦은 작품 조회는 경로가 바뀌면 폐기한다.
+- P6-3c 관련 검증: unit 187 pass, check·lint 0 error(기존 warning 8·info 2), Reader E2E desktop/mobile 146 pass/10 조건부 skip. T16/T17 실제 세 출처 경로 통과. 추가 fixture의 회차 ID·Arcalive key와 단독 KWIC 테스트 중복 ID를 바로잡았다. 첫 관련 실행의 통계 시간 2분 기대 실패는 재실행에서 통과했고 통계 코드는 수정하지 않았다. 재시작으로 중단된 첫 관련 실행은 완료로 세지 않았다. 관련 실패 trace는 `edge/.wrangler/redesign-traces/p6-3c-related-resume/`에 보존. 실기기 대기: KWIC 시트 키보드·시스템 Back, 데이터 절약 확인, 결과 원문 이동 후 작품 목록/필터 복귀(§14.5 M6).
+
+- P6-3c 전체 검증: 모든 4폭 Playwright 689 pass/0 fail/23 조건부 skip(9.5분), axe 포함. 최종 unit 187 pass, check·lint 0 error. Linux visual은 M6 마일스톤 종료 때 판정한다. 편집 5파일 + 생성 precache 목록.
+
 | 날짜 | 내용 |
 |---|---|
 | 2026-09-30 | v1: 조사 6건 종합, 결정 20, Phase 0–8 |
