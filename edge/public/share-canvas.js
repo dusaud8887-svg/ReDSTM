@@ -134,3 +134,47 @@ export function drawAaScene(ctx, { lines, background, fontSize = 16 }) {
 export function canvasBlob(canvas) {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
 }
+
+// 기록 카드: this week's reading as seven bars, with the total and the streak.
+export function drawStatsCard(ctx, { days, total, streak, finished = 0, tone = "light" }) {
+  const palette = cardPalette(1, tone);
+  ctx.canvas.width = CARD_WIDTH;
+  ctx.canvas.height = CARD_HEIGHT;
+  ctx.fillStyle = palette.background;
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  ctx.fillStyle = palette.band;
+  ctx.fillRect(0, 0, CARD_WIDTH, 28);
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = palette.muted;
+  ctx.font = `600 36px ${UI_FONT}`;
+  ctx.fillText("이번 주 기록", 96, 190);
+  ctx.fillStyle = palette.ink;
+  ctx.font = `96px ${QUOTE_FONT}`;
+  ctx.fillText(total, 96, 320);
+  ctx.font = `600 32px ${UI_FONT}`;
+  ctx.fillStyle = palette.muted;
+  ctx.fillText(`연속 ${streak}일 · 끝까지 읽은 작품 ${finished}`, 96, 384);
+  const most = Math.max(1, ...days.map((day) => day.milliseconds));
+  const labels = ["월", "화", "수", "목", "금", "토", "일"];
+  const barWidth = 88;
+  const gap = (CARD_WIDTH - 192 - barWidth * 7) / 6;
+  for (const [index, day] of days.entries()) {
+    const height = Math.round((day.milliseconds / most) * 520);
+    const x = 96 + index * (barWidth + gap);
+    ctx.fillStyle = day.milliseconds ? palette.band : palette.muted;
+    ctx.globalAlpha = day.milliseconds ? 1 : 0.25;
+    ctx.fillRect(x, 1040 - Math.max(height, 6), barWidth, Math.max(height, 6));
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = palette.muted;
+    ctx.font = `600 30px ${UI_FONT}`;
+    ctx.textAlign = "center";
+    ctx.fillText(labels[index], x + barWidth / 2, 1094);
+    ctx.textAlign = "left";
+  }
+  ctx.font = `28px ${UI_FONT}`;
+  ctx.fillText("읽은 시간(추정) · 보존된 회차 기준", 96, 1200);
+  ctx.font = `700 28px ${UI_FONT}`;
+  ctx.textAlign = "right";
+  ctx.fillText("ReDSTM", CARD_WIDTH - 96, CARD_HEIGHT - 72);
+  ctx.textAlign = "left";
+}
