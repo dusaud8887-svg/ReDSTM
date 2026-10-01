@@ -34,6 +34,9 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 
 .archive-body { width: min(var(--prose-width), calc(100% - 64px)); margin: 0 auto; padding: 42px 0 72px; font-family: var(--prose-font); font-size: var(--prose-size); line-height: var(--prose-line); text-align: var(--prose-align, start); overflow-wrap: break-word; text-wrap: pretty; }
 .archive-body:focus-visible { outline-offset: -3px; }
+body.continuous-mode #reader-pane { overflow-anchor: none; }
+.archive-body[data-continuous-title] { border-block-start: 1px solid var(--line); }
+.archive-body[data-continuous-title]::before { content: attr(data-continuous-title); display: block; margin-bottom: 24px; font: 700 20px/1.5 var(--font-display); white-space: normal; }
 /* Pinch on prose changes the font size (app.js) instead of zooming the page. */
 .archive-body:not(.aa) { touch-action: pan-x pan-y; }
 .setting-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }

@@ -58,11 +58,12 @@ import { featureEnabled } from "/capabilities.js";
 import { createOffline, deleteNamespace } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
 import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
-import { createTextModel, decodeLocator, encodeLocator, modelOffset } from "/text-model.js";
+import { createLocator, createTextModel, decodeLocator, encodeLocator, modelOffset, modelPosition } from "/text-model.js";
 import { renderSVG } from "/vendor/uqr@0.1.3/uqr.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
+import { createContinuousReader } from "/continuous-reader.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
 import { DragGesture, PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
@@ -247,9 +248,10 @@ const textLibrary = createTextLibrary({
     setList: renderReaderList,
     workSearch: () => void openWorkSearch(),
     classifyWork: (work) => personalLibrary.openWork(work),
-    captureAnchor: () => readerSession.capture(),
+    captureAnchor: captureReaderPosition,
     readingPosition: () => readingPosition(),
     canSavePosition: () => readerSession.canSave,
+    keepContinuousPosition: () => continuous.transitioning,
     cancelPendingWork: () => readerSession.cancelPendingWork(),
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
@@ -263,6 +265,66 @@ const textLibrary = createTextLibrary({
     if (currentDestination === "text") applyTextSortOptions();
   },
 });
+
+let readerDocument = null;
+let continuousPreview = null;
+const continuous = createContinuousReader({
+  body: elements["archive-body"], scroller: elements["reader-pane"], enabled: continuousEnabled, topInset: readerTopInset,
+  step: (direction) => readerSource === "text" ? textLibrary.command(direction > 0 ? "end-next" : "previous") : typeMoonStep(direction, { finished: direction > 0 }),
+  onError: () => showReaderFeedback("다음 회차를 잇지 못했어요 · 다시 시도해 주세요", 2400),
+});
+function continuousEnabled() {
+  return settings.readingMode === "continuous" && Boolean(readerSource) && currentMode !== "aa" &&
+    Boolean(readerNavigation?.hasToc || (readerNavigation?.pending && readerDocument?.workId?.startsWith("typemoon:collection:")));
+}
+function captureReaderPosition() {
+  const anchor = readerSession.capture();
+  if (anchor || !readerSession.canSave || !continuousEnabled()) return anchor;
+  // A fling can pass the last line before the boundary switch runs. Save this document's
+  // original end, rather than attaching the next document's text to its reading record.
+  const body = elements["archive-body"];
+  const model = createTextModel(body);
+  if (!model.text.length) return null;
+  const start = Math.max(0, model.text.length - 48);
+  const position = modelPosition(model, start);
+  const range = document.createRange(); range.selectNodeContents(body); range.setEnd(position.node, position.offset);
+  const offset = range.toString().length;
+  return { offset, quote: body.textContent.slice(offset, offset + 48), viewportOffset: 0, atStart: false,
+    loc: createLocator(model, start, model.text.length, readerSession.rev) };
+}
+function refreshContinuous() {
+  const enabled = continuousEnabled();
+  document.body.classList.toggle("continuous-mode", enabled);
+  if (!enabled) { continuous.reset(); continuousPreview = null; return; }
+  if (!readerDocument || readerSession.documentKey !== readerDocument.key || readerNavigation.pending) return;
+  readerDocument.workId = readerSession.workId || readerDocument.workId;
+  if (continuous.currentKey !== readerDocument.key) continuous.commit(readerDocument);
+  const next = readerNavigation.next;
+  if (!next?.prefetch || next.entry?.is_aa) return;
+  const key = next.documentId || `typemoon:${postIdentity(next.entry)}`;
+  const generation = readerSession.generation;
+  if (continuousPreview?.key === key && continuousPreview.generation === generation) return;
+  continuousPreview = { key, generation };
+  void (async () => {
+    const response = await fetch(next.prefetch, { credentials: "same-origin", redirect: "error", signal: readerSession.signal });
+    requireArchiveResponse(response, `다음 회차 응답 ${response.status}`);
+    const node = document.createElement("div"); node.className = elements["archive-body"].className;
+    if (next.sourceLane) {
+      const raw = await response.text();
+      const parsed = next.sourceLane === "novel" ? novelBody(raw) : arcaliveBody(raw);
+      renderPlainTextWithMedia(node, parsed.text, { sourceUrl: parsed.sourceUrl });
+    } else {
+      const payload = await response.json();
+      if (payload.schema_version !== 1 || !payload.post?.body_html || payload.post.is_aa) return;
+      node.innerHTML = payload.post.body_html;
+      normalizeReaderTypography(node); decorateImages(node); enhanceHtmlMedia(node);
+    }
+    if (generation !== readerSession.generation || !continuousEnabled()) return;
+    continuous.offer({ key, title: next.title, workId: readerSession.workId }, node);
+  })().catch((error) => {
+    if (error.name !== "AbortError" && generation === readerSession.generation) showReaderFeedback("다음 회차를 잇지 못했어요 · 다음 버튼으로 다시 열 수 있어요", 2400);
+  });
+}
 
 // Find in the chapter (docs/24 §8.11): the bar takes the dock's place and, after moving through
 // hits, closing it offers the place the reader was before.
@@ -1264,6 +1326,8 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    continuous.reset(); readerDocument = null; continuousPreview = null;
+    document.body.classList.remove("continuous-mode");
     stopAutoScroll();
     finishReadingSession();
     if (previousSource) readerSession.cancelPendingWork();
@@ -1466,7 +1530,8 @@ function applyReadingMode() {
     pageNoticeShown = true;
     showReaderFeedback("AA는 스크롤로 보여 줍니다", 2200);
   }
-  const anchor = paged.active !== want ? readerSession.adapter?.captureVisiblePosition() : null;
+  const anchor = paged.active !== want || (continuous.currentKey && !continuousEnabled()) ? readerSession.adapter?.captureVisiblePosition() : null;
+  if (!continuousEnabled()) continuous.reset();
   paged.active = want;
   elements.reader.classList.toggle("paged", want);
   elements["reader-pane"].classList.toggle("paged-host", want);
@@ -1486,6 +1551,7 @@ function applyReadingMode() {
     if (scrollAdapter) readerSession.adapter = scrollAdapter;
   }
   if (anchor && readerSession.restore(anchor)) syncScrollBaseline();
+  refreshContinuous();
   updateReadingProgress();
 }
 
@@ -1545,6 +1611,8 @@ function relayoutPages() {
 
 function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision }) {
   if (currentSummary) persistReadingPosition();
+  readerDocument = { key: documentId, title, workId };
+  continuous.prepare(readerDocument);
   cancelReaderSelection();
   currentSummary = null;
   currentPayload = null;
@@ -1572,6 +1640,8 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   void archiveTextMedia(body, renderId);
   openMobileReader();
   applyReadingMode();
+  const joined = continuous.commit(readerDocument);
+  if (joined) readerSession.frame(() => { syncScrollBaseline(); readerSession.capture(); });
   updateShellMode();
   readerSession.frame(() => elements["reader-title"].focus({ preventScroll: true }));
 }
@@ -1667,6 +1737,12 @@ function bodyProgress() {
   if (paged.active) return pagedAdapter.measureProgress();
   const pane = elements["reader-pane"];
   const body = elements["archive-body"];
+  if (continuousEnabled()) {
+    const top = body.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+    const length = body.offsetHeight - pane.clientHeight + readerTopInset();
+    return length > 0 ? Math.min(1, Math.max(0, (pane.scrollTop - top + readerTopInset()) / length)) :
+      Number(body.getBoundingClientRect().bottom <= pane.getBoundingClientRect().bottom);
+  }
   const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
   if (span > 0) return Math.min(1, Math.max(0, pane.scrollTop / span));
   const maximum = pane.scrollHeight - pane.clientHeight;
@@ -1784,6 +1860,7 @@ function renderReaderNavigation(nav) {
   renderChapterRun(document.querySelector("#end-run"), document.querySelector("#end-run-label"), nav.run ?? null);
   schedulePrefetch(nav.next?.prefetch);
   elements["reader-more-context"].textContent = nav.context ?? "";
+  refreshContinuous();
 }
 
 // Warm the browser cache for the next episode (archive objects are immutable). Skipped on
@@ -1815,6 +1892,7 @@ function readerCommand(name) {
   if (!readerSource) return;
   if (name === "settings") return openQuickSettings();
   if (name === "more") return openReaderMore();
+  if (continuousEnabled() && (name === "next" || name === "previous" || (name === "end-next" && elements["end-next"].dataset.action === "next"))) return continuous.move(name === "previous" ? -1 : 1);
   if (readerSource === "text") return textLibrary.command(name);
   if (name === "previous") return typeMoonStep(-1);
   if (name === "next") return typeMoonStep(1);
@@ -3732,6 +3810,8 @@ async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
 
 function showPost(payload, suppliedSummary, navigation, listHint = "") {
   const post = payload.post;
+  readerDocument = { key: `typemoon:${post.board_id}:${post.external_post_id}`, title: post.title || "제목 없음", workId: continuous.transitioning ? readerSession.workId : "" };
+  continuous.prepare(readerDocument);
   currentPayload = payload;
   currentSummary = {
     ...suppliedSummary,
@@ -3765,6 +3845,7 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   setSourceLink(post.canonical_url);
   renderPostBody();
   beginReaderDocument(`typemoon:${postIdentity(currentSummary)}`, "", currentSummary.object_key?.match(/-([a-f0-9]{64})\.json\.(?:gz|zst)$/)?.[1] || "");
+  const joined = continuous.commit(readerDocument);
   renderComments(payload.comments);
   rememberHistory(currentSummary);
   updateBookmarkButton();
@@ -3776,7 +3857,8 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   updateShellMode();
   readerSession.frame(() => {
     elements["reader-title"].focus({ preventScroll: true });
-    restoreReadingPosition(currentSummary);
+    if (joined) { syncScrollBaseline(); readerSession.capture(); }
+    else restoreReadingPosition(currentSummary);
   });
 }
 
@@ -3987,7 +4069,7 @@ function persistReadingPosition() {
   const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
   if (entry) {
     entry.scroll = readingPosition();
-    const anchor = readerSession.capture();
+    const anchor = captureReaderPosition();
     if (anchor) Object.assign(entry, {
       offset: anchor.offset, anchor: anchor.quote, anchorTop: Math.round(anchor.viewportOffset), loc: anchor.loc,
       revision: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
@@ -4348,7 +4430,7 @@ function typeMoonStep(offset, { finished = false } = {}) {
   const target = (offset > 0 ? typeMoonNavigation().next : typeMoonNavigation().previous)?.entry;
   if (!target) return;
   if (finished) markCurrentFinished();
-  loadPost(target, "replace");
+  return loadPost(target, "replace");
 }
 
 // The Reader was usually opened from this table of contents; go back to it instead of stacking
@@ -5022,6 +5104,7 @@ elements["reader-pane"].addEventListener("scroll", () => {
   scheduleReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   readerSession.observeScroll(current);
+  continuous.observeScroll(current);
   const delta = current - lastReaderScroll;
   lastReaderScroll = current;
   if (readerSession.keyboardOpen) return;

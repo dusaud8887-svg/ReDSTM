@@ -1174,6 +1174,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return result.target ? {
         title: result.target.label || result.target.title || "",
         entry: result.target,
+        documentId: current.lane === "novel" ? `novel:${result.target.source_site || ""}:${result.target.chapter_id}` : identity(result.target, current.lane),
+        sourceLane: current.lane,
         prefetch: HASH.test(result.target.sha256 || "") ? `/api/v1/text/object/${result.target.sha256}` : "",
       } : null;
     };
@@ -1270,6 +1272,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function restorePosition(record, hash) {
+    if (shell.keepContinuousPosition()) return;
     readerPane.scrollTop = record.loc ? 0 : record.scroll || 0;
     shell.syncScroll();
     const anchor = record.anchor || record.loc ? { offset: record.offset, quote: record.anchor, viewportOffset: record.anchorTop ?? 0, atStart: record.scroll === 0, ...(record.loc ? { loc: record.loc } : {}) } : null;
@@ -1528,7 +1531,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const sourceWork = current.work;
     const savedIdentity = current.viewLane === "saved" && sourceLane === "novel" ? `novel:${sourceWork?.work_id}:${target.chapter_id}` : "";
     const frozen = sequence;
-    void openBody(target, { navigation: "replace", sourceLane, sourceWork, savedIdentity })
+    return openBody(target, { navigation: "replace", sourceLane, sourceWork, savedIdentity })
       .then(() => {
         // Keep the order the reader started with, even if the list behind it was re-sorted —
         // unless another body (a side-list tap) replaced this move before it arrived.
