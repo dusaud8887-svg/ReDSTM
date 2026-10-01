@@ -1492,7 +1492,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     history.history[current.identity] = {
       ...old,
       readAt: old.readAt || new Date().toISOString(),
-      scroll: readerPane.scrollTop,
+      scroll: shell.readingPosition(),
       progress: (old.progress ?? 0) >= FINISHED ? Math.max(old.progress, measured) : measured,
       chapterId: current.entry.chapter_id || current.entry.source_chapter_id || "",
       revision: current.entry.sha256 || "",

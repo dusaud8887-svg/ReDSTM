@@ -45,6 +45,7 @@ import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
+import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
@@ -61,13 +62,13 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", readingMode: "scroll", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
   proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", readingMode: "읽기 방식", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
 };
 const elements = Object.fromEntries(
@@ -75,7 +76,7 @@ const elements = Object.fromEntries(
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
     "scope-tabs", "source-switch", "search-suggest", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
-    "archive-body", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
+    "archive-body", "page-hint", "comments", "comment-count", "comment-list", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
     "prose-size-output", "line-height-output", "prose-width-output", "prose-margin-output", "aa-size-output", "reset-settings",
@@ -224,6 +225,7 @@ const textLibrary = createTextLibrary({
     syncScroll: syncScrollBaseline,
     setList: renderReaderList,
     captureAnchor: () => readerSession.capture(),
+    readingPosition: () => readingPosition(),
     canSavePosition: () => readerSession.canSave,
     cancelPendingWork: () => readerSession.cancelPendingWork(),
     trackPendingWork: (cancel) => readerSession.track(cancel),
@@ -582,6 +584,7 @@ function applySettings() {
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
     ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
     ["[data-home-quote]", "homeQuote", settings.homeQuote],
+    ["[data-reading-mode]", "readingMode", settings.readingMode],
   ]) {
     for (const choice of document.querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
@@ -1233,10 +1236,180 @@ function beginReaderDocument(documentKey, workId, rev) {
     textLibrary.cancelPendingPosition();
     overlays.hideToast(elements["aa-zoom-indicator"]);
   });
-  readerSession.adapter = createScrollAdapter({
+  scrollAdapter = createScrollAdapter({
     body: elements["archive-body"], scroller: elements["reader-pane"], topInset: readerTopInset,
     revision: () => readerSession.rev, progress: bodyProgress, mode: currentMode === "aa" ? "aa" : "scroll",
   });
+  // A TypeMoon post lays its body out (and may enter page mode) before the document begins.
+  readerSession.adapter = paged.active ? pagedAdapter : scrollAdapter;
+  paged.page = 0;
+  paged.anchor = null;
+}
+
+// ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
+let scrollAdapter = null;
+// `anchor` is the sentence the current page was reached by (a turn, a restore or a find). Every
+// relayout puts that sentence back on screen, so rotating there and back does not drift a page.
+const paged = { active: false, page: 0, pages: 1, geometry: null, drag: null, anchor: null };
+let pageNoticeShown = false;
+const PAGE_HINT_KEY = "redstm.pageHint.v1";
+
+// First page-mode visit on a touch screen shows the tap zones once (docs/24 §8.10); one tap dismisses it.
+function showPageHintOnce() {
+  if (!matchMedia("(pointer: coarse)").matches) return;
+  try {
+    if (localStorage.getItem(PAGE_HINT_KEY)) return;
+  } catch {
+    return;
+  }
+  elements["page-hint"].hidden = false;
+}
+
+function layoutPages() {
+  const pane = elements["reader-pane"];
+  const narrow = isNarrowScreen();
+  const top = readerTopInset() + 16;
+  const geometry = pageGeometry({
+    paneWidth: pane.clientWidth, paneHeight: pane.clientHeight, margin: narrow ? settings.proseMargin : 32,
+    maxWidth: settings.proseWidth, top, bottom: narrow ? 84 : 32,
+  });
+  const reader = elements.reader;
+  reader.style.setProperty("--page-width", `${geometry.width}px`);
+  reader.style.setProperty("--page-gap", `${geometry.gap}px`);
+  reader.style.setProperty("--page-height", `${geometry.height}px`);
+  reader.style.setProperty("--page-left", `${geometry.left}px`);
+  reader.style.setProperty("--page-top", `${top}px`);
+  paged.geometry = geometry;
+  paged.pages = pageCount(elements["archive-body"].scrollWidth, geometry);
+}
+
+function showPage(page, { animate = false, offset = 0 } = {}) {
+  paged.page = Math.max(0, Math.min(paged.pages - 1, page));
+  const body = elements["archive-body"];
+  body.classList.toggle("turning", animate && !matchMedia("(prefers-reduced-motion: reduce)").matches);
+  body.style.transform = `translateX(${offset - paged.page * paged.geometry.step}px)`;
+  updateReadingProgress();
+}
+
+// The reader turned the page: saved like a scroll, and no late layout pulls it back.
+function turnPage(page, options) {
+  readerSession.markUserScroll();
+  showPage(page, options);
+  paged.anchor = capturePageStart();
+  queueScrollSave();
+}
+
+// The first character on the current page. Measured against the body's own box, which moves with
+// the transform, so a turn still animating reads the page it is going to.
+function capturePageStart() {
+  return capturePagedAnchor(elements["archive-body"],
+    elements["archive-body"].getBoundingClientRect().left + paged.page * paged.geometry.step, readerSession.rev);
+}
+
+const pagedAdapter = {
+  mode: "paged",
+  // The place is the sentence the page was reached by, not whatever begins the page now: a page
+  // start moves with every relayout, and recapturing it would drift the place a page at a time.
+  captureVisiblePosition: () => paged.anchor ?? capturePageStart(),
+  scrollToRange(anchor) {
+    if (anchor?.atStart) {
+      showPage(0);
+      paged.anchor = anchor;
+      return true;
+    }
+    const left = anchorLeft(elements["archive-body"], anchor, readerSession.rev);
+    if (left === null) return false;
+    showPage(pageAt(left - elements["archive-body"].getBoundingClientRect().left, paged.geometry, paged.pages));
+    paged.anchor = anchor;
+    return true;
+  },
+  measureProgress: () => (paged.pages > 1 ? paged.page / (paged.pages - 1) : 1),
+  onViewportChanged(anchor) { return pagedAdapter.scrollToRange(anchor); },
+  scrollTop: () => 0,
+};
+
+// Chooses the layout for the open body and keeps the sentence at the reader's place across it.
+function applyReadingMode() {
+  const want = settings.readingMode === "page" && Boolean(readerSource) && currentMode !== "aa";
+  if (settings.readingMode === "page" && readerSource && currentMode === "aa" && !pageNoticeShown) {
+    pageNoticeShown = true;
+    showReaderFeedback("AA는 스크롤로 보여 줍니다", 2200);
+  }
+  const anchor = paged.active !== want ? readerSession.adapter?.captureVisiblePosition() : null;
+  paged.active = want;
+  elements.reader.classList.toggle("paged", want);
+  elements["reader-pane"].classList.toggle("paged-host", want);
+  document.body.classList.toggle("page-mode", want);
+  const body = elements["archive-body"];
+  if (want) {
+    elements["reader-pane"].scrollTop = 0;
+    layoutPages();
+    readerSession.adapter = pagedAdapter;
+    showPage(paged.page);
+    showPageHintOnce();
+  } else {
+    elements["page-hint"].hidden = true;
+    body.style.transform = "";
+    body.classList.remove("turning");
+    paged.anchor = null;
+    if (scrollAdapter) readerSession.adapter = scrollAdapter;
+  }
+  if (anchor && readerSession.restore(anchor)) syncScrollBaseline();
+  updateReadingProgress();
+}
+
+// Pages turn by tap zones (오른손: left 30% back, middle 20% tools, right half forward) or by a
+// swipe that follows the finger. A swipe starting at the screen edges belongs to system Back.
+const EDGE_GUARD = 24;
+function followPageGesture(event, start) {
+  const dx = event.clientX - start.x;
+  if (!paged.drag) {
+    const fromEdge = start.x < EDGE_GUARD || start.x > innerWidth - EDGE_GUARD;
+    if (fromEdge || Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(event.clientY - start.y)) return;
+    paged.drag = true;
+  }
+  showPage(paged.page, { offset: dx });
+}
+
+// Page keys belong to the Reader only while it is on screen (a list over it keeps Space for scrolling).
+function pageKeys() {
+  return paged.active && document.body.classList.contains("reader-open");
+}
+
+function stepPage(direction) {
+  const next = paged.page + direction;
+  if (next >= paged.pages) return void readerCommand("next");
+  if (next < 0) return void readerCommand("previous");
+  turnPage(next, { animate: true });
+}
+
+function finishPageGesture(event, start) {
+  if (paged.drag) {
+    paged.drag = false;
+    const dx = event.clientX - start.x;
+    const target = swipeTarget(paged.page, paged.pages, dx, event.timeStamp - start.time, paged.geometry.width);
+    // A swipe past the last page moves on to the next episode, like the chapter end card.
+    if (target === paged.page && dx < -paged.geometry.width * 0.2 && paged.page === paged.pages - 1) readerCommand("next");
+    else turnPage(target, { animate: true });
+    return true;
+  }
+  if (event.pointerType === "mouse" || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) return false;
+  if (event.target.closest("a, button, input, select, textarea, label, summary, img, [role='button'], .media-figure, .reader-topbar, .reader-toolbar")) return false;
+  if (String(getSelection() ?? "")) return false;
+  const rect = elements["reader-pane"].getBoundingClientRect();
+  const ratio = (event.clientX - rect.left) / rect.width;
+  if (ratio < 0.3) stepPage(-1);
+  else if (ratio > 0.5) stepPage(1);
+  else setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
+  return true;
+}
+
+// Size or fonts changed the columns: lay them out again around the same sentence.
+function relayoutPages() {
+  if (!paged.active) return;
+  const anchor = pagedAdapter.captureVisiblePosition();
+  layoutPages();
+  if (!anchor || !pagedAdapter.scrollToRange(anchor)) showPage(paged.page);
 }
 
 function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision }) {
@@ -1267,6 +1440,7 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   body.dataset.renderId = renderId;
   void archiveTextMedia(body, renderId);
   openMobileReader();
+  applyReadingMode();
   updateShellMode();
   readerSession.frame(() => elements["reader-title"].focus({ preventScroll: true }));
 }
@@ -1359,6 +1533,7 @@ function readerTopInset() {
 
 // Progress through the body itself, so long comment threads below do not hold "finished" back.
 function bodyProgress() {
+  if (paged.active) return pagedAdapter.measureProgress();
   const pane = elements["reader-pane"];
   const body = elements["archive-body"];
   const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
@@ -3464,7 +3639,7 @@ function renderPostBody() {
   const identity = `${post.board_id}:${post.external_post_id}`;
   const override = settings.viewModes[identity];
   currentMode = override ?? (post.is_aa ? "aa" : "prose");
-  if (readerSession.adapter) readerSession.adapter.mode = currentMode === "aa" ? "aa" : "scroll";
+  if (scrollAdapter) scrollAdapter.mode = currentMode === "aa" ? "aa" : "scroll";
   const isAa = currentMode === "aa";
   elements["archive-body"].classList.toggle("aa", isAa);
   elements["archive-body"].ariaLabel = isAa ? "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다" : "글 본문";
@@ -3488,6 +3663,7 @@ function renderPostBody() {
   updateReaderLength();
   if (isAa) restoreAaView();
   else requestAnimationFrame(() => updateAaOverflowCue(true));
+  applyReadingMode();
 }
 
 function normalizeReaderTypography(container) {
@@ -3568,8 +3744,10 @@ function isNarrowScreen() {
   return matchMedia("(max-width: 759px)").matches;
 }
 
+// The stored pixel offset. In page mode the pane never scrolls, so it records only whether the
+// reader is at the start (0) — restore treats 0 as "the top", not as a sentence to find.
 function readingPosition() {
-  return elements["reader-pane"].scrollTop;
+  return paged.active ? paged.page : elements["reader-pane"].scrollTop;
 }
 
 function restoreReadingPosition(summary) {
@@ -3624,7 +3802,7 @@ function updateReadingProgress() {
   const progress = bodyProgress();
   elements["reading-progress"].style.width = `${progress * 100}%`;
   elements["reader-topbar-progress"].textContent = `${Math.round(progress * 100)}%`;
-  elements["reader-status"].textContent = `${Math.round(progress * 100)}%`;
+  elements["reader-status"].textContent = paged.active ? `${paged.page + 1} / ${paged.pages}쪽` : `${Math.round(progress * 100)}%`;
   elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
@@ -4651,6 +4829,7 @@ elements["reader-pane"].addEventListener("pointercancel", () => { pointerStart =
 elements["reader-pane"].addEventListener("pointerup", (event) => {
   const start = pointerStart;
   pointerStart = null;
+  if (paged.active && start && finishPageGesture(event, start)) return;
   if (!start || event.pointerType === "mouse" || !document.body.classList.contains("reader-open")) return;
   if (event.target.closest("a, button, input, select, textarea, label, summary, img, [role='button'], .media-figure, .chapter-end, .reader-list, .reader-topbar, .reader-toolbar")) return;
   const still = Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10 &&
@@ -4661,6 +4840,7 @@ elements["reader-pane"].addEventListener("pointerup", (event) => {
   setReaderChromeHidden(!document.body.classList.contains("reader-controls-hidden"));
 });
 elements["reader-pane"].addEventListener("pointermove", (event) => {
+  if (paged.active && pointerStart && event.pointerType !== "mouse") followPageGesture(event, pointerStart);
   if (pointerStart && Math.abs(event.clientY - pointerStart.y) > 4) readerSession.markUserScroll();
   if (event.pointerType !== "mouse" || !document.body.classList.contains("reader-controls-hidden")) return;
   if (event.clientY - elements["reader-pane"].getBoundingClientRect().top < 64) setReaderChromeHidden(false);
@@ -4699,6 +4879,28 @@ for (const choice of document.querySelectorAll("button[data-aa-auto-fit]")) {
     settings.aaAutoFit = choice.dataset.aaAutoFit;
     saveSettings();
   });
+}
+for (const choice of document.querySelectorAll("button[data-reading-mode]")) {
+  choice.addEventListener("click", () => {
+    settings.readingMode = choice.dataset.readingMode;
+    saveSettings();
+    applyReadingMode();
+  });
+}
+elements["page-hint"].addEventListener("click", () => {
+  elements["page-hint"].hidden = true;
+  try {
+    localStorage.setItem(PAGE_HINT_KEY, "1");
+  } catch { /* shown again next time */ }
+});
+new ResizeObserver(() => relayoutPages()).observe(elements["reader-pane"]);
+// Focus or find can scroll a clipped box; in page mode only the transform may move the text.
+for (const clipped of [elements.reader, elements["reader-pane"]]) {
+  clipped.addEventListener("scroll", () => {
+    if (!paged.active) return;
+    clipped.scrollLeft = 0;
+    clipped.scrollTop = 0;
+  }, { passive: true });
 }
 for (const choice of document.querySelectorAll("button[data-home-quote]")) {
   choice.addEventListener("click", () => {
@@ -4982,6 +5184,12 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     showDestination("search");
     elements["search-input"].focus();
+  } else if (pageKeys() && (event.key === "Home" || event.key === "End")) {
+    event.preventDefault();
+    turnPage(event.key === "Home" ? 0 : paged.pages - 1);
+  } else if (pageKeys() && ["ArrowLeft", "ArrowRight", " ", "PageUp", "PageDown"].includes(event.key)) {
+    event.preventDefault();
+    stepPage(event.key === "ArrowLeft" || event.key === "PageUp" || (event.key === " " && event.shiftKey) ? -1 : 1);
   } else if (event.key === "[" || (event.key === "ArrowLeft" && readerSource && currentMode !== "aa")) {
     readerCommand("previous");
   } else if (event.key === "]" || (event.key === "ArrowRight" && readerSource && currentMode !== "aa")) {
@@ -5046,10 +5254,13 @@ matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
 // started scrolling in the meantime.
 document.fonts.addEventListener("loading", () => { fontGeneration = readerSession.generation; });
 document.fonts.addEventListener("loadingdone", () => {
+  relayoutPages();
   if (readerSession.afterLayout(fontGeneration)) syncScrollBaseline();
 });
 elements["archive-body"].addEventListener("load", (event) => {
-  if (elements["archive-body"].contains(event.target) && readerSession.afterLayout(readerSession.generation)) syncScrollBaseline();
+  if (!elements["archive-body"].contains(event.target)) return;
+  relayoutPages();
+  if (readerSession.afterLayout(readerSession.generation)) syncScrollBaseline();
 }, { capture: true });
 elements["reader-pane"].addEventListener("wheel", () => readerSession.markUserScroll(), { passive: true });
 elements["reader-pane"].addEventListener("keydown", (event) => {

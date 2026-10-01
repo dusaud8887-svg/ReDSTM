@@ -337,6 +337,7 @@
           </div>
 
           <div class="archive-body" id="archive-body" tabindex="0" aria-label="글 본문"></div>
+          <button class="page-hint" id="page-hint" type="button" aria-label="쪽 넘기기 안내 닫기" hidden><span>이전 쪽</span><span>도구</span><span>다음 쪽</span></button>
           <div class="aa-zoom-indicator" id="aa-zoom-indicator" role="status" aria-live="polite" popover="manual" style="margin:0;right:auto;bottom:auto" hidden>100%</div>
           <section class="chapter-end" id="chapter-end" aria-label="다음 읽기">
             <p class="chapter-end-note" id="chapter-end-note" hidden></p>
@@ -406,6 +407,10 @@
         <button type="button" role="radio" data-reader-surface="default" aria-checked="false">기본</button>
         <button type="button" role="radio" data-reader-surface="paper" aria-checked="false">종이</button>
         <button type="button" role="radio" data-reader-surface="ink" aria-checked="false">먹</button>
+      </div>
+      <div class="segmented segmented-2" role="radiogroup" aria-label="읽기 방식">
+        <button type="button" role="radio" data-reading-mode="scroll" aria-checked="false">스크롤</button>
+        <button type="button" role="radio" data-reading-mode="page" aria-checked="false">페이지</button>
       </div>
       <label class="quick-range">밝기 낮추기<input type="range" data-quick-setting="readerDim" min="0" max="60" step="5"></label>
       <label class="quick-range">따뜻하게<input type="range" data-quick-setting="readerWarm" min="0" max="25" step="5"></label>
@@ -508,6 +513,14 @@
         </fieldset>
         <fieldset class="settings-group reading-behavior">
           <legend>읽기 동작</legend>
+          <div class="setting-row">
+            <span class="setting-label" id="reading-mode-label">읽기 방식</span>
+            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="reading-mode-label">
+              <button type="button" role="radio" data-reading-mode="scroll" aria-checked="false">스크롤</button>
+              <button type="button" role="radio" data-reading-mode="page" aria-checked="false">페이지</button>
+            </div>
+            <p class="setting-hint">페이지는 소설 본문을 옆으로 넘깁니다. 왼쪽을 누르면 이전 쪽, 오른쪽 절반을 누르면 다음 쪽, 가운데는 도구입니다. AA는 스크롤로 봅니다.</p>
+          </div>
           <div class="setting-row">
             <span class="setting-label" id="tap-paging-label">화면 탭으로 넘기기</span>
             <div class="segmented segmented-2" role="radiogroup" aria-labelledby="tap-paging-label">

@@ -1648,3 +1648,116 @@ test("Paragraph spacing and indent change prose but never an AA picture", async 
   await expect(aa).toHaveCSS("text-indent", "0px");
   await expect(aa).toHaveCSS("margin-bottom", "0px");
 });
+
+// Page mode tap zones (DESIGN §8.2 오른손) and the edge guard for system Back.
+test("Page mode taps turn pages by zone, the middle shows the tools and edge swipes stay with Back", async ({ page }) => {
+  test.skip(!mobileWidth(page), "tap zones are a touch layout");
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({ schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null, history: {} }));
+  });
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  // A touch screen shows the zones once; a tap dismisses them for good.
+  if (await page.evaluate(() => matchMedia("(pointer: coarse)").matches)) {
+    await page.locator("#page-hint").click();
+    await expect(page.locator("#page-hint")).toBeHidden();
+    await page.reload();
+    await expect(page.locator("#reader")).toHaveClass(/paged/);
+    await expect(page.locator("#page-hint")).toBeHidden();
+  }
+  const status = page.locator("#reader-status");
+  await expect(status).toHaveText(/^1 \/ \d+쪽$/);
+  const box = await page.locator("#reader-pane").boundingBox();
+  const y = box.y + box.height / 2;
+  const body = page.locator("#archive-body");
+  const touch = async (type, x) => body.dispatchEvent(type, { isPrimary: true, pointerType: "touch", clientX: x, clientY: y });
+  const tap = async (ratio) => {
+    await touch("pointerdown", box.x + box.width * ratio);
+    await touch("pointerup", box.x + box.width * ratio);
+  };
+  await tap(0.8);
+  await expect(status).toHaveText(/^2 \//);
+  await tap(0.1);
+  await expect(status).toHaveText(/^1 \//);
+  const hidden = await page.evaluate(() => document.body.classList.contains("reader-controls-hidden"));
+  await tap(0.4);
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains("reader-controls-hidden"))).toBe(!hidden);
+  // A swipe from the middle follows the finger and turns on release.
+  await touch("pointerdown", box.x + box.width * 0.8);
+  await touch("pointermove", box.x + box.width * 0.5);
+  await touch("pointermove", box.x + box.width * 0.2);
+  await touch("pointerup", box.x + box.width * 0.2);
+  await expect(status).toHaveText(/^2 \//);
+  // One that starts at the screen edge is the system Back gesture's, not a page turn.
+  await touch("pointerdown", 8);
+  await touch("pointermove", 200);
+  await touch("pointerup", 200);
+  await page.waitForTimeout(300);
+  await expect(status).toHaveText(/^2 \//);
+});
+
+// T01/T02 (automatable part): page mode keeps the same sentence through a font change, a
+// rotation, a reload and a switch back to scrolling; no page is empty.
+test("Page mode turns pages and keeps the sentence through size, rotation, reload and scroll", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({ schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null, history: {} }));
+  });
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  const status = page.locator("#reader-status");
+  await expect(status).toHaveText(/^1 \/ \d+쪽$/);
+  const pages = Number((await status.textContent()).match(/\/ (\d+)/)[1]);
+  expect(pages).toBeGreaterThan(1);
+  // The first visible paragraph on the current page, once a page turn has settled.
+  const firstVisible = () => page.evaluate(async () => {
+    const body = document.getElementById("archive-body");
+    await Promise.all(body.getAnimations().map((animation) => animation.finished.catch(() => {})));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const left = document.getElementById("reader-pane").getBoundingClientRect().left;
+    const right = left + document.getElementById("reader-pane").clientWidth;
+    return [...document.querySelectorAll("#archive-body p")].find((p) => {
+      const box = p.getBoundingClientRect();
+      return box.left >= left - 1 && box.right <= right + 1;
+    })?.textContent ?? "";
+  });
+  await page.keyboard.press("ArrowRight");
+  await expect(status).toHaveText(`2 / ${pages}쪽`);
+  // Wait for the 200ms turn to settle before reading what is on the page.
+  await expect.poll(firstVisible).toMatch(/\d+$/);
+  const sentence = await firstVisible();
+  expect(sentence).not.toBe("2편 본문 1");
+  // Every page has text: the last page is not empty.
+  await page.keyboard.press("End");
+  await expect(status).toHaveText(`${pages} / ${pages}쪽`);
+  await expect.poll(firstVisible).toMatch(/\d+$/);
+  for (let index = pages; index > 2; index -= 1) await page.keyboard.press("ArrowLeft");
+  await expect(status).toHaveText(`2 / ${pages}쪽`);
+  await expect.poll(firstVisible).toBe(sentence);
+  const size = page.viewportSize();
+  await page.setViewportSize({ width: size.height, height: size.width });
+  // Rotated, the pages hold different paragraphs, but the sentence the page began with is on screen.
+  await expect.poll(() => page.evaluate(async (text) => {
+    const body = document.getElementById("archive-body");
+    await Promise.all(body.getAnimations().map((animation) => animation.finished.catch(() => {})));
+    const pane = document.getElementById("reader-pane").getBoundingClientRect();
+    const box = [...body.querySelectorAll("p")].find((p) => p.textContent === text)?.getClientRects()[0];
+    return Boolean(box) && box.left >= pane.left && box.right <= pane.right;
+  }, sentence)).toBe(true);
+  await page.setViewportSize(size);
+  await expect.poll(firstVisible).toBe(sentence);
+  await page.waitForTimeout(400);
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(firstVisible).toBe(sentence);
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  await page.locator('#quick-settings [data-reading-mode="scroll"]').click();
+  await expect(page.locator("#reader")).not.toHaveClass(/paged/);
+  const top = await page.evaluate(() => {
+    const pane = document.getElementById("reader-pane").getBoundingClientRect().top;
+    return [...document.querySelectorAll("#archive-body p")].find((p) => p.getBoundingClientRect().bottom > pane + 60)?.textContent;
+  });
+  expect(Math.abs(Number(top.match(/\d+$/)[0]) - Number(sentence.match(/\d+$/)[0]))).toBeLessThanOrEqual(2);
+});
