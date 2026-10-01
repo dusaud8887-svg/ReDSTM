@@ -103,8 +103,75 @@ registerRoute(new NavigationRoute(async (context) => {
   return (await shellRequest()) ?? Response.error();
 }, { denylist: [/^\/ops/, /^\/cdn-cgi\//] }));
 
+// Saving a work for offline reading (§12.6.2): the page sends the work's files; four at a time
+// they go into the owner's offline cache, files already there are skipped (so 이어서 저장 resumes),
+// and progress goes back to the pages. One failed file leaves the save partial, never complete.
+const cancelled = new Set();
+async function saveOffline({ id, urls, requires = [] }) {
+  await ownerLoaded;
+  cancelled.delete(id);
+  const cache = await caches.open(offlineCacheName());
+  const statics = await caches.open("static-v");
+  let done = 0;
+  let failed = 0;
+  let bytes = 0;
+  const queue = [...urls];
+  const report = (type) => tell({ type, id, done, failed, total: urls.length, bytes });
+  async function take() {
+    while (queue.length && !cancelled.has(id)) {
+      const url = queue.shift();
+      try {
+        const cached = await cache.match(url);
+        if (cached) {
+          bytes += (await cached.clone().arrayBuffer()).byteLength;
+        } else {
+          const response = await fetch(url, { credentials: "same-origin" });
+          if (response.status !== 200 || authFailure(new Request(url), response)) {
+            if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url });
+            throw new Error(String(response.status));
+          }
+          bytes += (await response.clone().arrayBuffer()).byteLength;
+          await cache.put(url, response);
+        }
+        done += 1;
+      } catch {
+        failed += 1;
+      }
+      report("offline-progress");
+    }
+  }
+  // The fonts and modules a saved work needs to open offline.
+  for (const url of requires) {
+    try {
+      if (!(await statics.match(url))) await statics.add(url);
+    } catch { /* a missing font falls back; the text still opens */ }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, urls.length) }, take));
+  report(cancelled.has(id) ? "offline-cancelled" : "offline-done");
+}
+
+async function deleteOffline({ id, urls }) {
+  await ownerLoaded;
+  cancelled.add(id);
+  const cache = await caches.open(offlineCacheName());
+  await Promise.all(urls.map((url) => cache.delete(url)));
+  tell({ type: "offline-deleted", id });
+}
+
 self.addEventListener("message", (event) => {
   const data = event.data ?? {};
+  if (data.type === "SAVE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
+    event.waitUntil(saveOffline(data));
+    return;
+  }
+  if (data.type === "DELETE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
+    event.waitUntil(deleteOffline(data));
+    return;
+  }
+  if (data.type === "CANCEL_OFFLINE" && typeof data.id === "string") {
+    cancelled.add(data.id);
+    return;
+  }
   if (data.type === "SET_OWNER" && /^(?:[a-f0-9]{16}|anon)$/.test(data.owner ?? "")) {
     event.waitUntil((async () => {
       owner = data.owner;
