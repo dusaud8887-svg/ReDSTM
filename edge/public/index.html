@@ -231,6 +231,11 @@
             <span><strong>작품·글·작가 검색</strong><small>제목, 작성자, 게시판, 소설·AA로 찾기</small></span>
             <kbd aria-hidden="true">/</kbd>
           </button>
+          <section class="offline-works" id="offline-works" aria-labelledby="offline-works-title" hidden>
+            <h2 id="offline-works-title">이 기기에 저장한 작품</h2>
+            <p>오프라인에서는 저장한 작품만 열 수 있어요.</p>
+            <ul class="offline-works-list" id="offline-works-list"></ul>
+          </section>
           <section class="home-onboarding" id="home-onboarding" aria-labelledby="home-onboarding-title" hidden>
             <h2 id="home-onboarding-title">어디서부터 읽을까요</h2>
             <p>출처를 골라 둘러보거나, 다른 기기에서 내보낸 기록을 가져오세요.</p>
@@ -314,6 +319,11 @@
             </div>
             <div class="collection-actions">
               <button class="collection-continue" id="collection-continue" type="button" hidden></button>
+              <div class="offline-control" id="collection-offline" hidden>
+                <button type="button" id="offline-save">이 기기에 저장</button>
+                <span class="offline-state" id="offline-state" role="status"></span>
+                <button type="button" id="offline-delete" hidden>삭제</button>
+              </div>
               <form class="toc-jump" id="collection-jump" role="search" aria-label="회차로 이동">
                 <label for="collection-jump-input" class="sr-only">이동할 편 번호</label>
                 <input id="collection-jump-input" type="number" inputmode="numeric" min="1" placeholder="몇 편?" enterkeyhint="go">
@@ -461,6 +471,7 @@
       <button class="icon-button" id="find-next" type="button" aria-label="다음 결과"><svg aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
       <button class="icon-button" id="find-close" type="button" aria-label="찾기 닫기"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
+    <div class="action-toast" id="update-ready" role="status" popover="manual" hidden><span>새 버전이 있어요</span><button type="button" id="update-apply">지금 적용</button></div>
     <div class="action-toast" id="find-return" role="status" popover="manual" hidden><span>찾기 전 위치</span><button type="button" id="find-return-button">돌아가기</button></div>
 
     <button class="immersive-exit" id="immersive-exit" type="button" hidden>집중 종료</button>
@@ -498,6 +509,14 @@
       <form method="dialog">
         <header><div><p id="selection-more-quote"></p><h2 id="selection-more-title">선택한 문장</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
         <div class="selection-more-actions"><button type="button" id="selection-share">이미지로 공유</button><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
+      </form>
+    </dialog>
+
+    <dialog id="auth-dialog" aria-labelledby="auth-dialog-title">
+      <form method="dialog">
+        <header><div><p>보호된 장서</p><h2 id="auth-dialog-title">로그인이 만료됐어요</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <p>예전 응답으로 대신 보여 주지 않습니다. 다시 로그인하거나, 이 기기에 저장한 작품을 볼 수 있어요.</p>
+        <div class="bookmark-dialog-actions"><span></span><button type="button" id="auth-saved">저장한 작품 보기</button><button type="button" id="auth-login">다시 로그인</button></div>
       </form>
     </dialog>
 
@@ -641,6 +660,9 @@
           <a class="settings-ops" id="settings-ops" href="/ops"><span><strong>운영 현황</strong><small>수집 상태와 최근 실패 확인</small></span><span aria-hidden="true">→</span></a>
           <div class="settings-actions"><button class="text-command install-app" id="install-app" type="button" hidden>앱으로 설치</button><button class="text-command reset-settings" id="reset-settings" type="button">설정 기본값</button><button class="text-command" id="export-state" type="button">기록 내보내기</button><button class="text-command" id="import-state" type="button">기록 가져오기</button></div>
           <p class="settings-note">읽기 기록과 저장한 글은 이 브라우저에만 보관됩니다.</p>
+          <p class="settings-note" id="offline-storage" hidden></p>
+          <div class="settings-account" id="other-account" hidden><p>이 기기에 다른 계정 기록이 있어요. 지금 계정에서는 열지 않습니다.</p><button class="text-command" id="other-account-delete" type="button">그 기록 삭제</button></div>
+          <div class="settings-actions"><button class="text-command" id="clear-device" type="button">이 기기 기록 지우기</button><button class="text-command" id="reset-app-cache" type="button">앱 캐시 지우기</button></div>
           <details class="settings-keys" id="settings-keys">
             <summary>키보드 단축키</summary>
             <dl>

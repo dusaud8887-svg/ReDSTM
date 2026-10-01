@@ -50,7 +50,8 @@ import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
-import { createOffline } from "/offline.js";
+import { featureEnabled } from "/capabilities.js";
+import { createOffline, deleteNamespace } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
 import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
 import { createTextModel, modelOffset } from "/text-model.js";
@@ -101,7 +102,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
+    "offline-works", "offline-works-list", "other-account", "auth-dialog", "collection-offline", "offline-save", "offline-state", "offline-delete", "offline-storage", "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
     "home-excerpt", "home-excerpt-list", "home-week", "home-week-total", "home-week-bars", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
@@ -1206,6 +1207,23 @@ function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없�
     currentCollection = null;
   }
   renderCover(title, message, false, expired ? "다시 로그인" : "다시 시도");
+  void renderOfflineWorks(offline || expired);
+}
+
+// 이 기기에 저장한 작품: shown when the archive cannot be reached; each opens from its snapshot.
+async function renderOfflineWorks(show = true) {
+  const store = show ? await ownerStore() : null;
+  const works = store ? (await store.getAll("offline")).filter((work) => work.descriptor && work.state !== "interrupted") : [];
+  elements["offline-works"].hidden = !works.length;
+  elements["offline-works-list"].replaceChildren(...works.map((work) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `${work.title}${work.state === "partial" ? " · 일부만" : ""}`;
+    button.addEventListener("click", () => void openCollectionDetail(work.descriptor.id));
+    item.append(button);
+    return item;
+  }));
 }
 
 function openMobileReader() {
@@ -2247,6 +2265,7 @@ for (const input of quickSettings.querySelectorAll("[data-quick-setting]")) {
 
 function openSettings() {
   if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
+  void renderOfflineStorage();
   elements["settings-dialog"].querySelector("form").scrollTop = 0;
 }
 
@@ -2321,6 +2340,7 @@ function cancelReaderSelection() {
 }
 
 function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true } = {}) {
+  if (destination === "library") applyUpdateAtSafePoint();
   if (destination === "settings") {
     openSettings();
     document.title = "읽기 설정 — ReDSTM";
@@ -3241,6 +3261,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
       readingEntries.length ? `읽는 중 ${readingEntries.length}` : null,
     ].filter(Boolean).join(" · ");
     void showWorkReadingTime(workKey({ source: "typemoon", id: collection.id }), elements["collection-meta"]);
+    void showOfflineControl(collection);
     const skippedUnread = available.filter((entry) =>
       postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) !== "finished");
     const continueEntry = continueTarget.kind === "finished" || continueTarget.kind === "empty" ? null : continueTarget.entry;
@@ -3447,6 +3468,24 @@ function collectionIndex() {
 }
 
 async function loadCollectionDetail(collectionId) {
+  let found = null;
+  try {
+    found = await onlineCollectionDetail(collectionId);
+  } catch (error) {
+    const saved = await savedCollection(collectionId);
+    if (saved) return saved;
+    throw error;
+  }
+  return found ?? savedCollection(collectionId);
+}
+
+async function savedCollection(collectionId) {
+  const store = await ownerStore();
+  const snapshot = store ? await store.get("offline", workKey({ source: "typemoon", id: collectionId })) : null;
+  return snapshot?.descriptor ? validateCollection(snapshot.descriptor) : null;
+}
+
+async function onlineCollectionDetail(collectionId) {
   const index = await collectionIndex();
   if (index.schemaVersion === 1) return index.legacy.find((item) => item.id === collectionId) ?? null;
   const summary = index.summaryById.get(collectionId);
@@ -3574,6 +3613,7 @@ async function updateCollection() {
 // navigation: "push" enters the Reader from a list or Home, "replace" moves within the same
 // reading session (previous/next, another row of a visible side list), "route" follows history.
 async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
+  if (navigation === "push") applyUpdateAtSafePoint();
   const viewId = ++readerViewId;
   if (currentSummary) persistReadingPosition();
   readerSession.cancelPendingWork();
@@ -5264,11 +5304,48 @@ let annotationModel = null;
 let placedAnnotations = [];
 
 // The verified owner (Access email hash from /api/v1/me), or null when there is none (Basic auth).
+// Offline (no answer at all) the last verified owner on this device is used, so its saved works
+// open; online, a different owner than last time leaves the old namespace closed (§12.6.3).
+const OWNER_KEY = "redstm.owner.v1";
+const OTHER_OWNERS_KEY = "redstm.otherOwners.v1";
 let ownerRequest = null;
+// Owners seen before on this device whose records are still here, until they are deleted.
+function otherOwners() {
+  try {
+    const list = JSON.parse(localStorage.getItem(OTHER_OWNERS_KEY) ?? "[]");
+    return Array.isArray(list) ? list.filter((value) => /^[a-f0-9]{16}$/.test(value)) : [];
+  } catch {
+    return [];
+  }
+}
+function setOtherOwners(list) {
+  try {
+    localStorage.setItem(OTHER_OWNERS_KEY, JSON.stringify([...new Set(list)]));
+  } catch { /* shown again on the next mismatch */ }
+}
+function rememberedOwner() {
+  try {
+    const value = localStorage.getItem(OWNER_KEY);
+    return /^[a-f0-9]{16}$/.test(value ?? "") ? value : null;
+  } catch {
+    return null;
+  }
+}
 function ownerIdentity() {
   ownerRequest ??= fetch("/api/v1/me", { headers: { Accept: "application/json" } })
-    .then((response) => (response.ok ? response.json() : null))
-    .then((me) => (/^[a-f0-9]{16}$/.test(me?.ownerHash ?? "") ? me.ownerHash : null))
+    .then(async (response) => {
+      const me = response.ok ? await response.json().catch(() => null) : null;
+      const hash = /^[a-f0-9]{16}$/.test(me?.ownerHash ?? "") ? me.ownerHash : null;
+      const previous = rememberedOwner();
+      if (hash && previous && previous !== hash) setOtherOwners([...otherOwners(), previous]);
+      if (hash) setOtherOwners(otherOwners().filter((value) => value !== hash));
+      if (hash) {
+        try {
+          localStorage.setItem(OWNER_KEY, hash);
+        } catch { /* offline starts will not find the owner */ }
+      }
+      return hash;
+    }, () => rememberedOwner())
     .catch(() => null);
   return ownerRequest;
 }
@@ -5874,6 +5951,206 @@ async function showWorkReadingTime(key, element) {
   element.textContent += ` · 읽은 시간(추정) ${minutesLabel(spent)}`;
 }
 
+// ---- 이 기기에 저장 (docs/24 §12.6.2, T08) --------------------------------------------------------
+// A saved work is a snapshot in the owner's store (what to draw offline) plus its files in the
+// owner's offline cache (the worker downloads them). It needs both a verified owner and a worker.
+const OFFLINE_REQUIRES = [
+  "/fonts/maruburi@1.000/400.core.woff2", "/fonts/saitamaar@1.0/Saitamaar-Regular.woff2",
+  "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js", "/vendor/es-hangul@2.4.0/es-hangul.js", "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js",
+  "/vendor/floating-ui-dom@1.8.0/floating-ui.js", "/vendor/idb@8.0.3/idb.js",
+];
+let offlineWork = null; // the snapshot shown in the open work header
+const offlineRuns = new Map(); // workKey → live progress while saving
+
+function collectionSnapshot(collection, owner) {
+  const entries = collection.entries.filter((entry) => entry.object_key).map((entry) => ({
+    documentId: `typemoon:${entry.board_id}:${entry.external_post_id}`, order: entry.position, title: entry.title,
+    url: `/archive/${entry.object_key}`,
+  }));
+  return {
+    workKey: workKey({ source: "typemoon", id: collection.id }), owner, source: "typemoon", textModelVersion: 1,
+    title: collection.title, entries,
+    descriptor: {
+      id: collection.id, board_id: collection.board_id, title: collection.title, kind: collection.kind,
+      entries: collection.entries.map(({ position, board_id, external_post_id, title, object_key }) => ({ position, board_id, external_post_id, title, object_key })),
+    },
+    requires: OFFLINE_REQUIRES, media: "text-only", state: "interrupted", savedAt: new Date().toISOString(), bytes: 0, done: 0, failed: 0,
+  };
+}
+
+function sizeLabel(bytes) {
+  if (bytes < 1_048_576) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  return `${(bytes / 1_048_576).toFixed(1)}MB`;
+}
+
+function renderOfflineControl() {
+  const snapshot = offlineWork;
+  const run = snapshot && offlineRuns.get(snapshot.workKey);
+  const save = elements["offline-save"];
+  const remove = elements["offline-delete"];
+  const state = elements["offline-state"];
+  if (run) {
+    save.textContent = "멈추기";
+    save.dataset.action = "cancel";
+    remove.hidden = true;
+    state.textContent = `저장 중 ${run.done + run.failed}/${run.total}`;
+    return;
+  }
+  const stored = snapshot?.stored;
+  save.dataset.action = "save";
+  remove.hidden = !stored;
+  if (!stored) {
+    save.textContent = "이 기기에 저장";
+    state.textContent = "글만 저장 · 이미지는 온라인에서";
+  } else if (stored.state === "complete") {
+    save.hidden = true;
+    state.textContent = `이 기기에 저장됨 · ${sizeLabel(stored.bytes)}`;
+  } else {
+    save.hidden = false;
+    save.textContent = "이어서 저장";
+    state.textContent = stored.failed
+      ? `일부만 저장됨 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
+      : `저장이 중단됨 · ${stored.done}/${stored.entries.length}편`;
+  }
+  if (stored?.state !== "complete") save.hidden = false;
+}
+
+async function showOfflineControl(collection) {
+  const control = elements["collection-offline"];
+  const [store, owner] = await Promise.all([ownerStore(), ownerIdentity()]);
+  const usable = store && owner && offline.canSave && featureEnabled("offline", true);
+  const stored = store ? await store.get("offline", workKey({ source: "typemoon", id: collection.id })) : null;
+  if (activeCollectionId !== collection.id) return;
+  // With the offline flag off, a saved work can still be removed; nothing new is saved.
+  control.hidden = !usable && !stored;
+  if (control.hidden) return;
+  offlineWork = { ...collectionSnapshot(collection, owner), stored };
+  renderOfflineControl();
+  elements["offline-save"].disabled = !usable;
+}
+
+async function writeSnapshot(snapshot) {
+  const store = await ownerStore();
+  if (!store) return;
+  const { stored: _stored, ...value } = snapshot;
+  try {
+    await store.commit([{ store: "offline", value }]);
+  } catch {
+    showReaderFeedback("저장 상태를 기록하지 못했어요", 2400);
+  }
+}
+
+elements["offline-save"].addEventListener("click", async () => {
+  const snapshot = offlineWork;
+  if (!snapshot) return;
+  if (elements["offline-save"].dataset.action === "cancel") return void offline.cancel(snapshot.workKey);
+  // Ask once to keep saved works through storage pressure (granted silently or not at all).
+  void navigator.storage?.persist?.().catch(() => {});
+  const value = { ...snapshot, state: "interrupted", savedAt: new Date().toISOString() };
+  await writeSnapshot(value);
+  offlineRuns.set(snapshot.workKey, { done: 0, failed: 0, total: snapshot.entries.length });
+  renderOfflineControl();
+  offline.save(snapshot.workKey, snapshot.entries.map((entry) => entry.url), snapshot.requires);
+});
+
+elements["offline-delete"].addEventListener("click", async () => {
+  const snapshot = offlineWork;
+  if (!snapshot?.stored) return;
+  offline.remove(snapshot.workKey, snapshot.stored.entries.map((entry) => entry.url));
+  const store = await ownerStore();
+  try {
+    await store?.commit([{ store: "offline", key: snapshot.workKey, value: null }]);
+  } catch { /* the files are gone; the record is retried on the next delete */ }
+  offlineWork = { ...snapshot, stored: null };
+  renderOfflineControl();
+  showReaderFeedback("이 기기에서 지웠어요");
+  void renderOfflineStorage();
+});
+
+// Worker progress: the header follows it; the end (done, partial or stopped) is recorded.
+async function offlineProgress(message) {
+  const run = offlineRuns.get(message.id);
+  if (message.type === "offline-progress" && run) {
+    Object.assign(run, { done: message.done, failed: message.failed, total: message.total });
+  } else if ((message.type === "offline-done" || message.type === "offline-cancelled") && run) {
+    offlineRuns.delete(message.id);
+    const store = await ownerStore();
+    const stored = await store?.get("offline", message.id);
+    if (stored) {
+      const finished = { ...stored, done: message.done, failed: message.failed, bytes: message.bytes,
+        state: message.type === "offline-done" && !message.failed && message.done === stored.entries.length ? "complete" : message.failed ? "partial" : "interrupted" };
+      await writeSnapshot(finished);
+      if (offlineWork?.workKey === message.id) offlineWork = { ...offlineWork, stored: finished };
+    }
+    showReaderFeedback(message.failed ? `저장하지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "저장을 멈췄어요" : "이 기기에 저장했어요", 2400);
+    void renderOfflineStorage();
+  }
+  if (offlineWork?.workKey === message.id) renderOfflineControl();
+}
+
+// Settings: how many works this device keeps and the space the browser reports (T08).
+async function renderOfflineStorage() {
+  const owner = await ownerIdentity();
+  elements["other-account"].hidden = !otherOwners().some((value) => value !== owner);
+  const store = await ownerStore();
+  const works = store ? await store.getAll("offline") : [];
+  const estimate = await navigator.storage?.estimate?.().catch(() => null);
+  const line = elements["offline-storage"];
+  line.hidden = !works.length && !estimate;
+  if (line.hidden) return;
+  const used = estimate?.usage ? ` · 사용 ${sizeLabel(estimate.usage)}${estimate.quota ? ` / 가능 ${sizeLabel(estimate.quota)}` : ""}` : "";
+  line.textContent = `이 기기에 저장한 작품 ${works.length}개${used}. 저장한 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
+}
+
+// A new version never replaces the running one by itself (no automatic skipWaiting): it is
+// applied at a safe point — going to 서재 or opening another document — after the reading place is
+// saved, or at once from the toast; the page then reloads, so old and new modules never mix (T23).
+let updateReady = false;
+function applyUpdateAtSafePoint() {
+  if (!updateReady) return false;
+  if (currentSummary) persistReadingPosition();
+  persistUserState();
+  return offline.applyUpdate();
+}
+document.querySelector("#update-apply").addEventListener("click", () => {
+  overlays.hideToast(document.querySelector("#update-ready"));
+  applyUpdateAtSafePoint();
+});
+document.querySelector("#reset-app-cache").addEventListener("click", async () => {
+  if (!confirm("앱 캐시와 이 기기에 저장한 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
+  await offline.reset();
+  location.reload();
+});
+let authSheetClosed = false;
+elements["auth-dialog"].addEventListener("close", () => { authSheetClosed = true; });
+document.querySelector("#auth-login").addEventListener("click", () => location.reload());
+document.querySelector("#auth-saved").addEventListener("click", () => {
+  elements["auth-dialog"].close();
+  showDestination("library");
+  void renderOfflineWorks(true);
+});
+document.querySelector("#other-account-delete").addEventListener("click", async () => {
+  const owner = await ownerIdentity();
+  for (const other of otherOwners()) if (other !== owner) await deleteNamespace(other);
+  setOtherOwners([]);
+  elements["other-account"].hidden = true;
+  showReaderFeedback("다른 계정 기록을 지웠어요");
+});
+// 이 기기 기록 지우기: this owner's marks, notes, sessions, saved works and their caches. The reading
+// state in localStorage (설정·읽은 위치) stays; 기록 내보내기 first keeps a copy.
+document.querySelector("#clear-device").addEventListener("click", async () => {
+  if (!confirm("이 기기의 표시·메모·독서 기록·저장한 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
+  const owner = await ownerIdentity();
+  const store = await ownerStore();
+  store?.close();
+  ownerDb = null;
+  annotationRecords = [];
+  paintAnnotations();
+  if (owner) await deleteNamespace(owner);
+  showReaderFeedback("이 기기 기록을 지웠어요");
+  void renderOfflineStorage();
+});
+
 // Leaving search clears its conditions (showDestination), so the words are put back afterwards.
 document.querySelector("[data-records-scope]").addEventListener("click", async () => {
   const query = elements["search-input"].value.trim();
@@ -6095,10 +6372,14 @@ history.scrollRestoration = "manual";
 window.addEventListener("offline", () => {
   elements["archive-state"].textContent = "오프라인";
   if (!archiveReady) renderArchiveError({ code: "offline" });
+  void renderOfflineWorks(true);
 });
 window.addEventListener("online", () => {
   if (archiveReady) elements["archive-state"].textContent = readyLabel();
+  elements["offline-works"].hidden = true;
 });
+// Started without a network (T07): the saved works show even if cached data let the rest load.
+if (!navigator.onLine) void renderOfflineWorks(true);
 function flushLifecycleState() {
   if (typographyPersistTimer) {
     clearTimeout(typographyPersistTimer);
@@ -6154,7 +6435,16 @@ if (location.pathname === "/text") void handleRoute();
 
 // Service worker (docs/24 §12.6): registered once the page has settled; its caches are the owner's.
 const offline = createOffline({
-  onAuthExpired: () => showReaderFeedback("로그인이 만료됐어요. 페이지를 다시 열어 로그인해 주세요", 3600),
+  // Not a toast that a past answer quietly covers: a sheet, with the saved works as a choice (T09).
+  // Once closed it stays closed for this page: later failed requests would only reopen it.
+  onAuthExpired: () => {
+    if (!authSheetClosed && !elements["auth-dialog"].open) elements["auth-dialog"].showModal();
+  },
+  onSave: (message) => void offlineProgress(message),
+  onUpdateReady: () => {
+    updateReady = true;
+    overlays.showToast(document.querySelector("#update-ready"));
+  },
 });
 const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
 if (document.readyState === "complete") startOffline();
