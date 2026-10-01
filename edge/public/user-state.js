@@ -10,6 +10,7 @@ const themes = new Set(["system", "light", "dark"]);
 const proseFonts = new Set(["serif", "sans"]);
 const readerSurfaces = new Set(["default", "paper", "ink"]);
 const proseAlignments = new Set(["start", "justify"]);
+const readingModes = new Set(["scroll", "page"]);
 const toggles = new Set(["off", "on"]);
 const aaBackgroundPattern = /^#[0-9a-f]{6}$/i;
 const BOOKMARK_NOTE_LIMIT = 1000;
@@ -59,6 +60,7 @@ function sanitizeSettings(value, defaults = {}) {
   pick("readerSurface", (value) => readerSurfaces.has(value));
   pick("tapPaging", (value) => toggles.has(value));
   pick("homeQuote", (value) => toggles.has(value));
+  pick("readingMode", (value) => readingModes.has(value));
   pick("aaAutoFit", (value) => toggles.has(value));
   pick("aaCanvasWidth", (value) => [null, 680, 800].includes(value));
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),
