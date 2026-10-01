@@ -28,6 +28,8 @@
 
 P6-4는 세 출처 분류·고정, 이름 붙인 조건 조합의 스마트 서재, Ctrl/Cmd+K 작품·작가·명령 팔레트를 연결했다. 계정 IndexedDB와 v4 백업에 작품 정보·서재 설정을 포함하며 기존 소설 분류 원본은 보존한다. 전체 E2E 697 pass/23 조건부 skip(실패 4개 수정 후 `--last-failed` 통과), 새 시트 axe 포함. 세부 계약은 [`19 §14`](19_mobile_reader_redesign.md#14-스마트-서재분류명령-팔레트-p6-4-2026-10-02).
 
+P6-5 이어 스크롤은 연재 산문의 다음 회차를 미리 표시하고 실제 경계 이동 때 문서별 기록을 저장한다. DOM 최대 3회차·원문 locator·한 번의 Back 계약을 유지한다. 전체 E2E 717 pass/23 조건부 skip, AA 보존·axe 포함. 세부 계약은 [`19 §15`](19_mobile_reader_redesign.md#15-이어-스크롤-p6-5-2026-10-02).
+
 | 문서 | 용도 |
 |---|---|
 | [`00`](00_initial_product_architecture.md), [`04`](04_implementation_plan.md) | 제품 경계·결정 기록, 남은 출시 조건 |
