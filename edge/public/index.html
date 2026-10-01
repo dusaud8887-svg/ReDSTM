@@ -453,13 +453,12 @@
     </dialog>
 
     <dialog class="image-viewer" id="image-viewer" aria-label="이미지 보기">
-      <form method="dialog">
-        <img id="image-viewer-image" alt="본문 이미지 크게 보기" referrerpolicy="no-referrer">
-        <div class="image-viewer-actions">
-          <a id="image-viewer-source" href="#" target="_blank" rel="noreferrer">원본 열기</a>
-          <button id="image-viewer-zoom" type="button" aria-pressed="false">실제 크기</button>
-          <button value="close" aria-label="닫기">닫기</button>
-        </div>
+      <div class="image-viewer-stage" id="image-viewer-stage"></div>
+      <form method="dialog" class="image-viewer-actions">
+        <a id="image-viewer-source" href="#" target="_blank" rel="noreferrer">원본 열기</a>
+        <button id="image-viewer-zoom" type="button" aria-pressed="false">실제 크기</button>
+        <button id="image-viewer-share" type="button" hidden>공유</button>
+        <button value="close" aria-label="닫기">닫기</button>
       </form>
     </dialog>
 

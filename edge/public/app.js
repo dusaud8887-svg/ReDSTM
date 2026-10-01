@@ -45,6 +45,7 @@ import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { renderChapterRun } from "/reader-chrome.js";
+import { openGallery } from "/gallery.js";
 import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
@@ -91,7 +92,7 @@ const elements = Object.fromEntries(
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "image-viewer", "image-viewer-image", "image-viewer-source",
+    "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
     "reader-topbar-progress", "more-position", "more-position-output", "more-remaining", "reader-length",
     "more-link", "more-wake", "image-viewer-zoom", "install-app",
@@ -3694,31 +3695,44 @@ function normalizeReaderTypography(container) {
   }
 }
 
-function openImageViewer(href) {
-  setImageZoom(false);
-  elements["image-viewer-zoom"].hidden = true;
-  elements["image-viewer-image"].src = href;
-  elements["image-viewer-source"].href = href;
-  if (!elements["image-viewer"].open) elements["image-viewer"].showModal();
-}
+// The gallery over the body's pictures (gallery.js). One instance at a time; closing the dialog
+// (닫기, Back, Esc, a drag down) or leaving the document destroys it.
+let gallery = null;
+let galleryRequest = 0;
 
-// Fitted by default; 실제 크기 shows the image at its own pixels, centred on the tapped point
-// (or the middle) and panned by scrolling.
-function setImageZoom(zoomed, focus = { x: 0.5, y: 0.5 }) {
-  const viewer = elements["image-viewer"];
-  viewer.classList.toggle("zoomed", zoomed);
-  elements["image-viewer-zoom"].setAttribute("aria-pressed", String(zoomed));
-  elements["image-viewer-zoom"].textContent = zoomed ? "화면에 맞춤" : "실제 크기";
-  const scroller = viewer.querySelector("form");
-  if (!zoomed) {
-    scroller.scrollTo(0, 0);
+async function openImageViewer(target) {
+  const dialog = elements["image-viewer"];
+  const request = ++galleryRequest;
+  gallery?.destroy();
+  elements["image-viewer-zoom"].hidden = true;
+  elements["image-viewer-source"].href = target.dataset.image ?? target.currentSrc ?? target.src ?? "#";
+  if (!dialog.open) dialog.showModal();
+  const opened = await openGallery({
+    container: elements["archive-body"], target, appendTo: elements["image-viewer-stage"],
+    onChange: showGalleryItem,
+    onClose: () => {
+      if (gallery !== opened) return;
+      gallery = null;
+      if (dialog.open) dialog.close();
+    },
+  });
+  if (request !== galleryRequest || !dialog.open) return void opened?.destroy();
+  if (!opened) {
+    dialog.close();
+    showReaderFeedback("이미지를 열 수 없습니다", 2200);
     return;
   }
-  const image = elements["image-viewer-image"];
-  scroller.scrollTo(
-    Math.max(0, image.offsetLeft + image.offsetWidth * focus.x - scroller.clientWidth / 2),
-    Math.max(0, image.offsetTop + image.offsetHeight * focus.y - scroller.clientHeight / 2),
-  );
+  gallery = opened;
+}
+
+// 원본 열기 follows the picture on screen; 실제 크기 only matters for one larger than the screen.
+function showGalleryItem(item) {
+  if (!item) return;
+  elements["image-viewer-source"].href = item.src;
+  const stage = elements["image-viewer-stage"];
+  elements["image-viewer-zoom"].hidden = item.width <= stage.clientWidth && item.height <= stage.clientHeight;
+  elements["image-viewer-zoom"].setAttribute("aria-pressed", "false");
+  elements["image-viewer-zoom"].textContent = "실제 크기";
 }
 
 function renderComments(comments) {
@@ -4755,30 +4769,28 @@ elements["archive-body"].addEventListener("click", (event) => {
   if (currentMode === "aa") return;
   const trigger = event.target.closest(".media-open, a[data-image], img");
   if (!trigger || !elements["archive-body"].contains(trigger)) return;
-  const href = trigger.dataset.image ?? trigger.querySelector?.("img")?.src ?? trigger.src;
-  if (!href) return;
+  const target = trigger.matches(".media-open") ? trigger.querySelector("img") : trigger;
+  if (!target || !(target.dataset.image ?? target.src)) return;
   event.preventDefault();
-  openImageViewer(href);
+  void openImageViewer(target);
 });
-elements["image-viewer"].addEventListener("close", () => elements["image-viewer-image"].removeAttribute("src"));
-elements["image-viewer"].addEventListener("click", (event) => {
-  if (event.target === elements["image-viewer"]) elements["image-viewer"].close();
-});
-// 실제 크기 only matters when the image is larger than the screen.
-elements["image-viewer-image"].addEventListener("load", () => {
-  const image = elements["image-viewer-image"];
-  const scroller = elements["image-viewer"].querySelector("form");
-  elements["image-viewer-zoom"].hidden =
-    image.naturalWidth <= scroller.clientWidth && image.naturalHeight <= scroller.clientHeight;
-});
-elements["image-viewer-image"].addEventListener("click", (event) => {
-  if (elements["image-viewer-zoom"].hidden) return;
-  const image = elements["image-viewer-image"];
-  const zoomed = !elements["image-viewer"].classList.contains("zoomed");
-  setImageZoom(zoomed, { x: event.offsetX / image.offsetWidth, y: event.offsetY / image.offsetHeight });
+elements["image-viewer"].addEventListener("close", () => {
+  galleryRequest += 1;
+  gallery?.destroy();
+  gallery = null;
 });
 elements["image-viewer-zoom"].addEventListener("click", () => {
-  setImageZoom(!elements["image-viewer"].classList.contains("zoomed"));
+  const slide = gallery?.currSlide;
+  if (!slide) return;
+  const actual = elements["image-viewer-zoom"].getAttribute("aria-pressed") !== "true";
+  slide.zoomTo(actual ? 1 : slide.zoomLevels.initial, undefined, 200);
+  elements["image-viewer-zoom"].setAttribute("aria-pressed", String(actual));
+  elements["image-viewer-zoom"].textContent = actual ? "화면에 맞춤" : "실제 크기";
+});
+elements["image-viewer-share"].hidden = !navigator.share;
+elements["image-viewer-share"].addEventListener("click", () => {
+  const url = gallery?.currSlide?.data.src;
+  if (url) navigator.share({ url }).catch(() => { /* dismissed */ });
 });
 // Reading chrome (docs/19 §4.3): reading downward folds the top and bottom bars away on every
 // screen width; a still tap toggles them, a deliberate scroll back up or reaching the end of
@@ -5339,6 +5351,8 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.target.closest("input, select, textarea, button, [contenteditable]")) return;
+  // Keys inside an open dialog (the gallery's arrows, a sheet) are not Reader commands.
+  if (event.target.closest("dialog[open]")) return;
   // Browser and OS shortcuts (Ctrl+F find, Ctrl+B, Cmd+[ …) are not Reader commands.
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === "/") {

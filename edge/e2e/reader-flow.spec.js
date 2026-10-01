@@ -383,11 +383,19 @@ test("Image links in a body show as images, fail softly, and open a closable vie
   await figures.nth(0).locator(".media-open").click();
   const viewer = page.getByRole("dialog", { name: "이미지 보기" });
   await expect(viewer).toBeVisible();
-  await expect(viewer.locator("img")).toHaveAttribute("src", "https://img.example.test/a.png");
+  // The gallery holds the pictures that load, image links included; the failed one is left out.
+  await expect(viewer.locator(".pswp__counter")).toHaveText("1 / 3");
+  await expect(viewer.locator("#image-viewer-source")).toHaveAttribute("href", "https://img.example.test/a.png");
   // A picture smaller than the screen has nothing to zoom into.
   await expect(viewer.locator("#image-viewer-zoom")).toBeHidden();
+  // Arrows move through the gallery, not to the next post.
+  await page.keyboard.press("ArrowRight");
+  await expect(viewer.locator(".pswp__counter")).toHaveText("2 / 3");
+  await expect(viewer.locator("#image-viewer-source")).toHaveAttribute("href", /b\.jpg/);
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await viewer.getByRole("button", { name: "닫기" }).click();
   await expect(viewer).toBeHidden();
+  await expect(viewer.locator(".pswp")).toHaveCount(0);
   await expect(page).toHaveURL(/\/read\/board_a\/2$/);
 });
 
@@ -1037,16 +1045,43 @@ test("The image viewer shows a large picture at its own size and fits it again",
   const viewer = page.getByRole("dialog", { name: "이미지 보기" });
   const zoom = viewer.locator("#image-viewer-zoom");
   await expect(zoom).toBeVisible();
-  const width = () => viewer.locator("img").evaluate((image) => image.getBoundingClientRect().width);
-  expect(await width()).toBeLessThanOrEqual(page.viewportSize().width);
+  const width = () => viewer.locator(".pswp__img").first().evaluate((image) => Math.round(image.getBoundingClientRect().width));
+  await expect.poll(width).toBeLessThanOrEqual(page.viewportSize().width);
   await zoom.click();
   await expect(zoom).toHaveAttribute("aria-pressed", "true");
   await expect.poll(width).toBe(3000);
-  // Panned to the middle of the picture, with the actions still on screen.
-  expect(await viewer.locator("form").evaluate((form) => form.scrollLeft)).toBeGreaterThan(0);
+  // The actions stay on screen over the zoomed picture.
   await expect(zoom).toBeInViewport();
   await zoom.click();
   await expect.poll(width).toBeLessThanOrEqual(page.viewportSize().width);
+});
+
+// docs/24 §8.18: a picture taller than 1:3 opens filling the width, to be read by panning down.
+test("A very tall picture opens at the screen width instead of a sliver", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="9000"><rect width="2000" height="9000" fill="#468"/></svg>';
+  await page.route("https://img.example.test/**", (route) => route.fulfill({ contentType: "image/svg+xml", body: svg }));
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: false,
+        body_html: '<p><a href="https://img.example.test/tall.png">https://img.example.test/tall.png</a></p>',
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await page.locator("#archive-body .media-open").click();
+  const viewer = page.getByRole("dialog", { name: "이미지 보기" });
+  const box = () => viewer.locator(".pswp__img").first().evaluate((image) => {
+    const rect = image.getBoundingClientRect();
+    return { width: Math.round(rect.width), height: Math.round(rect.height) };
+  });
+  await expect.poll(async () => (await box()).width).toBe(page.viewportSize().width);
+  expect((await box()).height).toBeGreaterThan(page.viewportSize().height);
 });
 
 test("Text: novels read before show new chapters in the list, the read-state chips and Home", async ({ page }) => {
