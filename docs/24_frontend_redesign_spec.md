@@ -992,6 +992,7 @@ aaGestures, aaFullscreen, stats, offline, sync, kwic, glass, haptics`. off = UI�
 | M3 | 선택 핸들 vs 메뉴(T26), 공유(T13/T33), 저장 실패 |
 | M4 | 탭 종료 후 단절 시작(T07), 인증 실패(T09), 중단/재개·용량 부족 |
 | M5 | QR로 PC→폰·폰→PC 이어 읽기, 백업 병합 |
+| M6 | 자동 스크롤 120Hz·찾기/Back으로 바 닫기, KWIC 시트 키보드·Back, Ctrl/Cmd+K·IME, 이어 스크롤 fling·주소창·늦은 이미지/글꼴, 고운바탕 첫 표시 뒤 위치, AA 장면 이동 뒤 핀치·가로 전체화면 |
 | M7 | 전체 통합 회귀(첫 검증 장소가 아님) |
 
 ---
@@ -1355,6 +1356,11 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P6-6a(`cb55ce5`): `store.writeState` — 읽기 상태 전체 문자열을 `meta.legacy:<키>`에 미러, 처음 원본(`originalRaw`)·저장 당시 localStorage 값(`sourceRaw`) 보존, 키마다 보내지 않은(시도 0) op 하나만 유지(P3-4 기록의 outbox 증가 위험 중 읽기 상태 부분 해소, 주석·세션 op는 압축하지 않음). 변경되지 않은 localStorage가 더 새 사본을 덮지 않음(단위), outbox 실패 시 두 쓰기 모두 중단(E2E). unit 192, 전체 721 pass/23 skip.
 - P6-6b: 앱 연결 — TypeMoon·텍스트 상태 저장마다 사본 기록(키별 최신 값만, 한 번에 하나, 저장 당시 `sourceRaw`를 넘김), 앱 시작 때 localStorage가 비었거나 사본의 `sourceRaw` 그대로면 사본을 localStorage·화면 상태로 복구, 다르면 원본이 이겨 재조정. 사본 쓰기 알림은 주석 다시 칠하기를 건너뜀. 텍스트 라이브러리의 storage 수신을 `adoptState`로 묶어 복구에도 사용. 원본 localStorage는 지우지 않는다(검증 전 원본 보존 — 사본을 원본으로 승격하는 단계는 하지 않음). E2E: 저장 실패 → 다음 시작 복구, 비운 localStorage 복구, 바뀐 원본 우선(desktop/mobile 6/6). unit 192, check·lint 0 error, 전체 729 pass/0 fail/23 skip(13.2분). 첫 관련 실행 2 fail은 테스트가 열린 페이지의 이탈 저장 뒤에 원본을 바꿔서였다 — 앱 시작 전에 바꾸도록 수정(trace `edge/.wrangler/redesign-traces/p6-6b-related/`). 남은 위험: 시작 직후 복구 전에 상태 저장이 먼저 일어나면 복구를 건너뛴다(사본의 `originalRaw`는 유지), 계정이 바뀐 기기에서는 이전 localStorage가 새 계정 사본으로 들어간다(localStorage 자체가 이미 공유). 텍스트 상태 복구는 같은 경로라 E2E는 TypeMoon 상태로만 확인.
 - P6-6c: `docs/19` §16·README 갱신(이 기록 포함).
+- P6-7(`1eddf87`): 본문 서체 세 번째 `고운바탕`(`settings.proseFont: gowun`, 저장·백업 검사 허용값 추가). `--font-reading-alt`(DESIGN §2 reading-serif-alt) 토큰, 고를 때만 `gowun-batang@5.3.0/gowun-batang.css`를 link(처음 화면·다른 서체에서는 요청 0건 E2E), 본문에 쓰인 unicode-range 조각만 받는다. 서체 선택은 기존 select 유지(E2E id 유지) — DESIGN §10의 `서체 카드 3`은 같은 3종을 select + 현재 본문 미리보기로 제공하며 카드형 UI로 바꾸지 않았다(차이). 위치 유지는 기존 글꼴 loadingdone keep-top 경로. tokens 변경으로 전체 733 pass/0 fail/23 skip(14.0분).
+- P6-8 장면 이동: 실제 AA 300편 표본(`.data/migration/canonical-sample-2000.sqlite`)에서 298편이 2ch식 레스 머리줄(`번호 ： 이름 ： 날짜 ID:`, 편당 중앙값 64개)을 가졌고 25,292개 모두 단일 텍스트 노드였다. 구분선(━·◆◇)은 그림 테두리·장식과 섞여(상하 빈 줄 조건으로도 133/300편) 경계로 쓰지 않았다. P6-8a(`afa136e`): `aa-viewer.js` `isSceneHeader`·`sceneAt`·`sceneTarget`·`sceneY`(머리줄 앞은 장면 1, ‹는 장면 안이면 그 머리줄로, 스크롤 끝에서는 화면 안 마지막 머리줄) 단위 테스트. P6-8b(`e817858`): 머리줄 2개 이상인 AA만 도구줄 `‹ 장면 n/N ›`, 머리줄을 도구줄 바로 아래로 이동(가로 위치·AA DOM 불변 — E2E에서 innerHTML 동일), 스크롤·배율 변경 때 rAF로 라벨 갱신, 전체화면에서는 host를 스크롤. 발견·수정: 모바일 부하 중 이동 클릭이 가끔 사라짐 — 이동 직후 글꼴/레이아웃 복원이 이전 위치를 다시 적용(F0-2b와 같은 계열). 이동 전에 `markUserScroll()`. M6 전체 실행(4폭 부하)에서 mobile·compact가 다시 실패해 스크롤 기록을 계측하니 스크립트 덮어쓰기는 없었고, 모바일에서 바가 보이는 동안 sticky AA 도구줄(`top: 0`)이 Reader 상단 바 뒤에 가려져 `›`이 북마크 아이콘 아래에 있었다(P2-6 이후의 기존 배치 결함 — 사용자도 바가 보이는 동안 도구줄을 누를 수 없음). P6-8c: 바가 보이는 동안 모바일 도구줄을 상단 바 아래(`48px + safe-area`)에 붙이고, 장면 이동 스크롤은 쪽 넘김처럼 바를 숨기거나 보이지 않게(`holdChromeDuringScroll` 공용화). E2E에 도구줄 가림 검사 추가, 4폭 부하 32/32 반복 통과(trace `p6-8-repro*`·`p6-8-fix*`). 관련 Reader+viewer desktop/mobile 288 pass/1 fail(이 결함)/13 skip, trace `edge/.wrangler/redesign-traces/p6-8-related-full/`·`p6-8-repro/`.
+- P6-8 한글 AA 글꼴 실험(R-AA-02, §11.2 조건부): 실행하지 않고 연결하지 않음. 게이트는 배포 가능한(OFL) Gulim 한글 subset으로 AA 대사 20건을 비교하는 것인데, 저장소·의존성에 그런 글꼴이 없고 새 라이브러리 조사는 이번 범위에서 금지됐다. Gulim 자체는 Microsoft 글꼴이라 번들할 수 없다. 기본 AA 글꼴 스택·§8.16 값 불변(T06 통과). 재개 조건: 라이선스가 확인된 한글 AA 대체 글꼴 후보가 생기면 20건 비교부터.
+- P6-1 듣기: §17 A9에 따라 제거(구현하지 않음). S4도 실기기 미확인.
+- **M6 마감**: P6-2~P6-8 완료(P6-1 제거). 최종 코드(`dae237c`) 직전 전체 4폭+visual(VISUAL=1, workers=2) 733 pass/23 skip/52 fail — visual 48은 로컬 Windows 대 Linux 기준선 차이(CI 판정), 4개는 P6-8c 검사를 다른 테스트에 잘못 넣은 테스트 결함으로 이동 후 해당 2개 테스트 4폭×4회 32/32 통과. axe 포함. unit 194, check·lint 0 error(기존 warning 8·info 2). main 병합·CI 결과는 다음 기록.
 
 | 날짜 | 내용 |
 |---|---|

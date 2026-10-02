@@ -32,6 +32,8 @@ P6-5 이어 스크롤은 연재 산문의 다음 회차를 미리 표시하고 �
 
 P6-6 읽기 상태는 localStorage 원본을 유지한 채 계정 IndexedDB에 사본을 두고, 저장 실패나 삭제 뒤 시작할 때 사본으로 복구한다. 세부 계약은 [`19 §16`](19_mobile_reader_redesign.md#16-읽기-상태의-indexeddb-사본-p6-6-2026-10-02).
 
+P6-7 본문 서체에 고운바탕을 더했고 고른 때만 받는다. P6-8 AA는 원본 레스 머리줄이 둘 이상이면 `‹ 장면 n/N ›`으로 이동한다(AA DOM 불변). 한글 AA 글꼴 실험은 배포 가능한 글꼴이 없어 연결하지 않았다. 세부 계약은 [`19 §5`](19_mobile_reader_redesign.md)와 §10.
+
 | 문서 | 용도 |
 |---|---|
 | [`00`](00_initial_product_architecture.md), [`04`](04_implementation_plan.md) | 제품 경계·결정 기록, 남은 출시 조건 |
