@@ -61,7 +61,7 @@ import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, l
 import { createLocator, createTextModel, decodeLocator, encodeLocator, modelOffset, modelPosition } from "/text-model.js";
 import { renderSVG } from "/vendor/uqr@0.1.3/uqr.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
-import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import { createContinuousReader } from "/continuous-reader.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
@@ -103,7 +103,7 @@ const elements = Object.fromEntries(
     "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
     "paragraph-spacing", "paragraph-spacing-output", "text-indent", "text-indent-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
-    "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls",
+    "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls", "aa-scenes", "aa-scene-previous", "aa-scene-output", "aa-scene-next",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
@@ -146,6 +146,9 @@ let lastStoredState = null;
 const TEXT_STATE_KEY = "redstm.textState.v1";
 const mirrorQueue = new Map();
 let statesRestored = null;
+// P6-8 AA scene moves (findAaScenes).
+let aaScenes = [];
+let aaSceneFrame = 0;
 let settings;
 let historyEntries;
 // Per-post AA zoom and sideways position (see effectiveAaZoom).
@@ -827,7 +830,64 @@ function updateAaOverflowCue(showHint = false) {
 
 // `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
 // The minimap under a picture wider than the stage: where the view is across it (DESIGN §8.4).
+// P6-8 scene moves (DESIGN §8.4): the 레스 header text nodes of this AA body, found once per body.
+// Their positions are measured on use, since zoom and width change them (state at the top).
+function findAaScenes() {
+  aaScenes = [];
+  if (currentMode === "aa") {
+    const walker = document.createTreeWalker(elements["archive-body"], NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (isSceneHeader(node.data)) aaScenes.push(node);
+    }
+  }
+  if (aaScenes.length < 2) aaScenes = [];
+  elements["aa-scenes"].hidden = !aaScenes.length;
+  updateAaScene();
+}
+
+function aaSceneView() {
+  const scroller = document.fullscreenElement === elements["aa-host"] ? elements["aa-host"] : elements["reader-pane"];
+  const controls = elements["aa-controls"];
+  // A header lands just under the sticky toolbar.
+  const offset = (Number.parseFloat(getComputedStyle(controls).top) || 0) + controls.offsetHeight + 8;
+  const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
+  const range = document.createRange();
+  const tops = aaScenes.map((node) => {
+    range.selectNodeContents(node);
+    return range.getBoundingClientRect().top - origin;
+  });
+  return { scroller, offset, tops, y: sceneY(tops, { scrollTop: scroller.scrollTop, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight, offset }) };
+}
+
+function updateAaScene() {
+  if (!aaScenes.length) return;
+  const { tops, y } = aaSceneView();
+  const index = sceneAt(tops, y);
+  elements["aa-scene-output"].value = `장면 ${index + 1}/${tops.length}`;
+  elements["aa-scene-previous"].disabled = sceneTarget(tops, y, -1) < 0;
+  elements["aa-scene-next"].disabled = sceneTarget(tops, y, 1) < 0;
+}
+
+function scheduleAaScene() {
+  if (!aaScenes.length || aaSceneFrame) return;
+  aaSceneFrame = requestAnimationFrame(() => {
+    aaSceneFrame = 0;
+    updateAaScene();
+  });
+}
+
+function moveAaScene(direction) {
+  const { scroller, offset, tops, y } = aaSceneView();
+  const index = sceneTarget(tops, y, direction);
+  if (index < 0) return;
+  // A late font/layout restore must not put the reader back where the scene move started.
+  readerSession.markUserScroll();
+  scroller.scrollTo({ top: Math.max(0, tops[index] - offset), behavior: "instant" });
+  updateAaScene();
+}
+
 function updateAaMinimap() {
+  scheduleAaScene();
   const body = elements["archive-body"];
   const map = elements["aa-minimap"];
   const view = currentMode === "aa" ? minimapWindow(body) : null;
@@ -3942,6 +4002,7 @@ function renderPostBody() {
   updateReaderLength();
   if (isAa) restoreAaView();
   else requestAnimationFrame(() => updateAaOverflowCue(true));
+  findAaScenes();
   applyReadingMode();
   paintAnnotations();
 }
@@ -5123,6 +5184,7 @@ elements["reader-pane"].addEventListener("scroll", () => {
   const current = elements["reader-pane"].scrollTop;
   readerSession.observeScroll(current);
   continuous.observeScroll(current);
+  scheduleAaScene();
   const delta = current - lastReaderScroll;
   lastReaderScroll = current;
   if (readerSession.keyboardOpen) return;
@@ -5446,6 +5508,9 @@ new ResizeObserver(() => updateAaOverflowCue()).observe(elements["archive-body"]
 // button agree; leaving restores the zoom and sideways place the picture had before.
 let aaFullscreenReturn = null;
 elements["aa-fullscreen"].hidden = !document.fullscreenEnabled;
+elements["aa-scene-previous"].addEventListener("click", () => moveAaScene(-1));
+elements["aa-scene-next"].addEventListener("click", () => moveAaScene(1));
+elements["aa-host"].addEventListener("scroll", scheduleAaScene, { passive: true });
 elements["aa-fullscreen"].addEventListener("click", async () => {
   if (document.fullscreenElement) return void document.exitFullscreen().catch(() => {});
   const key = currentAaKey();

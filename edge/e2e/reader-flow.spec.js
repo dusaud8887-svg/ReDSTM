@@ -2423,3 +2423,62 @@ test("P6-4 classifications cover all sources and named condition combinations su
   expect(backup.records.library.views.find((view) => view.name === "기억한 작품").conditions).toEqual({ pinned: true, shelfId });
   expect(backup.records.works.filter((work) => work.shelfId === shelfId)).toHaveLength(3);
 });
+
+// P6-8: ‹ 장면 n/N › steps through the original 레스 header lines without touching the AA DOM.
+test("AA scene moves follow the original 레스 headers and hide without them", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const header = (number) => `${number} ： ◆nXsLRB5hfY ： 2024/11/29(金) 22:4${number}:32 ID:udvPw2Ed`;
+  const lines = (number) => Array.from({ length: 40 }, (_, line) => `<div>（　´∀｀）　장면 ${number} 줄 ${line}</div>`).join("");
+  const post = (id, body) => ({
+    schema_version: 1,
+    post: {
+      board_id: "board_a", external_post_id: id, canonical_url: `https://example.test/${id}`, title: `${id}편 제목`,
+      author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: true, body_html: body,
+    },
+    comments: [],
+  });
+  const scenes = `<div class="AA_Text">${[1, 2, 3, 4].map((number) => `<div>${header(number)}</div>${lines(number)}`).join("")}</div>`;
+  await page.route(/\/archive\/posts\/board_a\/[12]-/, (route) => {
+    const id = Number(/board_a\/(\d+)-/.exec(route.request().url())[1]);
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(post(id, id === 1 ? scenes : `<div class="AA_Text"><div>${"＿".repeat(20)}</div></div>`)) });
+  });
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  const group = page.locator("#aa-scenes");
+  const output = page.locator("#aa-scene-output");
+  await expect(group).toBeVisible();
+  await expect(output).toHaveText("장면 1/4");
+  await expect(page.locator("#aa-scene-previous")).toBeDisabled();
+  const before = await page.locator("#archive-body").innerHTML();
+
+  // The header of the scene moved to sits just under the sticky toolbar.
+  const headerTop = (number) => page.evaluate((text) => {
+    const walker = document.createTreeWalker(document.querySelector("#archive-body"), NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.data.trim() === text) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getBoundingClientRect().top - document.querySelector("#aa-controls").getBoundingClientRect().bottom;
+      }
+    }
+    return null;
+  }, header(number));
+  await page.locator("#aa-scene-next").click();
+  await expect(output).toHaveText("장면 2/4");
+  expect(Math.abs(await headerTop(2) - 8)).toBeLessThanOrEqual(3);
+  await page.locator("#aa-scene-next").click();
+  await page.locator("#aa-scene-next").click();
+  await expect(output).toHaveText("장면 4/4");
+  await expect(page.locator("#aa-scene-next")).toBeDisabled();
+  await page.locator("#aa-scene-previous").click();
+  await expect(output).toHaveText("장면 3/4");
+  expect(Math.abs(await headerTop(3) - 8)).toBeLessThanOrEqual(3);
+  // Plain scrolling updates the label too.
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = 0; });
+  await expect(output).toHaveText("장면 1/4");
+  expect(await page.locator("#archive-body").innerHTML()).toBe(before);
+
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(group).toBeHidden();
+});
