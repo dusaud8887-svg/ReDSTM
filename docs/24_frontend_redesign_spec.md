@@ -1173,6 +1173,7 @@ ReDSTM 프론트 개편을 구현한다. 설계는 이미 확정됐다.
 - 티켓 완료 조건: npm test · npm run check · npm run lint + 관련 E2E spec(desktop/mobile, workers=2) + 적힌 T 번호.
 - reader-session, store/user-state, overlay-manager, app.js 라우팅, CSS 분할·토큰(P1-1/P1-2), sw/offline 변경은 Playwright 전체도 실행한다.
 - 마일스톤 끝에는 Playwright 전체(모든 project) + axe + visual. 기준선과 로컬 visual 차이는 Linux CI로 판단한다.
+- 로컬 전체 실행은 `npm run test:e2e:local`(project마다 새 서버·새 프로세스, visual은 `VISUAL=1`). 단일 `playwright test` 전체 실행은 16GB 작업 PC에서 메모리가 부족했다(2026-10-02). CI는 `npm run test:e2e` 그대로.
 - 실패 재실행은 --last-failed. 같은 원인 실패가 독립 검증에서 두 번 넘게 반복되면 trace를 보존하고 가설·확인한 것·선택지를 보고한다.
 - E2E가 쓰는 id는 유지. 저장 형식을 옮기는 작업은 원본을 지우지 않는 롤백 경계를 둔다.
 - 설계와 다르게 해야 할 근거가 생기면 멈추고 근거와 선택지를 보고한다.
@@ -1393,6 +1394,7 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P7-2b·c(`2bcce6f`, `9552a79`): v1 별칭 7개(`--page`·`--surface-raised`·`--reader`·`--muted`·`--subtle`·`--overlay`·`--shadow`)의 사용 171곳을 의미 토큰(`--bg`·`--surface`·`--reader-bg`·`--ink-2`·`--ink-3`·`--scrim`·`--e2`)으로 바꾸고 정의와 Reader 범위의 별칭 재지정을 지웠다. `/ops`의 같은 이름 변수는 자체 정의라 그대로. 전체 4폭+visual 737 pass/23 skip/48 visual(로컬 대 Linux) — 비시각 실패 0.
 - P7-3(`9fa6dac`): docs/07 §3.2·§3.3·§4.3·§4.6·§6.3·§6.4, docs/09 §1·§2·§5·§6·§7, docs/19 머리, docs/README 머리를 현재 구현으로 갱신.
 - P7-1: S22+ 통합 확인 목록을 §14.5에 작성(20항목). 실기기 확인은 사용자 몫이며 결과를 받으면 여기에 기록한다.
+- 로컬 전체 E2E 메모리 부족(2026-10-02): M7 마감 실행이 554번째 테스트부터 `worker process exited unexpectedly (code=3221225794)`(0xC0000142, Windows가 새 Chrome worker를 초기화하지 못함)로 실패하고 Claude Code가 셸을 회수했다. 원인: 16GB RAM을 다른 앱(Codex·ChatGPT·patchright 다운로더·Edge·여러 에이전트 세션)과 나눠 쓰는 중에, 808개 테스트 내내 한 wrangler/workerd 서버가 약 1.7GB까지 커졌고, 셸만 회수돼 Playwright·wrangler·workerd가 고아로 남아 메모리를 계속 잡았다(`reuseExistingServer: true`라 다음 실행이 그 서버를 재사용할 수도 있었음). 대응: `scripts/e2e-local.mjs`(`npm run test:e2e:local`) — project별로 따로 실행해 서버·worker를 매번 새로 띄우고, 포트를 고아 서버가 잡고 있으면 재사용하지 않고 멈춘다. project별 출력 폴더로 trace도 보존. workers=2 유지, CI 변경 없음.
 
 | 날짜 | 내용 |
 |---|---|
