@@ -182,7 +182,7 @@ export default [
   },
   {
     "url": "/styles/components.css",
-    "revision": "da5316a796f093b1"
+    "revision": "474e02915bfeddcf"
   },
   {
     "url": "/styles/library.css",
@@ -190,7 +190,7 @@ export default [
   },
   {
     "url": "/styles/reader.css",
-    "revision": "35f82e076afb0bab"
+    "revision": "2d5caef49c3ce899"
   },
   {
     "url": "/styles/shell.css",
@@ -198,7 +198,7 @@ export default [
   },
   {
     "url": "/styles/tokens.css",
-    "revision": "1a90c4820af8e030"
+    "revision": "707feabfc76d5638"
   },
   {
     "url": "/text-anchor.js",
