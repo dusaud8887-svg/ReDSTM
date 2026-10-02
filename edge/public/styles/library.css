@@ -317,6 +317,9 @@ body.reading .home { display: none; }
 .collection-continue:hover { background: var(--accent-soft); }
 .collection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
 .collection-actions .collection-continue { margin: 0; }
+/* 작품에서 찾기 · 분류·고정 (P6-3, P6-4): the same pill as the text work 분류 button. */
+:is(#collection-find, #collection-classify, .text-work-find) { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
+:is(#collection-find, #collection-classify, .text-work-find):hover { border-color: var(--accent); color: var(--accent); }
 .toc-jump { display: flex; gap: 4px; margin-left: auto; }
 .toc-jump input { width: 6.5rem; height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
 .toc-jump button { min-width: 48px; height: 44px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 650; cursor: pointer; }
