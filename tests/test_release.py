@@ -13,7 +13,7 @@ from crawler.archive import (
     RUNTIME_SCHEMA_POLICY,
     SCHEMA_VERSION,
 )
-from scripts.deploy_oracle import OracleTarget
+from scripts.deploy_oracle import InstallNotStartedError, OracleTarget
 from scripts.release import (
     ReleaseError,
     _deployment_snapshot,
@@ -969,6 +969,38 @@ def test_coordinated_rollback_strictly_rejects_a_non_uuid_before_reads(
             "a" * 40,
             runner=lambda *_args, **_kwargs: pytest.fail("no read may run"),
         )
+
+
+def test_full_release_names_an_install_refused_by_an_active_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = tmp_path / "oracle.key"
+    key.write_text("test", encoding="utf-8")
+    target = OracleTarget("oracle.example", "ubuntu", key)
+    worker_rollbacks: list[str] = []
+    monkeypatch.setattr(
+        "scripts.release.status", lambda *_args, **_kwargs: {"current_release": "b" * 40}
+    )
+    monkeypatch.setattr(
+        "scripts.release.deploy_cloudflare",
+        lambda *_args, **_kwargs: {
+            "previous": {"version_id": _WORKER_OLD},
+            "deployed": {"version_id": _WORKER_NEW},
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.release.deploy_oracle_application",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(InstallNotStartedError("busy")),
+    )
+    monkeypatch.setattr(
+        "scripts.release._rollback_cloudflare",
+        lambda _edge, version, _message, **_kwargs: worker_rollbacks.append(version),
+    )
+
+    with pytest.raises(ReleaseError, match="oracle_install_not_started_worker_rolled_back"):
+        deploy_all(tmp_path, target, "a" * 40)
+
+    assert worker_rollbacks == [_WORKER_OLD]
 
 
 def test_full_release_does_not_double_rollback_oracle(

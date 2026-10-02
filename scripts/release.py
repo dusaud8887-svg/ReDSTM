@@ -25,6 +25,7 @@ from crawler.archive import (
 )
 from scripts.control_client import ControlClient
 from scripts.deploy_oracle import (
+    InstallNotStartedError,
     OracleTarget,
     build_archive,
     canonical_schema_status,
@@ -736,8 +737,13 @@ def deploy_all(
                 raise ReleaseError(
                     "oracle_deploy", "oracle_install_failed_worker_rollback_failed"
                 ) from rollback_error
+            # A refused install (an active crawl/runner or another release holds the lock) left
+            # Oracle untouched; say so instead of reporting a failed install.
             raise ReleaseError(
-                "oracle_deploy", "oracle_install_failed_worker_rolled_back"
+                "oracle_deploy",
+                "oracle_install_not_started_worker_rolled_back"
+                if isinstance(error, InstallNotStartedError)
+                else "oracle_install_failed_worker_rolled_back",
             ) from error
     try:
         deployed_version = str(cloudflare["deployed"]["version_id"])

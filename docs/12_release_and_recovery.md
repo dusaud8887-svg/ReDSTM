@@ -272,7 +272,7 @@ Oracle `previous`와 다시 뒤바뀌지 않는다.
 | local/CI gate | 외부 write 없음 | 원인 수정 후 재실행 |
 | D1 migration | Worker 배포 중단 | migration 상태 확인; down migration 금지 |
 | Worker 배포 관찰/smoke | 배포 전 Worker version 복구 | rollback smoke/report 확인 |
-| Oracle release/runner lock 또는 current guard | mutation/rollback 없음 | active run/다른 릴리스 종료 후 새 status로 재실행 |
+| Oracle release/runner lock 또는 current guard | Oracle mutation 없음; `deploy`에서는 이미 배포한 Worker를 이전 version으로 복구 | `oracle_install_not_started_worker_rolled_back` — active run/다른 릴리스 종료 후 새 status로 재실행 (2026-10-02 멈춘 retry run이 잠금을 잡아 실제 발생) |
 | Oracle 전환 뒤 설치 검증 | pre-install current SHA로 guarded rollback | current SHA와 marker 재확인 |
 | Oracle install 결과 모호 | bounded status가 target이면 계속, predeploy면 Worker 복구, 외부/조회 불가면 자동 변경 중단 | current SHA를 확인해 수동 판정 |
 | 명시적 Oracle rollback 결과 모호 | bounded status가 target이면 Worker 복구 계속, original이면 중단, 제3 release/조회 불가면 자동 변경 중단 | `oracle_rollback_*` safe code와 current SHA 확인 |

@@ -23,6 +23,10 @@ _CANONICAL_MIGRATION_TIMEOUT_SECONDS = 8 * 60 * 60
 _MAX_SCHEMA_STATUS_BYTES = 16 * 1024
 
 
+class InstallNotStartedError(RuntimeError):
+    """The installer refused before changing anything (a runner, crawl or release held a lock)."""
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -471,7 +475,7 @@ def deploy_release(
                 and isinstance(install_error.stderr, str)
                 and "redstm_install_not_started" in install_error.stderr.splitlines()
             ):
-                raise RuntimeError(
+                raise InstallNotStartedError(
                     "install not started because the remote release state changed or is busy"
                 ) from install_error
             install_failure = f"install failed with exit status {install_error.returncode}"
