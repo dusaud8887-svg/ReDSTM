@@ -30,6 +30,8 @@ P6-4는 세 출처 분류·고정, 이름 붙인 조건 조합의 스마트 서�
 
 P6-5 이어 스크롤은 연재 산문의 다음 회차를 미리 표시하고 실제 경계 이동 때 문서별 기록을 저장한다. DOM 최대 3회차·원문 locator·한 번의 Back 계약을 유지한다. 전체 E2E 717 pass/23 조건부 skip, AA 보존·axe 포함. 세부 계약은 [`19 §15`](19_mobile_reader_redesign.md#15-이어-스크롤-p6-5-2026-10-02).
 
+P6-6 읽기 상태는 localStorage 원본을 유지한 채 계정 IndexedDB에 사본을 두고, 저장 실패나 삭제 뒤 시작할 때 사본으로 복구한다. 세부 계약은 [`19 §16`](19_mobile_reader_redesign.md#16-읽기-상태의-indexeddb-사본-p6-6-2026-10-02).
+
 | 문서 | 용도 |
 |---|---|
 | [`00`](00_initial_product_architecture.md), [`04`](04_implementation_plan.md) | 제품 경계·결정 기록, 남은 출시 조건 |
