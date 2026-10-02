@@ -4717,6 +4717,7 @@ document.querySelector("#scrubber-return").addEventListener("click", () => {
 // Focusing the badge would unfold the tools and take it away from under the finger mid-tap.
 elements["reader-status"].addEventListener("pointerdown", (event) => event.preventDefault());
 elements["reader-status"].addEventListener("click", openScrubber);
+document.getElementById("reader-topbar-position").addEventListener("click", openScrubber);
 elements["more-mode"].addEventListener("click", () => {
   closeReaderMore();
   elements["mode-toggle"].click();

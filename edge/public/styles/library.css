@@ -536,3 +536,15 @@ body.reading-context .text-work-summary :is(.work-cover, .work-barcode) { displa
 #palette-results [aria-selected="true"] { background: var(--accent-soft); }
 #palette-status, #library-view-status { color: var(--ink-2); font-size: 13px; }
 @media (max-width: 599px) { .personal-library-dialog label { flex-wrap: wrap; } .personal-library-dialog :is(input:not([type="checkbox"]), select) { max-width: 100%; min-width: 0; } }
+
+/* Work page on a phone: the one main action (이어 읽기 / 처음부터) is a full-width filled button
+   on top within thumb reach; the secondary actions share one row and 몇 편? its own row. */
+@media (max-width: 759px) {
+  .collection-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+  .collection-actions .collection-continue { order: -1; grid-column: 1 / -1; min-height: 52px; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-size: 16px; text-align: center; }
+  .collection-actions .collection-continue:hover { background: var(--accent-hover); }
+  .collection-actions :is(.offline-control, .toc-jump) { grid-column: 1 / -1; }
+  .collection-actions .offline-control { order: 1; }
+  .collection-actions .toc-jump { order: 2; margin: 0; }
+  .collection-actions .toc-jump input { flex: 1; width: auto; }
+}

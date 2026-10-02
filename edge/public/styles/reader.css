@@ -30,7 +30,9 @@ body.text-library-open .text-work-back { display: inline-flex; }
 .reader-toolbar { transition: transform 160ms ease-in-out; }
 body.reader-controls-hidden .reader-toolbar { transform: translateY(calc(-100% - 2px)); }
 .reader-status { position: fixed; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 19; margin: 0; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--reader-bg) 85%, transparent); color: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 160ms ease-in-out; }
-body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opacity: 1; }
+/* While reading on a phone nothing sits over the text: the position lives in the top bar title
+   (tap = scrubber). Wider screens keep the badge in the empty margin. */
+@media (min-width: 760px) { body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opacity: 1; } }
 
 .archive-body { width: min(var(--prose-width), calc(100% - 64px)); margin: 0 auto; padding: 42px 0 72px; font-family: var(--prose-font); font-size: var(--prose-size); line-height: var(--prose-line); text-align: var(--prose-align, start); overflow-wrap: break-word; text-wrap: pretty; }
 .archive-body:focus-visible { outline-offset: -3px; }
@@ -188,7 +190,9 @@ body.autoscroll-open .reader-bottom { visibility: hidden; }
   .reader-topbar { position: sticky; top: 0; z-index: 8; min-height: calc(48px + env(safe-area-inset-top)); display: grid; grid-template-columns: auto minmax(0, 1fr) 48px 48px; align-items: center; gap: 4px; padding: env(safe-area-inset-top) 0 0 4px; border-bottom: 1px solid var(--line); background: var(--reader-bg); transition: transform 160ms ease-in-out; }
   body.reader-controls-hidden .reader-topbar { transform: translateY(-100%); }
   .reader-topbar .catalog-back { min-height: 48px; margin: 0; padding: 0 10px 0 4px; }
-  .reader-topbar-title { min-width: 0; margin: 0; overflow: hidden; color: var(--ink-2); font-size: 13px; font-weight: 650; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .reader-topbar-title { min-width: 0; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 4px; margin: 0; padding: 0; border: 0; background: transparent; font-family: inherit; cursor: pointer; overflow: hidden; color: var(--ink-2); font-size: 13px; font-weight: 650; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  #reader-topbar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .reader-topbar-progress { flex: 0 0 auto; }
   .reader-topbar .icon-button { width: 48px; height: 48px; }
   .collection-view { width: calc(100% - 32px); padding: 20px 0 calc(80px + env(safe-area-inset-bottom)); }
   .collection-view-header { padding-bottom: 20px; }
@@ -275,7 +279,7 @@ body.find-open .reader-bottom { visibility: hidden; }
 
 /* The folded progress badge opens the scrubber (docs/24 §8.7/8.9). */
 .reader-status { min-height: 28px; padding: 4px 10px; border: 0; font: inherit; font-size: 12px; cursor: pointer; }
-body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { pointer-events: auto; }
+@media (min-width: 760px) { body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { pointer-events: auto; } }
 .scrub-position { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .scrub-track { position: relative; grid-column: 1 / -1; display: block; }
 .scrub-track input { width: 100%; }
