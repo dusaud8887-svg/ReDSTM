@@ -51,3 +51,64 @@ test("P6-6 state migration preserves source bytes and rollback, bounds pending s
   expect(result.sameOperation).toBe(true);
   expect(result.otherRecord).toBeUndefined();
 });
+
+const OWNER = "0123456789abcdef";
+const KEY = "redstm.userState.v2";
+const stateCopy = (page) => page.evaluate(async ([owner, key]) => {
+  const { openStore } = await import("/store.js");
+  const store = await openStore(owner);
+  const copy = await store.get("meta", `legacy:${key}`);
+  store.close();
+  return { copy: copy?.raw ? Object.keys(JSON.parse(copy.raw).history) : null, local: Object.keys(JSON.parse(localStorage.getItem(key) ?? "{\"history\":{}}").history) };
+}, [OWNER, KEY]);
+
+test("P6-6 a reading state save that failed in localStorage comes back from the idb copy on the next start", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: OWNER }) }));
+  await page.addInitScript((key) => {
+    if (!sessionStorage.getItem("fail-state")) return;
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (this === localStorage && name === key) throw new DOMException("fixture quota", "QuotaExceededError");
+      return setItem.call(this, name, value);
+    };
+  }, KEY);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: ["board_a:2"] });
+
+  await page.evaluate(() => sessionStorage.setItem("fail-state", "1"));
+  await page.goto("/read/board_a/3");
+  await expect(page.locator("#reader-title")).toHaveText("3편 제목");
+  await expect(page.locator("#archive-state")).toHaveText("로컬 저장 실패");
+  await expect.poll(async () => (await stateCopy(page)).copy?.sort()).toEqual(["board_a:2", "board_a:3"]);
+  expect((await stateCopy(page)).local).toEqual(["board_a:2"]);
+
+  await page.evaluate(() => sessionStorage.removeItem("fail-state"));
+  await page.goto("/");
+  await expect.poll(async () => (await stateCopy(page)).local.sort()).toEqual(["board_a:2", "board_a:3"]);
+});
+
+test("P6-6 cleared localStorage reading state is restored from the idb copy, and an edited original wins", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: OWNER }) }));
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: ["board_a:2"] });
+
+  // Changes are made before the app starts: the open page saves its own state when it is left.
+  await page.addInitScript((key) => {
+    const change = sessionStorage.getItem("change-state");
+    sessionStorage.removeItem("change-state");
+    if (change === "clear") localStorage.removeItem(key);
+    if (change === "edit") localStorage.setItem(key, JSON.stringify({ schema_version: 2, settings: {}, history: {}, bookmarks: {} }));
+  }, KEY);
+  await page.evaluate(() => sessionStorage.setItem("change-state", "clear"));
+  await page.goto("/");
+  await expect.poll(async () => (await stateCopy(page)).local).toEqual(["board_a:2"]);
+
+  // An original changed outside this page (another older tab, a manual import) is newer than the copy.
+  await page.evaluate(() => sessionStorage.setItem("change-state", "edit"));
+  await page.goto("/");
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: [], local: [] });
+});

@@ -123,9 +123,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   // Failures show in the shared archive state label, the same way TypeMoon reading state does.
   function persist() {
     const archiveState = document.querySelector("#archive-state");
+    let raw;
     try {
       trimTextState(history, TEXT_STATE_CHARS);
-      localStorage.setItem(STATE_KEY, JSON.stringify(history));
+      raw = JSON.stringify(history);
+      localStorage.setItem(STATE_KEY, raw);
       if (archiveState) delete archiveState.dataset.storageFailed;
       if (archiveState?.textContent === "로컬 저장 실패") archiveState.textContent = "보존본";
     } catch (error) {
@@ -135,13 +137,18 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       }
       console.warn("Text reading state could not be saved", error);
     }
+    if (raw) shell.mirrorState?.(raw);
   }
 
   // Another tab saved text reading state: take it over (every save writes the whole object, so
   // keeping the old copy would erase that tab's records on this tab's next save).
   window.addEventListener("storage", (event) => {
-    if (event.key !== STATE_KEY || !event.newValue) return;
-    const incoming = readState();
+    if (event.key === STATE_KEY && event.newValue) adoptState(readState());
+  });
+
+  // Also a restored idb copy (P6-6).
+  function adoptState(incoming) {
+    if (incoming?.schema_version !== 1 || !incoming.history || !incoming.bookmarks) return;
     history.history = incoming.history;
     history.bookmarks = incoming.bookmarks;
     ensureShelves(incoming);
@@ -156,7 +163,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (lane === "saved") catalog = savedEntries();
       renderCatalog();
     }
-  });
+  }
 
   function identity(entry, sourceLane = lane, sourceWork = work) {
     return sourceLane === "novel"
@@ -2032,6 +2039,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves,
+    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves, adoptState,
   };
 }

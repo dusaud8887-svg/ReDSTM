@@ -137,11 +137,13 @@ export async function openStore(ownerHash) {
       });
       notify([key]);
     },
-    async writeState(key, raw) {
+    // sourceRaw: the localStorage bytes when this state was saved (a queued write must not record
+    // a later localStorage value as the one it supersedes).
+    async writeState(key, raw, sourceRaw = localStorage.getItem(key) ?? raw) {
       if (!["redstm.userState.v2", "redstm.textState.v1"].includes(key) || typeof raw !== "string") throw new TypeError("잘못된 읽기 상태");
       const value = JSON.parse(raw);
       if (value?.schema_version !== (key === "redstm.userState.v2" ? 2 : 1)) throw new TypeError("지원하지 않는 읽기 상태");
-      await locked(() => bridgeLegacy({ key, raw, sourceRaw: localStorage.getItem(key) ?? raw, updatedAt: new Date().toISOString() }));
+      await locked(() => bridgeLegacy({ key, raw, sourceRaw, updatedAt: new Date().toISOString() }));
       notify([key]);
     },
     async reconcileLegacy(keys) {

@@ -142,6 +142,10 @@ const RESULT_PAGE_SIZE = 100;
 let userState = loadUserState();
 // What this tab last wrote to localStorage, to tell another tab's save from our own echo.
 let lastStoredState = null;
+// P6-6 reading state copies in the owner's idb (mirrorState, restoreMirroredStates).
+const TEXT_STATE_KEY = "redstm.textState.v1";
+const mirrorQueue = new Map();
+let statesRestored = null;
 let settings;
 let historyEntries;
 // Per-post AA zoom and sideways position (see effectiveAaZoom).
@@ -253,6 +257,7 @@ const textLibrary = createTextLibrary({
     canSavePosition: () => readerSession.canSave,
     keepContinuousPosition: () => continuous.transitioning,
     cancelPendingWork: () => readerSession.cancelPendingWork(),
+    mirrorState: (raw) => mirrorState(TEXT_STATE_KEY, raw),
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
@@ -471,8 +476,9 @@ function persistUserState() {
     aaViews,
     lastCatalogState: userState.lastCatalogState,
   };
+  let serialized;
   try {
-    const serialized = serializeUserState(userState);
+    serialized = serializeUserState(userState);
     localStorage.setItem(STATE_KEY, serialized);
     lastStoredState = serialized;
     for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
@@ -486,6 +492,7 @@ function persistUserState() {
     elements["archive-state"].textContent = "로컬 저장 실패";
     console.warn("Reader state could not be saved", error);
   }
+  if (serialized) mirrorState(STATE_KEY, serialized);
 }
 
 // Another tab saved reading state. Every save writes the whole state, so a tab that kept its old
@@ -5524,6 +5531,53 @@ function ownerIdentity() {
   return ownerRequest;
 }
 
+// P6-6: localStorage stays the original reading state; the owner's idb keeps a copy of every save.
+// A copy newer than an untouched original (its save failed, or localStorage was cleared) is
+// restored once at start. Only the latest state per key is written, one write at a time.
+
+function localRaw(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function mirrorState(key, raw) {
+  const next = { raw, sourceRaw: localRaw(key) ?? raw };
+  const writing = mirrorQueue.has(key);
+  mirrorQueue.set(key, next);
+  if (writing) return;
+  void (async () => {
+    await null; // a save during module start runs before the owner store is declared
+    const store = await restoreMirroredStates().then(ownerStore);
+    for (let pending = mirrorQueue.get(key); pending; pending = mirrorQueue.get(key)) {
+      mirrorQueue.set(key, null);
+      await store?.writeState(key, pending.raw, pending.sourceRaw)
+        .catch((error) => console.warn("Reading state copy could not be saved", error));
+    }
+    mirrorQueue.delete(key);
+  })();
+}
+
+function restoreMirroredStates() {
+  statesRestored ??= ownerStore().then(async (store) => {
+    if (!store) return;
+    for (const key of [STATE_KEY, TEXT_STATE_KEY]) {
+      const copy = await store.get("meta", `legacy:${key}`);
+      const local = localRaw(key);
+      if (!copy || copy.raw === local || (local !== null && local !== copy.sourceRaw)) continue;
+      try {
+        localStorage.setItem(key, copy.raw);
+      } catch { /* the copy still applies to this page */ }
+      if (key === STATE_KEY) adoptStoredState(copy.raw);
+      else textLibrary.adoptState(JSON.parse(copy.raw));
+    }
+    await store.reconcileLegacy([STATE_KEY, TEXT_STATE_KEY]);
+  }).catch((error) => console.warn("Reading state copy could not be restored", error));
+  return statesRestored;
+}
+
 function ownerStore() {
   ownerDb ??= ownerIdentity()
     .then((hash) => (hash ? openStore(hash) : null))
@@ -5531,7 +5585,9 @@ function ownerStore() {
       if (!store) return null;
       annotationRecords = await store.getAll("annotations");
       // Another tab's change arrives here too.
-      store.subscribe(async () => {
+      store.subscribe(async ({ keys } = {}) => {
+        // Mirrored reading states (P6-6) are not records.
+        if (keys?.every((key) => key.startsWith("redstm."))) return;
         annotationRecords = await store.getAll("annotations");
         paintAnnotations();
       });
@@ -6902,6 +6958,7 @@ const offline = createOffline({
     overlays.showToast(document.querySelector("#update-ready"));
   },
 });
+void restoreMirroredStates();
 const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
 if (document.readyState === "complete") startOffline();
 else addEventListener("load", startOffline, { once: true });
