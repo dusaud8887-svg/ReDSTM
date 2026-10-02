@@ -1,6 +1,6 @@
 # ReDSTM 문서 인덱스
 
-- 갱신: 2026-09-29
+- 갱신: 2026-10-02 (프론트 개편 M0–M6 반영, 확정 설계는 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md))
 - 제품·데이터 계약: [`00_initial_product_architecture.md`](00_initial_product_architecture.md)
 - 남은 출시 조건: [`04_implementation_plan.md`](04_implementation_plan.md)
 - 배포·복구 절차: [`12_release_and_recovery.md`](12_release_and_recovery.md)

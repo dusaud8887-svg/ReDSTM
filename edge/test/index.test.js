@@ -370,7 +370,7 @@ test("caches only successful versioned assets immutably and keeps me Access-only
   }
   // Workers Assets would redirect a literal "@"; the Worker asks for the encoded name instead.
   assert.deepEqual(fetched, ["/fonts/pretendard%401.3.9/core.woff2", "/fonts/maruburi%401.000/maruburi.css", "/vendor/idb%408.0.3/idb.js", "/vendor/idb%408.0.3/idb.js"]);
-  for (const path of ["/app.js", "/fonts/MaruBuri-Regular.woff2", "/vendor/unversioned/file.js", "/fonts/name@not-a-version/file"]) {
+  for (const path of ["/app.js", "/fonts/SUIT-Variable.woff2", "/vendor/unversioned/file.js", "/fonts/name@not-a-version/file"]) {
     assert.equal((await workerFetch(request(path), env)).headers.get("Cache-Control"), null);
   }
   for (const [status, contentType] of [[404, "text/plain"], [200, "text/html; charset=utf-8"]]) {

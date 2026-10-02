@@ -1,7 +1,7 @@
 # 소설·AA Reader 상세 사양
 
 - 상태: Signal Archive Reader authenticated live; user visual and actual Android gates pending
-- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md) v2.2가 이 문서와 겹치는 항목(읽기 위치 기준값 = 원문 문장 locator, 산문 두 손가락은 글자 크기·AA는 배율, AA 도구·전체화면)을 대체한다. 본문 갱신은 `24` P7-3.
+- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md) v2.2가 이 문서와 겹치는 항목(읽기 위치 기준값 = 원문 문장 locator, 산문 두 손가락은 글자 크기·AA는 배율, AA 도구·전체화면)을 대체한다. 2026-10-02 `24` P7-3에서 §3.2·§3.3·§4.3·§4.6·§6.3·§6.4 본문을 현재 구현으로 갱신했다.
 - 기준일: 2026-07-12
 - 상위 UX: [`06_final_product_experience.md`](06_final_product_experience.md)
 - 시각 token: [`../DESIGN.md`](../DESIGN.md)
@@ -76,30 +76,30 @@ release가 바뀐 뒤에도 이어읽기는 최신 version을 열어야 한다.
 
 | control | 범위/값 | 기본 | UI |
 |---|---|---:|---|
-| 글자 크기 | 15–24px, 1px step | 18 | `−`, 현재 값, `+` |
-| 줄 간격 | 1.4–2.2, 0.1 step | 1.8 | segmented/range + 값 |
-| 본문 폭 | 560–960px, 40px step | 760 | 좁게/기본/넓게 + 세부 range |
-| 서체 | 명조 / 고딕 | 명조 | 2-option segment |
-| theme | system / light / dark | system | 전역 setting |
+| 글자 크기 | 15–28px, 1px step | 18 | 단계 버튼 + slider, 산문 두 손가락 |
+| 줄 간격 | 1.4–2.2, 0.1 step | 1.8 | slider + 값 |
+| 좌우 여백(모바일) / 본문 폭(데스크톱) | 12–32px / 560–960px | 20 / 760 | slider |
+| 문단 간격 · 들여쓰기 | 0–2em | 0.95 · 0 | slider(산문만, AA 제외) |
+| 서체 | 마루부리 / 고운바탕 / 프리텐다드 | 마루부리 | select + 현재 본문 미리보기 |
+| theme · 읽기 면 · 밝기 · 따뜻하게 | system/light/dark · 기본/종이/먹 · 0–60% · 0–25% | system · 기본 · 0 · 0 | segmented · slider |
 
-- control을 움직이는 동안 현재 본문에 즉시 preview한다.
-- 모바일에서 본문 폭 range는 비활성화하고 `화면에 맞춤`으로 이유를 설명한다.
-- font 선택은 실제 self-hosted MaruBuri/SUIT asset과 license notice가 포함된 뒤만 노출한다.
-- 글자 크기와 browser zoom을 방해하지 않는다.
+- control을 움직이는 동안 현재 본문에 즉시 반영하고 화면 맨 위 문장을 유지한다.
+- 글꼴은 버전 디렉터리의 self-hosted 분할본이며(마루부리 1.000·Pretendard 1.3.9), 고운바탕은 고를 때만
+  받는다(`19 §5`). 저장 키와 검사 규칙은 `19 §5`가 기준이다.
+- 산문 두 손가락은 browser zoom 대신 글자 크기를 1px 단위로 바꾼다(`19 §4`).
 
 ### 3.3 읽기 위치
 
-- scroll 저장은 stable post identity별로 throttle한다.
-- exact 복원은 `scrollTop`을 authoritative state로 저장한다. `progress`는 이어읽기 후보 판정을 위해
-  저장 시 같은 layout에서 파생한 0~1 값이며 위치 복원 source로 사용하지 않는다.
-- 재진입 시 위치 복원 전 layout에 필요한 font가 준비되어야 한다. font 준비와 image layout 뒤 최대
-  한 차례만 보정하며 자동 복원은 smooth scroll하지 않는다.
+- 위치는 stable post identity별로 저장하며 기준값은 원문 문장 locator(`24 §12.5` locator v2: 원문 offset·
+  quote·prefix/suffix)다. `scrollTop`·`progress`는 파생값이며, locator가 없는 옛 기록만 기존 offset+anchor로
+  복원한다. 풀리지 않는 위치는 첫 일치로 옮기지 않고 안내한다.
+- 글꼴 도착·이미지 load 뒤 보정은 사용자가 직접 움직이지 않았을 때만 한다. 스크립트·fling·스크롤바 이동도
+  사용자 이동으로 본다(`reader-session.js` observeScroll, T20). 키보드가 열린 동안 저장을 멈춘다.
 - 95% 이후는 `완독` badge를 만들지 않고 다음 진입 시 끝 부근으로 복원한다.
 - Home 이어읽기 후보는 current release에서 resolve 가능한 최신 history 중 progress 95% 미만인
-  항목이다. legacy의 임의 24시간 expiry는 가져오지 않는다. dismiss가 필요하면 session-only이며
-  user-state/export schema에 넣지 않는다.
-- 다른 tab의 `storage` event는 local dirty write가 없을 때만 v2 state를 다시 읽는다. 현재 tab의
-  변경을 오래된 cross-tab state로 덮어쓰지 않는다.
+  항목이다. legacy의 임의 24시간 expiry는 가져오지 않는다.
+- 다른 tab의 `storage` event는 새 상태를 그대로 채택한다. 읽기 상태 원본은 localStorage이며 계정
+  IndexedDB에 사본을 둔다(`19 §16`).
 
 ## 4. AA mode
 
@@ -162,19 +162,17 @@ sheet 안에서 읽기/저장/위치/보기 count와 보정 필드를 검토한 
 
 ### 4.3 Zoom과 횡스크롤
 
-- compact AA toolbar와 상세 설정 dialog는 같은 state를 조작한다. mobile toolbar는
-  `A− / 현재 값 / A+ / zoom / 설정`만 제공한다. 세 preset, canvas width, 원본색, 배경
-  quick choice/picker는 설정 dialog로 이동한다.
-- 변경 시 중앙에 `125%` 같은 feedback을 최대 1.2초 표시하고 screen reader에는 과도하게 announce하지
-  않는다.
-- `100%` reset은 한 번의 행동으로 가능해야 한다.
-- pinch는 기존 거리 delta `× 0.003`, 변화 임계값 `0.002`, 10–300% clamp를 parity baseline으로 쓴다.
-- desktop double click은 `100% → 150% → 200% → 100%` 순환을 유지한다.
-- zoom state는 즉시 반영하고 저장은 기존과 같은 250ms debounce를 적용한다.
-- 횡스크롤 가능하면 오른쪽 edge fade와 `가로로 이동` hint를 첫 진입에 한 번 표시한다.
-- drag-to-pan을 넣더라도 text selection, link, native touch scroll을 깨뜨리지 않아야 한다.
-- AA stage의 가로 scroll 위치는 저장/복원하지 않는다. zoom/폭 변경 뒤 복원 결과를 예측할 수
-  없기 때문이며, 세로 위치만 stable identity로 저장한다.
+- AA 도구줄(본문 위 sticky): `맞춤 · − · % · + · 색 · ⟲ 가로 전체화면 · ‹ 장면 n/N ›`. 프리셋·글자 크기·
+  canvas 폭·배경은 설정 dialog에 있고 같은 state를 조작한다. 모바일에서 바가 보이는 동안 도구줄은
+  Reader 상단 바 아래에 붙는다.
+- 배율은 10–300% 연속값(소수 셋째 자리, `setAaZoom` clamp 0.1–3.0)이다. `−`/`+`만 25% 단위다.
+- 두 손가락: 제스처 중에는 stage에 transform만 쓰고, 손을 떼면 그 연속 배율로 다시 그리며 두 손가락
+  중점이 같은 화면 위치에 오도록 스크롤을 보정한다. 25%로 맞추지 않는다.
+- 한 번 탭은 도구를 바로 토글하고, 300ms 안의 두 번째 탭은 그것을 되돌리고 `맞춤 ↔ 100%`를 바꾼다.
+- `맞춤`은 가장 넓은 줄이 들어오는 배율로 줄이기만 한다(`fitAaZoom` 수식은 `24 §8.16` 그대로).
+- 변경 시 배율 메시지를 짧게 표시한다(top layer, 전체화면 안에서도 보임).
+- 배율·가로 위치는 글마다 `aaViews`(최근 300개, 백업 포함)에 기억한다. `맞춤`과 수동 배율은 구분한다.
+- 가로 전체화면은 AA host(도구줄+본문+미니맵+메시지)를 대상으로 하고 `fullscreenchange`만 따른다(`24 §19` P2-6).
 
 ### 4.4 Source color와 dark theme
 
@@ -243,14 +241,10 @@ style을 통째로 붙이지 않고 아래 한 component 규칙을 유지한다.
 
 ### 4.6 긴 AA 탐색
 
-Minimap은 core가 아니다. 다음 조건을 모두 만족한 뒤 P2 candidate로 연다.
-
-1. AA stage가 3 viewport 이상인 실제 fixture가 반복된다.
-2. mobile에서 scroll thumb만으로 위치 이동이 어렵다는 사용 근거가 있다.
-3. minimap이 별도 global document listener나 큰 canvas 비용 없이 구현된다.
-4. keyboard/AT에서 숨겨진 조작 surface가 되지 않는다.
-
-채택하면 DSOTM의 비율 계산 원리만 가져오고 Svelte component나 DOM 구조는 port하지 않는다.
+- 미니맵: 그림이 stage보다 넓을 때만 본문 아래 48px 막대로 보이는 가로 구간을 표시하고 끌기·탭·←/→·
+  Home/End로 이동한다(`role=slider`).
+- 장면 이동: 원본 레스 머리줄(`번호 ： 이름 ： 날짜 ID:`)이 둘 이상인 글에만 `‹ 장면 n/N ›`을 보인다.
+  구분선은 그림 일부와 구별되지 않아 경계로 쓰지 않는다. AA DOM은 바꾸지 않는다(`19 §10`).
 
 ## 5. Mode 감지와 override
 
@@ -280,20 +274,12 @@ Mode source of truth는 exporter의 `is_aa`다. `AA_Text` class 하나, box-draw
 
 ### 6.3 Floating controls
 
-DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치를 참고하되 ReDSTM에서는
-다음처럼 단순화한다.
-
-- desktop: 상단 compact toolbar + 글 끝의 큰 previous/next.
-- mobile: 하단 bar에 목록, 이전, 저장, 다음, 설정을 둔다. 진입 시 표시하고 아래로 스크롤하면 숨기며
-  위로 스크롤 또는 중앙 tap으로 복귀한다. 320px에서도 다섯 action의 44px target과 한 줄 label을
-  유지한다.
-- 매 scroll event의 8px 방향 변화가 아니라 누적 이동량 기반 hysteresis로 숨김/복귀를 결정한다.
-  시작값은 아래 50px/위 30px이며 실제 Android fixture로만 조정한다.
-- 3초 timer로 무조건 숨기지 않는다. focus, pointer, screen reader 사용 중에는 유지한다.
-- scroll 방향 기반 숨김은 `prefers-reduced-motion`, keyboard focus, 열린 dialog를 존중한다. 이때는
-  상시 표시한다.
-- compact AA와 Reader의 직접 action은 예외 없이 44×44px 이상이다. legacy의 36px control은 복사하지
-  않는다.
+- desktop: 상단 도구줄 + 글 끝 카드의 이전/다음.
+- mobile: 상단 context bar와 하단 도크(목록 · 이전 · 다음 · `Aa` 설정 · 더보기)다. 본문을 아래로 읽으면 숨기고
+  위로 스크롤·본문 탭으로 복귀한다. 찾기·선택·설정이 열린 동안, 쪽 넘김·AA 장면 이동 중에는 숨김/복귀를
+  하지 않는다. 접기·복귀 조건은 `19 §4.3`, 도크 자리 점유는 `DESIGN.md §7.11`이 기준이다.
+- 누적 이동량(아래 48px · 위 96px)으로 숨김/복귀를 결정한다. 3초 timer로 무조건 숨기지 않는다.
+- 직접 action은 44×44px 이상이다.
 
 ### 6.4 Immersive
 
@@ -301,7 +287,7 @@ DSOTM `FloatingToolbar.svelte`의 이전/목록/bookmark/immersive/다음 배치
 - 새 theme가 아니며 동일한 light/dark token을 쓴다.
 - `Escape` 또는 명시적 `몰입 종료`로 빠져나온다.
 - history entry를 만들지 않는다. Android Back은 몰입 해제가 아니라 목록 복귀다.
-- fullscreen API 권한을 요구하지 않는다.
+- 몰입 모드는 fullscreen API를 쓰지 않는다. AA 가로 전체화면만 fullscreen API를 쓰며 거절돼도 일반 보기로 남는다.
 
 ## 7. Collection·이전/다음·끝 화면
 

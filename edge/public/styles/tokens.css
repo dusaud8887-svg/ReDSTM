@@ -1,5 +1,5 @@
-/* Ribbon Library tokens (DESIGN.md §2). Components read the semantic names; the v1 names at the
-   bottom are aliases kept until M6 so older rules keep working while screens move over. */
+/* Ribbon Library tokens (DESIGN.md §2). Components read the semantic names (the v1 aliases were
+   removed in P7-2). */
 :root {
   color-scheme: light;
   --bg: light-dark(#F7F6F3, #121413);
@@ -62,14 +62,6 @@
   --aa-effective-line: 18px;
   --aa-background: #f5f5f0;
   --aa-ink: #24252a;
-  /* v1 aliases (removed at the end of M6). */
-  --page: var(--bg);
-  --surface-raised: var(--surface);
-  --reader: var(--reader-bg);
-  --muted: var(--ink-2);
-  --subtle: var(--ink-3);
-  --overlay: var(--scrim);
-  --shadow: var(--e2);
   font-family: var(--font-ui);
 }
 
@@ -94,13 +86,11 @@
 }
 :root[data-surface="ink"] body.reader-active :is(#settings-dialog, #reader-more, #quick-settings) { color-scheme: dark; }
 /* Custom properties inherit substituted values, so the Reader re-derives the names that read
-   the surface tokens (the aliases included). */
+   the surface tokens. */
 :is(.reader, .reader-bottom, .reader-status) {
   --ink: var(--reader-ink);
   --ink-2: var(--reader-ink-2);
   --line: var(--reader-line);
-  --reader: var(--reader-bg);
-  --muted: var(--ink-2);
 }
 
 /* Typographic cover hues (DESIGN §2.5). */

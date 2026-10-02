@@ -42,7 +42,7 @@ Oracle에는 전용 계정·SFTP chroot·2GiB quota·단발 systemd 서비스/�
 | `scripts/text_archive/importer.py` | Newtomi ready batch 검증, idempotent 수입, 안전한 receipt | 고정 production 경로, revision 1→2만 허용, 본문 충돌 보류 |
 | `scripts/text_archive/collector.py` | 블랙툰/마루마루의 페이지·작품·무료 회차 JSON 한 요청 실행 | 표준 `requests`, `trust_env=False`, redirect 거부, 5초 그룹 간격, 영속 checkpoint/cooldown |
 | `scripts/text_archive/publisher.py` | 별도 R2용 immutable object/index/release와 pointer-last 게시 | `r2text:` 및 `/etc/redstm-text/rclone.conf`만 명시, readback SHA 필수 |
-| `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | `MemAvailable + redstm-text 자체 VmRSS ≥350MiB`(자체 RSS 차감 보정), `/` 여유 `≥40GiB`, cgroup `MemoryMax=150M`, `MemorySwapMax=0` |
+| `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | TypeMoon `control`/`schedule` 유닛이 활성이면 피크 620MiB에서 현재 cgroup 사용량을 뺀 값을 예약(읽기 실패 시 피크 전체). `MemAvailable + 자체 VmRSS − 예약 ≥ 필요량 + OS 150MiB`일 때만 시작. 필요량은 수집 60, 수입 100, 미디어 120, 게시 150MiB. 디스크는 볼륨 20%를 5–40GiB로 자른 TypeMoon 경고선. cgroup `MemoryMax=150M`, `MemorySwapMax=0`. 수입·미디어·게시는 `.operation.lock` 배타, 수집기는 그 잠금을 잡지 않음 |
 | `edge/public/text-library.js`, `edge/src/text-archive.js` | 기존 Reader 안의 텍스트 탐색/읽기와 고정 R2 read route | 같은 Access·검색/설정 shell, `redstm.textState.v1`, GET/HEAD만 |
 | `text-edge/` | 기존 주소 호환용 redirect | R2 binding/UI 없음, 사람 Access 확인 후 `/text`로 이동 |
 | `deploy/text-archive/` | 격리된 sshd/systemd 설치·갱신 스크립트와 템플릿 | Oracle에 설치·enable 완료 |
@@ -52,42 +52,45 @@ Oracle에는 전용 계정·SFTP chroot·2GiB quota·단발 systemd 서비스/�
 `arcalive:{board}:{post_id}:{content_lane}`이다. Oracle 직접 수집 identity도 출처별 site ID를
 보존한다. 서로 다른 사이트의 ID·slug가 달라도 NFKC/대소문자/공백 정규화 제목과
 **비어 있지 않은 동일 작가**가 맞으면
-`text_novel_link_candidates`에 후보만 만든다. 자동 승격은 없다. `python -m scripts.text_archive.links`
-는 검토 후보를 출력하고, 20작품 양쪽 목록·본문 hash canary를 사람이 확인한 뒤에만
-`--accept LEFT_SITE LEFT_WORK_ID RIGHT_SITE RIGHT_WORK_ID --canary-verified`로 승인한다. 승인 시
-정규화 제목·작가를 다시 검사하고, 이미 다른 canonical group에 속한 작품은 재배치하지 않는다.
+`text_novel_link_candidates`에 후보를 만든다. 완료 회차의 본문 SHA-256이 두 개 이상 같거나,
+하나가 같고 slug가 상대 source ID와 같으면 색인 중에 그 후보를 한 group으로 자동 연결한다.
+그 외 후보는 `python -m scripts.text_archive.links`가 출력하고,
+`--accept LEFT_SITE LEFT_WORK_ID RIGHT_SITE RIGHT_WORK_ID` 또는 같은 인자의 `--reject`로만 결정한다.
+승인 시 정규화 제목·작가를 다시 검사한다. 양쪽이 이미 다른 group에 있으면 더 먼저 만들어진
+group으로 합치고, 그 group의 다른 작품도 함께 옮긴다.
 확정 work group은 모든 수입/Oracle 수집 chapter의 canonical work ID와 publisher catalog에 반영된다.
 source/chapter ID와 기존 객체는 유지하며 회차 간 canonical merge는 하지 않는다. 기존 receipt는
 불변으로 두고 다음 availability snapshot이 최신 work group ID를 전달한다. 기존 PC source row의 빈 slug는
 DB 연결 시 숫자 source ID로 보완한다.
 
-승인된 work group 안에서 다른 출처의 본문이 이미 수입되었다면, Oracle은 회차의 전체 라벨
-(NFKC·대소문자·공백 정규화)과 본편/외전 구분이 양쪽에서 각각 유일할 때만 대기 요청을
-`covered`로 바꾼다. 승인 전·모호한 라벨·포인트 회차는 제외하지 않는다. 게시된 availability
-항목에는 group의 `linked_sources`를 포함해 PC도 게시 확인된 대응 회차만 새 큐에서 제외할 수
-있다. 이는 요청 중복을 줄이는 판정이며 두 본문의 SHA 동일성이나 원본 ID 병합 판정은 아니다.
+묶인 group이어도 회차 라벨이 같다고 Oracle 대기 요청을 `covered`로 빼지 않는다. 남아 있던
+`covered` 회차와 큐는 `discovered`와 `pending`으로 되돌린다. 게시된 availability 항목의
+`linked_sources`는 그 group에 묶인 출처 목록이다.
 
 ## 3. 수집·요청 예산
 
 - 대상 host는 명시 설정된 `blacktoonNNN.com`, `marumaruNNN.com` 형식만 허용한다. 현재 기본값은
-  설계 조사에서 확인한 `blacktoon452.com`, `marumaru102.com`; 숫자 suffix가 바뀌어도 자동 탐색,
-  다음 번호 시도, proxy, browser, anti-bot/captcha 우회는 없다.
-- 양쪽 도메인은 한 `blacktoon-marumaru-novel` 요청 그룹으로 같은 persisted 5초 최소 간격과
-  403/429/509 cooldown을 공유한다. 요청은 source별 round-robin이며 한 CLI 실행이 network request
-  **정확히 하나**만 시작한다. collector timer는 10초마다 실행 기회를 만들되, 이미 실행 중이면
-  중복 실행하지 않고 persisted 5초 간격·cooldown을 우선한다.
+  `blacktoon452.com`, `marumaru102.com`이다. 같은 출처의 5xx가 두 번 쌓이면 그 출처만 숫자
+  suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 성공한 호스트를 저장한다. proxy, browser,
+  anti-bot/captcha 우회는 없다.
+- 양쪽 도메인은 한 `blacktoon-marumaru-novel` 요청 그룹으로 persisted 5초 최소 간격을 공유한다.
+  403/429/509 cooldown은 출처별 행이라 한 도메인이 막혀도 다른 도메인은 진행한다. 요청은 source별
+  round-robin이다. collector timer는 5분마다
+  한 프로세스를 띄우고, 그 프로세스는 270초 동안 같은 5초 간격·cooldown으로 여러 요청을 잇는다.
+  이미 실행 중이면 겹치지 않는다. 수집기는 `.operation.lock`을 잡지 않아 수입과 짧은 SQLite
+  쓰기가 겹칠 수 있다. 수입기 busy 대기는 30초다. 수집기가 양보하는 조건은 게시 잠금과 메모리·디스크다.
 - 403/509 기본 6시간, 429 기본 1시간 cooldown이며 `Retry-After`가 더 길면 그 값을 우선한다
   (최대 7일). cooldown 중 sibling host로 fallback하지 않는다. 3xx도 redirect를 따라가지 않고 오류로 둔다.
 - `REDSTM_TEXT_BODY_SOURCE`가 비어 있으면 목록/작품/회차 상태만 조사하고 본문 요청을 만들지 않는다.
-  **첫 20작품의 양쪽 대응·본문 SHA 비교 canary가 수동 통과한 뒤에만** `blacktoon` 또는
-  `marumaru` 중 하나를 명시한다. 선택하지 않은 쪽은 본문 backup source로 자동 호출하지 않는다.
+  운영 유닛은 `both`다. 블랙툰과 마루마루 본문 큐를 각각 채우고, 회차 ID나 본문이 같다고 자동 확정하지 않는다.
+  `blacktoon` 또는 `marumaru`만 주면 그 출처의 본문만 요청한다.
 - 작품 API의 회차에는 실제로 가격/무료 필드가 없는 경우가 있어 `unknown_access`로 보존한다.
   body source를 명시한 canary에서만 공개 회차 detail을 읽어 `narration` 본문이면 무료로 확정하고,
   `paid` placeholder면 `waiting`으로 둔다. 이미 색인된 판정 불명 회차도 canary를 켠 뒤
   제한된 큐에 편입한다. 명시적 가격>0/locked도 `waiting`이며 자동 구매·쿠키/계정 회피는 없다.
   알 수 없는 `bodyJson` block, HTML, 빈/과대
   본문은 `parse_review`/held로 끝나며 성공 본문이 되지 않는다. 본문 최대 2MiB, HTTP 응답 최대 8MiB.
-- 작품 목록 페이지를 상세보다 먼저 체크포인트하고, 작품·회차 목록 색인은 10초 timer와 공통 출처 쿨다운으로 계속 진행한다. 소설 회차 본문은 첫 100작품/누적 1,000회 시도에서 멈추지 않고, 미처리 큐만 1,000건으로 유지해 완료한 만큼 보충한다. 게시의 소설 1,000건·아카라이브 2만 건 시험용 상한도 없다. 아카라이브에 변경이 없으면 검증된 원격 pointer만 읽어 확인해 15분마다 전체 파일을 다시 빌드하지 않는다.
+- 작품 목록 페이지를 상세보다 먼저 체크포인트하고, 작품·회차 목록 색인은 5분 timer와 공통 출처 쿨다운으로 계속 진행한다. 소설 회차 본문은 첫 100작품/누적 1,000회 시도에서 멈추지 않고, 미처리 큐만 1,000건으로 유지해 완료한 만큼 보충한다. 게시의 소설 1,000건·아카라이브 2만 건 시험용 상한도 없다. 아카라이브에 변경이 없으면 검증된 원격 pointer만 읽어 확인해 15분마다 전체 파일을 다시 빌드하지 않는다.
 - 모든 페이지/작품/회차 요청 전 runtime window를 다시 평가하고 TypeMoon publish lock을 요청 중에만 잡는다.
   장기 TypeMoon 수집이 보유하는 control lock은 텍스트 수집을 막지 않으며 실제 가용 메모리·디스크로 양보한다.
   수집기 timer가 TypeMoon 작업 창을 오래 막지 않는다. timer가 비활성 상태인 기간/락 점유 시간은 장애가 아니다.
@@ -104,9 +107,10 @@ DB 연결 시 숫자 source ID로 보완한다.
    `sftp.exe`가 PATH에 있어야 한다. Newtomi는 이를 설치/번들링하지 않으며, 없으면 동기화를 건너뛴다.
    Newtomi 자동 동기화는 기본 꺼짐이며, 켜도 전송 전에 `uncertain` 상태를 먼저 기록한다. SFTP가
    시작된 뒤 결과가 모호하거나 앱이 종료되면 자동 재전송하지 않고 receipt부터 조회한다. 프로세스
-   시작 전이 확인된 로컬 키/파일/검증 오류만 `queued`로 복구한다.
-2. importer는 producer/schema/batch/manifest digest, path allowlist, symlink/추가 파일, 20항목,
-   파일 ≤2MiB, manifest ≤256KiB, UTF-8/NUL, SHA-256을 검사한다. ready 없음은 no-op이며 receipt를
+   시작 전이 확인된 로컬 키/파일/검증 오류만 `queued`로 복구한다. 영수증 전 텍스트 배치는 8개,
+   이미지 배치는 2개까지만 올려 둔다. TypeMoon이 길어 수입이 양보되는 동안 수신함은 그 상한 안에서 찬다.
+2. importer는 producer/schema/batch/manifest digest, path allowlist, symlink/추가 파일, 항목 ≤100,
+   배치 ≤32MiB, 파일 ≤2MiB, manifest ≤256KiB, UTF-8/NUL, SHA-256을 검사한다. ready 없음은 no-op이며 receipt를
    쓰지 않는다. 같은 identity+SHA는 duplicate/object 재사용, identity+다른 SHA는
    `held_conflict`로 보류한다. 새 본문 객체는 content-addressed, local origin은 자동 삭제하지 않는다.
 3. R2 없이 import receipt revision 1을 만들 수 있다. publisher는 lane index를 500항목 페이지로

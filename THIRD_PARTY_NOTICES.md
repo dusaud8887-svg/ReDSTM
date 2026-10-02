@@ -63,7 +63,8 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
   `fonts/variable/woff2/SUIT-Variable.woff2`. SHA-256 is
   `aa894a204d5a6fbae259dac6868d350cbd373a390caee0313f92946af741df23` and the
   exact upstream license is `edge/public/fonts/SUIT-LICENSE.txt`.
-- `edge/public/fonts/MaruBuri-Regular.woff2`: MaruBuri by NAVER, SIL Open Font
+- `edge/font-sources/MaruBuri-Regular.woff2`(2026-10-02 P7-2부터 원본으로만 보관, 웹에는
+  `edge/public/fonts/maruburi@1.000/` 분할본을 제공): MaruBuri by NAVER, SIL Open Font
   License 1.1. The official unversioned source is NAVER's
   [Maru project](https://hangeul.naver.com/maruproject_11) and
   [webfont CDN](https://hangeul.pstatic.net/hangeul_static/webfont/MaruBuri/MaruBuri-Regular.woff2);
@@ -71,14 +72,15 @@ experimental이며 package license를 넣지 않으므로, 위 표의 direct dep
   `4cf1341cf2f23fb3e263712dfde1d8f25eedcc328b696a2e5a2c8add55e5c17b`.
   NAVER states that MaruBuri uses the same open license as Nanum in its
   [official license notice](https://help.naver.com/service/30016/contents/18088?osType=PC),
-  copied to `edge/public/fonts/MaruBuri-LICENSE.txt` with Reserved Font Name
+  copied to `edge/font-sources/MaruBuri-LICENSE.txt` with Reserved Font Name
   `MaruBuri`.
-- `edge/public/fonts/Saitamaar-Regular.ttf`: Saitamaar by YAMASINA Keage, MIT.
+- `edge/font-sources/Saitamaar-Regular.ttf`(P7-2부터 원본으로만 보관, 웹에는
+  `edge/public/fonts/saitamaar@1.0/` WOFF2): Saitamaar by YAMASINA Keage, MIT.
   DSOTM commit `c3e0c24e136d791f206d288adc4891874cbb6bdf`의
   `src/viewer/static/fonts/Saitamaar-Regular.ttf`에서 이식했으며 upstream은
   [transTemple/aaFont](https://github.com/transtemple/aaFont)다. SHA-256은
   `64fed56dcd5a1c64b5e35c92e06b422b71821205e23efd14c8b1772a43a9d7c5`이고
-  license 전문은 `edge/public/fonts/Saitamaar-LICENSE.txt`에 포함한다.
+  license 전문은 `edge/font-sources/Saitamaar-LICENSE.txt`에 포함한다.
 - 2026-09-30 프론트 개편 준비(`docs/24_frontend_redesign_spec.md`)로 추가한 자산. 아직 `index.html`에서
   참조하지 않으며 구현 Phase에서 연결한다. 버전은 `edge/package.json` devDependencies(정확 고정)와
   `edge/package-lock.json`이 source of truth다.

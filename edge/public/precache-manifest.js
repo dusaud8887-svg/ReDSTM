@@ -174,31 +174,31 @@ export default [
   },
   {
     "url": "/styles/aa.css",
-    "revision": "b0125791f721b8f7"
+    "revision": "d47d99bc56c1f940"
   },
   {
     "url": "/styles/base.css",
-    "revision": "0261cb78735b3214"
+    "revision": "c43673425dadbbe1"
   },
   {
     "url": "/styles/components.css",
-    "revision": "da5316a796f093b1"
+    "revision": "474e02915bfeddcf"
   },
   {
     "url": "/styles/library.css",
-    "revision": "ee857d66586df80c"
+    "revision": "85d99c9750f6f28f"
   },
   {
     "url": "/styles/reader.css",
-    "revision": "35f82e076afb0bab"
+    "revision": "2d5caef49c3ce899"
   },
   {
     "url": "/styles/shell.css",
-    "revision": "150041aa0c622c8a"
+    "revision": "4e1ecc92af940a8d"
   },
   {
     "url": "/styles/tokens.css",
-    "revision": "1a90c4820af8e030"
+    "revision": "707feabfc76d5638"
   },
   {
     "url": "/text-anchor.js",

@@ -2,10 +2,9 @@ import { readdir, readFile } from "node:fs/promises";
 
 const publicRoot = new URL("../public/", import.meta.url);
 const fonts = new URL("fonts/", publicRoot);
+// SUIT stays for /ops; the old single MaruBuri and Saitamaar files live only in font-sources.
 const assets = [
   ["SUIT-Variable.woff2", "SUIT-LICENSE.txt", true],
-  ["MaruBuri-Regular.woff2", "MaruBuri-LICENSE.txt", true],
-  ["Saitamaar-Regular.ttf", "Saitamaar-LICENSE.txt", false],
 ];
 // Versioned web font directories built by scripts/build-fonts.py: every url() in the family CSS
 // must be a real WOFF2 inside the same directory, and every WOFF2 there must be referenced.

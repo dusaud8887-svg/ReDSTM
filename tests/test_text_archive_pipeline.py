@@ -881,7 +881,11 @@ def test_publisher_does_not_claim_an_item_imported_after_build(
     original_build = publisher.build_publish_tree
 
     def build_then_import(
-        db_path_arg: Path, object_root: Path, output_root: Path, lane: str
+        db_path_arg: Path,
+        object_root: Path,
+        output_root: Path,
+        lane: str,
+        **_kwargs: object,
     ) -> dict[str, Any]:
         tree = original_build(db_path_arg, object_root, output_root, lane)
         with sqlite3.connect(db_path) as db:
@@ -1846,6 +1850,68 @@ def _republish(
             (f"2026-09-29T00:00:{run:02d}Z",),
         )
     return publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)
+
+
+def test_catalog_build_rechecks_typemoon_headroom(tmp_path: Path) -> None:
+    from scripts.text_archive.runtime import RuntimeWindowError
+
+    db_path, objects, _receipts = _novel_archive(tmp_path)
+    calls = 0
+
+    def headroom() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeWindowError("typemoon_memory_reserved")
+
+    with pytest.raises(RuntimeWindowError, match="typemoon_memory_reserved"):
+        publisher.build_publish_tree(
+            db_path, objects, tmp_path / "build", "novel", headroom=headroom
+        )
+    assert calls == 2
+
+
+def test_availability_window_deferral_keeps_the_published_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.text_archive.runtime import RuntimeWindowError
+
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    inbox = tmp_path / "inbox"
+    batch_id = "20260923T140000Z-pc-00000002"
+    _incoming_novel_batch(inbox, batch_id)
+    db_path = tmp_path / "state" / "text.sqlite"
+    receipts = inbox / "receipts"
+    importer.import_batch(inbox, batch_id, db_path, tmp_path / "objects", receipts)
+    remote: dict[str, bytes] = {}
+
+    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] == "copyto":
+            key = argv[5].split("redstm-text-archive/", 1)[1]
+            remote[key] = Path(argv[4]).read_bytes()
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        key = argv[4].split("redstm-text-archive/", 1)[1]
+        return subprocess.CompletedProcess(argv, 0, remote[key], b"")
+
+    def deferred(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise RuntimeWindowError("typemoon_memory_reserved")
+
+    monkeypatch.setattr(publisher, "build_availability_snapshot", deferred)
+    result = publisher.publish_lane(
+        db_path, tmp_path / "objects", tmp_path / "build", receipts, "novel", runner=rclone
+    )
+    again = publisher.publish_lane(
+        db_path, tmp_path / "objects", tmp_path / "build", receipts, "novel", runner=rclone
+    )
+
+    assert result["release_sha256"]
+    assert result["availability"] == {
+        "status": "deferred",
+        "error": "RuntimeWindowError: typemoon_memory_reserved",
+    }
+    assert "published/novel/release.json" in remote
+    assert again["status"] == "noop"
+    assert again["availability"]["status"] == "deferred"
 
 
 def test_rebuild_keeps_unchanged_files_and_reads_only_unpublished_objects(

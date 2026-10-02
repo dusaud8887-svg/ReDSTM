@@ -1,4 +1,4 @@
-.reader-pane { grid-column: 3; position: relative; min-width: 0; overflow: auto; overscroll-behavior-y: contain; background: var(--page); }
+.reader-pane { grid-column: 3; position: relative; min-width: 0; overflow: auto; overscroll-behavior-y: contain; background: var(--bg); }
 .reader-pane[aria-busy="true"]::before { content: ""; position: sticky; top: 0; z-index: 12; display: block; width: 28%; height: 2px; background: var(--accent); animation: loading-line 1s ease-in-out infinite alternate; }
 @keyframes loading-line { to { transform: translateX(260%); } }
 
@@ -8,7 +8,7 @@ body.reader-active .reader-shade { position: fixed; inset: 0; z-index: 45; displ
 body.reader-active .reader-shade::before, body.reader-active .reader-shade::after { content: ""; position: absolute; inset: 0; }
 body.reader-active .reader-shade::before { background: #000; opacity: var(--reader-dim, 0); }
 body.reader-active .reader-shade::after { background: #FF9E4A; opacity: var(--reader-warm, 0); mix-blend-mode: multiply; }
-.reader { min-height: 100%; background: var(--reader); color: var(--ink); scroll-padding-bottom: 72px; }
+.reader { min-height: 100%; background: var(--reader-bg); color: var(--ink); scroll-padding-bottom: 72px; }
 /* The app restores reading anchors itself; native scroll anchoring would double-correct. */
 .reader-pane { scroll-padding-bottom: 72px; overflow-anchor: none; }
 .reader-topbar { display: none; }
@@ -18,18 +18,18 @@ body.reader-active .reader-shade::after { background: #FF9E4A; opacity: var(--re
 body.text-library-open .text-work-back { display: inline-flex; }
 .reader-kicker { color: var(--ink-2); font-size: 12px; font-weight: 650; }
 .reader-header h1 { margin: 12px 0 14px; font-size: clamp(30px, 4vw, 48px); font-weight: 700; line-height: 1.22; letter-spacing: -.035em; word-break: keep-all; overflow-wrap: break-word; text-wrap: balance; }
-.reader-meta { margin: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.reader-meta { margin: 0; color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .reader-length::before { content: " · "; }
 /* The author is a link to their other posts; the padding keeps a 24px+ target inside the line. */
 .reader-author { margin: -6px -2px; padding: 6px 2px; border: 0; background: none; color: var(--ink); font: inherit; font-weight: 650; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; cursor: pointer; }
 .reader-author:hover { color: var(--accent); text-decoration-color: currentColor; }
 .collection-context { min-height: 40px; margin: 6px 0 0 -10px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
 .collection-context:hover { background: var(--accent-soft); }
-.reader-toolbar { position: sticky; top: 0; z-index: 7; min-height: 56px; display: flex; align-items: center; gap: 7px; padding: 6px max(20px, calc((100% - min(var(--prose-width), 900px)) / 2)); border-block: 1px solid var(--line); background: var(--reader); }
+.reader-toolbar { position: sticky; top: 0; z-index: 7; min-height: 56px; display: flex; align-items: center; gap: 7px; padding: 6px max(20px, calc((100% - min(var(--prose-width), 900px)) / 2)); border-block: 1px solid var(--line); background: var(--reader-bg); }
 /* Reading downward folds the tools away on every width (docs/19 §4.3); the progress line stays. */
 .reader-toolbar { transition: transform 160ms ease-in-out; }
 body.reader-controls-hidden .reader-toolbar { transform: translateY(calc(-100% - 2px)); }
-.reader-status { position: fixed; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 19; margin: 0; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--reader) 85%, transparent); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 160ms ease-in-out; }
+.reader-status { position: fixed; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 19; margin: 0; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--reader-bg) 85%, transparent); color: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 160ms ease-in-out; }
 body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opacity: 1; }
 
 .archive-body { width: min(var(--prose-width), calc(100% - 64px)); margin: 0 auto; padding: 42px 0 72px; font-family: var(--prose-font); font-size: var(--prose-size); line-height: var(--prose-line); text-align: var(--prose-align, start); overflow-wrap: break-word; text-wrap: pretty; }
@@ -39,7 +39,7 @@ body.continuous-mode #reader-pane { overflow-anchor: none; }
 .archive-body[data-continuous-title]::before { content: attr(data-continuous-title); display: block; margin-bottom: 24px; font: 700 20px/1.5 var(--font-display); white-space: normal; }
 /* Pinch on prose changes the font size (app.js) instead of zooming the page. */
 .archive-body:not(.aa) { touch-action: pan-x pan-y; }
-.setting-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.setting-hint { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
 @media (hover: hover) and (pointer: fine) { .touch-hint { display: none; } }
 /* Prose paragraph settings stop at an AA canvas and a media figure (DESIGN §8.1). `:scope` keeps
    the old .archive-body specificity. @scope does not stop inheritance — aa.css restates the AA root.
@@ -49,7 +49,7 @@ body.continuous-mode #reader-pane { overflow-anchor: none; }
   :scope:not(.aa) p { text-indent: var(--prose-indent, 0); }
 }
 .archive-body :is(h1, h2, h3, h4) { font-family: inherit; line-height: 1.4; }
-.archive-body blockquote { margin: 1.5em 0; padding-left: 1.25em; border-left: 3px solid var(--line-strong); color: var(--muted); }
+.archive-body blockquote { margin: 1.5em 0; padding-left: 1.25em; border-left: 3px solid var(--line-strong); color: var(--ink-2); }
 .archive-body img { max-width: 100%; max-height: 80vh; height: auto; }
 .archive-body a { color: var(--accent); }
 .archive-body hr { margin: 2.5em 0; border: 0; border-top: 1px solid var(--line); }
@@ -57,46 +57,46 @@ body.continuous-mode #reader-pane { overflow-anchor: none; }
 .media-figure { margin: 1.2em 0; }
 .media-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; background: var(--surface); cursor: zoom-in; }
 .media-open img { display: block; max-width: 100%; max-height: 80vh; height: auto; margin: 0 auto; border-radius: 8px; }
-.media-expired { margin: .6em 0; padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); font-family: var(--font-ui); font-size: 13px; }
+.media-expired { margin: .6em 0; padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--ink-2); font-family: var(--font-ui); font-size: 13px; }
 .media-expired a { color: var(--accent); }
 .media-video video { display: block; width: 100%; max-height: 70vh; border-radius: 8px; background: #000; }
 .media-figure figcaption { margin-top: 4px; font-family: var(--font-ui); font-size: 12px; line-height: 1.4; }
-.media-figure figcaption a { color: var(--muted); }
+.media-figure figcaption a { color: var(--ink-2); }
 .media-figure.failed { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; font-family: var(--font-ui); font-size: 13px; }
-.media-failed { margin: 0 !important; color: var(--muted); }
-.media-retry { min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--page); color: var(--ink); cursor: pointer; }
+.media-failed { margin: 0 !important; color: var(--ink-2); }
+.media-retry { min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .media-figure.failed figcaption { flex-basis: 100%; margin: 0; }
 .archive-body a[data-image] { text-decoration-style: dotted; }
 /* Selection menu (DESIGN §7.8): a dark pill under the selection; on touch screens, where the OS
    toolbar and handles sit around the selection, the same four actions take the dock's place. */
-.selection-menu { position: fixed; inset: auto; margin: 0; padding: 4px; display: flex; gap: 2px; border: 0; border-radius: 999px; background: var(--ink); color: var(--page); box-shadow: var(--shadow); }
+.selection-menu { position: fixed; inset: auto; margin: 0; padding: 4px; display: flex; gap: 2px; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); box-shadow: var(--e2); }
 .selection-menu:not(:popover-open) { display: none; }
 .selection-menu button { min-width: 48px; min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: 600 14px/1 var(--font-ui); cursor: pointer; }
-.selection-menu button:hover, .selection-menu button:focus-visible { background: color-mix(in srgb, var(--page) 16%, transparent); }
+.selection-menu button:hover, .selection-menu button:focus-visible { background: color-mix(in srgb, var(--bg) 16%, transparent); }
 .selection-menu.fixed { left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); justify-content: space-around; border-radius: 18px; }
 .selection-menu.fixed button { flex: 1; min-height: 48px; }
-.mark-menu { position: fixed; inset: auto; margin: 0; max-width: min(320px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow); }
+.mark-menu { position: fixed; inset: auto; margin: 0; max-width: min(320px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: var(--e2); }
 .mark-menu-note { margin: 2px 4px 10px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mark-menu-actions { display: flex; gap: 6px; }
-.mark-menu-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
-.note-quote { margin: 0 0 12px; padding-left: 12px; border-left: 3px solid var(--ribbon); color: var(--muted); font-family: var(--prose-font); line-height: 1.6; max-height: 7.5em; overflow: auto; }
+.mark-menu-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg); color: var(--ink); font-weight: 600; cursor: pointer; }
+.note-quote { margin: 0 0 12px; padding-left: 12px; border-left: 3px solid var(--ribbon); color: var(--ink-2); font-family: var(--prose-font); line-height: 1.6; max-height: 7.5em; overflow: auto; }
 /* 다른 기기에서 (docs/24 P5-1): the QR on white so any camera reads it, in either theme. */
 .handoff-code { width: min(260px, 70vw); margin: 0 auto 12px; padding: 12px; border-radius: 12px; background: #fff; }
 .handoff-code svg { display: block; width: 100%; height: auto; }
-.handoff-quote { margin: 0 0 12px; color: var(--muted); font-family: var(--prose-font); line-height: 1.6; text-align: center; }
+.handoff-quote { margin: 0 0 12px; color: var(--ink-2); font-family: var(--prose-font); line-height: 1.6; text-align: center; }
 .handoff-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .handoff-actions input { min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
-.handoff-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+.handoff-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--ink); font-weight: 600; cursor: pointer; }
 /* 읽기 프로필 in the quick panel: one chip per saved profile, the active one pressed. */
 .quick-profiles { display: grid; gap: 6px; }
 .quick-panel { max-height: min(320px, calc(100dvh - 100px)); overflow-y: auto; }
 .quick-profile-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.quick-profile-list button, .quick-profile-add { min-height: 40px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+.quick-profile-list button, .quick-profile-add { min-height: 40px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg); color: var(--ink); font-weight: 600; cursor: pointer; }
 .quick-profile-list button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
-.quick-profile-add { justify-self: start; color: var(--muted); font-weight: 500; }
+.quick-profile-add { justify-self: start; color: var(--ink-2); font-weight: 500; }
 .quick-profile-work { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 /* 자동 스크롤 takes the dock's place while it runs (DESIGN §7.11). */
-.autoscroll-bar { position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; justify-content: space-around; gap: 6px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 18px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow); }
+.autoscroll-bar { position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; justify-content: space-around; gap: 6px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 18px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--e2); }
 .autoscroll-bar[hidden] { display: none; }
 body.find-open .autoscroll-bar { visibility: hidden; }
 .autoscroll-bar button { min-width: 48px; min-height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font-size: 18px; cursor: pointer; }
@@ -104,16 +104,16 @@ body.find-open .autoscroll-bar { visibility: hidden; }
 body.autoscroll-open .reader-bottom { visibility: hidden; }
 @media (min-width: 760px) { .autoscroll-bar { left: auto; right: 24px; width: 320px; } }
 .selection-more-actions { display: grid; gap: 8px; }
-.selection-more-actions button { min-height: 48px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
+.selection-more-actions button { min-height: 48px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); color: var(--ink); font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
 /* Share sheet (docs/24 §8.14): the canvas itself is the preview (no blob: image under the CSP). */
 .share-preview { display: block; width: 100%; height: auto; max-height: 50dvh; object-fit: contain; margin: 0 auto 12px; border-radius: 12px; background: var(--surface); }
 #share-tones[hidden] { display: none; }
 .share-credit { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 14px; }
 .share-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.share-actions :is(button, a) { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font-weight: 600; text-decoration: none; cursor: pointer; }
+.share-actions :is(button, a) { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); color: var(--ink); font-weight: 600; text-decoration: none; cursor: pointer; }
 .share-actions #share-send { border-color: var(--accent); background: var(--accent); color: var(--on-accent, #fff); }
 .share-actions #share-send:disabled { opacity: .5; cursor: default; }
-.share-status { min-height: 1.4em; margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+.share-status { min-height: 1.4em; margin: 8px 0 0; color: var(--ink-2); font-size: 13px; }
 .selection-more-actions a { min-height: 48px; display: flex; align-items: center; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; color: var(--ink); text-decoration: none; font-weight: 600; }
 .image-viewer { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0; background: rgb(0 0 0 / 92%); }
 .image-viewer::backdrop { background: rgb(0 0 0 / 80%); }
@@ -122,73 +122,73 @@ body.autoscroll-open .reader-bottom { visibility: hidden; }
 .image-viewer-stage .pswp { --pswp-bg: #000; position: absolute; }
 .image-viewer-actions { position: fixed; left: 0; bottom: 0; z-index: 100001; width: 100vw; max-height: none; display: flex; justify-content: space-between; gap: 8px; padding: 10px 16px max(10px, env(safe-area-inset-bottom)); background: rgb(0 0 0 / 60%); }
 .image-viewer-actions :is(a, button) { min-height: 48px; display: inline-flex; align-items: center; padding: 0 18px; border: 1px solid rgb(255 255 255 / 35%); border-radius: 999px; background: transparent; color: #fff; font-weight: 650; text-decoration: none; cursor: pointer; }
-.image-fallback { display: inline-block; padding: 6px 8px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 12px; }
+.image-fallback { display: inline-block; padding: 6px 8px; border: 1px dashed var(--line-strong); color: var(--ink-2); font-size: 12px; }
 
 /* The list the reading session came from, around the current item (below the chapter end). */
-.reader-list { width: min(var(--prose-width), calc(100% - 64px)); margin: 0 auto 40px; border: 1px solid var(--line); border-radius: 14px; background: var(--page); overflow: hidden; }
+.reader-list { width: min(var(--prose-width), calc(100% - 64px)); margin: 0 auto 40px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); overflow: hidden; }
 .reader-list-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 8px 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .reader-list-header > div { min-width: 0; display: grid; gap: 2px; }
 .reader-list-header small { color: var(--ink-2); font-size: 11px; font-weight: 700; }
 .reader-list-header h2 { margin: 0; overflow: hidden; font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .reader-list-all { flex: 0 0 auto; min-height: 44px; display: inline-flex; align-items: center; gap: 2px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--accent); font-size: 13px; font-weight: 700; cursor: pointer; }
 .reader-list-all svg { width: 16px; height: 16px; }
-.reader-list-hint { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.reader-list-hint { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--line); color: var(--ink-2); font-size: 12px; }
 .reader-list-items { margin: 0; padding: 0; list-style: none; }
 .reader-list-items li + li { border-top: 1px solid var(--line); }
 .reader-list-row { width: 100%; min-height: 56px; display: grid; align-content: center; gap: 3px; padding: 8px 16px 8px 13px; border: 0; border-left: 3px solid transparent; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .reader-list-row strong { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14px; font-weight: 600; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
-.reader-list-row span { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.reader-list-row.read strong { color: var(--muted); font-weight: 500; }
+.reader-list-row span { overflow: hidden; color: var(--ink-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.reader-list-row.read strong { color: var(--ink-2); font-weight: 500; }
 .reader-list-row[aria-current="true"] { border-left-color: var(--ribbon); background: var(--ribbon-soft); cursor: default; }
 .reader-list-row[aria-current="true"] strong { color: var(--ink); font-weight: 700; }
-.reader-list-row:disabled:not([aria-current="true"]) { color: var(--subtle); cursor: default; }
+.reader-list-row:disabled:not([aria-current="true"]) { color: var(--ink-3); cursor: default; }
 .reader-list-pager { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 6px 8px; border-top: 1px solid var(--line); background: var(--surface); }
 .reader-list-pager button { min-height: 44px; display: inline-flex; align-items: center; gap: 2px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font-weight: 650; cursor: pointer; }
 .reader-list-pager button:last-child { justify-self: end; }
-.reader-list-pager button:disabled { color: var(--subtle); cursor: default; }
+.reader-list-pager button:disabled { color: var(--ink-3); cursor: default; }
 .reader-list-pager svg { width: 18px; height: 18px; }
-.reader-list-pager span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.reader-list-pager span { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 @media (hover: hover) { .reader-list-row:hover:not(:disabled) { background: var(--surface); } }
 /* Wide screens already show the same list beside the Reader. */
 @media (min-width: 760px) { body.reading-context:not(.catalog-collapsed) .reader-list { display: none; } }
 .comments { border-top: 1px solid var(--line); padding: 36px max(32px, calc((100% - var(--prose-width)) / 2)) 72px; }
 .comments h2 { margin: 0 0 20px; font-size: 20px; font-weight: 680; }
-.comments h2 span { color: var(--muted); font-weight: 450; }
+.comments h2 span { color: var(--ink-2); font-weight: 450; }
 .comments-toggle { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .comments-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; transition: transform 160ms var(--ease-out); }
 .comments-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
-.comments-return { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 21; min-height: 44px; padding: 0 18px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-raised); box-shadow: var(--shadow); color: var(--ink); font: 600 14px/1 var(--font-ui); cursor: pointer; transform: translateX(-50%); }
+.comments-return { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 21; min-height: 44px; padding: 0 18px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); box-shadow: var(--e2); color: var(--ink); font: 600 14px/1 var(--font-ui); cursor: pointer; transform: translateX(-50%); }
 .comments ol { margin: 0; padding: 0; list-style: none; }
 .comment { margin-left: calc(min(var(--depth), 4) * 14px); padding: 14px 0 14px 12px; border-left: 2px solid var(--line); border-bottom: 1px solid var(--line); }
-.comment header { display: flex; gap: 10px; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+.comment header { display: flex; gap: 10px; margin-bottom: 6px; color: var(--ink-2); font-size: 11px; }
 .comment header strong { color: var(--ink); }
 .comment-body { font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
-.comments ol:empty::after { content: "보존된 댓글이 없습니다."; color: var(--muted); font-size: 13px; }
+.comments ol:empty::after { content: "보존된 댓글이 없습니다."; color: var(--ink-2); font-size: 13px; }
 .chapter-end { width: min(var(--prose-width), calc(100% - 64px)); display: grid; gap: 10px; margin: 0 auto; padding: 8px 0 48px; }
-.chapter-end-note { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 13px; line-height: 1.55; }
+.chapter-end-note { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface); color: var(--ink-2); font-size: 13px; line-height: 1.55; }
 .chapter-end-next { width: 100%; min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 14px 18px; border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 14px; background: var(--accent-soft); color: var(--ink); text-align: left; cursor: pointer; }
 .chapter-end-next:hover:not(:disabled) { border-color: var(--accent); }
-.chapter-end-next:disabled { border-color: var(--line); background: var(--surface); color: var(--muted); cursor: default; }
+.chapter-end-next:disabled { border-color: var(--line); background: var(--surface); color: var(--ink-2); cursor: default; }
 .chapter-end-next > svg { flex: 0 0 auto; width: 24px; height: 24px; color: var(--accent); }
 .chapter-end-copy { min-width: 0; display: grid; gap: 4px; }
 .chapter-end-copy small { color: var(--accent); font-size: 12px; font-weight: 700; }
 .chapter-end-next strong { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 16px; font-weight: 700; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
 .chapter-end-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
-.chapter-end-actions button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font-weight: 650; cursor: pointer; }
+.chapter-end-actions button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); color: var(--ink); font-weight: 650; cursor: pointer; }
 .chapter-end-actions button:hover { border-color: var(--accent); color: var(--accent); }
 .chapter-end-actions svg { width: 18px; height: 18px; }
-.chapter-end-previous { min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
+.chapter-end-previous { min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2); text-align: left; cursor: pointer; }
 .chapter-end-previous:hover { background: var(--surface); color: var(--ink); }
 .chapter-end-previous svg { flex: 0 0 auto; width: 18px; height: 18px; }
-.chapter-end-previous small { color: var(--muted); font-weight: 600; }
+.chapter-end-previous small { color: var(--ink-2); font-weight: 600; }
 .chapter-end-previous span span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 
 @media (max-width: 759px) {
   .reader { min-height: 100%; padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-  .reader-topbar { position: sticky; top: 0; z-index: 8; min-height: calc(48px + env(safe-area-inset-top)); display: grid; grid-template-columns: auto minmax(0, 1fr) 48px 48px; align-items: center; gap: 4px; padding: env(safe-area-inset-top) 0 0 4px; border-bottom: 1px solid var(--line); background: var(--reader); transition: transform 160ms ease-in-out; }
+  .reader-topbar { position: sticky; top: 0; z-index: 8; min-height: calc(48px + env(safe-area-inset-top)); display: grid; grid-template-columns: auto minmax(0, 1fr) 48px 48px; align-items: center; gap: 4px; padding: env(safe-area-inset-top) 0 0 4px; border-bottom: 1px solid var(--line); background: var(--reader-bg); transition: transform 160ms ease-in-out; }
   body.reader-controls-hidden .reader-topbar { transform: translateY(-100%); }
   .reader-topbar .catalog-back { min-height: 48px; margin: 0; padding: 0 10px 0 4px; }
-  .reader-topbar-title { min-width: 0; margin: 0; overflow: hidden; color: var(--muted); font-size: 13px; font-weight: 650; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+  .reader-topbar-title { min-width: 0; margin: 0; overflow: hidden; color: var(--ink-2); font-size: 13px; font-weight: 650; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
   .reader-topbar .icon-button { width: 48px; height: 48px; }
   .collection-view { width: calc(100% - 32px); padding: 20px 0 calc(80px + env(safe-area-inset-bottom)); }
   .collection-view-header { padding-bottom: 20px; }
@@ -299,7 +299,7 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { point
 .reader.paged .archive-body.turning { transition: transform 200ms var(--ease-out); }
 .reader.paged .archive-body :is(img, video, .media-figure, figure) { max-height: var(--page-height); break-inside: avoid; }
 .reader.paged .archive-body table { display: block; max-width: 100%; overflow-x: auto; }
-.page-hint { position: absolute; inset: 0; z-index: 5; display: grid; grid-template-columns: 30% 20% 50%; padding: 0; border: 0; background: color-mix(in srgb, var(--reader) 55%, transparent); color: var(--ink); font: 600 15px/1.4 var(--font-ui); cursor: pointer; }
+.page-hint { position: absolute; inset: 0; z-index: 5; display: grid; grid-template-columns: 30% 20% 50%; padding: 0; border: 0; background: color-mix(in srgb, var(--reader-bg) 55%, transparent); color: var(--ink); font: 600 15px/1.4 var(--font-ui); cursor: pointer; }
 .page-hint[hidden] { display: none; }
 .page-hint span { display: grid; place-items: center; border-inline-end: 1px dashed var(--line-strong); }
 .page-hint span:last-child { border-inline-end: 0; }
