@@ -1214,12 +1214,14 @@ test("Gowun Batang is fetched only when chosen as the body font", async ({ page 
 // T25: the split MaruBuri 1.000 faces must lay out exactly like the single file readers had, so
 // saved lines and positions do not move when the new font CSS is linked.
 test("the versioned MaruBuri faces keep the previous body font's advances", async ({ page }) => {
+  // The single file readers had is no longer served (P7-2); compare against its kept original.
+  await page.route("**/previous-maruburi.woff2", (route) => route.fulfill({ path: "font-sources/MaruBuri-Regular.woff2", contentType: "font/woff2" }));
   await useCollectionFixture(page);
   await page.goto("/");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   const sample = "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮고 천천히 고개를 들었다. \"약속은 지키는 쪽이 먼저 잊지 않는 법이야.\" 늦었네, 알겠어. 미안해 — 2026년 9월 30일, 119화 · 겨울 정원의 약속! 뜌쉪펲 ABCxyz?";
   const widths = await page.evaluate(async (text) => {
-    const previous = new FontFace("PreviousMaruBuri", "url(/fonts/MaruBuri-Regular.woff2)");
+    const previous = new FontFace("PreviousMaruBuri", "url(/previous-maruburi.woff2)");
     document.fonts.add(await previous.load());
     await document.fonts.load("18px MaruBuri", text);
     const context = document.createElement("canvas").getContext("2d");
