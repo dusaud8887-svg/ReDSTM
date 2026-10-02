@@ -25,6 +25,10 @@
 .archive-body.aa p { margin: 0; }
 .archive-body.aa :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; display: block; margin: 0; padding: 0; white-space: nowrap !important; font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; background: transparent !important; }
 .archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
+/* 굵게: a stroke painted around each glyph in its own colour. It changes no font, weight, advance or
+   line, so the grid stays exactly as drawn (docs/24 §8.16 keeps font-weight 400). */
+:is(.archive-body.aa, .comment-body.aa-comment).aa-bold { -webkit-text-stroke: .04em currentColor; }
+.aa-control-group button[aria-pressed="true"]#aa-bold { border-color: var(--accent); color: var(--accent); }
 
 /* AA host (docs/24 §8.17): the toolbar, the picture, its minimap and the zoom message go full
    screen together, with 밝기 · 따뜻하게 drawn inside it because the page's shade stays outside. */
@@ -59,7 +63,8 @@ body.reader-controls-hidden .aa-minimap { opacity: 0; visibility: hidden; pointe
   body:not(.reader-controls-hidden) .aa-controls { top: calc(48px + env(safe-area-inset-top)); }
   .aa-control-group { flex: 0 0 auto; }
   /* One row on a phone: ⟲ alone, the tighter gaps keep 맞춤 − 100% + 색 ⟲ within 360px. */
-  .aa-controls { gap: 6px; }
+  .aa-controls { gap: 4px; }
+  .aa-zoom-reset { min-width: 52px !important; }
   .aa-long-label { display: none; }
   .aa-zoom-indicator { left: 50%; }
   .archive-body.aa { width: 100%; padding: 28px 8px 52px; }

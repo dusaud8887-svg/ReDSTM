@@ -83,13 +83,13 @@ const storageKeys = {
 };
 const defaultSettings = {
   theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", readingMode: "scroll", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
-  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
+  proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true, aaBold: false,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
   proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", readingMode: "읽기 방식", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
-  aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색",
+  aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색", aaBold: "AA 굵게",
 };
 const elements = Object.fromEntries(
   [
@@ -118,7 +118,7 @@ const elements = Object.fromEntries(
     "text-sort-chips",
     "reader-list", "reader-list-kicker", "reader-list-title", "reader-list-all", "reader-list-hint",
     "reader-list-items", "reader-list-previous", "reader-list-next", "reader-list-range",
-    "aa-source-styles", "aa-color", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit", "aa-host", "aa-fullscreen", "aa-minimap",
+    "aa-source-styles", "aa-color", "aa-bold", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit", "aa-host", "aa-fullscreen", "aa-minimap",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
     "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
@@ -727,8 +727,12 @@ function applySettings() {
   elements["aa-source-styles"].setAttribute("aria-pressed", settings.aaPreserveStyles);
   elements["aa-color"].setAttribute("aria-pressed", settings.aaPreserveStyles);
   elements["aa-color"].ariaLabel = settings.aaPreserveStyles ? "AA 색: 원본색 (누르면 단색)" : "AA 색: 단색 (누르면 원본색)";
+  // 색 only does something when the picture has its own colours; without them the button is left out.
+  elements["aa-color"].hidden = !elements["archive-body"].querySelector('font[color], span[style*="color"]');
+  elements["aa-bold"].setAttribute("aria-pressed", String(settings.aaBold));
   for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
     surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
+    surface.classList.toggle("aa-bold", settings.aaBold);
   }
   const canvas = elements["archive-body"].querySelector(".aa-canvas");
   if (canvas) canvas.dataset.width = settings.aaCanvasWidth ?? "auto";
@@ -738,7 +742,11 @@ function applySettings() {
       settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && aaZoom === 1);
   }
   let backgroundPresetSelected = false;
-  for (const button of document.querySelectorAll("[data-aa-background]")) {
+  elements["aa-bold"].addEventListener("click", () => {
+  settings.aaBold = !settings.aaBold;
+  saveSettings();
+});
+for (const button of document.querySelectorAll("[data-aa-background]")) {
     const selected = button.dataset.aaBackground === settings.aaBackground;
     button.classList.toggle("active", selected);
     backgroundPresetSelected ||= selected;
@@ -4084,8 +4092,9 @@ function renderComments(comments) {
   }
   elements["comment-list"].append(fragment);
   elements["end-comments-count"].textContent = elements["comment-count"].textContent;
-  elements["end-comments"].hidden = !comments.length;
-  setCommentsOpen(false);
+  // Comments sit right under the text and start unfolded, so the chapter end needs no shortcut.
+  elements["end-comments"].hidden = true;
+  setCommentsOpen(comments.length > 0);
   applySettings();
 }
 
@@ -6997,7 +7006,9 @@ async function openPersonalWork(work) {
 const classifyButton = document.createElement("button");
 classifyButton.id = "collection-classify"; classifyButton.type = "button"; classifyButton.textContent = "분류·고정";
 document.querySelector(".collection-actions").append(classifyButton);
-const readerClassify = document.createElement("button"); readerClassify.id = "reader-work-classify"; readerClassify.type = "button"; readerClassify.textContent = "작품 분류·고정";
+const readerClassify = document.createElement("button"); readerClassify.id = "reader-work-classify"; readerClassify.type = "button";
+// A tile like its neighbours in the 더보기 grid: a folder icon over the label.
+readerClassify.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h9A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-12Z"/><path d="m12 11 .9 1.8 2 .3-1.45 1.4.35 2-1.8-.95-1.8.95.35-2-1.45-1.4 2-.3Z"/></svg><span>분류·고정</span>';
 document.querySelector("#reader-work-find").after(readerClassify);
 readerClassify.addEventListener("click", async () => {
   closeReaderMore();

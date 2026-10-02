@@ -101,6 +101,7 @@ function sanitizeSettings(value, defaults = {}) {
   pick("aaBackground", (value) => typeof value === "string" && aaBackgroundPattern.test(value),
     (value) => value.toLowerCase());
   pick("aaPreserveStyles", (value) => typeof value === "boolean");
+  pick("aaBold", (value) => typeof value === "boolean");
   pick("autoScrollSpeed", (value) => Number.isInteger(value) && value >= 1 && value <= 10);
   if ("readingProfiles" in source || "readingProfiles" in fallback) {
     const profiles = sanitizeProfiles(source.readingProfiles ?? fallback.readingProfiles);

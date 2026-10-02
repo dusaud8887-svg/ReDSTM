@@ -166,6 +166,8 @@ body.autoscroll-open .reader-bottom { visibility: hidden; }
 .comment header strong { color: var(--ink); }
 .comment-body { font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
 .comments ol:empty::after { content: "보존된 댓글이 없습니다."; color: var(--ink-2); font-size: 13px; }
+/* Text → comments → next/previous → list: a post without comments shows no empty comment block. */
+.comments:has(#comment-list:empty) { display: none; }
 .chapter-end { width: min(var(--prose-width), calc(100% - 64px)); display: grid; gap: 10px; margin: 0 auto; padding: 8px 0 48px; }
 .chapter-end-note { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface); color: var(--ink-2); font-size: 13px; line-height: 1.55; }
 .chapter-end-next { width: 100%; min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 14px 18px; border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 14px; background: var(--accent-soft); color: var(--ink); text-align: left; cursor: pointer; }
@@ -201,7 +203,7 @@ body.autoscroll-open .reader-bottom { visibility: hidden; }
   .reader-header { width: calc(100% - 2 * var(--prose-margin)); padding: 18px 0 20px; }
   .catalog-back { min-height: 44px; display: inline-flex; align-items: center; gap: 3px; margin: -4px 0 12px; padding: 0 8px 0 0; border: 0; background: transparent; color: var(--accent); font-weight: 650; cursor: pointer; }
   .catalog-back svg { width: 18px; height: 18px; }
-  .reader-header h1 { margin: 8px 0 10px; font-size: 24px; line-height: 1.3; }
+  .reader-header h1 { margin: 6px 0 8px; font-size: 20px; line-height: 1.35; letter-spacing: -.02em; }
   .reader-toolbar { display: none; }
   .archive-body { width: calc(100% - 2 * var(--prose-margin)); padding-block: 4px 40px; }
   .reader-header { padding-bottom: 12px; }

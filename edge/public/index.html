@@ -375,6 +375,7 @@
             </div>
             <div class="aa-control-group">
               <button type="button" id="aa-color" aria-pressed="true" title="원본색 ↔ 단색">색</button>
+              <button type="button" id="aa-bold" aria-pressed="false" title="굵게 (글자 폭·격자는 그대로)">굵게</button>
               <button type="button" id="aa-fullscreen" aria-pressed="false" title="가로 전체화면" aria-label="가로 전체화면" hidden>⟲<span class="aa-long-label"> 가로 전체화면</span></button>
             </div>
             <div class="aa-control-group" id="aa-scenes" aria-label="장면 이동 · 원본 레스 단위" hidden>
@@ -387,11 +388,19 @@
           <button class="page-hint" id="page-hint" type="button" aria-label="쪽 넘기기 안내 닫기" hidden><span>이전 쪽</span><span>도구</span><span>다음 쪽</span></button>
           <div class="aa-zoom-indicator" id="aa-zoom-indicator" role="status" aria-live="polite" popover="manual" style="margin:0;right:auto;bottom:auto" hidden>100%</div>
           </div>
+          <section class="comments" id="comments" aria-labelledby="comments-title">
+            <h2 id="comments-title"><button class="comments-toggle" id="comments-toggle" type="button" aria-expanded="false" aria-controls="comment-list">댓글 <span id="comment-count">0</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></h2>
+            <ol id="comment-list" hidden="until-found"></ol>
+          </section>
           <section class="chapter-end" id="chapter-end" aria-label="다음 읽기">
             <p class="chapter-end-note" id="chapter-end-note" hidden></p>
             <button class="chapter-end-next" id="end-next" type="button">
               <span class="chapter-end-copy"><small id="end-next-kicker">다음 글</small><strong id="end-next-title">다음 글이 없습니다</strong></span>
               <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <button class="chapter-end-previous" id="end-previous" type="button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+              <span class="chapter-end-copy"><small id="end-previous-kicker">이전 글</small><span id="end-previous-title">이전 글이 없습니다</span></span>
             </button>
             <div class="chapter-end-run" id="end-run" hidden><span class="chapter-end-barcode"></span><small id="end-run-label"></small></div>
             <div class="chapter-end-actions">
@@ -399,10 +408,6 @@
               <button id="end-comments" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span>댓글 <span id="end-comments-count">0</span></span></button>
               <button id="end-toc" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>작품 목차</span></button>
             </div>
-            <button class="chapter-end-previous" id="end-previous" type="button">
-              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
-              <span class="chapter-end-copy"><small id="end-previous-kicker">이전 글</small><span id="end-previous-title">이전 글이 없습니다</span></span>
-            </button>
           </section>
           <section class="reader-list" id="reader-list" aria-labelledby="reader-list-title" hidden>
             <header class="reader-list-header">
@@ -416,10 +421,6 @@
               <span id="reader-list-range" aria-live="polite"></span>
               <button id="reader-list-next" type="button" aria-label="목록 다음 페이지">다음<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
             </nav>
-          </section>
-          <section class="comments" id="comments" aria-labelledby="comments-title">
-            <h2 id="comments-title"><button class="comments-toggle" id="comments-toggle" type="button" aria-expanded="false" aria-controls="comment-list">댓글 <span id="comment-count">0</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></h2>
-            <ol id="comment-list" hidden="until-found"></ol>
           </section>
         </article>
       </section>
@@ -725,10 +726,10 @@
     <dialog id="reader-more" aria-labelledby="reader-more-title">
       <form method="dialog">
         <header><div><p id="reader-more-context"></p><h2 id="reader-more-title">더보기</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
-        <button type="button" id="reader-work-find">작품에서 찾기</button>
         <label class="more-position">읽은 위치 <span class="more-position-values"><small id="more-remaining"></small><output id="more-position-output">0%</output></span><input id="more-position" type="range" min="0" max="100" step="1" value="0"></label>
         <div class="more-actions">
           <button id="more-toc" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>작품 목차</span></button>
+          <button id="reader-work-find" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><circle cx="16.5" cy="10.5" r="3.5"/><path d="m19 13 2.5 2.5"/></svg><span>작품에서 찾기</span></button>
           <button id="more-find" type="button"><svg aria-hidden="true"><use href="#i-search"/></svg><span>본문 찾기</span></button>
           <button id="more-bookmark" type="button" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/></svg><span id="more-bookmark-label">저장</span></button>
           <button id="more-note" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5V4Z"/><path d="M15 20v-4h4M8 9h8M8 13h5"/></svg><span>메모·태그</span></button>
