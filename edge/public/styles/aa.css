@@ -48,7 +48,9 @@
 }
 
 @media (max-width: 759px) {
-  .aa-controls { top: 0; flex-wrap: nowrap; overflow-x: auto; padding-inline: 8px; }
+  .aa-controls { top: 0; flex-wrap: nowrap; overflow-x: auto; padding-inline: 8px; transition: top 160ms ease-in-out; }
+  /* Stuck under the sticky Reader top bar while it shows, not behind it. */
+  body:not(.reader-controls-hidden) .aa-controls { top: calc(48px + env(safe-area-inset-top)); }
   .aa-control-group { flex: 0 0 auto; }
   .aa-zoom-indicator { left: 50%; }
   .archive-body.aa { width: 100%; padding: 28px 8px 52px; }

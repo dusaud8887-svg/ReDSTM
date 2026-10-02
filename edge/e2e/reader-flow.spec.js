@@ -2466,6 +2466,14 @@ test("AA scene moves follow the original 레스 headers and hide without them", 
   await page.locator("#aa-scene-next").click();
   await expect(output).toHaveText("장면 2/4");
   expect(Math.abs(await headerTop(2) - 8)).toBeLessThanOrEqual(3);
+  // A scene move is not a reading scroll: the toolbar stays for the next move.
+  await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+  // While the bars show, the toolbar is not behind the Reader top bar (mobile).
+  const covered = await page.locator("#aa-scene-next").evaluate((button) => {
+    const box = button.getBoundingClientRect();
+    return !button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  });
+  expect(covered).toBe(false);
   await page.locator("#aa-scene-next").click();
   await page.locator("#aa-scene-next").click();
   await expect(output).toHaveText("장면 4/4");

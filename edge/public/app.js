@@ -882,6 +882,8 @@ function moveAaScene(direction) {
   if (index < 0) return;
   // A late font/layout restore must not put the reader back where the scene move started.
   readerSession.markUserScroll();
+  // The toolbar stays for the next ‹ ›.
+  holdChromeDuringScroll();
   scroller.scrollTo({ top: Math.max(0, tops[index] - offset), behavior: "instant" });
   updateAaScene();
 }
@@ -5144,6 +5146,13 @@ const PAGE_FORWARD_ZONE = 0.6;
 let pagingScroll = false;
 let pagingTimer;
 
+// A page turn or scene move is not a reading scroll: it must not bring the bars back or hide them.
+function holdChromeDuringScroll() {
+  pagingScroll = true;
+  clearTimeout(pagingTimer);
+  pagingTimer = setTimeout(() => { pagingScroll = false; }, 800);
+}
+
 function pageByTap(event) {
   const pane = elements["reader-pane"];
   const rect = pane.getBoundingClientRect();
@@ -5156,10 +5165,7 @@ function pageByTap(event) {
   const bottomBar = document.body.classList.contains("reader-controls-hidden") ? 0
     : document.querySelector(".reader-bottom")?.getBoundingClientRect().height ?? 0;
   const distance = Math.max(line, pane.clientHeight - readerTopInset() - bottomBar - 2 * line);
-  // The page turn is not a reading scroll: it must not bring the bars back or hide them.
-  pagingScroll = true;
-  clearTimeout(pagingTimer);
-  pagingTimer = setTimeout(() => { pagingScroll = false; }, 800);
+  holdChromeDuringScroll();
   pane.scrollBy({
     top: direction * distance,
     behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
