@@ -97,7 +97,7 @@ Oracle marker 부재까지 확인해야 bootstrap이 완료된다.
 
 1. Oracle target, Access machine credential, Cloudflare auth를 쓰기 전에 검증한다.
 2. remote Git ref를 갱신하고 clean/pushed commit인지 확인한다.
-3. 해당 SHA의 detached 임시 worktree를 만들고 그 snapshot에서 전체 Python/Edge gate와 배포를 실행한다.
+3. 해당 SHA의 detached 임시 worktree를 만들고 그 snapshot에서 전체 Python/Edge gate와 배포를 실행한다. Edge E2E는 workstation 메모리에 맞춰 `npm run test:e2e:local`(project별 실행)이다. CI는 `npm run test:e2e`.
 4. 현재 Worker deployment/version과 Oracle status를 기록한다.
 5. remote D1 migration을 적용한다.
 6. Worker를 `git:<sha>` message와 `git-<40-character-sha>` tag로 배포한다.

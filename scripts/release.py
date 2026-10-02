@@ -303,7 +303,9 @@ def edge_preflight(
         _node_command(runner, "npm", "ci"),
         _node_command(runner, "npm", "test"),
         _node_command(runner, "npm", "run", "check"),
-        _node_command(runner, "npm", "run", "test:e2e"),
+        # Releases run on the 16 GB workstation (docs/12 §4): one Playwright run per project keeps
+        # the local server and browsers within memory. CI keeps the single `test:e2e` run.
+        _node_command(runner, "npm", "run", "test:e2e:local"),
         _node_command(runner, "npm", "run", "test:d1"),
     ]
     for command in commands:

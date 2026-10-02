@@ -156,7 +156,7 @@ def test_edge_preflight_runs_e2e_local_migrations_and_strict_dry_run(
         ["npm", "ci"],
         ["npm", "test"],
         ["npm", "run", "check"],
-        ["npm", "run", "test:e2e"],
+        ["npm", "run", "test:e2e:local"],
     ]
     assert commands[4] == ["npm", "run", "test:d1"]
     assert commands[5] == ["npx", "wrangler", "deploy", "--dry-run", "--strict"]
