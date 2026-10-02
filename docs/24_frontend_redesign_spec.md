@@ -810,7 +810,8 @@ DB "redstm" v1   (owner namespace: 로그인 사용자별 DB 이름 "redstm:<own
   **캐시하지 않고** 클라이언트에 `auth-expired` 메시지.
 - precache 목록은 `scripts/vendor.mjs` 확장(`precache-manifest.json` 생성, 파일 hash 포함)이 만들고 `npm run check`가 현재 파일과 일치하는지 검사.
   precache에는 **셸 + Pretendard core + MaruBuri 700 core**만. 나머지 vendor·글꼴 조각은 사용 시 runtime 캐시(§12.8 예산 3종).
-- SW는 `navigator.serviceWorker.register("/sw.js", { type: "module" })`(module worker 미지원 브라우저는 SW 없이 온라인 동작). SW 안에서 동적 `import()` 금지.
+- SW 원본은 `edge/sw/sw.js`(ESM import), 배포본 `public/sw.js`는 `npm run precache`가 **classic 스크립트 하나로 번들**한다(`npm run check`가 일치 검사). `register("/sw.js")`(classic). module SW는 Chrome이 스크립트와 import를 쿠키 없이 받아 Cloudflare Access 로그인으로 redirect되고 등록이 실패한다(2026-10-03 운영 콘솔 `The script resource is behind a redirect`). SW 안에서 동적 `import()` 금지.
+- manifest link는 `crossorigin="use-credentials"` — 기본 요청은 쿠키가 없어 같은 이유로 Access에 막힌다.
 
 #### 12.6.2 오프라인 snapshot
 

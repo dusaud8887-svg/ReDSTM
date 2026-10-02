@@ -1,183 +1,1292 @@
-// Service worker (docs/24 §12.6). Routes are registered in the order of the §12.6.1 table and the
-// first match wins. Nothing is imported dynamically. Every caching strategy shares one response
-// check: a redirect, a 3xx/401/403 or an HTML answer to an API request is never cached and tells
-// the page that the sign-in has expired instead of standing in for the real answer.
-
-import {
-  CacheableResponsePlugin, CacheFirst, ExpirationPlugin, NavigationRoute, NetworkFirst, NetworkOnly, RangeRequestsPlugin,
-  cleanupOutdatedCaches, precacheAndRoute, registerRoute,
-} from "/vendor/workbox@7.4.1/workbox.js";
-import shell from "/precache-manifest.js";
-
-const OWNER_CACHE = "redstm-sw-owner";
-const DAY = 24 * 60 * 60;
-let owner = "anon";
-
-// The signed-in owner (ownerHash from /api/v1/me, sent by the page) suffixes every cache that holds
-// reading data, so another account on this device never reads or overwrites it (§12.6.3).
-async function loadOwner() {
-  const saved = await (await caches.open(OWNER_CACHE)).match("/owner");
-  if (saved) owner = await saved.text();
-}
-const ownerLoaded = loadOwner().catch(() => {});
-const named = (base) => `${base}-${owner}`;
-const offlineCacheName = () => named("offline-v1");
-
-function tell(message) {
-  void self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
-    for (const client of clients) client.postMessage(message);
-  });
-}
-
-const api = (url) => url.pathname.startsWith("/api/") || url.pathname.startsWith("/archive/");
-function authFailure(request, response) {
-  if (!response) return false;
-  if (response.type === "opaqueredirect" || response.redirected || [401, 403].includes(response.status) ||
-      (response.status >= 300 && response.status < 400)) return true;
-  return api(new URL(request.url)) && (response.headers.get("Content-Type") ?? "").toLowerCase().includes("text/html");
-}
-const guard = {
-  async fetchDidSucceed({ request, response }) {
-    if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url });
-    return response;
-  },
-  async cacheWillUpdate({ request, response }) {
-    return response && response.status === 200 && !authFailure(request, response) ? response : null;
-  },
-};
-
-// Strategies resolve their cache name per request, after the owner is known.
-function ownedStrategy(Strategy, base, options = {}) {
-  return async (context) => {
-    await ownerLoaded;
-    return new Strategy({ ...options, cacheName: named(base), plugins: [guard, ...(options.plugins ?? [])] }).handle(context);
-  };
-}
-// A work saved for offline reading answers first; otherwise the runtime cache.
-function savedFirst(fallback) {
-  return async (context) => {
-    await ownerLoaded;
-    const saved = await (await caches.open(offlineCacheName())).match(context.request);
-    return saved ?? fallback(context);
-  };
-}
-const path = (test) => ({ url }) => url.origin === self.location.origin && test(url.pathname);
-const expiring = (maxEntries, maxAgeSeconds) => new ExpirationPlugin({ maxEntries, maxAgeSeconds, purgeOnQuotaError: true });
-
-// 1. Operations, Cloudflare and Access sign-in.
-registerRoute(path((p) => p.startsWith("/ops") || p.startsWith("/cdn-cgi/")), new NetworkOnly());
-// 2. Sync, RUM and who-am-I (POST requests are never routed, so they always reach the network).
-registerRoute(path((p) => p.startsWith("/api/v1/sync") || p === "/api/v1/rum" || p === "/api/v1/me"), new NetworkOnly());
-// 4. Archive freshness must not show a past value as current.
-registerRoute(path((p) => p === "/api/v1/text/status"), new NetworkOnly());
-// 5. Text release pointers.
-registerRoute(path((p) => /^\/api\/v1\/text\/release\/(?:novel|arcalive)$/.test(p)), ownedStrategy(NetworkFirst, "text-pointer", { networkTimeoutSeconds: 3 }));
-// 6–7. Immutable release manifests and indexes.
-registerRoute(path((p) => p.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(CacheFirst, "text-meta"));
-registerRoute(path((p) => p.startsWith("/api/v1/text/index/")), ownedStrategy(CacheFirst, "text-meta", { plugins: [expiring(200)] }));
-// 8. Immutable text objects.
-registerRoute(path((p) => p.startsWith("/api/v1/text/object/")),
-  savedFirst(ownedStrategy(CacheFirst, "text-objects", { plugins: [expiring(1000, 30 * DAY)] })));
-// 9. Media (GET), with ranges for video.
-registerRoute(path((p) => p.startsWith("/api/v1/text/media/")), ownedStrategy(CacheFirst, "media", {
-  plugins: [new CacheableResponsePlugin({ statuses: [200] }), new RangeRequestsPlugin()],
-}));
-// 10. The archive pointer.
-registerRoute(path((p) => p === "/archive/release.json"), ownedStrategy(NetworkFirst, "archive-pointer", { networkTimeoutSeconds: 3 }));
-// 11. Content-addressed archive objects (.json.zst replays from the cache, spike S3).
-registerRoute(path((p) => p.startsWith("/archive/")),
-  savedFirst(ownedStrategy(CacheFirst, "archive", { plugins: [expiring(1000, 30 * DAY)] })));
-// 12. Versioned fonts and vendor bundles never change under the same path.
-registerRoute(path((p) => /^\/(?:fonts|vendor)\/[a-z0-9-]+@\d+(?:\.\d+){0,2}\//.test(p)),
-  new CacheFirst({ cacheName: "static-v", plugins: [guard] }));
-// 13. The app shell.
-precacheAndRoute(shell);
-cleanupOutdatedCaches();
-// 14. Other navigations: the network, else the cached shell (the page shows the offline banner).
-const shellRequest = () => caches.match("/", { ignoreSearch: true });
-registerRoute(new NavigationRoute(async (context) => {
+// Generated by edge/scripts/vendor.mjs from sw/sw.js; run npm run precache after editing it.
+(() => {
+  // public:vendor/workbox@7.4.1/workbox.js
   try {
-    const response = await new NetworkFirst({ cacheName: "pages", networkTimeoutSeconds: 4, plugins: [guard] }).handle(context);
-    if (response) return response;
-  } catch { /* offline */ }
-  return (await shellRequest()) ?? Response.error();
-}, { denylist: [/^\/ops/, /^\/cdn-cgi\//] }));
-
-// Saving a work for offline reading (§12.6.2): the page sends the work's files; four at a time
-// they go into the owner's offline cache, files already there are skipped (so 이어서 저장 resumes),
-// and progress goes back to the pages. One failed file leaves the save partial, never complete.
-const cancelled = new Set();
-async function saveOffline({ id, urls, requires = [] }) {
-  await ownerLoaded;
-  cancelled.delete(id);
-  const cache = await caches.open(offlineCacheName());
-  const statics = await caches.open("static-v");
-  let done = 0;
-  let failed = 0;
-  let bytes = 0;
-  const queue = [...urls];
-  const report = (type) => tell({ type, id, done, failed, total: urls.length, bytes });
-  async function take() {
-    while (queue.length && !cancelled.has(id)) {
-      const url = queue.shift();
-      try {
-        const cached = await cache.match(url);
-        if (cached) {
-          bytes += (await cached.clone().arrayBuffer()).byteLength;
-        } else {
-          const response = await fetch(url, { credentials: "same-origin" });
-          if (response.status !== 200 || authFailure(new Request(url), response)) {
-            if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url });
-            throw new Error(String(response.status));
-          }
-          bytes += (await response.clone().arrayBuffer()).byteLength;
-          await cache.put(url, response);
+    self["workbox:core:7.4.0"] && _();
+  } catch {
+  }
+  var Fe = (o2, ...e) => {
+    let t = o2;
+    return e.length > 0 && (t += ` :: ${JSON.stringify(e)}`), t;
+  };
+  var de = Fe;
+  var l = class extends Error {
+    constructor(e, t) {
+      let r = de(e, t);
+      super(r), this.name = e, this.details = t;
+    }
+  };
+  try {
+    self["workbox:routing:7.4.0"] && _();
+  } catch {
+  }
+  var P = "GET";
+  var E = (o2) => o2 && typeof o2 == "object" ? o2 : { handle: o2 };
+  var h = class {
+    constructor(e, t, r = P) {
+      this.handler = E(t), this.match = e, this.method = r;
+    }
+    setCatchHandler(e) {
+      this.catchHandler = E(e);
+    }
+  };
+  var S = class extends h {
+    constructor(e, { allowlist: t = [/./], denylist: r = [] } = {}) {
+      super((s) => this._match(s), e), this._allowlist = t, this._denylist = r;
+    }
+    _match({ url: e, request: t }) {
+      if (t && t.mode !== "navigate") return false;
+      let r = e.pathname + e.search;
+      for (let s of this._denylist) if (s.test(r)) return false;
+      return !!this._allowlist.some((s) => s.test(r));
+    }
+  };
+  var x = class extends h {
+    constructor(e, t, r) {
+      let s = ({ url: n }) => {
+        let a = e.exec(n.href);
+        if (a && !(n.origin !== location.origin && a.index !== 0)) return a.slice(1);
+      };
+      super(s, t, r);
+    }
+  };
+  var ee = (o2) => new URL(String(o2), location.href).href.replace(new RegExp(`^${location.origin}`), "");
+  var R = class {
+    constructor() {
+      this._routes = /* @__PURE__ */ new Map(), this._defaultHandlerMap = /* @__PURE__ */ new Map();
+    }
+    get routes() {
+      return this._routes;
+    }
+    addFetchListener() {
+      self.addEventListener("fetch", ((e) => {
+        let { request: t } = e, r = this.handleRequest({ request: t, event: e });
+        r && e.respondWith(r);
+      }));
+    }
+    addCacheListener() {
+      self.addEventListener("message", ((e) => {
+        if (e.data && e.data.type === "CACHE_URLS") {
+          let { payload: t } = e.data, r = Promise.all(t.urlsToCache.map((s) => {
+            typeof s == "string" && (s = [s]);
+            let n = new Request(...s);
+            return this.handleRequest({ request: n, event: e });
+          }));
+          e.waitUntil(r), e.ports && e.ports[0] && r.then(() => e.ports[0].postMessage(true));
         }
-        done += 1;
-      } catch {
-        failed += 1;
+      }));
+    }
+    handleRequest({ request: e, event: t }) {
+      let r = new URL(e.url, location.href);
+      if (!r.protocol.startsWith("http")) return;
+      let s = r.origin === location.origin, { params: n, route: a } = this.findMatchingRoute({ event: t, request: e, sameOrigin: s, url: r }), i = a && a.handler, c = [], u = e.method;
+      if (!i && this._defaultHandlerMap.has(u) && (i = this._defaultHandlerMap.get(u)), !i) return;
+      let y;
+      try {
+        y = i.handle({ url: r, request: e, event: t, params: n });
+      } catch (b) {
+        y = Promise.reject(b);
       }
-      report("offline-progress");
+      let m = a && a.catchHandler;
+      return y instanceof Promise && (this._catchHandler || m) && (y = y.catch(async (b) => {
+        if (m) try {
+          return await m.handle({ url: r, request: e, event: t, params: n });
+        } catch (he) {
+          he instanceof Error && (b = he);
+        }
+        if (this._catchHandler) return this._catchHandler.handle({ url: r, request: e, event: t });
+        throw b;
+      })), y;
+    }
+    findMatchingRoute({ url: e, sameOrigin: t, request: r, event: s }) {
+      let n = this._routes.get(r.method) || [];
+      for (let a of n) {
+        let i, c = a.match({ url: e, sameOrigin: t, request: r, event: s });
+        if (c) return i = c, (Array.isArray(i) && i.length === 0 || c.constructor === Object && Object.keys(c).length === 0 || typeof c == "boolean") && (i = void 0), { route: a, params: i };
+      }
+      return {};
+    }
+    setDefaultHandler(e, t = P) {
+      this._defaultHandlerMap.set(t, E(e));
+    }
+    setCatchHandler(e) {
+      this._catchHandler = E(e);
+    }
+    registerRoute(e) {
+      this._routes.has(e.method) || this._routes.set(e.method, []), this._routes.get(e.method).push(e);
+    }
+    unregisterRoute(e) {
+      if (!this._routes.has(e.method)) throw new l("unregister-route-but-not-found-with-method", { method: e.method });
+      let t = this._routes.get(e.method).indexOf(e);
+      if (t > -1) this._routes.get(e.method).splice(t, 1);
+      else throw new l("unregister-route-route-not-registered");
+    }
+  };
+  var C;
+  var v = () => (C || (C = new R(), C.addFetchListener(), C.addCacheListener()), C);
+  function q(o2, e, t) {
+    let r;
+    if (typeof o2 == "string") {
+      let n = new URL(o2, location.href), a = ({ url: i }) => i.href === n.href;
+      r = new h(a, e, t);
+    } else if (o2 instanceof RegExp) r = new x(o2, e, t);
+    else if (typeof o2 == "function") r = new h(o2, e, t);
+    else if (o2 instanceof h) r = o2;
+    else throw new l("unsupported-route-type", { moduleName: "workbox-routing", funcName: "registerRoute", paramName: "capture" });
+    return v().registerRoute(r), r;
+  }
+  var g = { googleAnalytics: "googleAnalytics", precache: "precache-v2", prefix: "workbox", runtime: "runtime", suffix: typeof registration < "u" ? registration.scope : "" };
+  var te = (o2) => [g.prefix, o2, g.suffix].filter((e) => e && e.length > 0).join("-");
+  var Ie = (o2) => {
+    for (let e of Object.keys(g)) o2(e);
+  };
+  var f = { updateDetails: (o2) => {
+    Ie((e) => {
+      typeof o2[e] == "string" && (g[e] = o2[e]);
+    });
+  }, getGoogleAnalyticsName: (o2) => o2 || te(g.googleAnalytics), getPrecacheName: (o2) => o2 || te(g.precache), getPrefix: () => g.prefix, getRuntimeName: (o2) => o2 || te(g.runtime), getSuffix: () => g.suffix };
+  function fe(o2, e) {
+    let t = new URL(o2);
+    for (let r of e) t.searchParams.delete(r);
+    return t.href;
+  }
+  async function ge(o2, e, t, r) {
+    let s = fe(e.url, t);
+    if (e.url === s) return o2.match(e, r);
+    let n = Object.assign(Object.assign({}, r), { ignoreSearch: true }), a = await o2.keys(e, n);
+    for (let i of a) {
+      let c = fe(i.url, t);
+      if (s === c) return o2.match(i, r);
     }
   }
-  // The fonts and modules a saved work needs to open offline.
-  for (const url of requires) {
+  var V = class {
+    constructor() {
+      this.promise = new Promise((e, t) => {
+        this.resolve = e, this.reject = t;
+      });
+    }
+  };
+  var A = /* @__PURE__ */ new Set();
+  async function we() {
+    for (let o2 of A) await o2();
+  }
+  function F(o2) {
+    return new Promise((e) => setTimeout(e, o2));
+  }
+  try {
+    self["workbox:strategies:7.4.0"] && _();
+  } catch {
+  }
+  function I(o2) {
+    return typeof o2 == "string" ? new Request(o2) : o2;
+  }
+  var k = class {
+    constructor(e, t) {
+      this._cacheKeys = {}, Object.assign(this, t), this.event = t.event, this._strategy = e, this._handlerDeferred = new V(), this._extendLifetimePromises = [], this._plugins = [...e.plugins], this._pluginStateMap = /* @__PURE__ */ new Map();
+      for (let r of this._plugins) this._pluginStateMap.set(r, {});
+      this.event.waitUntil(this._handlerDeferred.promise);
+    }
+    async fetch(e) {
+      let { event: t } = this, r = I(e);
+      if (r.mode === "navigate" && t instanceof FetchEvent && t.preloadResponse) {
+        let a = await t.preloadResponse;
+        if (a) return a;
+      }
+      let s = this.hasCallback("fetchDidFail") ? r.clone() : null;
+      try {
+        for (let a of this.iterateCallbacks("requestWillFetch")) r = await a({ request: r.clone(), event: t });
+      } catch (a) {
+        if (a instanceof Error) throw new l("plugin-error-request-will-fetch", { thrownErrorMessage: a.message });
+      }
+      let n = r.clone();
+      try {
+        let a;
+        a = await fetch(r, r.mode === "navigate" ? void 0 : this._strategy.fetchOptions);
+        for (let i of this.iterateCallbacks("fetchDidSucceed")) a = await i({ event: t, request: n, response: a });
+        return a;
+      } catch (a) {
+        throw s && await this.runCallbacks("fetchDidFail", { error: a, event: t, originalRequest: s.clone(), request: n.clone() }), a;
+      }
+    }
+    async fetchAndCachePut(e) {
+      let t = await this.fetch(e), r = t.clone();
+      return this.waitUntil(this.cachePut(e, r)), t;
+    }
+    async cacheMatch(e) {
+      let t = I(e), r, { cacheName: s, matchOptions: n } = this._strategy, a = await this.getCacheKey(t, "read"), i = Object.assign(Object.assign({}, n), { cacheName: s });
+      r = await caches.match(a, i);
+      for (let c of this.iterateCallbacks("cachedResponseWillBeUsed")) r = await c({ cacheName: s, matchOptions: n, cachedResponse: r, request: a, event: this.event }) || void 0;
+      return r;
+    }
+    async cachePut(e, t) {
+      let r = I(e);
+      await F(0);
+      let s = await this.getCacheKey(r, "write");
+      if (!t) throw new l("cache-put-with-no-response", { url: ee(s.url) });
+      let n = await this._ensureResponseSafeToCache(t);
+      if (!n) return false;
+      let { cacheName: a, matchOptions: i } = this._strategy, c = await self.caches.open(a), u = this.hasCallback("cacheDidUpdate"), y = u ? await ge(c, s.clone(), ["__WB_REVISION__"], i) : null;
+      try {
+        await c.put(s, u ? n.clone() : n);
+      } catch (m) {
+        if (m instanceof Error) throw m.name === "QuotaExceededError" && await we(), m;
+      }
+      for (let m of this.iterateCallbacks("cacheDidUpdate")) await m({ cacheName: a, oldResponse: y, newResponse: n.clone(), request: s, event: this.event });
+      return true;
+    }
+    async getCacheKey(e, t) {
+      let r = `${e.url} | ${t}`;
+      if (!this._cacheKeys[r]) {
+        let s = e;
+        for (let n of this.iterateCallbacks("cacheKeyWillBeUsed")) s = I(await n({ mode: t, request: s, event: this.event, params: this.params }));
+        this._cacheKeys[r] = s;
+      }
+      return this._cacheKeys[r];
+    }
+    hasCallback(e) {
+      for (let t of this._strategy.plugins) if (e in t) return true;
+      return false;
+    }
+    async runCallbacks(e, t) {
+      for (let r of this.iterateCallbacks(e)) await r(t);
+    }
+    *iterateCallbacks(e) {
+      for (let t of this._strategy.plugins) if (typeof t[e] == "function") {
+        let r = this._pluginStateMap.get(t);
+        yield (n) => {
+          let a = Object.assign(Object.assign({}, n), { state: r });
+          return t[e](a);
+        };
+      }
+    }
+    waitUntil(e) {
+      return this._extendLifetimePromises.push(e), e;
+    }
+    async doneWaiting() {
+      for (; this._extendLifetimePromises.length; ) {
+        let e = this._extendLifetimePromises.splice(0), r = (await Promise.allSettled(e)).find((s) => s.status === "rejected");
+        if (r) throw r.reason;
+      }
+    }
+    destroy() {
+      this._handlerDeferred.resolve(null);
+    }
+    async _ensureResponseSafeToCache(e) {
+      let t = e, r = false;
+      for (let s of this.iterateCallbacks("cacheWillUpdate")) if (t = await s({ request: this.request, response: t, event: this.event }) || void 0, r = true, !t) break;
+      return r || t && t.status !== 200 && (t = void 0), t;
+    }
+  };
+  var p = class {
+    constructor(e = {}) {
+      this.cacheName = f.getRuntimeName(e.cacheName), this.plugins = e.plugins || [], this.fetchOptions = e.fetchOptions, this.matchOptions = e.matchOptions;
+    }
+    handle(e) {
+      let [t] = this.handleAll(e);
+      return t;
+    }
+    handleAll(e) {
+      e instanceof FetchEvent && (e = { event: e, request: e.request });
+      let t = e.event, r = typeof e.request == "string" ? new Request(e.request) : e.request, s = "params" in e ? e.params : void 0, n = new k(this, { event: t, request: r, params: s }), a = this._getResponse(n, r, t), i = this._awaitComplete(a, n, r, t);
+      return [a, i];
+    }
+    async _getResponse(e, t, r) {
+      await e.runCallbacks("handlerWillStart", { event: r, request: t });
+      let s;
+      try {
+        if (s = await this._handle(t, e), !s || s.type === "error") throw new l("no-response", { url: t.url });
+      } catch (n) {
+        if (n instanceof Error) {
+          for (let a of e.iterateCallbacks("handlerDidError")) if (s = await a({ error: n, event: r, request: t }), s) break;
+        }
+        if (!s) throw n;
+      }
+      for (let n of e.iterateCallbacks("handlerWillRespond")) s = await n({ event: r, request: t, response: s });
+      return s;
+    }
+    async _awaitComplete(e, t, r, s) {
+      let n, a;
+      try {
+        n = await e;
+      } catch {
+      }
+      try {
+        await t.runCallbacks("handlerDidRespond", { event: s, request: r, response: n }), await t.doneWaiting();
+      } catch (i) {
+        i instanceof Error && (a = i);
+      }
+      if (await t.runCallbacks("handlerDidComplete", { event: s, request: r, response: n, error: a }), t.destroy(), a) throw a;
+    }
+  };
+  var M = class extends p {
+    async _handle(e, t) {
+      let r = [], s = await t.cacheMatch(e), n;
+      if (!s) try {
+        s = await t.fetchAndCachePut(e);
+      } catch (a) {
+        a instanceof Error && (n = a);
+      }
+      if (!s) throw new l("no-response", { url: e.url, error: n });
+      return s;
+    }
+  };
+  var W = { cacheWillUpdate: async ({ response: o2 }) => o2.status === 200 || o2.status === 0 ? o2 : null };
+  var K = class extends p {
+    constructor(e = {}) {
+      super(e), this.plugins.some((t) => "cacheWillUpdate" in t) || this.plugins.unshift(W), this._networkTimeoutSeconds = e.networkTimeoutSeconds || 0;
+    }
+    async _handle(e, t) {
+      let r = [], s = [], n;
+      if (this._networkTimeoutSeconds) {
+        let { id: c, promise: u } = this._getTimeoutPromise({ request: e, logs: r, handler: t });
+        n = c, s.push(u);
+      }
+      let a = this._getNetworkPromise({ timeoutId: n, request: e, logs: r, handler: t });
+      s.push(a);
+      let i = await t.waitUntil((async () => await t.waitUntil(Promise.race(s)) || await a)());
+      if (!i) throw new l("no-response", { url: e.url });
+      return i;
+    }
+    _getTimeoutPromise({ request: e, logs: t, handler: r }) {
+      let s;
+      return { promise: new Promise((a) => {
+        s = setTimeout(async () => {
+          a(await r.cacheMatch(e));
+        }, this._networkTimeoutSeconds * 1e3);
+      }), id: s };
+    }
+    async _getNetworkPromise({ timeoutId: e, request: t, logs: r, handler: s }) {
+      let n, a;
+      try {
+        a = await s.fetchAndCachePut(t);
+      } catch (i) {
+        i instanceof Error && (n = i);
+      }
+      return e && clearTimeout(e), (n || !a) && (a = await s.cacheMatch(t)), a;
+    }
+  };
+  var B = class extends p {
+    constructor(e = {}) {
+      super(e), this._networkTimeoutSeconds = e.networkTimeoutSeconds || 0;
+    }
+    async _handle(e, t) {
+      let r, s;
+      try {
+        let n = [t.fetch(e)];
+        if (this._networkTimeoutSeconds) {
+          let a = F(this._networkTimeoutSeconds * 1e3);
+          n.push(a);
+        }
+        if (s = await Promise.race(n), !s) throw new Error(`Timed out the network response after ${this._networkTimeoutSeconds} seconds.`);
+      } catch (n) {
+        n instanceof Error && (r = n);
+      }
+      if (!s) throw new l("no-response", { url: e.url, error: r });
+      return s;
+    }
+  };
+  function j(o2) {
+    o2.then(() => {
+    });
+  }
+  var Me = (o2, e) => e.some((t) => o2 instanceof t);
+  var Ne;
+  var Ee;
+  function We() {
+    return Ne || (Ne = [IDBDatabase, IDBObjectStore, IDBIndex, IDBCursor, IDBTransaction]);
+  }
+  function Ke() {
+    return Ee || (Ee = [IDBCursor.prototype.advance, IDBCursor.prototype.continue, IDBCursor.prototype.continuePrimaryKey]);
+  }
+  var be = /* @__PURE__ */ new WeakMap();
+  var oe = /* @__PURE__ */ new WeakMap();
+  var xe = /* @__PURE__ */ new WeakMap();
+  var re = /* @__PURE__ */ new WeakMap();
+  var ne = /* @__PURE__ */ new WeakMap();
+  function Be(o2) {
+    let e = new Promise((t, r) => {
+      let s = () => {
+        o2.removeEventListener("success", n), o2.removeEventListener("error", a);
+      }, n = () => {
+        t(d(o2.result)), s();
+      }, a = () => {
+        r(o2.error), s();
+      };
+      o2.addEventListener("success", n), o2.addEventListener("error", a);
+    });
+    return e.then((t) => {
+      t instanceof IDBCursor && be.set(t, o2);
+    }).catch(() => {
+    }), ne.set(e, o2), e;
+  }
+  function He(o2) {
+    if (oe.has(o2)) return;
+    let e = new Promise((t, r) => {
+      let s = () => {
+        o2.removeEventListener("complete", n), o2.removeEventListener("error", a), o2.removeEventListener("abort", a);
+      }, n = () => {
+        t(), s();
+      }, a = () => {
+        r(o2.error || new DOMException("AbortError", "AbortError")), s();
+      };
+      o2.addEventListener("complete", n), o2.addEventListener("error", a), o2.addEventListener("abort", a);
+    });
+    oe.set(o2, e);
+  }
+  var se = { get(o2, e, t) {
+    if (o2 instanceof IDBTransaction) {
+      if (e === "done") return oe.get(o2);
+      if (e === "objectStoreNames") return o2.objectStoreNames || xe.get(o2);
+      if (e === "store") return t.objectStoreNames[1] ? void 0 : t.objectStore(t.objectStoreNames[0]);
+    }
+    return d(o2[e]);
+  }, set(o2, e, t) {
+    return o2[e] = t, true;
+  }, has(o2, e) {
+    return o2 instanceof IDBTransaction && (e === "done" || e === "store") ? true : e in o2;
+  } };
+  function Re(o2) {
+    se = o2(se);
+  }
+  function je(o2) {
+    return o2 === IDBDatabase.prototype.transaction && !("objectStoreNames" in IDBTransaction.prototype) ? function(e, ...t) {
+      let r = o2.call(G(this), e, ...t);
+      return xe.set(r, e.sort ? e.sort() : [e]), d(r);
+    } : Ke().includes(o2) ? function(...e) {
+      return o2.apply(G(this), e), d(be.get(this));
+    } : function(...e) {
+      return d(o2.apply(G(this), e));
+    };
+  }
+  function Ge(o2) {
+    return typeof o2 == "function" ? je(o2) : (o2 instanceof IDBTransaction && He(o2), Me(o2, We()) ? new Proxy(o2, se) : o2);
+  }
+  function d(o2) {
+    if (o2 instanceof IDBRequest) return Be(o2);
+    if (re.has(o2)) return re.get(o2);
+    let e = Ge(o2);
+    return e !== o2 && (re.set(o2, e), ne.set(e, o2)), e;
+  }
+  var G = (o2) => ne.get(o2);
+  function Ce(o2, e, { blocked: t, upgrade: r, blocking: s, terminated: n } = {}) {
+    let a = indexedDB.open(o2, e), i = d(a);
+    return r && a.addEventListener("upgradeneeded", (c) => {
+      r(d(a.result), c.oldVersion, c.newVersion, d(a.transaction), c);
+    }), t && a.addEventListener("blocked", (c) => t(c.oldVersion, c.newVersion, c)), i.then((c) => {
+      n && c.addEventListener("close", () => n()), s && c.addEventListener("versionchange", (u) => s(u.oldVersion, u.newVersion, u));
+    }).catch(() => {
+    }), i;
+  }
+  function ve(o2, { blocked: e } = {}) {
+    let t = indexedDB.deleteDatabase(o2);
+    return e && t.addEventListener("blocked", (r) => e(r.oldVersion, r)), d(t).then(() => {
+    });
+  }
+  var Je = ["get", "getKey", "getAll", "getAllKeys", "count"];
+  var ze = ["put", "add", "delete", "clear"];
+  var ae = /* @__PURE__ */ new Map();
+  function _e(o2, e) {
+    if (!(o2 instanceof IDBDatabase && !(e in o2) && typeof e == "string")) return;
+    if (ae.get(e)) return ae.get(e);
+    let t = e.replace(/FromIndex$/, ""), r = e !== t, s = ze.includes(t);
+    if (!(t in (r ? IDBIndex : IDBObjectStore).prototype) || !(s || Je.includes(t))) return;
+    let n = async function(a, ...i) {
+      let c = this.transaction(a, s ? "readwrite" : "readonly"), u = c.store;
+      return r && (u = u.index(i.shift())), (await Promise.all([u[t](...i), s && c.done]))[0];
+    };
+    return ae.set(e, n), n;
+  }
+  Re((o2) => ({ ...o2, get: (e, t, r) => _e(e, t) || o2.get(e, t, r), has: (e, t) => !!_e(e, t) || o2.has(e, t) }));
+  try {
+    self["workbox:expiration:7.4.0"] && _();
+  } catch {
+  }
+  var Qe = "workbox-expiration";
+  var D = "cache-entries";
+  var ke = (o2) => {
+    let e = new URL(o2, location.href);
+    return e.hash = "", e.href;
+  };
+  var J = class {
+    constructor(e) {
+      this._db = null, this._cacheName = e;
+    }
+    _upgradeDb(e) {
+      let t = e.createObjectStore(D, { keyPath: "id" });
+      t.createIndex("cacheName", "cacheName", { unique: false }), t.createIndex("timestamp", "timestamp", { unique: false });
+    }
+    _upgradeDbAndDeleteOldDbs(e) {
+      this._upgradeDb(e), this._cacheName && ve(this._cacheName);
+    }
+    async setTimestamp(e, t) {
+      e = ke(e);
+      let r = { url: e, timestamp: t, cacheName: this._cacheName, id: this._getId(e) }, n = (await this.getDb()).transaction(D, "readwrite", { durability: "relaxed" });
+      await n.store.put(r), await n.done;
+    }
+    async getTimestamp(e) {
+      let r = await (await this.getDb()).get(D, this._getId(e));
+      return r?.timestamp;
+    }
+    async expireEntries(e, t) {
+      let r = await this.getDb(), s = await r.transaction(D).store.index("timestamp").openCursor(null, "prev"), n = [], a = 0;
+      for (; s; ) {
+        let c = s.value;
+        c.cacheName === this._cacheName && (e && c.timestamp < e || t && a >= t ? n.push(s.value) : a++), s = await s.continue();
+      }
+      let i = [];
+      for (let c of n) await r.delete(D, c.id), i.push(c.url);
+      return i;
+    }
+    _getId(e) {
+      return this._cacheName + "|" + ke(e);
+    }
+    async getDb() {
+      return this._db || (this._db = await Ce(Qe, 1, { upgrade: this._upgradeDbAndDeleteOldDbs.bind(this) })), this._db;
+    }
+  };
+  var T = class {
+    constructor(e, t = {}) {
+      this._isRunning = false, this._rerunRequested = false, this._maxEntries = t.maxEntries, this._maxAgeSeconds = t.maxAgeSeconds, this._matchOptions = t.matchOptions, this._cacheName = e, this._timestampModel = new J(e);
+    }
+    async expireEntries() {
+      if (this._isRunning) {
+        this._rerunRequested = true;
+        return;
+      }
+      this._isRunning = true;
+      let e = this._maxAgeSeconds ? Date.now() - this._maxAgeSeconds * 1e3 : 0, t = await this._timestampModel.expireEntries(e, this._maxEntries), r = await self.caches.open(this._cacheName);
+      for (let s of t) await r.delete(s, this._matchOptions);
+      this._isRunning = false, this._rerunRequested && (this._rerunRequested = false, j(this.expireEntries()));
+    }
+    async updateTimestamp(e) {
+      await this._timestampModel.setTimestamp(e, Date.now());
+    }
+    async isURLExpired(e) {
+      if (this._maxAgeSeconds) {
+        let t = await this._timestampModel.getTimestamp(e), r = Date.now() - this._maxAgeSeconds * 1e3;
+        return t !== void 0 ? t < r : true;
+      } else return false;
+    }
+    async delete() {
+      this._rerunRequested = false, await this._timestampModel.expireEntries(1 / 0);
+    }
+  };
+  function De(o2) {
+    A.add(o2);
+  }
+  var z = class {
+    constructor(e = {}) {
+      this.cachedResponseWillBeUsed = async ({ event: t, request: r, cacheName: s, cachedResponse: n }) => {
+        if (!n) return null;
+        let a = this._isResponseDateFresh(n), i = this._getCacheExpiration(s);
+        j(i.expireEntries());
+        let c = i.updateTimestamp(r.url);
+        if (t) try {
+          t.waitUntil(c);
+        } catch {
+        }
+        return a ? n : null;
+      }, this.cacheDidUpdate = async ({ cacheName: t, request: r }) => {
+        let s = this._getCacheExpiration(t);
+        await s.updateTimestamp(r.url), await s.expireEntries();
+      }, this._config = e, this._maxAgeSeconds = e.maxAgeSeconds, this._cacheExpirations = /* @__PURE__ */ new Map(), e.purgeOnQuotaError && De(() => this.deleteCacheAndMetadata());
+    }
+    _getCacheExpiration(e) {
+      if (e === f.getRuntimeName()) throw new l("expire-custom-caches-only");
+      let t = this._cacheExpirations.get(e);
+      return t || (t = new T(e, this._config), this._cacheExpirations.set(e, t)), t;
+    }
+    _isResponseDateFresh(e) {
+      if (!this._maxAgeSeconds) return true;
+      let t = this._getDateHeaderTimestamp(e);
+      if (t === null) return true;
+      let r = Date.now();
+      return t >= r - this._maxAgeSeconds * 1e3;
+    }
+    _getDateHeaderTimestamp(e) {
+      if (!e.headers.has("date")) return null;
+      let t = e.headers.get("date"), s = new Date(t).getTime();
+      return isNaN(s) ? null : s;
+    }
+    async deleteCacheAndMetadata() {
+      for (let [e, t] of this._cacheExpirations) await self.caches.delete(e), await t.delete();
+      this._cacheExpirations = /* @__PURE__ */ new Map();
+    }
+  };
+  try {
+    self["workbox:cacheable-response:7.4.0"] && _();
+  } catch {
+  }
+  var O = class {
+    constructor(e = {}) {
+      this._statuses = e.statuses, this._headers = e.headers;
+    }
+    isResponseCacheable(e) {
+      let t = true;
+      return this._statuses && (t = this._statuses.includes(e.status)), this._headers && t && (t = Object.keys(this._headers).some((r) => e.headers.get(r) === this._headers[r])), t;
+    }
+  };
+  var Q = class {
+    constructor(e) {
+      this.cacheWillUpdate = async ({ response: t }) => this._cacheableResponse.isResponseCacheable(t) ? t : null, this._cacheableResponse = new O(e);
+    }
+  };
+  try {
+    self["workbox:range-requests:7.4.0"] && _();
+  } catch {
+  }
+  function Te(o2, e, t) {
+    let r = o2.size;
+    if (t && t > r || e && e < 0) throw new l("range-not-satisfiable", { size: r, end: t, start: e });
+    let s, n;
+    return e !== void 0 && t !== void 0 ? (s = e, n = t + 1) : e !== void 0 && t === void 0 ? (s = e, n = r) : t !== void 0 && e === void 0 && (s = r - t, n = r), { start: s, end: n };
+  }
+  function Oe(o2) {
+    let e = o2.trim().toLowerCase();
+    if (!e.startsWith("bytes=")) throw new l("unit-must-be-bytes", { normalizedRangeHeader: e });
+    if (e.includes(",")) throw new l("single-range-only", { normalizedRangeHeader: e });
+    let t = /(\d*)-(\d*)/.exec(e);
+    if (!t || !(t[1] || t[2])) throw new l("invalid-range-values", { normalizedRangeHeader: e });
+    return { start: t[1] === "" ? void 0 : Number(t[1]), end: t[2] === "" ? void 0 : Number(t[2]) };
+  }
+  async function ie(o2, e) {
     try {
-      if (!(await statics.match(url))) await statics.add(url);
-    } catch { /* a missing font falls back; the text still opens */ }
+      if (e.status === 206) return e;
+      let t = o2.headers.get("range");
+      if (!t) throw new l("no-range-header");
+      let r = Oe(t), s = await e.blob(), n = Te(s, r.start, r.end), a = s.slice(n.start, n.end), i = a.size, c = new Response(a, { status: 206, statusText: "Partial Content", headers: e.headers });
+      return c.headers.set("Content-Length", String(i)), c.headers.set("Content-Range", `bytes ${n.start}-${n.end - 1}/${s.size}`), c;
+    } catch {
+      return new Response("", { status: 416, statusText: "Range Not Satisfiable" });
+    }
   }
-  await Promise.all(Array.from({ length: Math.min(4, urls.length) }, take));
-  report(cancelled.has(id) ? "offline-cancelled" : "offline-done");
-}
+  var Y = class {
+    constructor() {
+      this.cachedResponseWillBeUsed = async ({ request: e, cachedResponse: t }) => t && e.headers.has("range") ? await ie(e, t) : t;
+    }
+  };
+  function ce(o2, e) {
+    let t = e();
+    return o2.waitUntil(t), t;
+  }
+  try {
+    self["workbox:precaching:7.4.0"] && _();
+  } catch {
+  }
+  var Ye = "__WB_REVISION__";
+  function Ue(o2) {
+    if (!o2) throw new l("add-to-cache-list-unexpected-type", { entry: o2 });
+    if (typeof o2 == "string") {
+      let n = new URL(o2, location.href);
+      return { cacheKey: n.href, url: n.href };
+    }
+    let { revision: e, url: t } = o2;
+    if (!t) throw new l("add-to-cache-list-unexpected-type", { entry: o2 });
+    if (!e) {
+      let n = new URL(t, location.href);
+      return { cacheKey: n.href, url: n.href };
+    }
+    let r = new URL(t, location.href), s = new URL(t, location.href);
+    return r.searchParams.set(Ye, e), { cacheKey: r.href, url: s.href };
+  }
+  var X = class {
+    constructor() {
+      this.updatedURLs = [], this.notUpdatedURLs = [], this.handlerWillStart = async ({ request: e, state: t }) => {
+        t && (t.originalRequest = e);
+      }, this.cachedResponseWillBeUsed = async ({ event: e, state: t, cachedResponse: r }) => {
+        if (e.type === "install" && t && t.originalRequest && t.originalRequest instanceof Request) {
+          let s = t.originalRequest.url;
+          r ? this.notUpdatedURLs.push(s) : this.updatedURLs.push(s);
+        }
+        return r;
+      };
+    }
+  };
+  var Z = class {
+    constructor({ precacheController: e }) {
+      this.cacheKeyWillBeUsed = async ({ request: t, params: r }) => {
+        let s = r?.cacheKey || this._precacheController.getCacheKeyForURL(t.url);
+        return s ? new Request(s, { headers: t.headers }) : t;
+      }, this._precacheController = e;
+    }
+  };
+  var U;
+  function $e() {
+    if (U === void 0) {
+      let o2 = new Response("");
+      if ("body" in o2) try {
+        new Response(o2.body), U = true;
+      } catch {
+        U = false;
+      }
+      U = false;
+    }
+    return U;
+  }
+  async function Le(o2, e) {
+    let t = null;
+    if (o2.url && (t = new URL(o2.url).origin), t !== self.location.origin) throw new l("cross-origin-copy-response", { origin: t });
+    let r = o2.clone(), s = { headers: new Headers(r.headers), status: r.status, statusText: r.statusText }, n = e ? e(s) : s, a = $e() ? r.body : await r.blob();
+    return new Response(a, n);
+  }
+  var N = class o extends p {
+    constructor(e = {}) {
+      e.cacheName = f.getPrecacheName(e.cacheName), super(e), this._fallbackToNetwork = e.fallbackToNetwork !== false, this.plugins.push(o.copyRedirectedCacheableResponsesPlugin);
+    }
+    async _handle(e, t) {
+      let r = await t.cacheMatch(e);
+      return r || (t.event && t.event.type === "install" ? await this._handleInstall(e, t) : await this._handleFetch(e, t));
+    }
+    async _handleFetch(e, t) {
+      let r, s = t.params || {};
+      if (this._fallbackToNetwork) {
+        let n = s.integrity, a = e.integrity, i = !a || a === n;
+        if (r = await t.fetch(new Request(e, { integrity: e.mode !== "no-cors" ? a || n : void 0 })), n && i && e.mode !== "no-cors") {
+          this._useDefaultCacheabilityPluginIfNeeded();
+          let c = await t.cachePut(e, r.clone());
+        }
+      } else throw new l("missing-precache-entry", { cacheName: this.cacheName, url: e.url });
+      return r;
+    }
+    async _handleInstall(e, t) {
+      this._useDefaultCacheabilityPluginIfNeeded();
+      let r = await t.fetch(e);
+      if (!await t.cachePut(e, r.clone())) throw new l("bad-precaching-response", { url: e.url, status: r.status });
+      return r;
+    }
+    _useDefaultCacheabilityPluginIfNeeded() {
+      let e = null, t = 0;
+      for (let [r, s] of this.plugins.entries()) s !== o.copyRedirectedCacheableResponsesPlugin && (s === o.defaultPrecacheCacheabilityPlugin && (e = r), s.cacheWillUpdate && t++);
+      t === 0 ? this.plugins.push(o.defaultPrecacheCacheabilityPlugin) : t > 1 && e !== null && this.plugins.splice(e, 1);
+    }
+  };
+  N.defaultPrecacheCacheabilityPlugin = { async cacheWillUpdate({ response: o2 }) {
+    return !o2 || o2.status >= 400 ? null : o2;
+  } };
+  N.copyRedirectedCacheableResponsesPlugin = { async cacheWillUpdate({ response: o2 }) {
+    return o2.redirected ? await Le(o2) : o2;
+  } };
+  var $ = class {
+    constructor({ cacheName: e, plugins: t = [], fallbackToNetwork: r = true } = {}) {
+      this._urlsToCacheKeys = /* @__PURE__ */ new Map(), this._urlsToCacheModes = /* @__PURE__ */ new Map(), this._cacheKeysToIntegrities = /* @__PURE__ */ new Map(), this._strategy = new N({ cacheName: f.getPrecacheName(e), plugins: [...t, new Z({ precacheController: this })], fallbackToNetwork: r }), this.install = this.install.bind(this), this.activate = this.activate.bind(this);
+    }
+    get strategy() {
+      return this._strategy;
+    }
+    precache(e) {
+      this.addToCacheList(e), this._installAndActiveListenersAdded || (self.addEventListener("install", this.install), self.addEventListener("activate", this.activate), this._installAndActiveListenersAdded = true);
+    }
+    addToCacheList(e) {
+      let t = [];
+      for (let r of e) {
+        typeof r == "string" ? t.push(r) : r && r.revision === void 0 && t.push(r.url);
+        let { cacheKey: s, url: n } = Ue(r), a = typeof r != "string" && r.revision ? "reload" : "default";
+        if (this._urlsToCacheKeys.has(n) && this._urlsToCacheKeys.get(n) !== s) throw new l("add-to-cache-list-conflicting-entries", { firstEntry: this._urlsToCacheKeys.get(n), secondEntry: s });
+        if (typeof r != "string" && r.integrity) {
+          if (this._cacheKeysToIntegrities.has(s) && this._cacheKeysToIntegrities.get(s) !== r.integrity) throw new l("add-to-cache-list-conflicting-integrities", { url: n });
+          this._cacheKeysToIntegrities.set(s, r.integrity);
+        }
+        if (this._urlsToCacheKeys.set(n, s), this._urlsToCacheModes.set(n, a), t.length > 0) {
+          let i = `Workbox is precaching URLs without revision info: ${t.join(", ")}
+This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
+          console.warn(i);
+        }
+      }
+    }
+    install(e) {
+      return ce(e, async () => {
+        let t = new X();
+        this.strategy.plugins.push(t);
+        for (let [n, a] of this._urlsToCacheKeys) {
+          let i = this._cacheKeysToIntegrities.get(a), c = this._urlsToCacheModes.get(n), u = new Request(n, { integrity: i, cache: c, credentials: "same-origin" });
+          await Promise.all(this.strategy.handleAll({ params: { cacheKey: a }, request: u, event: e }));
+        }
+        let { updatedURLs: r, notUpdatedURLs: s } = t;
+        return { updatedURLs: r, notUpdatedURLs: s };
+      });
+    }
+    activate(e) {
+      return ce(e, async () => {
+        let t = await self.caches.open(this.strategy.cacheName), r = await t.keys(), s = new Set(this._urlsToCacheKeys.values()), n = [];
+        for (let a of r) s.has(a.url) || (await t.delete(a), n.push(a.url));
+        return { deletedURLs: n };
+      });
+    }
+    getURLsToCacheKeys() {
+      return this._urlsToCacheKeys;
+    }
+    getCachedURLs() {
+      return [...this._urlsToCacheKeys.keys()];
+    }
+    getCacheKeyForURL(e) {
+      let t = new URL(e, location.href);
+      return this._urlsToCacheKeys.get(t.href);
+    }
+    getIntegrityForCacheKey(e) {
+      return this._cacheKeysToIntegrities.get(e);
+    }
+    async matchPrecache(e) {
+      let t = e instanceof Request ? e.url : e, r = this.getCacheKeyForURL(t);
+      if (r) return (await self.caches.open(this.strategy.cacheName)).match(r);
+    }
+    createHandlerBoundToURL(e) {
+      let t = this.getCacheKeyForURL(e);
+      if (!t) throw new l("non-precached-url", { url: e });
+      return (r) => (r.request = new Request(e), r.params = Object.assign({ cacheKey: t }, r.params), this.strategy.handle(r));
+    }
+  };
+  var le;
+  var w = () => (le || (le = new $()), le);
+  function Pe(o2, e = []) {
+    for (let t of [...o2.searchParams.keys()]) e.some((r) => r.test(t)) && o2.searchParams.delete(t);
+    return o2;
+  }
+  function* Se(o2, { ignoreURLParametersMatching: e = [/^utm_/, /^fbclid$/], directoryIndex: t = "index.html", cleanURLs: r = true, urlManipulation: s } = {}) {
+    let n = new URL(o2, location.href);
+    n.hash = "", yield n.href;
+    let a = Pe(n, e);
+    if (yield a.href, t && a.pathname.endsWith("/")) {
+      let i = new URL(a.href);
+      i.pathname += t, yield i.href;
+    }
+    if (r) {
+      let i = new URL(a.href);
+      i.pathname += ".html", yield i.href;
+    }
+    if (s) {
+      let i = s({ url: n });
+      for (let c of i) yield c.href;
+    }
+  }
+  var L = class extends h {
+    constructor(e, t) {
+      let r = ({ request: s }) => {
+        let n = e.getURLsToCacheKeys();
+        for (let a of Se(s.url, t)) {
+          let i = n.get(a);
+          if (i) {
+            let c = e.getIntegrityForCacheKey(i);
+            return { cacheKey: i, integrity: c };
+          }
+        }
+      };
+      super(r, e.strategy);
+    }
+  };
+  function ue(o2) {
+    let e = w(), t = new L(e, o2);
+    q(t);
+  }
+  var Xe = "-precache-";
+  var qe = async (o2, e = Xe) => {
+    let r = (await self.caches.keys()).filter((s) => s.includes(e) && s.includes(self.registration.scope) && s !== o2);
+    return await Promise.all(r.map((s) => self.caches.delete(s))), r;
+  };
+  function Ve() {
+    self.addEventListener("activate", ((o2) => {
+      let e = f.getPrecacheName();
+      o2.waitUntil(qe(e).then((t) => {
+      }));
+    }));
+  }
+  function pe(o2) {
+    w().precache(o2);
+  }
+  function Ae(o2, e) {
+    pe(o2), ue(e);
+  }
 
-async function deleteOffline({ id, urls }) {
-  await ownerLoaded;
-  cancelled.add(id);
-  const cache = await caches.open(offlineCacheName());
-  await Promise.all(urls.map((url) => cache.delete(url)));
-  tell({ type: "offline-deleted", id });
-}
+  // public:precache-manifest.js
+  var precache_manifest_default = [
+    {
+      "url": "/",
+      "revision": "782cf2e2bb973453"
+    },
+    {
+      "url": "/aa-viewer.js",
+      "revision": "5582079c5862c0a6"
+    },
+    {
+      "url": "/annotations.js",
+      "revision": "b8ac7e4999e8d4cd"
+    },
+    {
+      "url": "/app.js",
+      "revision": "ee711c63c6113a6b"
+    },
+    {
+      "url": "/arca-media.js",
+      "revision": "2924bfddf4394f89"
+    },
+    {
+      "url": "/barcode.js",
+      "revision": "816f7cca8e749c3a"
+    },
+    {
+      "url": "/board-navigator.js",
+      "revision": "374cb09e429f6a65"
+    },
+    {
+      "url": "/capabilities.js",
+      "revision": "c0830f0fb20ae570"
+    },
+    {
+      "url": "/continuous-reader.js",
+      "revision": "2d56f23f350ebc8a"
+    },
+    {
+      "url": "/find.js",
+      "revision": "c6367336caa93a8d"
+    },
+    {
+      "url": "/fonts/gowun-batang@5.3.0/gowun-batang.css",
+      "revision": "b54627a9995983a1"
+    },
+    {
+      "url": "/fonts/maruburi@1.000/700.core.woff2",
+      "revision": "f1b398fd12413b5e"
+    },
+    {
+      "url": "/fonts/maruburi@1.000/maruburi.css",
+      "revision": "38d90354667d3d65"
+    },
+    {
+      "url": "/fonts/pretendard@1.3.9/core.woff2",
+      "revision": "bf613d97c8d48725"
+    },
+    {
+      "url": "/fonts/pretendard@1.3.9/pretendard.css",
+      "revision": "2647e08a36496ab7"
+    },
+    {
+      "url": "/fonts/saitamaar@1.0/saitamaar.css",
+      "revision": "b37c2f33b0ce51c4"
+    },
+    {
+      "url": "/gallery.js",
+      "revision": "f42f16d1afabf82d"
+    },
+    {
+      "url": "/haptics.js",
+      "revision": "25ddf26e560c23d9"
+    },
+    {
+      "url": "/home.js",
+      "revision": "e7a4d26d6abff391"
+    },
+    {
+      "url": "/icons/app-icon-192.png",
+      "revision": "02c0d2518686ab16"
+    },
+    {
+      "url": "/icons/app-icon-512.png",
+      "revision": "fa2fe3f75fa7f186"
+    },
+    {
+      "url": "/icons/app-icon.svg",
+      "revision": "7852059e72eb0b08"
+    },
+    {
+      "url": "/kwic-core.js",
+      "revision": "9572686f6d4dc2ce"
+    },
+    {
+      "url": "/kwic-worker.js",
+      "revision": "396c5def3c4d182f"
+    },
+    {
+      "url": "/kwic.js",
+      "revision": "d3384bb2ed491e9c"
+    },
+    {
+      "url": "/library.js",
+      "revision": "176c62d300daaa42"
+    },
+    {
+      "url": "/list-anchor.js",
+      "revision": "672aaa0522624719"
+    },
+    {
+      "url": "/manifest.webmanifest",
+      "revision": "59a197f3c9925ec2"
+    },
+    {
+      "url": "/media.js",
+      "revision": "38b903c157b1e2fd"
+    },
+    {
+      "url": "/offline.js",
+      "revision": "f33c1ed4b8a5ebc5"
+    },
+    {
+      "url": "/overlay-manager.js",
+      "revision": "0866583592214d43"
+    },
+    {
+      "url": "/reader-chrome.js",
+      "revision": "913787c801eeec41"
+    },
+    {
+      "url": "/reader-modes.js",
+      "revision": "bd7cacfe97b6cb5d"
+    },
+    {
+      "url": "/reader-session.js",
+      "revision": "38cc0fcaf9eabbb4"
+    },
+    {
+      "url": "/reading-model.js",
+      "revision": "11ae2472a5a129d1"
+    },
+    {
+      "url": "/search-core.js",
+      "revision": "dd7e1d3757eac475"
+    },
+    {
+      "url": "/search-suggest.js",
+      "revision": "5557e4af93fb59c0"
+    },
+    {
+      "url": "/search-worker.js",
+      "revision": "44c36e6680b7c838"
+    },
+    {
+      "url": "/sequence.js",
+      "revision": "7f901aca468db6af"
+    },
+    {
+      "url": "/share-canvas.js",
+      "revision": "82b71d76784e1ddd"
+    },
+    {
+      "url": "/shell.js",
+      "revision": "21c71986ae46dd39"
+    },
+    {
+      "url": "/stats.js",
+      "revision": "58ba5738e4202c9c"
+    },
+    {
+      "url": "/store.js",
+      "revision": "45a774e3ad6e8f2d"
+    },
+    {
+      "url": "/styles/aa.css",
+      "revision": "f07a35ec2f3afb43"
+    },
+    {
+      "url": "/styles/base.css",
+      "revision": "c43673425dadbbe1"
+    },
+    {
+      "url": "/styles/components.css",
+      "revision": "474e02915bfeddcf"
+    },
+    {
+      "url": "/styles/library.css",
+      "revision": "839b9ba3eeb2d66d"
+    },
+    {
+      "url": "/styles/reader.css",
+      "revision": "7bf8edf259ef90bb"
+    },
+    {
+      "url": "/styles/shell.css",
+      "revision": "4e1ecc92af940a8d"
+    },
+    {
+      "url": "/styles/tokens.css",
+      "revision": "707feabfc76d5638"
+    },
+    {
+      "url": "/text-anchor.js",
+      "revision": "dcbc4f250387e482"
+    },
+    {
+      "url": "/text-library.js",
+      "revision": "a1dfa04b7d8ec2f4"
+    },
+    {
+      "url": "/text-model.js",
+      "revision": "fa21d3ed59ac7e20"
+    },
+    {
+      "url": "/text-shelves.js",
+      "revision": "70e190d8a233fb7d"
+    },
+    {
+      "url": "/text-work.js",
+      "revision": "27628b9c73f988da"
+    },
+    {
+      "url": "/theme.js",
+      "revision": "0e34607886b753db"
+    },
+    {
+      "url": "/type-cover.js",
+      "revision": "3222c85a6402583a"
+    },
+    {
+      "url": "/user-state.js",
+      "revision": "fe8a36a2252d7c17"
+    },
+    {
+      "url": "/work-header.js",
+      "revision": "4da8f6eab330483c"
+    }
+  ];
 
-self.addEventListener("message", (event) => {
-  const data = event.data ?? {};
-  if (data.type === "SAVE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
-    event.waitUntil(saveOffline(data));
-    return;
+  // sw:sw.js
+  var OWNER_CACHE = "redstm-sw-owner";
+  var DAY = 24 * 60 * 60;
+  var owner = "anon";
+  async function loadOwner() {
+    const saved = await (await caches.open(OWNER_CACHE)).match("/owner");
+    if (saved) owner = await saved.text();
   }
-  if (data.type === "DELETE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
-    event.waitUntil(deleteOffline(data));
-    return;
+  var ownerLoaded = loadOwner().catch(() => {
+  });
+  var named = (base) => `${base}-${owner}`;
+  var offlineCacheName = () => named("offline-v1");
+  function tell(message) {
+    void self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) client.postMessage(message);
+    });
   }
-  if (data.type === "CANCEL_OFFLINE" && typeof data.id === "string") {
-    cancelled.add(data.id);
-    return;
+  var api = (url) => url.pathname.startsWith("/api/") || url.pathname.startsWith("/archive/");
+  function authFailure(request, response) {
+    if (!response) return false;
+    if (response.type === "opaqueredirect" || response.redirected || [401, 403].includes(response.status) || response.status >= 300 && response.status < 400) return true;
+    return api(new URL(request.url)) && (response.headers.get("Content-Type") ?? "").toLowerCase().includes("text/html");
   }
-  if (data.type === "SET_OWNER" && /^(?:[a-f0-9]{16}|anon)$/.test(data.owner ?? "")) {
-    event.waitUntil((async () => {
-      owner = data.owner;
-      await (await caches.open(OWNER_CACHE)).put("/owner", new Response(owner));
-    })());
-  } else if (data.type === "SKIP_WAITING") {
-    void self.skipWaiting();
+  var guard = {
+    async fetchDidSucceed({ request, response }) {
+      if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url });
+      return response;
+    },
+    async cacheWillUpdate({ request, response }) {
+      return response && response.status === 200 && !authFailure(request, response) ? response : null;
+    }
+  };
+  function ownedStrategy(Strategy, base, options = {}) {
+    return async (context) => {
+      await ownerLoaded;
+      return new Strategy({ ...options, cacheName: named(base), plugins: [guard, ...options.plugins ?? []] }).handle(context);
+    };
   }
-});
+  function savedFirst(fallback) {
+    return async (context) => {
+      await ownerLoaded;
+      const saved = await (await caches.open(offlineCacheName())).match(context.request);
+      return saved ?? fallback(context);
+    };
+  }
+  var path = (test) => ({ url }) => url.origin === self.location.origin && test(url.pathname);
+  var expiring = (maxEntries, maxAgeSeconds) => new z({ maxEntries, maxAgeSeconds, purgeOnQuotaError: true });
+  q(path((p2) => p2.startsWith("/ops") || p2.startsWith("/cdn-cgi/")), new B());
+  q(path((p2) => p2.startsWith("/api/v1/sync") || p2 === "/api/v1/rum" || p2 === "/api/v1/me"), new B());
+  q(path((p2) => p2 === "/api/v1/text/status"), new B());
+  q(path((p2) => /^\/api\/v1\/text\/release\/(?:novel|arcalive)$/.test(p2)), ownedStrategy(K, "text-pointer", { networkTimeoutSeconds: 3 }));
+  q(path((p2) => p2.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(M, "text-meta"));
+  q(path((p2) => p2.startsWith("/api/v1/text/index/")), ownedStrategy(M, "text-meta", { plugins: [expiring(200)] }));
+  q(
+    path((p2) => p2.startsWith("/api/v1/text/object/")),
+    savedFirst(ownedStrategy(M, "text-objects", { plugins: [expiring(1e3, 30 * DAY)] }))
+  );
+  q(path((p2) => p2.startsWith("/api/v1/text/media/")), ownedStrategy(M, "media", {
+    plugins: [new Q({ statuses: [200] }), new Y()]
+  }));
+  q(path((p2) => p2 === "/archive/release.json"), ownedStrategy(K, "archive-pointer", { networkTimeoutSeconds: 3 }));
+  q(
+    path((p2) => p2.startsWith("/archive/")),
+    savedFirst(ownedStrategy(M, "archive", { plugins: [expiring(1e3, 30 * DAY)] }))
+  );
+  q(
+    path((p2) => /^\/(?:fonts|vendor)\/[a-z0-9-]+@\d+(?:\.\d+){0,2}\//.test(p2)),
+    new M({ cacheName: "static-v", plugins: [guard] })
+  );
+  Ae(precache_manifest_default);
+  Ve();
+  var shellRequest = () => caches.match("/", { ignoreSearch: true });
+  q(new S(async (context) => {
+    try {
+      const response = await new K({ cacheName: "pages", networkTimeoutSeconds: 4, plugins: [guard] }).handle(context);
+      if (response) return response;
+    } catch {
+    }
+    return await shellRequest() ?? Response.error();
+  }, { denylist: [/^\/ops/, /^\/cdn-cgi\//] }));
+  var cancelled = /* @__PURE__ */ new Set();
+  async function saveOffline({ id, urls, requires = [] }) {
+    await ownerLoaded;
+    cancelled.delete(id);
+    const cache = await caches.open(offlineCacheName());
+    const statics = await caches.open("static-v");
+    let done = 0;
+    let failed = 0;
+    let bytes = 0;
+    const queue = [...urls];
+    const report = (type) => tell({ type, id, done, failed, total: urls.length, bytes });
+    async function take() {
+      while (queue.length && !cancelled.has(id)) {
+        const url = queue.shift();
+        try {
+          const cached = await cache.match(url);
+          if (cached) {
+            bytes += (await cached.clone().arrayBuffer()).byteLength;
+          } else {
+            const response = await fetch(url, { credentials: "same-origin" });
+            if (response.status !== 200 || authFailure(new Request(url), response)) {
+              if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url });
+              throw new Error(String(response.status));
+            }
+            bytes += (await response.clone().arrayBuffer()).byteLength;
+            await cache.put(url, response);
+          }
+          done += 1;
+        } catch {
+          failed += 1;
+        }
+        report("offline-progress");
+      }
+    }
+    for (const url of requires) {
+      try {
+        if (!await statics.match(url)) await statics.add(url);
+      } catch {
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(4, urls.length) }, take));
+    report(cancelled.has(id) ? "offline-cancelled" : "offline-done");
+  }
+  async function deleteOffline({ id, urls }) {
+    await ownerLoaded;
+    cancelled.add(id);
+    const cache = await caches.open(offlineCacheName());
+    await Promise.all(urls.map((url) => cache.delete(url)));
+    tell({ type: "offline-deleted", id });
+  }
+  self.addEventListener("message", (event) => {
+    const data = event.data ?? {};
+    if (data.type === "SAVE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
+      event.waitUntil(saveOffline(data));
+      return;
+    }
+    if (data.type === "DELETE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
+      event.waitUntil(deleteOffline(data));
+      return;
+    }
+    if (data.type === "CANCEL_OFFLINE" && typeof data.id === "string") {
+      cancelled.add(data.id);
+      return;
+    }
+    if (data.type === "SET_OWNER" && /^(?:[a-f0-9]{16}|anon)$/.test(data.owner ?? "")) {
+      event.waitUntil((async () => {
+        owner = data.owner;
+        await (await caches.open(OWNER_CACHE)).put("/owner", new Response(owner));
+      })());
+    } else if (data.type === "SKIP_WAITING") {
+      void self.skipWaiting();
+    }
+  });
+})();

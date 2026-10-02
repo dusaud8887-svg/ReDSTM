@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "96503409283a5d2f"
+    "revision": "782cf2e2bb973453"
   },
   {
     "url": "/aa-viewer.js",
@@ -118,7 +118,7 @@ export default [
   },
   {
     "url": "/offline.js",
-    "revision": "0a8372f7333e508f"
+    "revision": "f33c1ed4b8a5ebc5"
   },
   {
     "url": "/overlay-manager.js",

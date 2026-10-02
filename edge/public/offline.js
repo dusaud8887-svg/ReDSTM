@@ -24,9 +24,9 @@ export function createOffline({ onAuthExpired = () => {}, onUpdateReady = () => 
   async function register() {
     if (!container) return null;
     try {
-      registration = await container.register("/sw.js", { type: "module", scope: "/" });
+      registration = await container.register("/sw.js", { scope: "/" });
     } catch {
-      return null; // module workers unsupported or blocked: online only
+      return null; // service workers unsupported or blocked: online only
     }
     send({ type: "SET_OWNER", owner });
     // A new version waits until the page applies it at a safe point (T23).
