@@ -52,3 +52,46 @@ export function minimapScroll(ratio, { clientWidth, scrollWidth }) {
   const max = Math.max(0, scrollWidth - clientWidth);
   return Math.round(Math.min(max, Math.max(0, ratio * scrollWidth - clientWidth / 2)));
 }
+
+// Scene moves (DESIGN §8.4) follow only a clear block boundary of the original: the header line of
+// each 레스, `2405 ： ◆nXsLRB5hfY ： 2024/11/29(金) 22:44:32 ID:udvPw2Ed` (298 of 300 sampled AA posts).
+const RES_HEADER = /^\s*\d{1,5}\s*[：:].{0,80}?[：:]\s*\d{4}\/\d{1,2}\/\d{1,2}.{0,60}$/u;
+export function isSceneHeader(line) {
+  const text = line.trim();
+  return text.length <= 200 && RES_HEADER.test(text);
+}
+
+// Rounded scroll offsets and sub-pixel line tops count as the same place within this many px.
+const SCENE_SLACK = 2;
+
+// The position scenes are judged at: the line under the toolbar, or at the end of the scroll the
+// last header on screen (a short last scene can never reach the toolbar).
+export function sceneY(tops, { scrollTop, clientHeight, scrollHeight, offset }) {
+  const y = scrollTop + offset;
+  if (scrollTop + clientHeight < scrollHeight - SCENE_SLACK) return y;
+  const visible = tops.filter((top) => top < scrollTop + clientHeight);
+  return visible.length ? Math.max(y, visible.at(-1)) : y;
+}
+
+// The scene shown at scroll offset `y`: the last header at or above it (the first before any).
+export function sceneAt(tops, y) {
+  let low = 0;
+  let high = tops.length - 1;
+  let found = 0;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (tops[middle] <= y + SCENE_SLACK) {
+      found = middle;
+      low = middle + 1;
+    } else high = middle - 1;
+  }
+  return found;
+}
+
+// The header a ‹ or › moves to from `y`, or -1 at either end. Text before the first header belongs
+// to scene 1; ‹ inside a scene first returns to its own header.
+export function sceneTarget(tops, y, direction) {
+  const current = sceneAt(tops, y);
+  if (direction > 0) return current + 1 < tops.length ? current + 1 : -1;
+  return tops[current] < y - SCENE_SLACK ? current : current - 1;
+}
