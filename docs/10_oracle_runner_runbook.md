@@ -506,7 +506,7 @@ full doctor와 verified canonical backup은 현재 자동 schedule 작업이 아
 | network | 발자국 | 브라우저 `USER_AGENT` + `Accept`/`Accept-Language` + page/detail `Referer` 체인, 로그인 handshake도 동일 | 봇 token을 우선 차단하는 WAF/rate limiter 회피; 회원 브라우저와 같은 발자국 |
 | outage | 봇 차단 감지 | 게시글/목록 자리의 challenge interstitial(Cloudflare/WAF)은 `network_error`로 분류 | site-wide backoff breaker 발화·attempt 보존, parse drift 오분류 방지 |
 | network | listing timeout | 240초 | 저속 원본에서 목록도 수 분간 streaming됨; 실측상 본문 뒤 비정상 TLS EOF(약 109초)와 저속 완결 응답을 모두 수용 |
-| network | detail timeout | connect 6.1초 + read-idle 30초, 총시간 상한 없음 | 2025 local 30,644건/20.19GiB에서 검증된 Requests 의미론: 바이트가 흐르는 대형 AA는 끝까지 받고 멈춘 해당 글만 실패 |
+| network | detail timeout | connect 6.1초 + 첫 바이트 240초 + read-idle 30초, 총시간 상한 없음 | 상태줄과 본문 첫 조각까지는 느린 PHP listing과 같은 240초. 본문이 시작된 뒤 30초 무수신이면 해당 글만 실패하고, 바이트가 흐르는 대형 AA는 끝까지 받는다. read-idle 30초는 2025 local 30,644건/20.19GiB에서 검증된 무수신 예산이다 |
 | network | request retry | listing 최초 포함 총 4회; detail 동일 글 총 3회 | 개별 detail만 빠르게 재시도하고 최종 실패만 durable defer |
 | network | 응답 크기 | `DOWNLOAD_WARNSIZE` 8MiB, `DOWNLOAD_MAXSIZE` 64MiB 명시 | 956MiB RAM 보호; 큰 AA는 8MiB 경고로 관찰 |
 | network | dataloss/빈 listing | raw capture 뒤 같은 listing을 총 3회 안에서 재시도, 소진 시 coverage 중단; 잘린 detail은 저장하지 않고 durable retry; 명시 empty marker만 빈 page 허용 | 일시적 chunk 종료는 회복하되 잘린/변형 응답을 정상 본문으로 저장하지 않음 |

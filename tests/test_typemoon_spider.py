@@ -41,6 +41,7 @@ def test_policy_settings_and_urls_are_conservative() -> None:
     assert settings.DOWNLOAD_TIMEOUT == 240
     assert settings.REDSTM_LISTING_TIMEOUT_SECONDS == 240
     assert settings.REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS == 6.1
+    assert settings.REDSTM_DETAIL_FIRST_BYTE_TIMEOUT_SECONDS == 240
     assert settings.REDSTM_DETAIL_READ_TIMEOUT_SECONDS == 30
     assert settings.RANDOMIZE_DOWNLOAD_DELAY is False
     assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 2

@@ -59,6 +59,8 @@ const safeWarnings = new Set([
   "token_expiring",
   "publish_stale",
   "maintenance",
+  "memory_limit",
+  "recovery_time_budget",
 ]);
 const identifierPattern = /^[a-zA-Z0-9_.:-]{1,128}$/;
 // Strings only: a regex test would coerce ["abc"] or 123 into a matching string.

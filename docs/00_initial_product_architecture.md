@@ -874,7 +874,7 @@ network/429 3회와 auth/parser 첫 실패가 더 이른 종료 조건이다. �
 | 영역 | 현재 구현 | 장기 운영 전 남은 gate |
 |---|---|---|
 | 부하 제한 | listing concurrency 2/detail 1, 요청 시작 간 고정 10초 delay(robots `Crawl-delay`와 동일, robots 자체는 미준수) | canary에서 요청 간격·429 여부 확인 |
-| 요청 실패 | listing 총 240초; detail connect 6.1초/read-idle 30초와 동일 글 총 3회, 429는 frontier defer | live timeout/429 빈도 확인 |
+| 요청 실패 | listing 총 240초; detail connect 6.1초/첫 바이트 240초/read-idle 30초와 동일 글 총 3회, 429는 frontier defer | live timeout/429 빈도 확인 |
 | durable retry | network는 2분~6시간 backoff로 무기한, parse/storage는 5회 뒤 dead | 실제 backlog에서 revive report 확인 |
 | 중단 복구 | cycle-wide writer lock/lease, stale 회수, subprocess hard bound, WARC `.partial` 진단 | live process kill과 systemd timeout 상호작용 |
 | listing | complete changed-row seed, overlap boundary, schema v4 inventory cursor·댓글 기대치·증분 anchor | 실제 cursor progression |
@@ -1080,7 +1080,7 @@ storage_error
   `DOWNLOAD_DELAY=10`, `RANDOMIZE_DOWNLOAD_DELAY=False`, listing `RETRY_TIMES=3`, detail retry 2,
   `AUTOTHROTTLE_ENABLED=True`, `DOWNLOAD_FAIL_ON_DATALOSS=False`, `ROBOTSTXT_OBEY=False`(2026-07-14
   사용자 결정; 요청 간격은 robots `Crawl-delay`와 같은 10초를 계속 지킴)다.
-- listing 총 timeout은 240초, detail은 connect 6.1초/read-idle 30초(총시간 상한 없음), response
+- listing 총 timeout은 240초, detail은 connect 6.1초/첫 바이트 240초/read-idle 30초(총시간 상한 없음), response
   warning/max는 8/64MiB, 감속 전용 AutoThrottle은 10~120초, frontier lease는 3600초다. detail은
   바이트가 흐르는 수 MB AA를 끝까지 받고 멈춘 해당 글만 총 3회 재시도한다. 정확한 표는
   [`10 §8.1`](10_oracle_runner_runbook.md)이다.

@@ -211,6 +211,78 @@ def test_recovery_revives_legacy_dead_network_failure_without_resetting_attempts
     ]
 
 
+def test_missing_only_leaves_dead_network_rows_that_already_have_a_body(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    with connect_archive(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('aa_a01', 'AA', 'https://www.typemoon.net/aa_a01', 'now', 'now')
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO posts (
+                board_id, external_post_id, canonical_url, title, first_seen_at, last_seen_at
+            ) VALUES ('aa_a01', ?, 'https://www.typemoon.net/aa_a01/' || ?, 't', 'now', 'now')
+            """,
+            [(1, 1), (2, 2)],
+        )
+        connection.execute(
+            """
+            INSERT INTO post_versions (
+                post_id, content_sha256, parser_version, capture_origin,
+                body_html_zstd, body_text_zstd, comments_sha256, captured_at
+            ) VALUES (
+                (SELECT id FROM posts WHERE board_id='aa_a01' AND external_post_id=1),
+                ?, 'test', 'live', ?, ?, ?, 'now'
+            )
+            """,
+            ("a" * 64, compress_body("<p>body</p>"), compress_body("body"), "c" * 64),
+        )
+        connection.execute(
+            """
+            UPDATE posts SET latest_version_id = (
+                SELECT id FROM post_versions
+                WHERE post_id = (
+                    SELECT id FROM posts
+                    WHERE board_id='aa_a01' AND external_post_id=1
+                )
+            )
+            WHERE board_id='aa_a01' AND external_post_id=1
+            """
+        )
+    store.seed("aa_a01", 1, "https://www.typemoon.net/aa_a01/1")
+    store.seed("aa_a01", 2, "https://www.typemoon.net/aa_a01/2")
+    with connect_archive(path) as connection:
+        connection.execute(
+            """
+            UPDATE crawl_frontier
+            SET state = 'dead', attempts = 5, last_error_code = 'network_error'
+            """
+        )
+    moment = datetime(2026, 7, 11, tzinfo=UTC)
+
+    assert store.recovery_candidates(limit=5, now=moment, missing_only=True) == [("aa_a01", 2)]
+    with connect_archive(path, read_only=True) as connection:
+        states = [
+            tuple(row)
+            for row in connection.execute(
+                """
+                SELECT external_post_id, state
+                FROM crawl_frontier ORDER BY external_post_id
+                """
+            )
+        ]
+    assert states == [(1, "dead"), (2, "retry")]
+    assert store.recovery_candidates(limit=5, now=moment) == [
+        ("aa_a01", 2),
+        ("aa_a01", 1),
+    ]
+
+
 def test_dead_requeue_is_bounded_and_error_specific(tmp_path: Path) -> None:
     path = tmp_path / "frontier.sqlite"
     store = FrontierStore(path)

@@ -591,12 +591,15 @@ API/D1/DOM 금지:
 safe_message는 stable code와 operator-facing summary만 가진다.
 
 safe warning code는 고정 어휘를 쓴다: `auth_failed`, `parse_drift`, `rate_limited`,
-`site_unreachable`, `disk_low`, `control_rejected`, `token_expiring`, `publish_stale`.
+`site_unreachable`, `disk_low`, `control_rejected`, `token_expiring`, `publish_stale`,
+`maintenance`, `memory_limit`, `recovery_time_budget`.
 새 code가 필요하면 이 문서를 먼저 갱신한다. `site_unreachable`은 원 사이트 outage(연결 실패,
 timeout, 완결되지 않는 저속 응답 포함)로 run이
 조기 종료됐음을 뜻하며 runner 장애(stale)와 구분해 표시한다. `control_rejected`는 재시도해도
-성공하지 않는 control 4xx가 최근 24시간 안에 발생했다는 generic 경고다. 원래 code는 Oracle local
-evidence에만 보존하고 D1/UI에 노출하지 않는다.
+성공하지 않는 control 4xx가 최근 24시간 안에 발생했다는 generic 경고다. `memory_limit`은
+Scrapy 메모리 상한으로 그 배치를 닫았고 남은 글은 다음 배치로 이어진다는 뜻이다.
+`recovery_time_budget`은 실행 시간 상한에 닿아 진행분과 재시도 큐를 보존한 채 멈췄다는 뜻이다.
+원래 code는 Oracle local evidence에만 보존하고 D1/UI에 노출하지 않는다.
 
 incremental export/publish의 terminal safe code는 기존 `publish.pending`을 지우지 않는다. marker가
 없다는 사실도 다음 bounded reconcile을 생략하는 근거가 아니다.

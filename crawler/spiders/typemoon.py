@@ -516,8 +516,9 @@ class TypeMoonSpider(scrapy.Spider):
                 "redstm_capture": True,
                 "expected_comment_count": expected_comment_count,
                 "redstm_sequential_detail": True,
-                # Requests turns 30 seconds without bytes into this request's error. Retry
-                # only this detail three total times before durable frontier backoff.
+                # The first body byte waits on the detail first-byte budget. After that,
+                # 30 seconds of silence becomes this request's error. Retry only this
+                # detail three total times before durable frontier backoff.
                 "max_retry_times": REDSTM_DETAIL_RETRY_TIMES,
             },
         )
