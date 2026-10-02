@@ -447,6 +447,17 @@ function applyUserState(state) {
   aaViews = { ...(state.aaViews ?? {}) };
 }
 
+// 고운바탕 is fetched only once someone picks it (DESIGN §10: an unchosen font is not downloaded).
+function proseFontStack() {
+  if (settings.proseFont === "sans") return "var(--font-ui)";
+  if (settings.proseFont !== "gowun") return "var(--font-reading)";
+  if (!document.querySelector("#gowun-batang-css")) {
+    const link = Object.assign(document.createElement("link"), { id: "gowun-batang-css", rel: "stylesheet", href: "/fonts/gowun-batang@5.3.0/gowun-batang.css" });
+    document.head.append(link);
+  }
+  return "var(--font-reading-alt)";
+}
+
 // The idle archive label; a failing local save stays visible over later "loaded" updates.
 function readyLabel() {
   return elements["archive-state"].dataset.storageFailed ? "로컬 저장 실패" : "보존본";
@@ -664,7 +675,7 @@ function applySettings() {
   root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
   root.style.setProperty("--prose-paragraph", `${settings.paragraphSpacing}em`);
   root.style.setProperty("--prose-indent", `${settings.textIndent}em`);
-  root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
+  root.style.setProperty("--prose-font", proseFontStack());
   const aaZoom = effectiveAaZoom();
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * aaZoom}px`);
   root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * aaZoom}px`);
@@ -705,7 +716,7 @@ function applySettings() {
   // The font is judged on the reader's own text: the first lines of the open chapter, if any.
   const preview = document.querySelector("#font-preview");
   preview.textContent = elements["archive-body"].textContent.replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
-  preview.style.fontFamily = settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)";
+  preview.style.fontFamily = proseFontStack();
   document.querySelector("#quick-size-output").value = String(settings.proseSize);
   elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
