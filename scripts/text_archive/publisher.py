@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,6 +52,11 @@ _PRUNABLE_KEY = r"published/(?:releases|indexes)/{lane}/[a-f0-9]{{64}}\.json"
 def _window() -> Any:
     """One exclusive heavy text step (runtime.operation_window); publishing needs ~150 MiB."""
     return operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=150 * 1024 * 1024)
+
+
+def _check_headroom(headroom: Callable[[], None] | None) -> None:
+    if headroom is not None:
+        headroom()
 
 
 def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -287,7 +292,12 @@ def _arcalive_works(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], di
 
 
 def build_publish_tree(
-    db_path: Path, object_root: Path, output_root: Path, lane: str
+    db_path: Path,
+    object_root: Path,
+    output_root: Path,
+    lane: str,
+    *,
+    headroom: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Build deterministic, content-addressed artifacts without touching remote storage."""
     if lane not in {"novel", "arcalive"}:
@@ -327,6 +337,9 @@ def build_publish_tree(
                         ),
                     )
         # Keep catalog, object and item passes on one imported snapshot in WAL mode.
+        # Headroom is rechecked around this read so a TypeMoon unit that became active
+        # after the preflight stops the local build without holding the publish lock.
+        _check_headroom(headroom)
         db.execute("BEGIN")
         item_count, generated_at = db.execute(
             "SELECT COUNT(*),COALESCE(MAX(imported_at),'1970-01-01T00:00:00Z') "
@@ -344,6 +357,7 @@ def build_publish_tree(
             work_catalog_refs: list[dict[str, str]] = []
 
             def page(items: list[dict[str, Any]]) -> None:
+                _check_headroom(headroom)
                 key, body = _indexed_file(
                     output_root,
                     lane,
@@ -379,9 +393,13 @@ def build_publish_tree(
                        WHERE i.lane=? ORDER BY i.canonical_work_id,i.imported_at,i.identity""",
                     (lane,),
                 )
+                seen_works = 0
                 for work_id, work_rows in groupby(
                     rows, key=lambda row: str(row["canonical_work_id"])
                 ):
+                    seen_works += 1
+                    if seen_works % 50 == 0:
+                        _check_headroom(headroom)
                     chapters = _unique_novel_chapters([dict(row) for row in work_rows])
                     first = chapters[0]
                     chapters.sort(key=_chapter_sort_key)
@@ -521,6 +539,7 @@ def build_publish_tree(
                 stream.flush()
                 os.fsync(stream.fileno())
         db.execute("COMMIT")
+        _check_headroom(headroom)
         # Objects upload straight from the content-addressed store, which already has the
         # published layout under objects/sha256/. Only objects not yet verified in R2 are read.
         for target_key, digest, source_key, size in _plan_rows(plans["objects"]):
@@ -899,8 +918,14 @@ def prune_receipts(receipts_root: Path, drop_root: Path, *, now: float | None = 
     return removed
 
 
-def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str, Any]:
+def build_availability_snapshot(
+    db_path: Path,
+    receipts_root: Path,
+    *,
+    headroom: Callable[[], None] | None = None,
+) -> dict[str, Any]:
     """Write a content-addressed, paged snapshot of novel items verified in R2."""
+    _check_headroom(headroom)
     db = _connect(db_path)
     try:
         # Both passes must see the same rows while imports continue in WAL mode.
@@ -959,6 +984,7 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         page_refs: list[dict[str, Any]] = []
 
         def write_page(page_items: list[dict[str, Any]]) -> None:
+            _check_headroom(headroom)
             page_number = len(page_refs)
             body = _json_bytes(
                 {
@@ -1026,6 +1052,18 @@ def build_availability_snapshot(db_path: Path, receipts_root: Path) -> dict[str,
         db.close()
 
 
+def _availability_or_defer(
+    db_path: Path,
+    receipts_root: Path,
+    headroom: Callable[[], None],
+) -> dict[str, Any]:
+    """A TypeMoon window during the snapshot defers that document only."""
+    try:
+        return build_availability_snapshot(db_path, receipts_root, headroom=headroom)
+    except RuntimeWindowError as exc:
+        return {"status": "deferred", "error": f"{type(exc).__name__}: {exc}"[:300]}
+
+
 def publish_lane(
     db_path: Path,
     object_root: Path,
@@ -1039,6 +1077,11 @@ def publish_lane(
     """Publish immutable text artifacts, verify readback, then switch one pointer."""
     if remote != "r2text:redstm-text-archive":
         raise ValueError("text publisher remote is fixed to r2text:redstm-text-archive")
+
+    def headroom() -> None:
+        with _window():
+            pass
+
     with sqlite3.connect(db_path) as state_db:
         item_count = int(
             state_db.execute(
@@ -1057,8 +1100,8 @@ def publish_lane(
         metadata_digest = hashlib.sha256(
             f"arcalive-works-v1:{metadata_digest}".encode()
         ).hexdigest()
-    # Pre-flight gate: yield before the unwindowed catalog build (the novel lane has no
-    # earlier window) when TypeMoon is publishing or memory/disk is below the floor.
+    # Pre-flight, then the catalog build rechecks between pages without holding the lock
+    # while it writes local files. A TypeMoon unit that starts mid-build stops the step.
     with _window():
         pass
     if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
@@ -1087,9 +1130,11 @@ def publish_lane(
                 _finalize_receipts(db_path, receipts_root)
                 result = {"lane": lane, "item_count": item_count, "status": "noop"}
                 if lane == "novel":
-                    result["availability"] = build_availability_snapshot(db_path, receipts_root)
+                    result["availability"] = _availability_or_defer(
+                        db_path, receipts_root, headroom
+                    )
                 return result
-    tree = build_publish_tree(db_path, object_root, build_root, lane)
+    tree = build_publish_tree(db_path, object_root, build_root, lane, headroom=headroom)
     db = _connect(db_path)
     try:
         pending_objects: list[tuple[str, str]] = []
@@ -1098,8 +1143,9 @@ def publish_lane(
             if pending_objects:
                 batch = pending_objects[:]
                 _publish_object_batch(build_root, object_root, remote, batch, runner)
-                for key, digest in batch:
-                    _record_publication(db_path, key, digest)
+                with _window():
+                    for key, digest in batch:
+                        _record_publication(db_path, key, digest)
                 pending_objects.clear()
 
         for key, digest, *_ in _plan_rows(Path(tree["object_plan"])):
@@ -1138,7 +1184,8 @@ def publish_lane(
                     )
                 if hashlib.sha256(readback).hexdigest() != digest:
                     raise OSError(f"R2 readback mismatch: {key}")
-                _record_publication(db_path, key, digest)
+                with _window():
+                    _record_publication(db_path, key, digest)
         pointer_path = Path(tree["pointer_path"])
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
@@ -1162,18 +1209,20 @@ def publish_lane(
             )
         if hashlib.sha256(pointer_readback).hexdigest() != pointer_hash:
             raise OSError("release pointer readback mismatch")
-        _record_publication(db_path, pointer_key, pointer_hash)
-        _record_publication(db_path, metadata_key, metadata_digest)
-        with db:
-            now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-            for identity, content_sha256 in _plan_rows(Path(tree["item_plan"])):
-                db.execute(
-                    "INSERT INTO text_archive_publications(key,sha256,verified_at) VALUES(?,?,?) "
-                    "ON CONFLICT(key) DO UPDATE SET sha256=excluded.sha256, "
-                    "verified_at=CASE WHEN text_archive_publications.sha256<>excluded.sha256 "
-                    "THEN excluded.verified_at ELSE text_archive_publications.verified_at END",
-                    (f"item:{identity}", content_sha256, now),
-                )
+        with _window():
+            _record_publication(db_path, pointer_key, pointer_hash)
+            _record_publication(db_path, metadata_key, metadata_digest)
+            with db:
+                now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+                for identity, content_sha256 in _plan_rows(Path(tree["item_plan"])):
+                    db.execute(
+                        "INSERT INTO text_archive_publications"
+                        "(key,sha256,verified_at) VALUES(?,?,?) "
+                        "ON CONFLICT(key) DO UPDATE SET sha256=excluded.sha256, "
+                        "verified_at=CASE WHEN text_archive_publications.sha256<>excluded.sha256 "
+                        "THEN excluded.verified_at ELSE text_archive_publications.verified_at END",
+                        (f"item:{identity}", content_sha256, now),
+                    )
     finally:
         db.close()
     _finalize_receipts(db_path, receipts_root)
@@ -1198,7 +1247,7 @@ def publish_lane(
     ) as exc:
         result["prune"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}
     if lane == "novel":
-        result["availability"] = build_availability_snapshot(db_path, receipts_root)
+        result["availability"] = _availability_or_defer(db_path, receipts_root, headroom)
     return result
 
 

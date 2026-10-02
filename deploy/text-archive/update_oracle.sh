@@ -10,6 +10,7 @@ release="/opt/redstm-text/releases/$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -o root -g root -m 0755 "$release"
 cp -a /opt/redstm-text/current/. "$release/"
 cp -a "$stage/scripts/text_archive/"*.py "$release/scripts/text_archive/"
+install -o root -g root -m 0644 "$stage/scripts/storage_policy.py" "$release/scripts/"
 install -d -o root -g root -m 0755 "$release/crawler"
 install -o root -g root -m 0644 "$stage/crawler/__init__.py" "$stage/crawler/collections.py" \
   "$release/crawler/"
