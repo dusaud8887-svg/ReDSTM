@@ -1,7 +1,7 @@
 # Frontend 구현 전략·채택 판단
 
 - 상태: Reader/Operations mobile-first live 배포; actual Android·사용자 acceptance pending
-- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md) v2.2가 이 문서의 §6 라이브러리 판정(Fuse·아이콘 패키지·IndexedDB·SW 등)과 구조 결정 중 겹치는 항목을 대체한다. 본문 갱신은 `24` P7-3.
+- 우선순위(2026-09-30): 프론트 개편 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md) v2.2가 이 문서의 §6 라이브러리 판정(Fuse·아이콘 패키지·IndexedDB·SW 등)과 구조 결정 중 겹치는 항목을 대체한다. 2026-10-02 `24` P7-3에서 §1·§2·§5·§6·§7 본문을 현재 구현으로 갱신했다.
 - 기준일: 2026-07-12
 - product: [06](06_final_product_experience.md)
 - reader: [07](07_reader_and_aa_experience.md)
@@ -14,7 +14,8 @@
 2. Worker가 Access JWT, R2 read/stream, D1 control API를 담당한다.
 3. Reader와 Operations는 route/data/action module을 분리하지만 한 Worker deployment를 쓴다.
 4. DSOTM은 fork하지 않고 AA 계산·reader behavior·operations state model만 selective port한다.
-5. frontend framework, router, UI kit, icon package, font CDN을 추가하지 않는다.
+5. frontend framework, router, UI kit, icon package, font CDN을 추가하지 않는다. 필요한 작은 라이브러리는
+   npm으로 고정해 `public/vendor/<이름>@<버전>/`에 번들하고 notice를 남긴다(§6, `24 §11`).
 6. native dialog, details, popover, History API, Web Worker를 먼저 쓴다.
 7. D1은 canonical data가 아니라 작은 command/status/audit control plane에만 쓴다.
 
@@ -43,6 +44,10 @@
 - white canvas/near-white chrome 전역 palette, compact Operations verdict, stale/unknown/unverified core state,
   disclosure ledger와 기본 state disable, server same-intent replay 및 same-tab reload command-key 재사용
   (`local`, 4 viewport fixture)
+- 2026-09-30~10-02 프론트 개편 M0–M6(`24 §19`): Ribbon Library 토큰·셸, 원문 문장 locator와 Reader 세션,
+  페이지·이어 스크롤, AA 핀치·가로 전체화면·미니맵·장면 이동, 표시·메모·발췌·공유 이미지·통계, 저장한 작품
+  오프라인(service worker), QR 이어 읽기·백업 v4 병합, 읽기 프로필·자동 스크롤, KWIC, 명령 팔레트·스마트
+  서재, 읽기 상태 IndexedDB 사본
 
 ### 남은 acceptance
 
@@ -143,7 +148,7 @@ Freshness 계약:
 
 | 필요 | 선택 |
 |---|---|
-| settings/confirmation | native dialog |
+| settings/confirmation | native dialog, 겹침·Back은 `overlay-manager.js`(CloseWatcher, top layer) |
 | mobile sheet | same dialog DOM + CSS |
 | Android Back으로 sheet/dialog 닫기 | native `showModal()`의 Chromium close request; history entry 추가 금지 |
 | disclosure | details/summary |
@@ -155,10 +160,10 @@ Freshness 계약:
 | search | existing Web Worker |
 | async cancellation | AbortController |
 | theme | CSS custom properties + `color-scheme` 동기화 |
-| Android 상단 크롬 색 | `theme-color` meta를 테마 적용 시 JS로 page token(light `#FFFFFF`/dark `#0B0D12`)과 동기화; 명시 테마는 media별 두 meta 모두, 종이 면 본문 중에는 Reader 색 (`DESIGN.md §5`) |
+| Android 상단 크롬 색 | `theme-color`를 `theme.js`가 앱 밖에서는 `--bg`, Reader 안에서는 읽기 면 색으로 동기화 (`DESIGN.md §2.4`) |
 | 화면 켜 두기 | Screen Wake Lock, 사용자가 켠 동안·본문이 열린 동안만; 자동 요청 금지 |
 | 링크 복사 | Clipboard API, 실패 시 Web Share |
-| persistence | versioned localStorage JSON |
+| persistence | 읽기 상태는 versioned localStorage JSON(원본) + 계정 IndexedDB 사본, 표시·메모·세션·작품 정보·오프라인 목록은 계정 IndexedDB(`idb`) |
 | transition | CSS, View Transition progressive only |
 | command/status | fetch + bounded polling |
 
@@ -170,21 +175,21 @@ Operations live 상태는 active run 중 15초, idle 중 60초 polling하고 bac
 | 후보 | 판정 | 이유 |
 |---|---|---|
 | DSOTM | selective parity port | AA/reader/ops behavior만 검증됨 |
-| SUIT Variable | adopt asset | modern Korean UI, OFL 1.1 |
-| MaruBuri | adopt asset | long-form prose 선택지 |
-| Saitamaar | adopted | AA source fidelity |
+| Pretendard 1.3.9 · MaruBuri 1.000 · Saitamaar | adopted(버전 디렉터리 분할 WOFF2) | UI·본문·AA. 원본은 `edge/font-sources`, `npm run fonts`로 재현(T14) |
+| Gowun Batang 5.3.0 | adopted(고를 때만 link) | 본문 명조 대안 |
+| SUIT Variable | `/ops`만 | `/ops` 화면 매핑 보류(`24 §17`) |
+| idb 8 | adopted | 계정 IndexedDB 트랜잭션·outbox |
+| Workbox 7.4 | adopted | 저장한 작품만 오프라인, 경로표 `24 §12.6.1` |
+| es-hangul 2.4 · uFuzzy 1.0 | adopted | 초성·자모·비슷한 제목 검색(Fuse.js 대신) |
+| Floating UI · @use-gesture · PhotoSwipe · uqr | adopted | 선택 메뉴 · AA 핀치/미니맵 · 이미지 보기 · QR |
 | D1 | adopt control only | small atomic command/status/audit state |
 | Readwise/RIDI/Linear/Standard Ebooks | reference only | IA/typography/status 원리 |
 | Lucide | reject package | 필요한 SVG만 license와 vendor 가능 |
-| React/Svelte/Vue | reject | current state/route complexity에 불필요 |
-| Tailwind/UI kit | reject | token/semantic CSS보다 책임이 큼 |
+| React/Svelte/Vue · Tailwind/UI kit · HTMX | reject | current state/route complexity에 불필요 |
 | Pagefind | conditional | body-search evidence와 size gate 필요 |
 | ReplayWeb.page | conditional | selected WACZ replay 요구 때 |
-| web app manifest | adopt should | 홈 화면 추가/standalone; service worker 없이 manifest만, Access 로그인 flow 실기기 확인 |
-| service worker/PWA | conditional should | selected offline posts만 |
-| IndexedDB | conditional should | explicit offline content에만 |
-| HTMX | reject | static Reader와 JSON control에 이득 없음 |
-| Fuse.js | reject | existing substring search가 충분 |
+| web app manifest | adopted | 홈 화면 추가/standalone |
+| 서버 동기화·RUM | 보류 | `24 §17` |
 
 fork할 project는 없다.
 
@@ -226,8 +231,8 @@ fork할 project는 없다.
 - automatic wake lock
 - legacy 24시간 continue expiry와 10% progress 저장
 - adjacent-post hover prefetch와 36px toolbar action
-- whole archive offline cache
-- duplicate localStorage/server/IndexedDB settings
+- whole archive offline cache(저장한 작품만 오프라인)
+- localStorage와 IndexedDB의 별도 설정 원본(읽기 상태는 localStorage 원본 하나, IndexedDB는 복구용 사본)
 
 ## 8. Reader state implementation
 
