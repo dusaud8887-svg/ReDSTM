@@ -174,11 +174,11 @@ export default [
   },
   {
     "url": "/styles/aa.css",
-    "revision": "b0125791f721b8f7"
+    "revision": "d47d99bc56c1f940"
   },
   {
     "url": "/styles/base.css",
-    "revision": "0261cb78735b3214"
+    "revision": "c43673425dadbbe1"
   },
   {
     "url": "/styles/components.css",
@@ -186,7 +186,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "ee857d66586df80c"
+    "revision": "b23183de24623cf2"
   },
   {
     "url": "/styles/reader.css",
@@ -194,7 +194,7 @@ export default [
   },
   {
     "url": "/styles/shell.css",
-    "revision": "150041aa0c622c8a"
+    "revision": "4e1ecc92af940a8d"
   },
   {
     "url": "/styles/tokens.css",

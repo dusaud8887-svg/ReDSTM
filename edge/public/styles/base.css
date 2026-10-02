@@ -1,13 +1,13 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { width: 100%; height: 100%; overscroll-behavior-y: contain; }
-html { background: var(--page); }
+html { background: var(--bg); }
 body {
   margin: 0;
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
   overflow: hidden;
-  background: var(--page);
+  background: var(--bg);
   color: var(--ink);
 }
 body.reading-context { grid-template-columns: 72px 380px minmax(0, 1fr); }
