@@ -102,9 +102,10 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .app-nav { display: none; }
   .catalog-toggle { display: none !important; }
   .app-settings { display: grid; }
-  .archive-facts { gap: 6px; padding-inline: 4px; }
-  .archive-facts #archive-count { display: none; }
-  .archive-facts > :not(.sr-only) + :not(.sr-only)::before { margin-right: 6px; }
+  /* Operations and archive state are an admin's concern, not a reader's: on a phone they live in
+     설정 › 운영 현황 (and the offline banner), leaving the bar to the title and settings. */
+  .app-bar .archive-facts { display: none; }
+  .app-settings { margin-left: auto; }
   .workspace { grid-column: 1; width: 100%; min-width: 0; min-height: 0; display: block; overflow: hidden; }
   /* The catalog alone reserves room for the fixed bottom navigation; its inner grid does not. */
   .catalog, body.reading-context .catalog { width: 100%; height: 100%; padding-bottom: calc(56px + env(safe-area-inset-bottom)); border: 0; }

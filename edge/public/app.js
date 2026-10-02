@@ -5539,7 +5539,10 @@ elements["aa-fullscreen"].addEventListener("click", async () => {
 document.addEventListener("fullscreenchange", () => {
   const active = document.fullscreenElement === elements["aa-host"];
   elements["aa-fullscreen"].setAttribute("aria-pressed", String(active));
-  elements["aa-fullscreen"].textContent = active ? "⟲ 나가기" : "⟲ 가로 전체화면";
+  // A phone shows only the ⟲ icon (aa.css hides the word); the name stays for screen readers.
+  const label = Object.assign(document.createElement("span"), { className: "aa-long-label", textContent: active ? " 나가기" : " 가로 전체화면" });
+  elements["aa-fullscreen"].replaceChildren("⟲", label);
+  elements["aa-fullscreen"].setAttribute("aria-label", active ? "가로 전체화면 나가기" : "가로 전체화면");
   if (active) return;
   const back = aaFullscreenReturn;
   aaFullscreenReturn = null;

@@ -186,13 +186,17 @@ export function createPersonalLibrary({ host, overlays, getData, load, save, com
     const generation = ++homeGeneration;
     const [data, next] = await Promise.all([getData(), load()]);
     if (generation !== homeGeneration || !visible()) return;
-    state = next; section.hidden = !data.length;
-    section.querySelector("#smart-library-chips").replaceChildren(...state.config.views.map((view) => {
-      const button = document.createElement("button"); button.type = "button"; button.dataset.viewId = view.id;
+    state = next;
+    // A view with no work in it is an empty module: it is left out, and the shelf hides when nothing is left.
+    const chips = state.config.views.map((view) => {
       const count = data.filter((work) => matchesView(work, view.conditions, state.styles.get(work.key))).length;
+      if (!count) return null;
+      const button = document.createElement("button"); button.type = "button"; button.dataset.viewId = view.id;
       button.textContent = `${view.name} ${count}`; button.addEventListener("click", () => void openView(view)); return button;
-    }));
+    }).filter(Boolean);
+    section.querySelector("#smart-library-chips").replaceChildren(...chips);
     const pinned = data.filter((work) => matchesView(work, { pinned: true }, state.styles.get(work.key)));
+    section.hidden = !chips.length && !pinned.length;
     const pinnedSection = section.querySelector("#library-pinned"); pinnedSection.hidden = !pinned.length;
     pinnedSection.querySelector("ol").replaceChildren(...pinned.map(makeCard));
   }

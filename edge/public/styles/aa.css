@@ -58,6 +58,9 @@ body.reader-controls-hidden .aa-minimap { opacity: 0; visibility: hidden; pointe
   /* Stuck under the sticky Reader top bar while it shows, not behind it. */
   body:not(.reader-controls-hidden) .aa-controls { top: calc(48px + env(safe-area-inset-top)); }
   .aa-control-group { flex: 0 0 auto; }
+  /* One row on a phone: ⟲ alone, the tighter gaps keep 맞춤 − 100% + 색 ⟲ within 360px. */
+  .aa-controls { gap: 6px; }
+  .aa-long-label { display: none; }
   .aa-zoom-indicator { left: 50%; }
   .archive-body.aa { width: 100%; padding: 28px 8px 52px; }
   /* Above the floating dock while the tools show. */

@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "782cf2e2bb973453"
+    "revision": "f5faf474d3b4d0d1"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "ee711c63c6113a6b"
+    "revision": "48facda725351780"
   },
   {
     "url": "/arca-media.js",
@@ -102,7 +102,7 @@ export default [
   },
   {
     "url": "/library.js",
-    "revision": "176c62d300daaa42"
+    "revision": "2f67a511aea644f3"
   },
   {
     "url": "/list-anchor.js",
@@ -118,7 +118,7 @@ export default [
   },
   {
     "url": "/offline.js",
-    "revision": "f33c1ed4b8a5ebc5"
+    "revision": "5b77a2869302e3b0"
   },
   {
     "url": "/overlay-manager.js",
@@ -174,7 +174,7 @@ export default [
   },
   {
     "url": "/styles/aa.css",
-    "revision": "f07a35ec2f3afb43"
+    "revision": "45bef8bfd7d7fe10"
   },
   {
     "url": "/styles/base.css",
@@ -186,7 +186,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "839b9ba3eeb2d66d"
+    "revision": "538412982c9d6509"
   },
   {
     "url": "/styles/reader.css",
@@ -194,7 +194,7 @@ export default [
   },
   {
     "url": "/styles/shell.css",
-    "revision": "4e1ecc92af940a8d"
+    "revision": "ccea474d483a7459"
   },
   {
     "url": "/styles/tokens.css",
