@@ -2,11 +2,11 @@
 export default [
   {
     "url": "/",
-    "revision": "dffaa4ce155d5aaf"
+    "revision": "a71b47a58616806e"
   },
   {
     "url": "/aa-viewer.js",
-    "revision": "7163bbb124c3210e"
+    "revision": "5582079c5862c0a6"
   },
   {
     "url": "/annotations.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "bf36b2bad6e9b452"
+    "revision": "6156be721d78d3df"
   },
   {
     "url": "/arca-media.js",
@@ -31,6 +31,10 @@ export default [
   {
     "url": "/capabilities.js",
     "revision": "c0830f0fb20ae570"
+  },
+  {
+    "url": "/continuous-reader.js",
+    "revision": "2d56f23f350ebc8a"
   },
   {
     "url": "/find.js",
@@ -83,6 +87,22 @@ export default [
   {
     "url": "/icons/app-icon.svg",
     "revision": "7852059e72eb0b08"
+  },
+  {
+    "url": "/kwic-core.js",
+    "revision": "9572686f6d4dc2ce"
+  },
+  {
+    "url": "/kwic-worker.js",
+    "revision": "396c5def3c4d182f"
+  },
+  {
+    "url": "/kwic.js",
+    "revision": "d3384bb2ed491e9c"
+  },
+  {
+    "url": "/library.js",
+    "revision": "176c62d300daaa42"
   },
   {
     "url": "/list-anchor.js",
@@ -150,11 +170,11 @@ export default [
   },
   {
     "url": "/store.js",
-    "revision": "f90e8f065682a47b"
+    "revision": "45a774e3ad6e8f2d"
   },
   {
     "url": "/styles/aa.css",
-    "revision": "b3af8117a073fff1"
+    "revision": "b0125791f721b8f7"
   },
   {
     "url": "/styles/base.css",
@@ -166,11 +186,11 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "db94478e5084dc4f"
+    "revision": "ee857d66586df80c"
   },
   {
     "url": "/styles/reader.css",
-    "revision": "4fa320fa75f62e19"
+    "revision": "35f82e076afb0bab"
   },
   {
     "url": "/styles/shell.css",
@@ -178,7 +198,7 @@ export default [
   },
   {
     "url": "/styles/tokens.css",
-    "revision": "0d344a07af85ff53"
+    "revision": "1a90c4820af8e030"
   },
   {
     "url": "/text-anchor.js",
@@ -186,7 +206,7 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "56300400ac765094"
+    "revision": "a1dfa04b7d8ec2f4"
   },
   {
     "url": "/text-model.js",
@@ -210,7 +230,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "9fc0a0885d2b0c41"
+    "revision": "fe8a36a2252d7c17"
   },
   {
     "url": "/work-header.js",

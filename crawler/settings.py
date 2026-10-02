@@ -81,11 +81,14 @@ AUTOTHROTTLE_MAX_DELAY = 120.0
 AUTOTHROTTLE_TARGET_CONCURRENCY = float(REDSTM_CONCURRENT_REQUESTS)
 
 # --- Timeouts ----------------------------------------------------------------
-# Listing uses Scrapy's total timeout. Detail uses the sequential Requests handler below:
-# its read timeout is an inactivity budget, so multi-MB AA may run indefinitely while bytes
-# arrive but one silent origin socket is released after 30 seconds.
+# Listing uses Scrapy's total timeout. Detail uses the sequential Requests handler below.
+# The first-byte budget stays on the socket through the status line and any pause before
+# the body starts. After the first body chunk the socket shrinks to a 30s inactivity
+# budget, so multi-MB AA may run indefinitely while bytes arrive but one silent origin
+# socket is released after 30 seconds.
 REDSTM_LISTING_TIMEOUT_SECONDS = 240
 REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS = 6.1
+REDSTM_DETAIL_FIRST_BYTE_TIMEOUT_SECONDS = 240
 REDSTM_DETAIL_READ_TIMEOUT_SECONDS = 30
 DOWNLOAD_TIMEOUT = REDSTM_LISTING_TIMEOUT_SECONDS
 

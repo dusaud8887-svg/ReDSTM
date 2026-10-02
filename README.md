@@ -130,8 +130,8 @@ robots.txt는 2026-07-14 사용자 결정으로 준수하지 않으며(`ROBOTSTX
 원본이 공표한 `Crawl-delay: 10`과 동일하게 유지한다. 요청은 로그인 회원의 브라우저와 일관된 발자국
 (실제 브라우저 UA, `Accept`/`Accept-Language`, page·detail `Referer` 체인; 로그인 handshake도 동일)을
 보내 WAF/rate limiter의 봇 차단을 피하고, 봇 차단·challenge 페이지가 오면 parse drift가 아니라
-`network_error`로 backoff한다. listing은 총 240초 timeout이고, detail은 connect 6.1초/read-idle
-30초라서 바이트가 계속 오는 대형 AA는 끝까지 받되 멈춘 글만 끊는다. listing은 최초 포함 최대 4회,
+`network_error`로 backoff한다. listing은 총 240초 timeout이고, detail은 connect 6.1초, 첫 바이트
+240초, read-idle 30초라서 느린 헤더를 기다린 뒤 바이트가 계속 오는 대형 AA는 끝까지 받되 멈춘 글만 끊는다. listing은 최초 포함 최대 4회,
 detail은 동일 글만 총 3회 재시도한 뒤 영속 frontier가 2분~6시간 backoff로 무기한 재시도한다.
 network breaker 뒤 장기 수동 작업은 1건 canary로 원본 회복을 확인한 뒤 정상 20건 직렬 chunk로
 복귀한다. 실행 중 Operations 집계는 5분마다 canonical

@@ -60,7 +60,7 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 | checkpoint | DB cursor/lease + pass marker | JSON checkpoint + DB queue | page CSV와 파일 존재 | persistent RequestQueue/RequestList |
 | 기본 동시성 | listing global/domain 2(환경변수 1–3), detail 1 | UI 2 표기지만 rebuild 실제 직렬 | 1 | resource-aware autoscaling, min/max/분당 제한 |
 | 시작 간격 | 고정 10초, 감속 AutoThrottle | rebuild 고정 4초 | 대략 3~5초+매 5회 추가 휴식 | same-domain delay와 maxRequestsPerMinute |
-| timeout | listing 총 240초/detail connect 6.1초+read-idle 30초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
+| timeout | listing 총 240초/detail connect 6.1초+첫 바이트 240초+read-idle 30초 | rebuild plan 60초, session 30초 | connect 6.1/read 30초 | handler timeout과 HTTP/browser별 설정 |
 | retry | listing 최초 포함 4회; detail 동일 글 총 3회 뒤 durable frontier | fetch retry+workflow retry, failed/dead queue | adapter retry와 외부 loop가 중첩 | maxRequestRetries, error/final failure handler |
 | 429 | Retry-After 최대 24시간 반영 | 60초 cooldown 후 1회 | 일반 HTTPError와 동일, Retry-After 미지원 | blocked retry/session rotation/사용자 handler |
 | 장애 차단 | detail network 5회, parse/rate 3회 breaker | network 8회, content 5/8 단계 복구 | 없음 | retry budget과 handler; domain breaker는 사용자가 정책화 |
@@ -92,13 +92,14 @@ GitHub star는 품질 보증이 아니라 생태계 규모를 가늠하는 보�
 ### 현재 처리량
 
 `crawler/settings.py` 기준값은 listing global/domain concurrency 2, detail concurrency 1,
-`DOWNLOAD_DELAY=10`이다. listing은 총 timeout 240초와 최초 포함 4회, detail은 connect 6.1초와
-read-idle 30초, 동일 글 총 3회를 사용한 뒤 durable frontier로 defer한다.
+`DOWNLOAD_DELAY=10`이다. listing은 총 timeout 240초와 최초 포함 4회, detail은 connect 6.1초,
+첫 바이트 240초, read-idle 30초, 동일 글 총 3회를 사용한 뒤 durable frontier로 defer한다.
 
 - 응답이 10초 이하일 때 이론상 최대 6 request/minute, 360/hour다.
 - listing은 10초 시작 간격과 concurrency 2를 유지하지만, detail은 동일 PHP session의 worker/session
   lock 경합을 피하려고 직렬화한다.
-- detail read timeout은 총시간이 아니라 연속 무수신 시간이다. 따라서 수 MB AA가 30초보다 오래 걸려도
+- detail read timeout은 총시간이 아니라 연속 무수신 시간이다. 첫 바이트까지는 240초를 기다리고,
+  본문이 시작된 뒤 30초 동안 바이트가 없으면 해당 글만 끊는다. 수 MB AA가 그보다 오래 걸려도
   바이트가 계속 오면 중단하지 않는다.
 - 2026-07-14 최근 inventory worker 3개의 실측은 444초/5 capture, 1,565초/6 capture,
   1,166초/10 capture였다. 이는 raw retry request 수가 아니라 canonical에 남은 terminal capture 기준

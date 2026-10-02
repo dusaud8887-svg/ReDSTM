@@ -34,6 +34,9 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 
 .archive-body { width: min(var(--prose-width), calc(100% - 64px)); margin: 0 auto; padding: 42px 0 72px; font-family: var(--prose-font); font-size: var(--prose-size); line-height: var(--prose-line); text-align: var(--prose-align, start); overflow-wrap: break-word; text-wrap: pretty; }
 .archive-body:focus-visible { outline-offset: -3px; }
+body.continuous-mode #reader-pane { overflow-anchor: none; }
+.archive-body[data-continuous-title] { border-block-start: 1px solid var(--line); }
+.archive-body[data-continuous-title]::before { content: attr(data-continuous-title); display: block; margin-bottom: 24px; font: 700 20px/1.5 var(--font-display); white-space: normal; }
 /* Pinch on prose changes the font size (app.js) instead of zooming the page. */
 .archive-body:not(.aa) { touch-action: pan-x pan-y; }
 .setting-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -84,6 +87,22 @@ body.reader-active.reader-controls-hidden:not(.immersive) .reader-status { opaci
 .handoff-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .handoff-actions input { min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
 .handoff-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+/* 읽기 프로필 in the quick panel: one chip per saved profile, the active one pressed. */
+.quick-profiles { display: grid; gap: 6px; }
+.quick-panel { max-height: min(320px, calc(100dvh - 100px)); overflow-y: auto; }
+.quick-profile-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick-profile-list button, .quick-profile-add { min-height: 40px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--page); color: var(--ink); font-weight: 600; cursor: pointer; }
+.quick-profile-list button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.quick-profile-add { justify-self: start; color: var(--muted); font-weight: 500; }
+.quick-profile-work { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+/* 자동 스크롤 takes the dock's place while it runs (DESIGN §7.11). */
+.autoscroll-bar { position: fixed; left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 30; display: flex; align-items: center; justify-content: space-around; gap: 6px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 18px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow); }
+.autoscroll-bar[hidden] { display: none; }
+body.find-open .autoscroll-bar { visibility: hidden; }
+.autoscroll-bar button { min-width: 48px; min-height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font-size: 18px; cursor: pointer; }
+.autoscroll-bar output { min-width: 32px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+body.autoscroll-open .reader-bottom { visibility: hidden; }
+@media (min-width: 760px) { .autoscroll-bar { left: auto; right: 24px; width: 320px; } }
 .selection-more-actions { display: grid; gap: 8px; }
 .selection-more-actions button { min-height: 48px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--page); color: var(--ink); font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
 /* Share sheet (docs/24 §8.14): the canvas itself is the preview (no blob: image under the CSP). */

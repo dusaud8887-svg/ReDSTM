@@ -28,6 +28,14 @@ const summary = (extension = "zst", hash = "a") => ({
   object_key: `posts/write_free21/62068-${hash.repeat(64)}.json.${extension}`,
 });
 
+test("continuous prose mode survives backup validation and unknown modes fall back", () => {
+  const current = defaultUserState({ ...defaults, readingMode: "scroll" });
+  const continuous = planImport(exportUserState({ ...current, settings: { ...current.settings, readingMode: "continuous" } }), current.settings);
+  assert.equal(continuous.state.settings.readingMode, "continuous");
+  const unknown = planImport(exportUserState({ ...current, settings: { ...current.settings, readingMode: "infinite" } }), current.settings);
+  assert.equal(unknown.state.settings.readingMode, "scroll");
+});
+
 test("optional locators survive v2 storage and v3 backups without replacing legacy positions", () => {
   const revision = "a".repeat(64);
   const loc = createLocator({ text: "앞 문장. 읽던 문장. 뒤 문장." }, 6, 12, revision);
@@ -371,4 +379,22 @@ test("imported times with a zone offset are kept as the same instant in UTC", ()
   assert.equal(planImport(exportUserState(state), defaults).state.history["write_free21:62068"].readAt, "2026-09-30T00:00:00.000Z");
   state.history["write_free21:62068"].readAt = "2026-09-30T00:00:00Z";
   assert.equal(planImport(exportUserState(state), defaults).state.history["write_free21:62068"].readAt, "2026-09-30T00:00:00Z");
+});
+
+test("reading profiles, work exceptions and the auto-scroll speed survive storage and backups", () => {
+  const state = defaultUserState(defaults);
+  state.settings.autoScrollSpeed = 4;
+  state.settings.readingProfiles = [
+    { name: "밤", values: { readerSurface: "ink", readerDim: 30, proseSize: 20, theme: "dark", aaZoom: 2 } },
+    { name: "밤", values: { proseSize: 16 } },
+    { name: "", values: { proseSize: 16 } },
+    { name: "낮", values: { proseSize: 99 } },
+  ];
+  state.settings.workProfiles = { "typemoon:collection:1": "밤", "typemoon:collection:2": "없는 프로필" };
+  const restored = planImport(exportUserState(state), defaults).state.settings;
+  assert.equal(restored.autoScrollSpeed, 4);
+  assert.deepEqual(restored.readingProfiles, [{ name: "밤", values: { proseSize: 20, readerSurface: "ink", readerDim: 30 } }]);
+  assert.deepEqual(restored.workProfiles, { "typemoon:collection:1": "밤" });
+  state.settings.autoScrollSpeed = 11;
+  assert.equal(planImport(exportUserState(state), defaults).state.settings.autoScrollSpeed, undefined);
 });

@@ -1,5 +1,6 @@
 import { gunzipSync } from "node:zlib";
 
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 import { arcalivePost, arcaliveWork, novelWork, useTextArchive } from "./text-fixture.js";
@@ -2146,4 +2147,346 @@ test("Merging a backup keeps a differently edited note as a conflict copy", asyn
   await expect(cards).toHaveCount(2);
   await expect(page.locator(".excerpt-card", { hasText: "이 기기 메모" }).locator(".result-meta")).toContainText("충돌 사본");
   await expect(page.locator(".excerpt-card", { hasText: "다른 기기 메모" }).locator(".result-meta")).not.toContainText("충돌 사본");
+});
+
+// P6-2: 자동 스크롤 flows, pauses on touch and takes the dock's place; reading profiles switch the
+// reading settings at once, and 이 작품만 opens a work with its profile without changing the base.
+test("Auto scroll flows and pauses, and reading profiles apply globally or to one work", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(page.locator("#collection-context")).toBeVisible();
+  const openMore = () => page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await openMore();
+  await page.locator("#more-autoscroll").click();
+  const bar = page.locator("#autoscroll-bar");
+  await expect(bar).toBeVisible();
+  const pane = page.locator("#reader-pane");
+  const start = await pane.evaluate((element) => element.scrollTop);
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(start + 10);
+  await page.locator('[data-autoscroll-delta="1"]').click();
+  await expect(page.locator("#autoscroll-speed")).toHaveText("4");
+  await page.locator("#archive-body").dispatchEvent("pointerdown", { isPrimary: true, pointerType: "touch", clientX: 100, clientY: 300 });
+  await expect(page.locator("#autoscroll-toggle")).toHaveText("▶");
+  const paused = await pane.evaluate((element) => element.scrollTop);
+  await page.waitForTimeout(400);
+  expect(await pane.evaluate((element) => element.scrollTop)).toBe(paused);
+  await page.locator("#autoscroll-toggle").click();
+  await page.locator(mobileWidth(page) ? "#reader-find" : "#reader-toolbar-find").click();
+  await expect(page.locator("#find-bar")).toBeVisible();
+  await expect(bar).toBeHidden();
+  await page.locator("#find-close").click();
+  await expect(bar).toBeVisible();
+  await expect(page.locator("#autoscroll-toggle")).toHaveText("▶");
+  await page.locator("#autoscroll-close").click();
+  await expect(bar).toBeHidden();
+
+  const quick = () => page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  const surface = () => page.locator('#quick-settings [data-reader-surface][aria-checked="true"]').getAttribute("data-reader-surface");
+  const saveAs = async (name) => {
+    page.once("dialog", (dialog) => dialog.accept(name));
+    await page.locator("#quick-profile-add").click();
+    await expect(page.locator(`#quick-profile-list [data-profile="${name}"]`)).toBeVisible();
+  };
+  await quick();
+  await saveAs("낮");
+  await page.locator('#quick-settings [data-reader-surface="ink"]').click();
+  await saveAs("밤");
+  await expect(page.locator('#quick-profile-list [data-profile="밤"]')).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#quick-profile-work-check").check();
+  await page.locator('#quick-profile-list [data-profile="낮"]').click();
+  expect(await surface()).toBe("default");
+  // Reopened, the work wears its own profile while the stored base stays 낮.
+  await page.reload();
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--reader-dim") || document.body.dataset.readerSurface || document.documentElement.dataset.readerSurface)).toBeTruthy();
+  await quick();
+  await expect.poll(surface).toBe("ink");
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings);
+  expect(stored.readerSurface).toBe("default");
+  expect(Object.values(stored.workProfiles)).toEqual(["밤"]);
+  await page.locator("#quick-profile-work-check").uncheck();
+  await expect.poll(surface).toBe("default");
+});
+
+test("KWIC worker returns original locators and reports unreadable episodes separately", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/");
+  const results = await page.evaluate(async () => {
+    const { createTextModel } = await import("/text-model.js");
+    const worker = new Worker("/kwic-worker.js", { type: "module" });
+    try {
+      return await new Promise((resolve, reject) => {
+        const found = [];
+        worker.onerror = reject;
+        worker.onmessage = ({ data }) => {
+          if (data.type === "parse") {
+            const body = new DOMParser().parseFromString(JSON.parse(data.raw).post.body_html, "text/html").body;
+            worker.postMessage({ type: "parsed", queryId: data.queryId, parseId: data.parseId, text: createTextModel(body).text });
+          } else if (data.type === "result") found.push(data);
+          else if (data.type === "done") resolve(found);
+        };
+        worker.postMessage({ type: "search", queryId: 1, query: "본문 1", entries: [
+          { documentId: "1", type: "typemoon", url: `/archive/posts/board_a/1-${"1".padStart(64, "0")}.json.zst` },
+          { documentId: "missing", type: "typemoon", url: "/archive/missing.json" },
+        ] });
+      });
+    } finally { worker.terminate(); }
+  });
+  expect(results).toHaveLength(2);
+  expect(results.find((result) => result.entry.documentId === "1").matches[0].locator.exact).toBe("본문 1");
+  expect(results.at(-1).failed).toBe(1);
+  expect(results.find((result) => result.entry.documentId === "missing").error).toBe(true);
+});
+
+test("KWIC sheet filters before counts, widens explicitly and opens an original sentence", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const { createKwic } = await import("/kwic.js");
+    const { createTextModel } = await import("/text-model.js");
+    const { createOverlayManager } = await import("/overlay-manager.js");
+    document.querySelector("#kwic-dialog").remove();
+    const kwic = createKwic({
+      overlays: createOverlayManager(),
+      parse: (_entry, raw) => createTextModel(new DOMParser().parseFromString(JSON.parse(raw).post.body_html, "text/html").body).text,
+      async onOpen(hit, parent) { window.kwicOpened = { hit, parent }; },
+    });
+    kwic.open({ title: "긴 연재", from: "/collections/1", current: "1", read: ["1"], entries: [1, 2, 3].map((id) => ({
+      title: `${id}편`, documentId: String(id), type: "typemoon", url: `/archive/posts/board_a/${id}-${id.toString(16).padStart(64, "0")}.json.zst`,
+    })) }, "본문 40");
+  });
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐 1곳");
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐 3곳");
+  await page.locator("#kwic-results button").nth(2).click();
+  const opened = await page.evaluate(() => window.kwicOpened);
+  expect(opened.hit.entry.documentId).toBe("3");
+  expect(opened.hit.locator.exact).toBe("본문 40");
+  expect(opened.parent).toBe("/collections/1?kwic=%EB%B3%B8%EB%AC%B8+40&kwicAll=1");
+});
+
+
+test("T16/T17 work search opens a sentence and Back restores the scoped results", async ({ page }) => {
+  await useLongCollection(page, 200);
+  await page.goto("/read/board_a/200");
+  await expect(page.locator("#collection-context")).toBeVisible();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#reader-work-find").click();
+  await page.locator("#kwic-input").fill("본문 40");
+  await page.locator("#kwic-search").getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐 1곳");
+  await expect(page.locator("#kwic-results button")).toHaveCount(1);
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("200화에 걸쳐 200곳");
+  await page.locator("#kwic-results button").first().click();
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  await expect.poll(() => page.locator("#reader-pane").evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+  await page.goBack();
+  await expect(page.locator("#kwic-dialog")).toBeVisible();
+  await expect(page.locator("#kwic-input")).toHaveValue("본문 40");
+  await expect(page.locator("#kwic-all")).toBeChecked();
+  await expect(page.locator("#kwic-status")).toContainText("200화에 걸쳐 200곳");
+});
+
+test("T16/T17 novel work search uses original text and returns to its work", async ({ page }) => {
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "검색 소설", chapters: 3 })] });
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent("novel:toki:1")}&chapter=1-1`);
+  await expect(page.locator("#reader-title")).toHaveText("1화");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#reader-work-find").click();
+  await page.locator("#kwic-input").fill("본문 줄");
+  await page.locator("#kwic-search").getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐");
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+  await page.locator("#kwic-results button").last().click();
+  await expect(page.locator("#reader-title")).toHaveText("3화");
+  await page.goBack();
+  await expect(page.locator("#kwic-dialog")).toBeVisible();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+});
+
+
+test("T16/T17 Arcalive work search returns to its filtered chapter list", async ({ page }) => {
+  const posts = [1, 2, 3].map((id) => arcalivePost({ id, title: `${id}편` }));
+  const item = arcaliveWork({ key: "search", title: "검색 연재", posts });
+  await useTextArchive(page, { posts, works: [item] });
+  await page.goto(`/text?lane=arcalive&view=works&work=${encodeURIComponent(item.item.work_id)}&sort=latest&item=${encodeURIComponent(posts[0].identity)}`);
+  await expect(page.locator("#reader-title")).toHaveText("1편");
+  await page.locator(mobileWidth(page) ? "#reader-bottom-more" : "#reader-toolbar-more").click();
+  await page.locator("#reader-work-find").click();
+  await page.locator("#kwic-input").fill("본문 줄");
+  await page.locator("#kwic-search").getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#kwic-status")).toContainText("1화에 걸쳐");
+  await page.locator("#kwic-all").check();
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+  await page.locator("#kwic-results button").last().click();
+  await expect(page.locator("#reader-title")).toHaveText("3편");
+  await page.goBack();
+  await expect(page.locator("#kwic-dialog")).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("sort")).toBe("latest");
+  await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
+});
+
+
+test("P6-4 palette finds metadata across sources and keeps IME and settings commands separate", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const posts = [4, 5].map((id) => arcalivePost({ id, title: `${id}편` }));
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "세이버 소설", author: "카나", chapters: 3 })], posts,
+    works: [arcaliveWork({ key: "garden", title: "정원 연재", posts })] });
+  await page.goto("/");
+  const open = () => page.keyboard.press("Control+k");
+  await open();
+  await page.locator("#palette-input").fill("ㅅㅇㅂ");
+  await expect(page.locator('#palette-results button[data-work-key="novel:novel:toki:1"]')).toHaveText(/세이버 소설/);
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+  await page.locator("#palette-input").press("Enter");
+  await expect(page.locator("#text-work-summary")).toContainText("세이버 소설");
+  await open();
+  await page.locator("#palette-input").fill("카나");
+  await expect(page.locator("#palette-results button")).toHaveCount(1);
+  await page.locator("#palette-input").fill("정원");
+  await expect(page.locator("#palette-results button")).toHaveText(/정원 연재/);
+  await page.locator("#palette-input").press("Enter");
+  await expect(page.locator("#text-work-summary")).toContainText("정원 연재");
+  await open();
+  await page.locator("#palette-input").fill("설정");
+  await expect(page.locator("#palette-results button")).toHaveText(/설정/);
+  await page.locator("#palette-input").press("Enter");
+  await expect(page.locator("#settings-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator("body").dispatchEvent("keydown", { key: "k", ctrlKey: true, isComposing: true });
+  await expect(page.locator("#command-palette")).toBeHidden();
+});
+
+test("P6-4 classifications cover all sources and named condition combinations survive a v4 backup", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await useLongCollection(page, 3);
+  const posts = [4, 5].map((id) => arcalivePost({ id, title: `${id}편` }));
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "세이버 소설", chapters: 3 })], posts,
+    works: [arcaliveWork({ key: "garden", title: "정원 연재", posts })] });
+  await page.goto("/collections/1");
+  await page.locator("#collection-classify").click();
+  await expect(page.locator("#work-style-dialog")).toBeVisible();
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+  page.once("dialog", (dialog) => dialog.accept("기억"));
+  await page.locator("#library-shelf-add").click();
+  const style = page.locator("#work-style-form");
+  await expect(style.locator('select option:checked')).toHaveText("기억");
+  const shelfId = await style.locator("select").inputValue();
+  await style.locator('[name="pinned"]').check();
+  await style.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator("#work-style-dialog")).toBeHidden();
+  const paletteWork = async (query) => {
+    await page.keyboard.press("Control+k"); await page.locator("#palette-input").fill(query);
+    await expect(page.locator("#palette-results button")).toHaveCount(1);
+    await page.locator("#palette-input").press("Enter");
+    await expect(page.locator("#text-work-summary")).toContainText(query);
+    await page.locator("#text-work-summary .shelf-summary").click();
+    await expect(page.locator("#work-style-dialog")).toBeVisible();
+    await style.locator("select").selectOption(shelfId);
+  };
+  await paletteWork("세이버");
+  await style.locator('[name="pinned"]').check();
+  await style.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator("#work-style-dialog")).toBeHidden();
+  await paletteWork("정원");
+  await style.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator("#work-style-dialog")).toBeHidden();
+  await page.evaluate(() => { history.pushState({}, "", "/"); dispatchEvent(new PopStateEvent("popstate", { state: {} })); });
+  await expect(page.locator("#smart-library")).toBeVisible();
+  await expect(page.locator("#library-pinned .shelf-card")).toHaveCount(2);
+  await page.locator("#smart-library-edit").click();
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()).violations).toEqual([]);
+  const form = page.locator("#library-view-form");
+  await form.locator('[name="name"]').fill("기억한 작품");
+  await form.locator('[name="shelfId"]').selectOption(shelfId);
+  await form.locator('[name="pinned"]').check();
+  await form.getByRole("button", { name: "조건 조합 저장" }).click();
+  await expect(page.locator("#library-editor-status")).toHaveText("저장했어요");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#smart-library-chips button", { hasText: "기억한 작품" })).toHaveText("기억한 작품 2");
+  await page.locator("#smart-library-chips button", { hasText: "기억한 작품" }).click();
+  await expect(page.locator("#library-view-works li")).toHaveCount(2);
+  await expect(page.locator("#library-view-works")).toContainText("긴 연재");
+  await expect(page.locator("#library-view-works")).toContainText("세이버 소설");
+  await expect(page.locator("#library-view-works")).not.toContainText("정원 연재");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(page.locator("#smart-library-chips button", { hasText: "기억한 작품" })).toHaveText("기억한 작품 2");
+  await page.goto("/settings");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-state").click()]);
+  const raw = await (await download.createReadStream()).toArray().then((chunks) => Buffer.concat(chunks));
+  const backup = JSON.parse(gunzipSync(raw).toString("utf8"));
+  expect(backup.schema_version).toBe(4);
+  expect(backup.records.library.views.find((view) => view.name === "기억한 작품").conditions).toEqual({ pinned: true, shelfId });
+  expect(backup.records.works.filter((work) => work.shelfId === shelfId)).toHaveLength(3);
+});
+
+// P6-8: ‹ 장면 n/N › steps through the original 레스 header lines without touching the AA DOM.
+test("AA scene moves follow the original 레스 headers and hide without them", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const header = (number) => `${number} ： ◆nXsLRB5hfY ： 2024/11/29(金) 22:4${number}:32 ID:udvPw2Ed`;
+  const lines = (number) => Array.from({ length: 40 }, (_, line) => `<div>（　´∀｀）　장면 ${number} 줄 ${line}</div>`).join("");
+  const post = (id, body) => ({
+    schema_version: 1,
+    post: {
+      board_id: "board_a", external_post_id: id, canonical_url: `https://example.test/${id}`, title: `${id}편 제목`,
+      author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: true, body_html: body,
+    },
+    comments: [],
+  });
+  const scenes = `<div class="AA_Text">${[1, 2, 3, 4].map((number) => `<div>${header(number)}</div>${lines(number)}`).join("")}</div>`;
+  await page.route(/\/archive\/posts\/board_a\/[12]-/, (route) => {
+    const id = Number(/board_a\/(\d+)-/.exec(route.request().url())[1]);
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(post(id, id === 1 ? scenes : `<div class="AA_Text"><div>${"＿".repeat(20)}</div></div>`)) });
+  });
+  await page.goto("/read/board_a/1");
+  await expect(page.locator("#reader-title")).toHaveText("1편 제목");
+  const group = page.locator("#aa-scenes");
+  const output = page.locator("#aa-scene-output");
+  await expect(group).toBeVisible();
+  await expect(output).toHaveText("장면 1/4");
+  await expect(page.locator("#aa-scene-previous")).toBeDisabled();
+  const before = await page.locator("#archive-body").innerHTML();
+
+  // The header of the scene moved to sits just under the sticky toolbar.
+  const headerTop = (number) => page.evaluate((text) => {
+    const walker = document.createTreeWalker(document.querySelector("#archive-body"), NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.data.trim() === text) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getBoundingClientRect().top - document.querySelector("#aa-controls").getBoundingClientRect().bottom;
+      }
+    }
+    return null;
+  }, header(number));
+  await page.locator("#aa-scene-next").click();
+  await expect(output).toHaveText("장면 2/4");
+  expect(Math.abs(await headerTop(2) - 8)).toBeLessThanOrEqual(3);
+  // A scene move is not a reading scroll: the toolbar stays for the next move.
+  await expect(page.locator("body")).not.toHaveClass(/reader-controls-hidden/);
+  // While the bars show, the toolbar is not behind the Reader top bar (mobile).
+  const covered = await page.locator("#aa-scene-next").evaluate((button) => {
+    const box = button.getBoundingClientRect();
+    return !button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  });
+  expect(covered).toBe(false);
+  await page.locator("#aa-scene-next").click();
+  await page.locator("#aa-scene-next").click();
+  await expect(output).toHaveText("장면 4/4");
+  await expect(page.locator("#aa-scene-next")).toBeDisabled();
+  await page.locator("#aa-scene-previous").click();
+  await expect(output).toHaveText("장면 3/4");
+  expect(Math.abs(await headerTop(3) - 8)).toBeLessThanOrEqual(3);
+  // Plain scrolling updates the label too.
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = 0; });
+  await expect(output).toHaveText("장면 1/4");
+  expect(await page.locator("#archive-body").innerHTML()).toBe(before);
+
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect(group).toBeHidden();
 });

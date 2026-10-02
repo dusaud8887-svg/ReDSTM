@@ -51,6 +51,7 @@
   /* Faces come from the versioned font CSS linked in index.html (DESIGN §3.1). */
   --font-ui: "Pretendard Variable", Pretendard, system-ui, "Malgun Gothic", sans-serif;
   --font-display: MaruBuri, "Gowun Batang", "Noto Serif KR", serif;
+  --font-reading-alt: "Gowun Batang", MaruBuri, "Noto Serif KR", serif;
   --font-reading: MaruBuri, "Gowun Batang", "Noto Serif CJK KR", "Noto Serif KR", "Noto Serif CJK JP", "Source Han Serif K", Batang, serif;
   --prose-size: 18px;
   --prose-line: 1.8;

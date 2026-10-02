@@ -1586,6 +1586,34 @@ test("upserts monotonic bounded board status", async () => {
   assert.ok(Date.parse(parameters[20]) <= Date.now() + 6 * 60 * 1000);
 });
 
+test("accepts a memory-limit board warning", async () => {
+  let warning;
+  const env = {
+    CONTROL_DB: database((method, _statement, values) => {
+      assert.equal(method, "run");
+      warning = values[15];
+      return { success: true };
+    }),
+  };
+  const response = await controlApiResponse(
+    request("/api/v1/runner/boards/status", {
+      method: "POST",
+      body: {
+        board_id: "aa",
+        last_scanned_at: "2026-07-12T04:00:00Z",
+        last_outcome: "failed",
+        counters: { discovered: 0, changed: 0, pending: 1, retry: 0, dead: 0 },
+        warning_code: "memory_limit",
+      },
+      headers: { "Idempotency-Key": "board-memory-limit" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(warning, "memory_limit");
+});
+
 test("rejects a board timestamp beyond the allowed future clock skew before D1", async () => {
   const response = await controlApiResponse(
     request("/api/v1/runner/boards/status", {

@@ -131,7 +131,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | request | robots | 미준수(`ROBOTSTXT_OBEY=False`, 2026-07-14 사용자 결정; 10초 간격은 유지) | `crawler/settings.py` |
 | request | 발자국 | 브라우저 `USER_AGENT`(Chrome 150), `Accept`/`Accept-Language`, UA client hints(`sec-ch-ua*`)와 fetch-metadata(`Sec-Fetch-*`, `Upgrade-Insecure-Requests`) 헤더(`DEFAULT_REQUEST_HEADERS`), page/detail `Referer`와 `Sec-Fetch-Site` 체인, 로그인 핸드셰이크도 동일 헤더 | `crawler/settings.py` + `crawler/spiders/typemoon.py` + `crawler/session.py` |
 | request | TLS 지문 impersonation | 기본 off; 설정 시 login/listing은 curl_cffi Chrome 지문, detail은 검증된 순차 HTTP/1.1 transport 사용(optional `impersonate` extra 필요) | `crawler/footprint.py` + `crawler/settings.py` + `crawler/session.py` |
-| request | listing/detail timeout | listing 총 240초 / detail connect 6.1초 + read-idle 30초(총시간 상한 없음) | `crawler/settings.py` + `crawler/download_handlers.py` |
+| request | listing/detail timeout | listing 총 240초 / detail connect 6.1초 + 첫 바이트 240초 + read-idle 30초(총시간 상한 없음) | `crawler/settings.py` + `crawler/download_handlers.py` |
 | request | retry | listing 최초 포함 총 4회; detail 동일 글 총 3회 뒤 영속 frontier | `crawler/settings.py` + `crawler/spiders/typemoon.py` |
 | response | warning/max | 8MiB / 64MiB | `crawler/settings.py` |
 | WARC | rotation | 1GiB | `crawler/settings.py` |

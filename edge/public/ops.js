@@ -77,6 +77,8 @@ const warningLabels = {
   token_expiring: "수집기 인증 갱신이 필요합니다.",
   publish_stale: "새 보존본 게시가 지연되고 있습니다.",
   maintenance: "Oracle 보관소를 점검하고 있습니다. 수동 수집은 점검 완료 후 다시 사용할 수 있습니다.",
+  memory_limit: "메모리 한도에 닿아 이 배치를 먼저 끝냈습니다. 남은 글은 다음 배치로 이어집니다.",
+  recovery_time_budget: "실행 시간 상한에 닿았습니다. 진행분과 재시도 큐는 보존됩니다.",
   schedule_overdue: "자동 실행 예정 시각이 지났거나 마지막 자동 실행이 7시간보다 오래됐습니다.",
   schedule_unverified: "예약은 켜져 있지만 자동 실행 완료 이력이 아직 없습니다.",
 };

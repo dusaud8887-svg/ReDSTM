@@ -91,6 +91,13 @@ def _timed_out(crawler: Any) -> bool:
     )
 
 
+def _memory_limited(crawler: Any) -> bool:
+    return bool(
+        crawler.stats is not None
+        and crawler.stats.get_value("finish_reason") == "memusage_exceeded"
+    )
+
+
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:
     archive = args.archive.expanduser().resolve(strict=True)
     session_path = args.session.expanduser().resolve()
@@ -168,6 +175,8 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         )
         if _timed_out(crawler):
             failures = sorted({*failures, "sync_time_budget"})
+        if _memory_limited(crawler):
+            failures = sorted({*failures, "memory_limit"})
         outcomes = _capture_summary(archive, run_id)
         paused = bool(getattr(spider, "paused", False))
         inventory_next_page = int(getattr(spider, "next_inventory_page", inventory_start_page))

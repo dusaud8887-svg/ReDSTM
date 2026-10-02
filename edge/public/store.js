@@ -1,4 +1,4 @@
-const KEYS = { annotations: "id", sessions: "id", works: "workKey", offline: "workKey" };
+const KEYS = { annotations: "id", sessions: "id", works: "workKey", offline: "workKey", meta: "key" };
 
 export function storeName(ownerHash) {
   if (typeof ownerHash !== "string" || !/^[a-f0-9]{16}$/.test(ownerHash)) throw new TypeError("검증된 계정 식별자가 필요합니다");
@@ -13,6 +13,7 @@ export function planChanges(changes, createdAt = new Date().toISOString()) {
     const key = change.value === null ? change.key : change.value?.[keyPath];
     if (typeof key !== "string" || !key || key.length > 300) throw new TypeError("잘못된 기록 식별자");
     if (change.baseRev !== undefined && (!Number.isSafeInteger(change.baseRev) || change.baseRev < 0)) throw new TypeError("잘못된 revision");
+    if (change.store === "meta" && key !== "library") throw new TypeError("지원하지 않는 사용자 설정");
     const value = structuredClone(change.value);
     return { store: change.store, key, value, op: {
       opId: crypto.randomUUID(), key: `${change.store}:${key}`, value,
@@ -43,7 +44,7 @@ export async function writeTransaction(db, changes) {
 export function pendingLegacy(records, committed) {
   return records.filter((record) => {
     const previous = committed.get(record.key);
-    return !previous || record.raw !== previous.raw || record.updatedAt > previous.updatedAt;
+    return !previous || record.raw !== (previous.sourceRaw ?? previous.raw) || record.updatedAt > previous.updatedAt;
   });
 }
 
@@ -93,9 +94,18 @@ export async function openStore(ownerHash) {
     const transaction = db.transaction(["meta", "outbox"], "readwrite");
     const value = JSON.parse(record.raw);
     try {
-      await transaction.objectStore("meta").put({ ...record, key: `legacy:${record.key}` });
+      const previous = await transaction.objectStore("meta").get(`legacy:${record.key}`);
+      const opId = crypto.randomUUID();
+      // A full state supersedes its unsent predecessor. Keep attempted operations, and never
+      // compact annotations/tombstones here. The original migration bytes remain a rollback copy.
+      if (previous?.pendingOpId) {
+        const pending = await transaction.objectStore("outbox").get(previous.pendingOpId);
+        if (pending?.state === "pending" && pending.attempts === 0) await transaction.objectStore("outbox").delete(pending.opId);
+      }
+      await transaction.objectStore("meta").put({ ...record, key: `legacy:${record.key}`,
+        sourceRaw: record.sourceRaw ?? record.raw, originalRaw: previous?.originalRaw ?? record.raw, pendingOpId: opId });
       await transaction.objectStore("outbox").add({
-        opId: crypto.randomUUID(), key: `legacy:${record.key}`, value, baseRev: 0,
+        opId, key: `legacy:${record.key}`, value, baseRev: 0,
         createdAt: record.updatedAt, attempts: 0, state: "pending",
       });
       await transaction.done;
@@ -125,6 +135,15 @@ export async function openStore(ownerHash) {
         localStorage.setItem(key, raw);
         await bridgeLegacy({ key, raw, updatedAt: value?.updatedAt || new Date().toISOString() });
       });
+      notify([key]);
+    },
+    // sourceRaw: the localStorage bytes when this state was saved (a queued write must not record
+    // a later localStorage value as the one it supersedes).
+    async writeState(key, raw, sourceRaw = localStorage.getItem(key) ?? raw) {
+      if (!["redstm.userState.v2", "redstm.textState.v1"].includes(key) || typeof raw !== "string") throw new TypeError("잘못된 읽기 상태");
+      const value = JSON.parse(raw);
+      if (value?.schema_version !== (key === "redstm.userState.v2" ? 2 : 1)) throw new TypeError("지원하지 않는 읽기 상태");
+      await locked(() => bridgeLegacy({ key, raw, sourceRaw, updatedAt: new Date().toISOString() }));
       notify([key]);
     },
     async reconcileLegacy(keys) {

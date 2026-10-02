@@ -318,6 +318,7 @@
               </div>
             </div>
             <div class="collection-actions">
+              <button type="button" id="collection-find">작품에서 찾기</button>
               <button class="collection-continue" id="collection-continue" type="button" hidden></button>
               <div class="offline-control" id="collection-offline" hidden>
                 <button type="button" id="offline-save">이 기기에 저장</button>
@@ -375,6 +376,9 @@
             <div class="aa-control-group">
               <button type="button" id="aa-color" aria-pressed="true" title="원본색 ↔ 단색">색</button>
               <button type="button" id="aa-fullscreen" aria-pressed="false" title="가로 전체화면" hidden>⟲ 가로 전체화면</button>
+            </div>
+            <div class="aa-control-group" id="aa-scenes" aria-label="장면 이동 · 원본 레스 단위" hidden>
+              <button type="button" id="aa-scene-previous" aria-label="이전 장면">‹</button><output id="aa-scene-output">장면 1/1</output><button type="button" id="aa-scene-next" aria-label="다음 장면">›</button>
             </div>
           </div>
 
@@ -461,11 +465,24 @@
       </div>
       <label class="quick-range">밝기 낮추기<input type="range" data-quick-setting="readerDim" min="0" max="60" step="5"></label>
       <label class="quick-range">따뜻하게<input type="range" data-quick-setting="readerWarm" min="0" max="25" step="5"></label>
+      <div class="quick-profiles" role="group" aria-label="읽기 프로필">
+        <div class="quick-profile-list" id="quick-profile-list"></div>
+        <button type="button" class="quick-profile-add" id="quick-profile-add">지금 설정 저장</button>
+        <label class="quick-profile-work" id="quick-profile-work" hidden><input type="checkbox" id="quick-profile-work-check"> <span id="quick-profile-work-label">이 작품만 이 프로필</span></label>
+      </div>
       <button class="quick-all" id="quick-all-settings" type="button">모든 설정 <span aria-hidden="true">›</span></button>
+    </div>
+    <div class="autoscroll-bar" id="autoscroll-bar" role="group" aria-label="자동 스크롤" hidden>
+      <button type="button" id="autoscroll-toggle" aria-label="멈추기">⏸</button>
+      <button type="button" data-autoscroll-delta="-1" aria-label="느리게">−</button>
+      <output id="autoscroll-speed" aria-label="속도">3</output>
+      <button type="button" data-autoscroll-delta="1" aria-label="빠르게">+</button>
+      <button type="button" id="autoscroll-close" aria-label="자동 스크롤 끄기">✕</button>
     </div>
     <div class="find-bar" id="find-bar" role="search" aria-label="본문 찾기" hidden>
       <div class="find-band" id="find-band" aria-hidden="true"></div>
       <label class="find-field"><span class="sr-only">이 회차에서 찾을 말</span><svg aria-hidden="true"><use href="#i-search"/></svg><input id="find-input" type="text" enterkeyhint="search" autocomplete="off" placeholder="이 회차에서 찾기"></label>
+      <button type="button" id="find-work">작품 전체</button>
       <output class="find-count" id="find-count" aria-live="polite"></output>
       <button class="icon-button" id="find-previous" type="button" aria-label="이전 결과"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
       <button class="icon-button" id="find-next" type="button" aria-label="다음 결과"><svg aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
@@ -508,7 +525,7 @@
     <dialog id="selection-more" aria-labelledby="selection-more-title">
       <form method="dialog">
         <header><div><p id="selection-more-quote"></p><h2 id="selection-more-title">선택한 문장</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
-        <div class="selection-more-actions"><button type="button" id="selection-share">이미지로 공유</button><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
+        <div class="selection-more-actions"><button type="button" id="selection-work-find">작품에서 찾기</button><button type="button" id="selection-share">이미지로 공유</button><a id="selection-namu" href="#" target="_blank" rel="noreferrer">나무위키에서 찾기</a></div>
       </form>
     </dialog>
 
@@ -603,7 +620,7 @@
           <label>들여쓰기 <output id="text-indent-output"></output><input id="text-indent" type="range" min="0" max="2" step="0.5"></label>
           <label class="margin-setting">좌우 여백 <output id="prose-margin-output"></output><input id="prose-margin" type="range" min="12" max="32" step="2"></label>
           <label class="width-setting">본문 너비 <output id="prose-width-output"></output><input id="prose-width" type="range" min="560" max="960" step="20"></label>
-          <label>본문 서체<span class="font-preview" id="font-preview" aria-hidden="true"></span><select id="prose-font"><option value="serif">마루부리</option><option value="sans">프리텐다드</option></select></label>
+          <label>본문 서체<span class="font-preview" id="font-preview" aria-hidden="true"></span><select id="prose-font"><option value="serif">마루부리</option><option value="gowun">고운바탕</option><option value="sans">프리텐다드</option></select></label>
           <div class="setting-row">
             <span class="setting-label" id="prose-align-label">문단 정렬</span>
             <div class="segmented segmented-2" role="radiogroup" aria-labelledby="prose-align-label">
@@ -616,11 +633,12 @@
           <legend>읽기 동작</legend>
           <div class="setting-row">
             <span class="setting-label" id="reading-mode-label">읽기 방식</span>
-            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="reading-mode-label">
+            <div class="segmented segmented-3" role="radiogroup" aria-labelledby="reading-mode-label">
               <button type="button" role="radio" data-reading-mode="scroll" aria-checked="false">스크롤</button>
               <button type="button" role="radio" data-reading-mode="page" aria-checked="false">페이지</button>
+              <button type="button" role="radio" data-reading-mode="continuous" aria-checked="false">이어 스크롤</button>
             </div>
-            <p class="setting-hint">페이지는 소설 본문을 옆으로 넘깁니다. 왼쪽을 누르면 이전 쪽, 오른쪽 절반을 누르면 다음 쪽, 가운데는 도구입니다. AA는 스크롤로 봅니다.</p>
+            <p class="setting-hint">페이지는 왼쪽 이전·오른쪽 다음·가운데 도구로 넘깁니다. 이어 스크롤은 연재 산문의 다음 회차를 아래에 표시합니다. AA는 스크롤로 봅니다.</p>
           </div>
           <div class="setting-row">
             <span class="setting-label" id="tap-paging-label">화면 탭으로 넘기기</span>
@@ -707,6 +725,7 @@
     <dialog id="reader-more" aria-labelledby="reader-more-title">
       <form method="dialog">
         <header><div><p id="reader-more-context"></p><h2 id="reader-more-title">더보기</h2></div><button class="icon-button" value="close" aria-label="닫기" title="닫기"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <button type="button" id="reader-work-find">작품에서 찾기</button>
         <label class="more-position">읽은 위치 <span class="more-position-values"><small id="more-remaining"></small><output id="more-position-output">0%</output></span><input id="more-position" type="range" min="0" max="100" step="1" value="0"></label>
         <div class="more-actions">
           <button id="more-toc" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z"/></svg><span>작품 목차</span></button>
@@ -716,6 +735,7 @@
           <a id="more-source" href="#" target="_blank" rel="noreferrer"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg><span>원문 열기</span></a>
           <button id="more-mode" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16"/></svg><span id="more-mode-label">AA로 보기</span></button>
           <button id="more-mode-reset" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg><span>자동 보기</span></button>
+          <button id="more-autoscroll" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v16M6 14l6 6 6-6"/></svg><span>자동 스크롤</span></button>
           <button id="more-immersive" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span id="more-immersive-label">집중 모드</span></button>
           <button id="more-mark-read" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 12.5 4.5 4.5L20 5.5M4 7.5l2.5 2.5M11 11.5l3-3"/></svg><span id="more-mark-read-label">이전 회차 모두 읽음</span></button>
           <button id="more-handoff" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v1M14 20h1M18 18h3v3"/></svg><span>다른 기기에서</span></button>

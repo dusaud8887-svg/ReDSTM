@@ -21,6 +21,7 @@ from urllib3.exceptions import ProtocolError, ReadTimeoutError, SSLError
 from crawler.origin_proxy import requests_proxies
 from crawler.settings import (
     REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS,
+    REDSTM_DETAIL_FIRST_BYTE_TIMEOUT_SECONDS,
     REDSTM_DETAIL_READ_TIMEOUT_SECONDS,
 )
 
@@ -72,7 +73,7 @@ class SequentialDetailDownloadHandler:
             verify=os.environ.get("REQUESTS_CA_BUNDLE") or True,
             timeout=(
                 REDSTM_DETAIL_CONNECT_TIMEOUT_SECONDS,
-                REDSTM_DETAIL_READ_TIMEOUT_SECONDS,
+                REDSTM_DETAIL_FIRST_BYTE_TIMEOUT_SECONDS,
             ),
         ) as source:
             request.meta["download_latency"] = time.monotonic() - started_at
@@ -85,9 +86,25 @@ class SequentialDetailDownloadHandler:
             warned = False
             truncated: BaseException | None = None
             try:
-                for chunk in source.raw.stream(amt=64 << 10, decode_content=False):
+                # One byte keeps the 240s budget through the status line and any
+                # pause before the body. The idle budget applies to everything after.
+                # Stay on read(). stream() opens a second chunk parser, and TypeMoon
+                # sends Transfer-Encoding: chunked with no Content-Length.
+                lead = source.raw.read(1, decode_content=False)
+            except ReadTimeoutError as error:
+                raise requests.exceptions.ConnectionError(error) from error
+            except ProtocolError as error:
+                raise requests.exceptions.ChunkedEncodingError(error) from error
+            except SSLError as error:
+                raise requests.exceptions.SSLError(error) from error
+            if lead:
+                _apply_body_idle_timeout(source)
+                body.extend(lead)
+            try:
+                while True:
+                    chunk = source.raw.read(64 << 10, decode_content=False)
                     if not chunk:
-                        continue
+                        break
                     body.extend(chunk)
                     if self._maxsize and len(body) > self._maxsize:
                         raise DownloadCancelledError(
@@ -144,3 +161,46 @@ class SequentialDetailDownloadHandler:
             await self._delegate.close()
         finally:
             self._session.close()
+
+
+def _detail_socket(source: requests.Response) -> tuple[Any, Any]:
+    """Return the socket later body reads actually use.
+
+    ``Connection: close`` makes ``http.client`` drop ``HTTPConnection.sock`` after
+    the status line, while the makefile socket stays open for the body. That
+    makefile socket still carries the header read timeout.
+    """
+    raw = source.raw
+    connection = getattr(raw, "connection", None)
+    sock = getattr(connection, "sock", None)
+    if callable(getattr(sock, "settimeout", None)):
+        return connection, sock
+    buffered = getattr(getattr(raw, "_fp", None), "fp", None)
+    reader = getattr(buffered, "raw", None)
+    sock = getattr(reader, "_sock", None)
+    if callable(getattr(sock, "settimeout", None)):
+        return connection, sock
+    return connection, None
+
+
+def _apply_body_idle_timeout(source: requests.Response) -> None:
+    """Shrink the body socket from the header budget to the 30s idle budget.
+
+    A missing socket would keep the long header budget on the body, so fail the
+    transfer instead of streaming under it.
+    """
+    connection, sock = _detail_socket(source)
+    if not callable(getattr(sock, "settimeout", None)):
+        # A one-byte body can already be finished, and http.client then drops
+        # the makefile socket. Nothing remains to protect with the idle budget.
+        finished = getattr(source.raw, "isclosed", None)
+        if callable(finished) and finished():
+            return
+        if getattr(source.raw, "closed", False):
+            return
+        raise requests.exceptions.ConnectionError(
+            "detail response has no socket for the body idle timeout"
+        )
+    if hasattr(connection, "timeout"):
+        connection.timeout = REDSTM_DETAIL_READ_TIMEOUT_SECONDS
+    sock.settimeout(REDSTM_DETAIL_READ_TIMEOUT_SECONDS)

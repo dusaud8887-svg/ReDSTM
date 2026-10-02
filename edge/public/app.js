@@ -7,6 +7,7 @@ import {
   mergeTextStates,
   mergeUserStates,
   migrateLegacyState,
+  PROFILE_KEYS,
   planImport,
   postIdentity,
   readingLocationFields,
@@ -46,6 +47,9 @@ import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
+import { createPersonalLibrary, mergeLibrary, mergeWorkStyles, sanitizeLibrary, sanitizeWorkStyle } from "/library.js";
+import { createKwic } from "/kwic.js";
+import { arcaliveBody, novelBody } from "/text-work.js";
 import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
@@ -54,16 +58,18 @@ import { featureEnabled } from "/capabilities.js";
 import { createOffline, deleteNamespace } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
 import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, localDay, minutesLabel, monthCells, readingStreak, unionLength, weekSummary, workReading } from "/stats.js";
-import { createTextModel, decodeLocator, encodeLocator, modelOffset } from "/text-model.js";
+import { createLocator, createTextModel, decodeLocator, encodeLocator, modelOffset, modelPosition } from "/text-model.js";
 import { renderSVG } from "/vendor/uqr@0.1.3/uqr.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
-import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "/aa-viewer.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
+import { createContinuousReader } from "/continuous-reader.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
 import { DragGesture, PinchGesture } from "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js";
 import * as hangul from "/vendor/es-hangul@2.4.0/es-hangul.js";
 
 const readerSession = createDocumentSession();
+let personalLibrary = null;
 let fontGeneration = 0;
 
 const postObjectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;
@@ -97,13 +103,13 @@ const elements = Object.fromEntries(
     "reader-dim", "reader-dim-output", "reader-warm", "reader-warm-output",
     "paragraph-spacing", "paragraph-spacing-output", "text-indent", "text-indent-output",
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
-    "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls",
+    "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls", "aa-scenes", "aa-scene-previous", "aa-scene-output", "aa-scene-next",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
     "mode-chips", "kind-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
-    "offline-works", "offline-works-list", "other-account", "auth-dialog", "collection-offline", "offline-save", "offline-state", "offline-delete", "offline-storage", "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
+    "autoscroll-bar", "offline-works", "offline-works-list", "other-account", "auth-dialog", "collection-offline", "offline-save", "offline-state", "offline-delete", "offline-storage", "excerpts-export", "stats-panel", "stats-ring", "stats-today", "stats-streak", "stats-finished", "stats-chars", "stats-month-title", "stats-heat", "stats-share",
     "home-excerpt", "home-excerpt-list", "home-week", "home-week-total", "home-week-bars", "share-dialog", "share-preview", "share-tones", "share-credit", "share-send", "share-download", "share-status", "selection-menu", "mark-menu", "mark-menu-note", "mark-note", "note-dialog", "note-form", "note-quote", "note-text", "selection-more", "selection-more-quote", "selection-namu",
     "image-viewer", "image-viewer-stage", "image-viewer-share", "image-viewer-source",
     "collection-jump", "collection-jump-input",
@@ -136,6 +142,13 @@ const RESULT_PAGE_SIZE = 100;
 let userState = loadUserState();
 // What this tab last wrote to localStorage, to tell another tab's save from our own echo.
 let lastStoredState = null;
+// P6-6 reading state copies in the owner's idb (mirrorState, restoreMirroredStates).
+const TEXT_STATE_KEY = "redstm.textState.v1";
+const mirrorQueue = new Map();
+let statesRestored = null;
+// P6-8 AA scene moves (findAaScenes).
+let aaScenes = [];
+let aaSceneFrame = 0;
 let settings;
 let historyEntries;
 // Per-post AA zoom and sideways position (see effectiveAaZoom).
@@ -240,10 +253,14 @@ const textLibrary = createTextLibrary({
     progress: bodyProgress,
     syncScroll: syncScrollBaseline,
     setList: renderReaderList,
-    captureAnchor: () => readerSession.capture(),
+    workSearch: () => void openWorkSearch(),
+    classifyWork: (work) => personalLibrary.openWork(work),
+    captureAnchor: captureReaderPosition,
     readingPosition: () => readingPosition(),
     canSavePosition: () => readerSession.canSave,
+    keepContinuousPosition: () => continuous.transitioning,
     cancelPendingWork: () => readerSession.cancelPendingWork(),
+    mirrorState: (raw) => mirrorState(TEXT_STATE_KEY, raw),
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
@@ -256,6 +273,66 @@ const textLibrary = createTextLibrary({
     if (currentDestination === "text") applyTextSortOptions();
   },
 });
+
+let readerDocument = null;
+let continuousPreview = null;
+const continuous = createContinuousReader({
+  body: elements["archive-body"], scroller: elements["reader-pane"], enabled: continuousEnabled, topInset: readerTopInset,
+  step: (direction) => readerSource === "text" ? textLibrary.command(direction > 0 ? "end-next" : "previous") : typeMoonStep(direction, { finished: direction > 0 }),
+  onError: () => showReaderFeedback("다음 회차를 잇지 못했어요 · 다시 시도해 주세요", 2400),
+});
+function continuousEnabled() {
+  return settings.readingMode === "continuous" && Boolean(readerSource) && currentMode !== "aa" &&
+    Boolean(readerNavigation?.hasToc || (readerNavigation?.pending && readerDocument?.workId?.startsWith("typemoon:collection:")));
+}
+function captureReaderPosition() {
+  const anchor = readerSession.capture();
+  if (anchor || !readerSession.canSave || !continuousEnabled()) return anchor;
+  // A fling can pass the last line before the boundary switch runs. Save this document's
+  // original end, rather than attaching the next document's text to its reading record.
+  const body = elements["archive-body"];
+  const model = createTextModel(body);
+  if (!model.text.length) return null;
+  const start = Math.max(0, model.text.length - 48);
+  const position = modelPosition(model, start);
+  const range = document.createRange(); range.selectNodeContents(body); range.setEnd(position.node, position.offset);
+  const offset = range.toString().length;
+  return { offset, quote: body.textContent.slice(offset, offset + 48), viewportOffset: 0, atStart: false,
+    loc: createLocator(model, start, model.text.length, readerSession.rev) };
+}
+function refreshContinuous() {
+  const enabled = continuousEnabled();
+  document.body.classList.toggle("continuous-mode", enabled);
+  if (!enabled) { continuous.reset(); continuousPreview = null; return; }
+  if (!readerDocument || readerSession.documentKey !== readerDocument.key || readerNavigation.pending) return;
+  readerDocument.workId = readerSession.workId || readerDocument.workId;
+  if (continuous.currentKey !== readerDocument.key) continuous.commit(readerDocument);
+  const next = readerNavigation.next;
+  if (!next?.prefetch || next.entry?.is_aa) return;
+  const key = next.documentId || `typemoon:${postIdentity(next.entry)}`;
+  const generation = readerSession.generation;
+  if (continuousPreview?.key === key && continuousPreview.generation === generation) return;
+  continuousPreview = { key, generation };
+  void (async () => {
+    const response = await fetch(next.prefetch, { credentials: "same-origin", redirect: "error", signal: readerSession.signal });
+    requireArchiveResponse(response, `다음 회차 응답 ${response.status}`);
+    const node = document.createElement("div"); node.className = elements["archive-body"].className;
+    if (next.sourceLane) {
+      const raw = await response.text();
+      const parsed = next.sourceLane === "novel" ? novelBody(raw) : arcaliveBody(raw);
+      renderPlainTextWithMedia(node, parsed.text, { sourceUrl: parsed.sourceUrl });
+    } else {
+      const payload = await response.json();
+      if (payload.schema_version !== 1 || !payload.post?.body_html || payload.post.is_aa) return;
+      node.innerHTML = payload.post.body_html;
+      normalizeReaderTypography(node); decorateImages(node); enhanceHtmlMedia(node);
+    }
+    if (generation !== readerSession.generation || !continuousEnabled()) return;
+    continuous.offer({ key, title: next.title, workId: readerSession.workId }, node);
+  })().catch((error) => {
+    if (error.name !== "AbortError" && generation === readerSession.generation) showReaderFeedback("다음 회차를 잇지 못했어요 · 다음 버튼으로 다시 열 수 있어요", 2400);
+  });
+}
 
 // Find in the chapter (docs/24 §8.11): the bar takes the dock's place and, after moving through
 // hits, closing it offers the place the reader was before.
@@ -277,6 +354,7 @@ const find = createFind({
 let findReturnTimer = null;
 let findReturnAnchor = null;
 function openFind() {
+  pauseAutoScroll();
   if (!readerSource) return;
   find.open((anchor) => {
     if (!anchor) return;
@@ -372,13 +450,26 @@ function applyUserState(state) {
   aaViews = { ...(state.aaViews ?? {}) };
 }
 
+// 고운바탕 is fetched only once someone picks it (DESIGN §10: an unchosen font is not downloaded).
+function proseFontStack() {
+  if (settings.proseFont === "sans") return "var(--font-ui)";
+  if (settings.proseFont !== "gowun") return "var(--font-reading)";
+  if (!document.querySelector("#gowun-batang-css")) {
+    const link = Object.assign(document.createElement("link"), { id: "gowun-batang-css", rel: "stylesheet", href: "/fonts/gowun-batang@5.3.0/gowun-batang.css" });
+    document.head.append(link);
+  }
+  return "var(--font-reading-alt)";
+}
+
 // The idle archive label; a failing local save stays visible over later "loaded" updates.
 function readyLabel() {
   return elements["archive-state"].dataset.storageFailed ? "로컬 저장 실패" : "보존본";
 }
 
 function persistUserState() {
-  const { viewModes, ...savedSettings } = settings;
+  const { viewModes, ...current } = settings;
+  // While a work's own profile is on (이 작품만), the user's base reading settings are what is kept.
+  const savedSettings = { ...current, ...(workProfileBase ?? {}) };
   userState = {
     schema_version: 2,
     settings: savedSettings,
@@ -399,8 +490,9 @@ function persistUserState() {
     aaViews,
     lastCatalogState: userState.lastCatalogState,
   };
+  let serialized;
   try {
-    const serialized = serializeUserState(userState);
+    serialized = serializeUserState(userState);
     localStorage.setItem(STATE_KEY, serialized);
     lastStoredState = serialized;
     for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
@@ -414,6 +506,7 @@ function persistUserState() {
     elements["archive-state"].textContent = "로컬 저장 실패";
     console.warn("Reader state could not be saved", error);
   }
+  if (serialized) mirrorState(STATE_KEY, serialized);
 }
 
 // Another tab saved reading state. Every save writes the whole state, so a tab that kept its old
@@ -585,7 +678,7 @@ function applySettings() {
   root.style.setProperty("--prose-margin", `${settings.proseMargin}px`);
   root.style.setProperty("--prose-paragraph", `${settings.paragraphSpacing}em`);
   root.style.setProperty("--prose-indent", `${settings.textIndent}em`);
-  root.style.setProperty("--prose-font", settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)");
+  root.style.setProperty("--prose-font", proseFontStack());
   const aaZoom = effectiveAaZoom();
   root.style.setProperty("--aa-effective-size", `${settings.aaSize * aaZoom}px`);
   root.style.setProperty("--aa-effective-line", `${settings.aaSize * 1.125 * aaZoom}px`);
@@ -626,7 +719,7 @@ function applySettings() {
   // The font is judged on the reader's own text: the first lines of the open chapter, if any.
   const preview = document.querySelector("#font-preview");
   preview.textContent = elements["archive-body"].textContent.replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
-  preview.style.fontFamily = settings.proseFont === "sans" ? "var(--font-ui)" : "var(--font-reading)";
+  preview.style.fontFamily = proseFontStack();
   document.querySelector("#quick-size-output").value = String(settings.proseSize);
   elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
   elements["aa-background"].value = settings.aaBackground;
@@ -737,7 +830,66 @@ function updateAaOverflowCue(showHint = false) {
 
 // `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
 // The minimap under a picture wider than the stage: where the view is across it (DESIGN §8.4).
+// P6-8 scene moves (DESIGN §8.4): the 레스 header text nodes of this AA body, found once per body.
+// Their positions are measured on use, since zoom and width change them (state at the top).
+function findAaScenes() {
+  aaScenes = [];
+  if (currentMode === "aa") {
+    const walker = document.createTreeWalker(elements["archive-body"], NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (isSceneHeader(node.data)) aaScenes.push(node);
+    }
+  }
+  if (aaScenes.length < 2) aaScenes = [];
+  elements["aa-scenes"].hidden = !aaScenes.length;
+  updateAaScene();
+}
+
+function aaSceneView() {
+  const scroller = document.fullscreenElement === elements["aa-host"] ? elements["aa-host"] : elements["reader-pane"];
+  const controls = elements["aa-controls"];
+  // A header lands just under the sticky toolbar.
+  const offset = (Number.parseFloat(getComputedStyle(controls).top) || 0) + controls.offsetHeight + 8;
+  const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
+  const range = document.createRange();
+  const tops = aaScenes.map((node) => {
+    range.selectNodeContents(node);
+    return range.getBoundingClientRect().top - origin;
+  });
+  return { scroller, offset, tops, y: sceneY(tops, { scrollTop: scroller.scrollTop, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight, offset }) };
+}
+
+function updateAaScene() {
+  if (!aaScenes.length) return;
+  const { tops, y } = aaSceneView();
+  const index = sceneAt(tops, y);
+  elements["aa-scene-output"].value = `장면 ${index + 1}/${tops.length}`;
+  elements["aa-scene-previous"].disabled = sceneTarget(tops, y, -1) < 0;
+  elements["aa-scene-next"].disabled = sceneTarget(tops, y, 1) < 0;
+}
+
+function scheduleAaScene() {
+  if (!aaScenes.length || aaSceneFrame) return;
+  aaSceneFrame = requestAnimationFrame(() => {
+    aaSceneFrame = 0;
+    updateAaScene();
+  });
+}
+
+function moveAaScene(direction) {
+  const { scroller, offset, tops, y } = aaSceneView();
+  const index = sceneTarget(tops, y, direction);
+  if (index < 0) return;
+  // A late font/layout restore must not put the reader back where the scene move started.
+  readerSession.markUserScroll();
+  // The toolbar stays for the next ‹ ›.
+  holdChromeDuringScroll();
+  scroller.scrollTo({ top: Math.max(0, tops[index] - offset), behavior: "instant" });
+  updateAaScene();
+}
+
 function updateAaMinimap() {
+  scheduleAaScene();
   const body = elements["archive-body"];
   const map = elements["aa-minimap"];
   const view = currentMode === "aa" ? minimapWindow(body) : null;
@@ -858,6 +1010,7 @@ function renderCover(
   elements["empty-reader"].classList.toggle("home-alert", Boolean(actionLabel) || title !== "내 장서");
   renderHomeBoards();
   void renderReadingWorks();
+  void personalLibrary?.renderHome().catch(() => {});
   void renderDiscovery();
   void renderHomeRecords();
   updateShellMode();
@@ -1253,6 +1406,9 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    continuous.reset(); readerDocument = null; continuousPreview = null;
+    document.body.classList.remove("continuous-mode");
+    stopAutoScroll();
     finishReadingSession();
     if (previousSource) readerSession.cancelPendingWork();
     readerNavigation = null;
@@ -1297,7 +1453,9 @@ function beginReaderDocument(documentKey, workId, rev) {
   paged.page = 0;
   paged.anchor = null;
   hideSelectionMenu();
+  stopAutoScroll();
   finishReadingSession();
+  readerSession.frame(applyWorkProfile);
   readerSession.frame(startReadingSession);
   readerSession.frame(() => void ownerStore().then(() => {
     paintAnnotations();
@@ -1305,6 +1463,63 @@ function beginReaderDocument(documentKey, workId, rev) {
     jumpToHandoff();
   }));
 }
+
+// Work search shares the Reader's original-text extraction and its parent route.
+const kwic = createKwic({
+  overlays,
+  parse(entry, raw) {
+    const body = document.createElement("div");
+    if (entry.type === "typemoon") body.innerHTML = JSON.parse(raw).post.body_html;
+    else body.textContent = (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text;
+    return createTextModel(body).text;
+  },
+  async onOpen(hit, parent) {
+    persistReadingPosition();
+    history.replaceState({ ...(history.state ?? {}), redstmReader: false }, "", parent);
+    if (hit.entry.type === "typemoon") await loadPost(hit.entry.summary);
+    else await textLibrary.openKwicResult(hit.entry);
+    readerSession.frame(() => readerSession.frame(() => {
+      if (readerSession.restore({ loc: hit.locator, viewportOffset: Math.round(elements["reader-pane"].clientHeight / 3) })) syncScrollBaseline();
+      else showReaderFeedback("원문에서 이 문장을 찾지 못했어요", 2400);
+    }));
+  },
+});
+async function openWorkSearch(query = "", all = false) {
+  const route = currentRoute();
+  closeReaderMore();
+  find.close();
+  pauseAutoScroll();
+  let context;
+  if (readerSource === "text" || currentDestination === "text") context = textLibrary.kwicContext();
+  else {
+    const collection = currentSummary ? (currentCollection?.collection || (await findCollection(currentSummary))?.collection)
+      : activeCollectionId === null ? null : await loadCollectionDetail(activeCollectionId);
+    if (collection) {
+      const records = historyByIdentityMap();
+      context = {
+        title: collection.title, from: location.pathname.startsWith("/collections/") ? currentRoute()
+          : history.state?.redstmParent?.startsWith("/collections/") ? history.state.redstmParent : `/collections/${collection.id}`,
+        current: currentSummary ? postIdentity(currentSummary) : "",
+        read: collection.entries.filter((entry) => records.has(postIdentity(entry))).map(postIdentity),
+        entries: collection.entries.filter((entry) => entry.object_key).map((entry) => ({
+          documentId: postIdentity(entry), title: `${entry.position}편 · ${entry.title}`, type: "typemoon",
+          url: `/archive/${entry.object_key}`, summary: entry,
+          rev: entry.object_key.match(/-([a-f0-9]{64})\.json/)?.[1] || "",
+        })),
+      };
+    }
+  }
+  if (route !== currentRoute()) return;
+  if (!context) return void showReaderFeedback("작품의 회차 목록에서 찾을 수 있어요", 2200);
+  kwic.open(context, query, all);
+}
+for (const id of ["collection-find", "reader-work-find", "find-work"]) {
+  document.querySelector(`#${id}`).addEventListener("click", () => void openWorkSearch(id === "find-work" ? document.querySelector("#find-input").value : ""));
+}
+document.querySelector("#selection-work-find").addEventListener("click", () => {
+  elements["selection-more"].close();
+  void openWorkSearch(moreQuote || "");
+});
 
 // ---- Page mode (docs/24 §8.10, S1: whole-chapter columns moved by a transform) -----------------
 let scrollAdapter = null;
@@ -1395,7 +1610,8 @@ function applyReadingMode() {
     pageNoticeShown = true;
     showReaderFeedback("AA는 스크롤로 보여 줍니다", 2200);
   }
-  const anchor = paged.active !== want ? readerSession.adapter?.captureVisiblePosition() : null;
+  const anchor = paged.active !== want || (continuous.currentKey && !continuousEnabled()) ? readerSession.adapter?.captureVisiblePosition() : null;
+  if (!continuousEnabled()) continuous.reset();
   paged.active = want;
   elements.reader.classList.toggle("paged", want);
   elements["reader-pane"].classList.toggle("paged-host", want);
@@ -1415,6 +1631,7 @@ function applyReadingMode() {
     if (scrollAdapter) readerSession.adapter = scrollAdapter;
   }
   if (anchor && readerSession.restore(anchor)) syncScrollBaseline();
+  refreshContinuous();
   updateReadingProgress();
 }
 
@@ -1474,6 +1691,8 @@ function relayoutPages() {
 
 function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision }) {
   if (currentSummary) persistReadingPosition();
+  readerDocument = { key: documentId, title, workId };
+  continuous.prepare(readerDocument);
   cancelReaderSelection();
   currentSummary = null;
   currentPayload = null;
@@ -1501,6 +1720,8 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   void archiveTextMedia(body, renderId);
   openMobileReader();
   applyReadingMode();
+  const joined = continuous.commit(readerDocument);
+  if (joined) readerSession.frame(() => { syncScrollBaseline(); readerSession.capture(); });
   updateShellMode();
   readerSession.frame(() => elements["reader-title"].focus({ preventScroll: true }));
 }
@@ -1596,6 +1817,12 @@ function bodyProgress() {
   if (paged.active) return pagedAdapter.measureProgress();
   const pane = elements["reader-pane"];
   const body = elements["archive-body"];
+  if (continuousEnabled()) {
+    const top = body.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+    const length = body.offsetHeight - pane.clientHeight + readerTopInset();
+    return length > 0 ? Math.min(1, Math.max(0, (pane.scrollTop - top + readerTopInset()) / length)) :
+      Number(body.getBoundingClientRect().bottom <= pane.getBoundingClientRect().bottom);
+  }
   const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
   if (span > 0) return Math.min(1, Math.max(0, pane.scrollTop / span));
   const maximum = pane.scrollHeight - pane.clientHeight;
@@ -1713,6 +1940,7 @@ function renderReaderNavigation(nav) {
   renderChapterRun(document.querySelector("#end-run"), document.querySelector("#end-run-label"), nav.run ?? null);
   schedulePrefetch(nav.next?.prefetch);
   elements["reader-more-context"].textContent = nav.context ?? "";
+  refreshContinuous();
 }
 
 // Warm the browser cache for the next episode (archive objects are immutable). Skipped on
@@ -1744,6 +1972,7 @@ function readerCommand(name) {
   if (!readerSource) return;
   if (name === "settings") return openQuickSettings();
   if (name === "more") return openReaderMore();
+  if (continuousEnabled() && (name === "next" || name === "previous" || (name === "end-next" && elements["end-next"].dataset.action === "next"))) return continuous.move(name === "previous" ? -1 : 1);
   if (readerSource === "text") return textLibrary.command(name);
   if (name === "previous") return typeMoonStep(-1);
   if (name === "next") return typeMoonStep(1);
@@ -2247,6 +2476,7 @@ const quickSettings = document.querySelector("#quick-settings");
 overlays.watch(quickSettings, "popover");
 function openQuickSettings() {
   document.querySelector("#quick-size-output").value = String(settings.proseSize);
+  renderProfiles();
   quickSettings.showPopover();
 }
 document.querySelector("#quick-all-settings").addEventListener("click", () => {
@@ -2334,14 +2564,14 @@ function restoreCatalogPosition() {
   });
 }
 
-function cancelReaderSelection() {
-  overlays.closeAll("navigate");
+function cancelReaderSelection(preserveOverlays = false) {
+  if (!preserveOverlays) overlays.closeAll("navigate");
   readerViewId += 1;
   postController?.abort();
   readerSession.cancelPendingWork();
 }
 
-function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true } = {}) {
+function showDestination(destination, navigate = true, view = destination === "bookmarks" ? "bookmarks" : "all", { focusSearch = true, preserveOverlays = false } = {}) {
   if (destination === "library") applyUpdateAtSafePoint();
   if (destination === "settings") {
     openSettings();
@@ -2351,11 +2581,12 @@ function showDestination(destination, navigate = true, view = destination === "b
     }
     return;
   }
+  let textReady;
   const wasText = currentDestination === "text";
   if (wasText && destination !== "text") textLibrary.leave();
   if (currentSummary) persistReadingPosition();
   else if (currentDestination !== "library") persistCatalogState();
-  cancelReaderSelection();
+  cancelReaderSelection(preserveOverlays);
   setImmersive(false, false);
   const leavingCatalog = ["browse", "search"].includes(currentDestination);
   if (!["browse", "search"].includes(destination)) setScope("posts");
@@ -2390,7 +2621,7 @@ function showDestination(destination, navigate = true, view = destination === "b
   closeMobileReader(destination === "search" && navigate && focusSearch);
   if (destination === "text") {
     const params = navigate && !wasText ? new URLSearchParams() : new URLSearchParams(location.search);
-    void textLibrary.open(params);
+    textReady = textLibrary.open(params);
   } else if (destination === "bookmarks") {
     updateTabs();
     renderCurrentView();
@@ -2412,6 +2643,7 @@ function showDestination(destination, navigate = true, view = destination === "b
       destination === "bookmarks" ? { redstmSaved: { ...currentSearchState(), view: currentView } } : null;
     history.pushState(state, "", path);
   }
+  return textReady;
 }
 
 function setImmersive(active, restoreFocus = true) {
@@ -2517,11 +2749,14 @@ function returnToList() {
 }
 
 async function handleRoute() {
+  const initializedRoute = routeHandled;
   if (!routeHandled) {
     routeHandled = true;
     synthesizeParentEntry();
   }
   closeReaderMore();
+  kwic.close();
+  if (initializedRoute) personalLibrary?.close();
   const summary = routeSummary();
   if (summary && currentDestination === "text") {
     textLibrary.leave();
@@ -2542,7 +2777,7 @@ async function handleRoute() {
         currentDestination = ["browse", "search"].includes(destination) ? destination : "browse";
         await openCollectionDetail(collectionId, "route");
       } else {
-        showDestination(destination, false, currentView);
+        await showDestination(destination, false, currentView, { preserveOverlays: !initializedRoute });
         if (destination !== "library") syncSearchRoute();
         // The installed app's 이어서 읽기 shortcut (manifest) resumes straight away.
         if (destination === "library" && new URLSearchParams(location.search).has("continue")) {
@@ -2554,6 +2789,8 @@ async function handleRoute() {
         }
       }
     }
+    const searchParams = new URLSearchParams(location.search);
+    if (searchParams.has("kwic")) await openWorkSearch(searchParams.get("kwic"), searchParams.get("kwicAll") === "1");
     if (settingsRoute) {
       openSettings();
       document.title = "읽기 설정 — ReDSTM";
@@ -3244,6 +3481,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     elements["collection-view"].hidden = false;
     document.body.classList.add("collection-detail-open");
     elements["collection-title"].textContent = collection.title;
+    document.querySelector("#collection-classify").onclick = () => void personalLibrary.openWork({ key: workKey({ source: "typemoon", id: collection.id }), title: collection.title, source: "typemoon" }).then((opened) => { if (!opened) showReaderFeedback("이 기기에 기록을 저장할 수 없어요", 2200); });
     const unavailable = collection.entries.filter((entry) => !entry.object_key).length;
     void collectionIndex().then((index) => {
       const summary = index.summaryById?.get(collection.id) ?? index.summaries.find((item) => item.id === collection.id);
@@ -3596,6 +3834,9 @@ async function updateCollection() {
     currentCollection = membership;
     if (membership) {
       readerSession.workId = `typemoon:collection:${membership.collection.id}`;
+      // The session and a work's own profile follow the work once it is known.
+      if (readingSession?.documentId === readerSession.documentKey) readingSession.workKey = readerSession.workId;
+      applyWorkProfile();
       activeCollectionId = membership.collection.id;
       const unavailable = membership.collection.entries.filter((entry) => !entry.object_key).length;
       const label = `${membership.collection.title} · ${membership.index + 1}/${membership.collection.entries.length}` +
@@ -3649,6 +3890,8 @@ async function loadPost(summary, navigation = "push", { listHint = "" } = {}) {
 
 function showPost(payload, suppliedSummary, navigation, listHint = "") {
   const post = payload.post;
+  readerDocument = { key: `typemoon:${post.board_id}:${post.external_post_id}`, title: post.title || "제목 없음", workId: continuous.transitioning ? readerSession.workId : "" };
+  continuous.prepare(readerDocument);
   currentPayload = payload;
   currentSummary = {
     ...suppliedSummary,
@@ -3682,6 +3925,7 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   setSourceLink(post.canonical_url);
   renderPostBody();
   beginReaderDocument(`typemoon:${postIdentity(currentSummary)}`, "", currentSummary.object_key?.match(/-([a-f0-9]{64})\.json\.(?:gz|zst)$/)?.[1] || "");
+  const joined = continuous.commit(readerDocument);
   renderComments(payload.comments);
   rememberHistory(currentSummary);
   updateBookmarkButton();
@@ -3693,7 +3937,8 @@ function showPost(payload, suppliedSummary, navigation, listHint = "") {
   updateShellMode();
   readerSession.frame(() => {
     elements["reader-title"].focus({ preventScroll: true });
-    restoreReadingPosition(currentSummary);
+    if (joined) { syncScrollBaseline(); readerSession.capture(); }
+    else restoreReadingPosition(currentSummary);
   });
 }
 
@@ -3759,6 +4004,7 @@ function renderPostBody() {
   updateReaderLength();
   if (isAa) restoreAaView();
   else requestAnimationFrame(() => updateAaOverflowCue(true));
+  findAaScenes();
   applyReadingMode();
   paintAnnotations();
 }
@@ -3904,7 +4150,7 @@ function persistReadingPosition() {
   const entry = historyEntries.find((item) => samePost(item.summary, currentSummary));
   if (entry) {
     entry.scroll = readingPosition();
-    const anchor = readerSession.capture();
+    const anchor = captureReaderPosition();
     if (anchor) Object.assign(entry, {
       offset: anchor.offset, anchor: anchor.quote, anchorTop: Math.round(anchor.viewportOffset), loc: anchor.loc,
       revision: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
@@ -4265,7 +4511,7 @@ function typeMoonStep(offset, { finished = false } = {}) {
   const target = (offset > 0 ? typeMoonNavigation().next : typeMoonNavigation().previous)?.entry;
   if (!target) return;
   if (finished) markCurrentFinished();
-  loadPost(target, "replace");
+  return loadPost(target, "replace");
 }
 
 // The Reader was usually opened from this table of contents; go back to it instead of stacking
@@ -4522,15 +4768,20 @@ function scheduleSearch() {
 
 // Suggestions: TypeMoon works and boards, rebuilt only when the archive's index changes.
 let suggestSource = null;
+let suggestTextSource = "";
 let suggestIndex = null;
 const suggester = createSuggester(async () => {
   const index = await collectionIndex().catch(() => null);
   if (!index) return null;
-  if (suggestSource !== index) {
+  const textWorks = await textLibrary.metadataWorks();
+  const source = JSON.stringify(textWorks.map((work) => [work.key, work.title, work.author]));
+  if (suggestSource !== index || suggestTextSource !== source) {
     suggestSource = index;
+    suggestTextSource = source;
     suggestIndex = createSuggestIndex([
       ...index.summaries.map((collection) => ({ key: `c:${collection.id}`, title: collection.title, kind: "work", id: collection.id,
         meta: [boardLabel(collection.board_id), `${collection.entry_count ?? collection.entries?.length ?? 0}편`] })),
+      ...textWorks.map((work) => ({ key: work.key, title: work.title, kind: "text-work", id: work.route, meta: [work.sourceLabel, work.author] })),
       ...[...boardById.values()].map((board) => ({ key: `b:${board.board_id}`, title: boardDisplayName(board, board.board_id), kind: "board", id: board.board_id,
         meta: ["게시판", boardGroupLabel(board.group_name)] })),
     ], { hangul, UFuzzy });
@@ -4614,6 +4865,7 @@ elements["search-suggest"].addEventListener("click", (event) => {
   if (!row) return;
   const id = row.dataset.suggestId;
   if (row.dataset.suggestKind === "work") void openCollectionDetail(/^\d+$/.test(id) ? Number(id) : id);
+  else if (row.dataset.suggestKind === "text-work") void openPersonalWork({ route: id });
   else {
     elements["search-input"].value = "";
     updateSuggestions();
@@ -4894,6 +5146,13 @@ const PAGE_FORWARD_ZONE = 0.6;
 let pagingScroll = false;
 let pagingTimer;
 
+// A page turn or scene move is not a reading scroll: it must not bring the bars back or hide them.
+function holdChromeDuringScroll() {
+  pagingScroll = true;
+  clearTimeout(pagingTimer);
+  pagingTimer = setTimeout(() => { pagingScroll = false; }, 800);
+}
+
 function pageByTap(event) {
   const pane = elements["reader-pane"];
   const rect = pane.getBoundingClientRect();
@@ -4906,10 +5165,7 @@ function pageByTap(event) {
   const bottomBar = document.body.classList.contains("reader-controls-hidden") ? 0
     : document.querySelector(".reader-bottom")?.getBoundingClientRect().height ?? 0;
   const distance = Math.max(line, pane.clientHeight - readerTopInset() - bottomBar - 2 * line);
-  // The page turn is not a reading scroll: it must not bring the bars back or hide them.
-  pagingScroll = true;
-  clearTimeout(pagingTimer);
-  pagingTimer = setTimeout(() => { pagingScroll = false; }, 800);
+  holdChromeDuringScroll();
   pane.scrollBy({
     top: direction * distance,
     behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
@@ -4933,6 +5189,8 @@ elements["reader-pane"].addEventListener("scroll", () => {
   scheduleReadingProgress();
   const current = elements["reader-pane"].scrollTop;
   readerSession.observeScroll(current);
+  continuous.observeScroll(current);
+  scheduleAaScene();
   const delta = current - lastReaderScroll;
   lastReaderScroll = current;
   if (readerSession.keyboardOpen) return;
@@ -5256,6 +5514,9 @@ new ResizeObserver(() => updateAaOverflowCue()).observe(elements["archive-body"]
 // button agree; leaving restores the zoom and sideways place the picture had before.
 let aaFullscreenReturn = null;
 elements["aa-fullscreen"].hidden = !document.fullscreenEnabled;
+elements["aa-scene-previous"].addEventListener("click", () => moveAaScene(-1));
+elements["aa-scene-next"].addEventListener("click", () => moveAaScene(1));
+elements["aa-host"].addEventListener("scroll", scheduleAaScene, { passive: true });
 elements["aa-fullscreen"].addEventListener("click", async () => {
   if (document.fullscreenElement) return void document.exitFullscreen().catch(() => {});
   const key = currentAaKey();
@@ -5352,6 +5613,53 @@ function ownerIdentity() {
   return ownerRequest;
 }
 
+// P6-6: localStorage stays the original reading state; the owner's idb keeps a copy of every save.
+// A copy newer than an untouched original (its save failed, or localStorage was cleared) is
+// restored once at start. Only the latest state per key is written, one write at a time.
+
+function localRaw(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function mirrorState(key, raw) {
+  const next = { raw, sourceRaw: localRaw(key) ?? raw };
+  const writing = mirrorQueue.has(key);
+  mirrorQueue.set(key, next);
+  if (writing) return;
+  void (async () => {
+    await null; // a save during module start runs before the owner store is declared
+    const store = await restoreMirroredStates().then(ownerStore);
+    for (let pending = mirrorQueue.get(key); pending; pending = mirrorQueue.get(key)) {
+      mirrorQueue.set(key, null);
+      await store?.writeState(key, pending.raw, pending.sourceRaw)
+        .catch((error) => console.warn("Reading state copy could not be saved", error));
+    }
+    mirrorQueue.delete(key);
+  })();
+}
+
+function restoreMirroredStates() {
+  statesRestored ??= ownerStore().then(async (store) => {
+    if (!store) return;
+    for (const key of [STATE_KEY, TEXT_STATE_KEY]) {
+      const copy = await store.get("meta", `legacy:${key}`);
+      const local = localRaw(key);
+      if (!copy || copy.raw === local || (local !== null && local !== copy.sourceRaw)) continue;
+      try {
+        localStorage.setItem(key, copy.raw);
+      } catch { /* the copy still applies to this page */ }
+      if (key === STATE_KEY) adoptStoredState(copy.raw);
+      else textLibrary.adoptState(JSON.parse(copy.raw));
+    }
+    await store.reconcileLegacy([STATE_KEY, TEXT_STATE_KEY]);
+  }).catch((error) => console.warn("Reading state copy could not be restored", error));
+  return statesRestored;
+}
+
 function ownerStore() {
   ownerDb ??= ownerIdentity()
     .then((hash) => (hash ? openStore(hash) : null))
@@ -5359,7 +5667,9 @@ function ownerStore() {
       if (!store) return null;
       annotationRecords = await store.getAll("annotations");
       // Another tab's change arrives here too.
-      store.subscribe(async () => {
+      store.subscribe(async ({ keys } = {}) => {
+        // Mirrored reading states (P6-6) are not records.
+        if (keys?.every((key) => key.startsWith("redstm."))) return;
         annotationRecords = await store.getAll("annotations");
         paintAnnotations();
       });
@@ -5476,7 +5786,7 @@ function selectionRecord() {
     return annotationRecord({
       model, ...offsets, rev: readerSession.rev, documentId: readerSession.documentKey, workId: readerSession.workId,
       context: {
-        title: elements["reader-title"].textContent, work: currentCollection?.title || elements["reader-kicker"].textContent,
+        title: elements["reader-title"].textContent, work: currentCollection?.collection?.title || elements["reader-kicker"].textContent,
         route: `${location.pathname}${location.search}`,
       },
     });
@@ -5625,7 +5935,7 @@ function shareText() {
 function excerptShare(quote, record = null) {
   void openShare({
     kind: "excerpt", quote,
-    work: record?.context?.work ?? (currentCollection?.title || elements["reader-kicker"].textContent),
+    work: record?.context?.work ?? (currentCollection?.collection?.title || elements["reader-kicker"].textContent),
     title: record?.context?.title ?? elements["reader-title"].textContent,
     hue: documentHue(record?.workId || record?.documentId),
   });
@@ -5665,7 +5975,7 @@ document.querySelector("#sel-image").addEventListener("click", () => {
   if (!lines) return void showReaderFeedback("이미지로 만들 줄을 골라 주세요", 2200);
   void openShare({
     kind: "aa", lines, background: settings.aaBackground, fontSize: settings.aaSize,
-    work: currentCollection?.title || elements["reader-kicker"].textContent, title: elements["reader-title"].textContent,
+    work: currentCollection?.collection?.title || elements["reader-kicker"].textContent, title: elements["reader-title"].textContent,
   });
 });
 document.querySelector("#selection-share").addEventListener("click", () => {
@@ -5792,8 +6102,9 @@ elements["excerpts-export"].addEventListener("click", () => {
 let readingSession = null;
 let sessionTimer = 0;
 
+// The work a document belongs to: a TypeMoon post's collection arrives a moment after the post
+// (updateCollection sets readerSession.workId), a text chapter knows it from the start.
 function sessionWorkKey() {
-  if (currentCollection?.id) return workKey({ source: "typemoon", id: currentCollection.id });
   return readerSession.workId || readerSession.documentKey;
 }
 
@@ -6196,6 +6507,160 @@ document.querySelector("#handoff-copy").addEventListener("click", () => {
   void navigator.clipboard?.writeText(document.querySelector("#handoff-url").value).then(() => showReaderFeedback("링크를 복사했어요"));
 });
 
+// ---- 읽기 프로필 · 이 작품만 (DESIGN §10, docs/24 P6-2) ------------------------------------------
+// A profile is a named copy of the reading settings. Choosing one applies it to every work; with
+// 이 작품만 a work opens with its profile while the base settings stay as they were (and come back
+// when another work opens). Changes made inside such a work are for that visit only.
+let workProfileBase = null;
+const pickProfile = () => Object.fromEntries(PROFILE_KEYS.filter((key) => key in settings).map((key) => [key, settings[key]]));
+function activeProfileName() {
+  const values = pickProfile();
+  return (settings.readingProfiles ?? []).find((profile) => Object.entries(profile.values).every(([key, value]) => values[key] === value))?.name ?? "";
+}
+function currentWorkKey() {
+  return readerSource ? sessionWorkKey() : "";
+}
+
+function renderProfiles() {
+  const list = document.querySelector("#quick-profile-list");
+  const active = activeProfileName();
+  list.replaceChildren(...(settings.readingProfiles ?? []).map((profile) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = profile.name;
+    button.dataset.profile = profile.name;
+    button.setAttribute("aria-pressed", String(profile.name === active));
+    return button;
+  }));
+  const key = currentWorkKey();
+  const workToggle = document.querySelector("#quick-profile-work");
+  workToggle.hidden = !key || !active;
+  document.querySelector("#quick-profile-work-check").checked = Boolean(key && settings.workProfiles?.[key] === active);
+  document.querySelector("#quick-profile-work-label").textContent = `이 작품만 ‘${active}’`;
+}
+
+function applyProfile(name, { persist = true } = {}) {
+  const profile = (settings.readingProfiles ?? []).find((item) => item.name === name);
+  if (!profile) return;
+  changeTypography(() => Object.assign(settings, profile.values));
+  if (persist) saveSettings();
+  renderProfiles();
+}
+
+// Opening a work with its own profile puts it on; leaving for one without restores the base.
+function applyWorkProfile() {
+  const name = settings.workProfiles?.[currentWorkKey()];
+  if (name && !workProfileBase) {
+    workProfileBase = pickProfile();
+    applyProfile(name, { persist: false });
+  } else if (name) {
+    applyProfile(name, { persist: false });
+  } else if (workProfileBase) {
+    const base = workProfileBase;
+    workProfileBase = null;
+    changeTypography(() => Object.assign(settings, base));
+  }
+}
+
+document.querySelector("#quick-profile-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-profile]");
+  if (!button) return;
+  if (workProfileBase) {
+    // Choosing a profile inside a work with its own one changes the base, not the exception.
+    workProfileBase = null;
+  }
+  applyProfile(button.dataset.profile);
+});
+document.querySelector("#quick-profile-add").addEventListener("click", () => {
+  const name = prompt("프로필 이름 (예: 낮, 밤)", (settings.readingProfiles?.length ?? 0) ? "" : "밤")?.trim().slice(0, 12);
+  if (!name) return;
+  const profiles = (settings.readingProfiles ?? []).filter((profile) => profile.name !== name);
+  if (profiles.length >= 6) return void showReaderFeedback("프로필은 6개까지예요", 2200);
+  settings.readingProfiles = [...profiles, { name, values: pickProfile() }];
+  saveSettings();
+  renderProfiles();
+  showReaderFeedback(`‘${name}’ 프로필을 저장했어요`);
+});
+document.querySelector("#quick-profile-work-check").addEventListener("change", (event) => {
+  const key = currentWorkKey();
+  const active = activeProfileName();
+  if (!key || !active) return;
+  const works = { ...(settings.workProfiles ?? {}) };
+  if (event.target.checked) works[key] = active;
+  else delete works[key];
+  settings.workProfiles = works;
+  if (!event.target.checked) applyWorkProfile();
+  saveSettings();
+  renderProfiles();
+});
+
+// ---- 자동 스크롤 (DESIGN §8.2, docs/24 P6-2) ------------------------------------------------------
+// Speed 1–10 (12–120 px/s). Any touch, wheel or key on the text pauses it; the bar takes the
+// dock's place. Page mode turns pages instead of scrolling, so it is not offered there.
+let autoScroll = null;
+function autoScrollTick(now) {
+  const state = autoScroll;
+  if (!state || state.paused) return;
+  const pane = elements["reader-pane"];
+  state.carry += ((now - state.last) / 1000) * (settings.autoScrollSpeed ?? 3) * 12;
+  state.last = now;
+  const step = Math.floor(state.carry);
+  if (step) {
+    state.carry -= step;
+    pane.scrollTop += step;
+  }
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 2) return void pauseAutoScroll();
+  state.frame = requestAnimationFrame(autoScrollTick);
+}
+function renderAutoScroll() {
+  document.querySelector("#autoscroll-speed").value = String(settings.autoScrollSpeed ?? 3);
+  const toggle = document.querySelector("#autoscroll-toggle");
+  toggle.textContent = autoScroll?.paused ? "▶" : "⏸";
+  toggle.ariaLabel = autoScroll?.paused ? "다시 흐르기" : "멈추기";
+}
+function resumeAutoScroll() {
+  if (!autoScroll) return;
+  autoScroll.paused = false;
+  autoScroll.last = performance.now();
+  renderAutoScroll();
+  autoScroll.frame = requestAnimationFrame(autoScrollTick);
+}
+function pauseAutoScroll() {
+  if (!autoScroll || autoScroll.paused) return;
+  autoScroll.paused = true;
+  cancelAnimationFrame(autoScroll.frame);
+  renderAutoScroll();
+}
+function stopAutoScroll() {
+  if (!autoScroll) return;
+  cancelAnimationFrame(autoScroll.frame);
+  autoScroll = null;
+  elements["autoscroll-bar"].hidden = true;
+  document.body.classList.remove("autoscroll-open");
+}
+document.querySelector("#more-autoscroll").addEventListener("click", () => {
+  closeReaderMore();
+  if (paged.active || currentMode === "aa") return void showReaderFeedback(paged.active ? "페이지 모드에서는 자동 스크롤을 쓰지 않아요" : "AA는 직접 움직여 보세요", 2400);
+  stopAutoScroll();
+  autoScroll = { paused: true, carry: 0, last: 0, frame: 0 };
+  elements["autoscroll-bar"].hidden = false;
+  document.body.classList.add("autoscroll-open");
+  overlays.openBar("autoscroll-bar", stopAutoScroll);
+  resumeAutoScroll();
+});
+document.querySelector("#autoscroll-toggle").addEventListener("click", () => (autoScroll?.paused ? resumeAutoScroll() : pauseAutoScroll()));
+document.querySelector("#autoscroll-close").addEventListener("click", () => overlays.closeLayer("autoscroll-bar"));
+for (const button of document.querySelectorAll("[data-autoscroll-delta]")) {
+  button.addEventListener("click", () => {
+    settings.autoScrollSpeed = Math.max(1, Math.min(10, (settings.autoScrollSpeed ?? 3) + Number(button.dataset.autoscrollDelta)));
+    saveSettings();
+    renderAutoScroll();
+  });
+}
+for (const type of ["pointerdown", "wheel"]) elements["reader-pane"].addEventListener(type, pauseAutoScroll, { passive: true });
+elements["reader-pane"].addEventListener("keydown", pauseAutoScroll);
+document.addEventListener("visibilitychange", () => { if (document.hidden) pauseAutoScroll(); });
+
 // Leaving search clears its conditions (showDestination), so the words are put back afterwards.
 document.querySelector("[data-records-scope]").addEventListener("click", async () => {
   const query = elements["search-input"].value.trim();
@@ -6239,7 +6704,7 @@ elements["reset-settings"].addEventListener("click", () => {
 elements["export-state"].addEventListener("click", async () => {
   persistUserState();
   const store = await ownerStore();
-  const records = store ? { annotations: await store.getAll("annotations"), sessions: await store.getAll("sessions") } : null;
+  const records = store ? { annotations: await store.getAll("annotations"), sessions: await store.getAll("sessions"), works: await store.getAll("works"), library: await store.get("meta", "library") } : null;
   const json = exportUserState(userState, textLibrary.exportState(), { records });
   const compressed = typeof CompressionStream === "function";
   const blob = compressed
@@ -6345,29 +6810,40 @@ async function backupText(file) {
 // Marks, notes and sessions are always merged (T22): a deletion stays deleted, the later edit
 // wins, and nothing here is removed by 덮어쓰기. One transaction, so a failure changes nothing.
 async function importRecords(records) {
-  if (!records || (!records.annotations.length && !records.sessions.length)) return "";
+  if (!records || (!records.annotations.length && !records.sessions.length && !records.works?.length && !records.library)) return "";
   const store = await ownerStore();
   if (!store) return " · 표시·메모·독서 기록은 이 기기 저장소가 없어 가져오지 못했습니다";
   const annotations = mergeAnnotationRecords(await store.getAll("annotations"), records.annotations);
   const sessions = mergeSessionRecords(await store.getAll("sessions"), records.sessions);
-  if (!annotations.length && !sessions.length) return " · 표시·메모·독서 기록은 이미 같습니다";
+  const works = mergeWorkStyles(await store.getAll("works"), records.works || []);
+  const previousLibrary = await store.get("meta", "library");
+  const library = records.library ? mergeLibrary(previousLibrary, records.library) : null;
+  const libraryChanged = library && JSON.stringify(library) !== JSON.stringify(previousLibrary);
+  if (!annotations.length && !sessions.length && !works.length && !libraryChanged) return " · 표시·메모·독서 기록은 이미 같습니다";
   try {
     await store.commit([
       ...annotations.map((value) => ({ store: "annotations", value })),
       ...sessions.map((value) => ({ store: "sessions", value })),
+      ...works.map((value) => ({ store: "works", value })),
+      ...(libraryChanged ? [{ store: "meta", value: library }] : []),
     ]);
   } catch {
     return " · 표시·메모·독서 기록을 저장하지 못했습니다(이전 기록은 그대로)";
   }
   annotationRecords = await store.getAll("annotations");
   paintAnnotations();
+  if (libraryChanged || works.length) await personalLibraryChanged(await loadPersonalLibrary());
   const copies = annotations.filter((record) => record.conflictOf).length;
-  return ` · 표시·메모 ${annotations.length - copies}건 · 독서 기록 ${sessions.length}건 반영${copies ? ` · 서로 다르게 고친 ${copies}건은 충돌 사본으로 남김(기록 › 발췌)` : ""}`;
+  return ` · 표시·메모 ${annotations.length - copies}건 · 독서 기록 ${sessions.length}건 반영${works.length ? ` · 작품 정보 ${works.length}건` : ""}${libraryChanged ? " · 스마트 서재 반영" : ""}${copies ? ` · 서로 다르게 고친 ${copies}건은 충돌 사본으로 남김(기록 › 발췌)` : ""}`;
 }
 elements["import-apply"].addEventListener("click", () => void applyImport(false));
 elements["import-merge"].addEventListener("click", () => void applyImport(true));
 
 document.addEventListener("keydown", (event) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") {
+    event.preventDefault(); personalLibrary.openPalette(); return;
+  }
   if (overlays.handleEscape(event)) return;
   const catalogArrow = event.target === elements["search-input"] || event.target.closest(".result-item");
   if (catalogArrow && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
@@ -6475,6 +6951,78 @@ elements["reader-pane"].addEventListener("keydown", (event) => {
   if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Home", "End"].includes(event.key) &&
       !event.target.closest("input, textarea, [contenteditable]")) readerSession.markUserScroll();
 });
+async function personalWorkData() {
+  const [index, textWorks] = await Promise.all([collectionIndex().catch(() => null), textLibrary.metadataWorks()]);
+  const reading = index ? await collectionReadingProgress(index).catch(() => ({ progress: new Map(), failedBoards: new Set() })) : null;
+  return [
+    ...(index?.summaries || []).map((item) => {
+      const state = reading.progress.get(item.id);
+      return {
+        key: workKey({ source: "typemoon", id: item.id }), title: item.title, author: item.author, source: "typemoon", sourceLabel: "타입문넷",
+        chapters: item.entry_count ?? item.entries?.length ?? 0,
+        read: reading.failedBoards.has(item.board_id) ? "unknown" : collectionOccupancy({ availableCount: collectionAvailableCount(item), finishedCount: state?.finished || 0, readingCount: state?.reading || 0 }),
+        fresh: hasNewEpisodes(item, state), aa: item.is_aa === true || boardById.get(item.board_id)?.is_aa === true,
+        collectionId: item.id,
+      };
+    }), ...textWorks,
+  ];
+}
+async function loadPersonalLibrary() {
+  const store = await ownerStore();
+  const legacy = textLibrary.shelfState();
+  const raw = store ? await store.get("meta", "library") : null;
+  const config = sanitizeLibrary(raw || { shelves: otherOwners().length ? [] : legacy.shelves });
+  const records = store ? await store.getAll("works") : [];
+  if (!raw && !otherOwners().length) {
+    for (const [id, shelfId] of Object.entries(legacy.workShelves || {})) {
+      if (!records.some((record) => record.workKey === `novel:${id}`)) records.push({ workKey: `novel:${id}`, shelfId, updatedAt: "1970-01-01T00:00:00.000Z" });
+    }
+  }
+  return { config, styles: new Map(records.map(sanitizeWorkStyle).filter(Boolean).map((record) => [record.workKey, record])), canSave: Boolean(store) };
+}
+async function personalLibraryChanged(state) {
+  textLibrary.applyLibraryShelves(state.config, state.styles);
+  if (currentDestination === "library") void personalLibrary.renderHome();
+}
+async function openPersonalWork(work) {
+  if (work.collectionId !== undefined) return openCollectionDetail(work.collectionId);
+  persistReadingPosition();
+  history.pushState({ redstmText: true, redstmParent: currentRoute() }, "", work.route);
+  await handleRoute();
+}
+const classifyButton = document.createElement("button");
+classifyButton.id = "collection-classify"; classifyButton.type = "button"; classifyButton.textContent = "분류·고정";
+document.querySelector(".collection-actions").append(classifyButton);
+const readerClassify = document.createElement("button"); readerClassify.id = "reader-work-classify"; readerClassify.type = "button"; readerClassify.textContent = "작품 분류·고정";
+document.querySelector("#reader-work-find").after(readerClassify);
+readerClassify.addEventListener("click", async () => {
+  closeReaderMore();
+  const work = readerSource === "text" ? textLibrary.styleWork() : currentCollection ? {
+    key: workKey({ source: "typemoon", id: currentCollection.collection.id }), title: currentCollection.collection.title, source: "typemoon",
+  } : null;
+  if (!work || !await personalLibrary.openWork(work)) showReaderFeedback("작품 분류를 저장할 수 없어요", 2200);
+});
+personalLibrary = createPersonalLibrary({
+  host: elements["reading-works"], overlays, getData: personalWorkData, load: loadPersonalLibrary,
+  async save(config, styles) {
+    const store = await ownerStore();
+    if (!store) throw new Error("owner_unavailable");
+    const changes = new Map();
+    if (!await store.get("meta", "library")) for (const value of (await loadPersonalLibrary()).styles.values()) changes.set(value.workKey, value);
+    for (const value of styles) changes.set(value.workKey, value);
+    await store.commit([{ store: "meta", value: config }, ...[...changes.values()].map((value) => ({ store: "works", value }))]);
+  },
+  onChanged: personalLibraryChanged, onOpen: openPersonalWork,
+  makeCard: (work) => shelfCard({ title: work.title, source: work.sourceLabel, hueKey: work.key, meta: [work.sourceLabel], open: () => void openPersonalWork(work) }),
+  libraries: { hangul, UFuzzy }, feedback: (message) => showReaderFeedback(message, 2400), visible: () => currentDestination === "library",
+  commands: () => [
+    { title: "서재로", run: () => showDestination("library") }, { title: "둘러보기", run: () => showDestination("browse") },
+    { title: "검색", run: () => showDestination("search") }, { title: "기록", run: () => showDestination("bookmarks") },
+    { title: "설정", run: openSettings },
+    ...(readerSource ? [{ title: "본문 찾기", run: openFind }, { title: "작품에서 찾기", run: () => void openWorkSearch() }] : []),
+  ],
+});
+
 applySettings();
 // Text archive routes do not depend on the TypeMoon search index; start them immediately.
 if (location.pathname === "/text") void handleRoute();
@@ -6492,6 +7040,7 @@ const offline = createOffline({
     overlays.showToast(document.querySelector("#update-ready"));
   },
 });
+void restoreMirroredStates();
 const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
 if (document.readyState === "complete") startOffline();
 else addEventListener("load", startOffline, { once: true });

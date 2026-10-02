@@ -1,3 +1,17 @@
+/* KWIC results belong to a native sheet, outside the original body DOM. */
+#kwic-dialog { padding: 20px; }
+#kwic-search { display: flex; align-items: end; gap: 8px; }
+#kwic-search label { display: grid; gap: 8px; flex: 1; min-width: 0; }
+#kwic-dialog input[type="text"] { width: 100%; min-width: 0; min-height: 44px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); }
+#kwic-dialog button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.kwic-scope { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.kwic-distribution { display: flex; gap: 1px; height: 20px; }
+.kwic-distribution i { flex: 1; background: var(--line); }
+.kwic-distribution i.hit { background: var(--accent); }
+#kwic-results { padding: 0; list-style: none; display: grid; gap: 8px; }
+#kwic-results button { width: 100%; text-align: start; display: grid; gap: 8px; }
+#kwic-results span { font-family: var(--font-reading); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+#kwic-results mark { background: var(--hl-find); color: var(--ink); }
 .catalog-inner {
   min-width: 0;
   min-height: 0;
@@ -491,3 +505,31 @@ body.reading .home { display: none; }
    chapter, leaves the narrow list its whole height (the barcode waits on the work screen). */
 .text-work-summary .work-head { align-items: start; gap: 12px; }
 body.reading-context .text-work-summary :is(.work-cover, .work-barcode) { display: none; }
+
+/* Personal views share the quiet Library chips and source-wide work rows. */
+.smart-library { margin: 24px 0; }
+.smart-library header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.smart-library h2 { font: 700 18px/1.4 var(--font-display); }
+#smart-library-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.smart-library > header button, #smart-library-chips button { min-height: 44px; padding: 8px 14px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--accent); }
+.personal-library-dialog { width: min(560px, calc(100vw - 24px)); max-height: min(80dvh, 760px); padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-sheet); color: var(--ink); background: var(--surface); box-shadow: var(--e3); }
+.personal-library-dialog::backdrop { background: var(--scrim); }
+.personal-library-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.personal-library-dialog h2 { margin: 0; font-size: 22px; }
+.personal-library-dialog :is(button, input, select) { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); color: var(--ink); background: var(--surface); }
+.personal-library-dialog button { cursor: pointer; }
+.personal-library-dialog input[type="checkbox"] { width: 20px; min-height: 20px; accent-color: var(--accent); }
+.personal-library-dialog form:not([method="dialog"]) { display: grid; gap: 12px; }
+.personal-library-dialog label { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.personal-library-dialog :is(ul, ol) { padding: 0; list-style: none; }
+.personal-library-dialog li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.personal-library-dialog li > button { flex: 1; min-width: 0; text-align: left; border: 0; }
+.personal-library-dialog li :is(strong, small) { display: block; }
+.personal-library-dialog small { color: var(--ink-2); font-size: 13px; }
+#palette-input { width: 100%; margin-top: 20px; }
+#palette-results { max-height: 45dvh; overflow: auto; }
+#palette-results li { border-radius: var(--radius-control); }
+#palette-results li button { width: 100%; background: transparent; }
+#palette-results [aria-selected="true"] { background: var(--accent-soft); }
+#palette-status, #library-view-status { color: var(--ink-2); font-size: 13px; }
+@media (max-width: 599px) { .personal-library-dialog label { flex-wrap: wrap; } .personal-library-dialog :is(input:not([type="checkbox"]), select) { max-width: 100%; min-width: 0; } }

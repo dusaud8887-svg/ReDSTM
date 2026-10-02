@@ -288,6 +288,18 @@ class FrontierStore:
         expired_board_clause = " AND board_id = ?" if board_id is not None else ""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # A body-less fill must not reopen dead network rows that already have a body.
+            # Those rows cannot be selected, and the rewrite still holds this write transaction.
+            missing_body_clause = ""
+            if missing_only:
+                missing_body_clause = """
+                  AND NOT EXISTS (
+                      SELECT 1 FROM posts AS post
+                      WHERE post.board_id = crawl_frontier.board_id
+                        AND post.external_post_id = crawl_frontier.external_post_id
+                        AND post.latest_version_id IS NOT NULL
+                  )
+                """
             connection.execute(
                 f"""
                 UPDATE crawl_frontier
@@ -296,6 +308,7 @@ class FrontierStore:
                   AND (last_error_code = 'network_error'
                        OR lower(last_error_code) LIKE '%timed out%')
                   {expired_board_clause}
+                  {missing_body_clause}
                 """,
                 (selected_at, *([board_id] if board_id is not None else [])),
             )

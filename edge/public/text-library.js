@@ -123,9 +123,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   // Failures show in the shared archive state label, the same way TypeMoon reading state does.
   function persist() {
     const archiveState = document.querySelector("#archive-state");
+    let raw;
     try {
       trimTextState(history, TEXT_STATE_CHARS);
-      localStorage.setItem(STATE_KEY, JSON.stringify(history));
+      raw = JSON.stringify(history);
+      localStorage.setItem(STATE_KEY, raw);
       if (archiveState) delete archiveState.dataset.storageFailed;
       if (archiveState?.textContent === "로컬 저장 실패") archiveState.textContent = "보존본";
     } catch (error) {
@@ -135,13 +137,18 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       }
       console.warn("Text reading state could not be saved", error);
     }
+    if (raw) shell.mirrorState?.(raw);
   }
 
   // Another tab saved text reading state: take it over (every save writes the whole object, so
   // keeping the old copy would erase that tab's records on this tab's next save).
   window.addEventListener("storage", (event) => {
-    if (event.key !== STATE_KEY || !event.newValue) return;
-    const incoming = readState();
+    if (event.key === STATE_KEY && event.newValue) adoptState(readState());
+  });
+
+  // Also a restored idb copy (P6-6).
+  function adoptState(incoming) {
+    if (incoming?.schema_version !== 1 || !incoming.history || !incoming.bookmarks) return;
     history.history = incoming.history;
     history.bookmarks = incoming.bookmarks;
     ensureShelves(incoming);
@@ -156,7 +163,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (lane === "saved") catalog = savedEntries();
       renderCatalog();
     }
-  });
+  }
 
   function identity(entry, sourceLane = lane, sourceWork = work) {
     return sourceLane === "novel"
@@ -489,12 +496,18 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     // Shelf and 몇 화? share one row under the title.
     const actions = document.createElement("div");
     actions.className = "text-work-actions";
-    if (lane === "novel") {
+    const findWork = document.createElement("button");
+    findWork.type = "button";
+    findWork.className = "text-work-find";
+    findWork.textContent = "작품에서 찾기";
+    findWork.addEventListener("click", () => shell.workSearch());
+    actions.append(findWork);
+    if (lane === "novel" || lane === "arcalive") {
       const shelf = document.createElement("button");
       shelf.type = "button";
       shelf.className = "shelf-summary";
       shelf.dataset.workId = work.work_id;
-      shelf.textContent = `분류: ${shelfName(history, shelfOf(history, work.work_id))}`;
+      shelf.textContent = lane === "novel" ? `분류: ${shelfName(history, shelfOf(history, work.work_id))}` : "분류·고정";
       actions.append(shelf);
     }
     if (total > LIST_PAGE) {
@@ -1168,6 +1181,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return result.target ? {
         title: result.target.label || result.target.title || "",
         entry: result.target,
+        documentId: current.lane === "novel" ? `novel:${result.target.source_site || ""}:${result.target.chapter_id}` : identity(result.target, current.lane),
+        sourceLane: current.lane,
         prefetch: HASH.test(result.target.sha256 || "") ? `/api/v1/text/object/${result.target.sha256}` : "",
       } : null;
     };
@@ -1264,6 +1279,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function restorePosition(record, hash) {
+    if (shell.keepContinuousPosition()) return;
     readerPane.scrollTop = record.loc ? 0 : record.scroll || 0;
     shell.syncScroll();
     const anchor = record.anchor || record.loc ? { offset: record.offset, quote: record.anchor, viewportOffset: record.anchorTop ?? 0, atStart: record.scroll === 0, ...(record.loc ? { loc: record.loc } : {}) } : null;
@@ -1522,7 +1538,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const sourceWork = current.work;
     const savedIdentity = current.viewLane === "saved" && sourceLane === "novel" ? `novel:${sourceWork?.work_id}:${target.chapter_id}` : "";
     const frozen = sequence;
-    void openBody(target, { navigation: "replace", sourceLane, sourceWork, savedIdentity })
+    return openBody(target, { navigation: "replace", sourceLane, sourceWork, savedIdentity })
       .then(() => {
         // Keep the order the reader started with, even if the list behind it was re-sorted —
         // unless another body (a side-list tap) replaced this move before it arrived.
@@ -1780,9 +1796,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     event.preventDefault();
     addShelfFromDialog();
   });
-  for (const host of [list, document.querySelector("#text-work-summary")]) host.addEventListener("click", (event) => {
+  for (const host of [list, document.querySelector("#text-work-summary")]) host.addEventListener("click", async (event) => {
     const button = event.target.closest(".shelf-edit, .shelf-summary");
-    if (button && active) openShelfDialog(button.dataset.workId);
+    if (!button || !active) return;
+    const item = currentWorks().find((item) => item.work_id === button.dataset.workId) || work;
+    if (item && await shell.classifyWork({ key: workKey({ source: lane, id: item.work_id, board: item.board || "" }), title: item.title, source: lane })) return;
+    if (lane === "novel") openShelfDialog(button.dataset.workId);
   });
   document.querySelector("#novel-shelf-manage").addEventListener("click", () => openShelfDialog(""));
   document.querySelector("#novel-views").addEventListener("click", (event) => {
@@ -1937,6 +1956,62 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     }
   }
 
+  async function metadataWorks() {
+    await Promise.all(["novel", "arcalive"].map((source) => catalogs.has(source) ? null : loadCatalog(source).catch(() => null)));
+    const novelProgress = workProgress();
+    const arcaProgress = arcaliveWorkProgress();
+    return ["novel", "arcalive"].flatMap((source) => {
+      const items = source === "novel" ? catalogs.get(source)?.items || [] : catalogs.get(source)?.works || [];
+      const progress = source === "novel" ? novelProgress : arcaProgress;
+      return items.map((item) => {
+        const state = workState(item, progress.get(item.work_id));
+        return {
+          key: workKey({ source, id: item.work_id, board: item.board || "" }), source,
+          title: item.title, author: item.author, sourceLabel: source === "novel" ? "소설" : "아카라이브",
+          chapters: item.chapter_count || 0, read: state.state, fresh: state.newCount > 0, aa: item.is_aa === true,
+          route: `/text?${new URLSearchParams({ lane: source, ...(source === "arcalive" ? { view: "works" } : {}), work: item.work_id })}`,
+        };
+      });
+    });
+  }
+  function styleWork() {
+    const item = current?.work || work;
+    const source = current?.lane || lane;
+    return item ? { key: workKey({ source, id: item.work_id, board: item.board || "" }), title: item.title, source } : null;
+  }
+  function shelfState() { return { shelves: history.shelves, workShelves: history.workShelves }; }
+  function applyLibraryShelves(config, styles) {
+    history.shelves = config.shelves.map((shelf) => ({ ...shelf }));
+    history.workShelves = {};
+    for (const value of styles.values()) {
+      if (!value.deletedAt && value.workKey.startsWith("novel:") && value.shelfId) history.workShelves[value.workKey.slice(6)] = value.shelfId;
+    }
+    persist();
+    if (active && !current) renderCatalog();
+  }
+
+  function kwicContext() {
+    const itemWork = current?.work || work;
+    const sourceLane = current?.lane || lane;
+    const entries = sequence?.toc ? sequence.entries : chapterSource;
+    if (!itemWork || !entries.length) return null;
+    return {
+      title: itemWork.title,
+      from: listRoute(),
+      current: current?.identity || "",
+      read: entries.filter((entry) => history.history[identity(entry, sourceLane, itemWork)]).map((entry) => identity(entry, sourceLane, itemWork)),
+      entries: entries.filter((entry) => HASH.test(entry.sha256 || "")).map((entry) => ({
+        documentId: identity(entry, sourceLane, itemWork), title: entry.label || entry.title,
+        type: sourceLane, url: `/api/v1/text/object/${entry.sha256}`, rev: entry.sha256,
+        entry, work: itemWork,
+      })),
+    };
+  }
+  async function openKwicResult(hit) {
+    lane = hit.type; work = hit.work;
+    await openBody(hit.entry, { sourceLane: hit.type, sourceWork: hit.work });
+  }
+
   function isReading() { return Boolean(current); }
   function inWork() { return Boolean(work); }
   function currentRoute() { return route(); }
@@ -1964,6 +2039,6 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount, markPreviousRead, savedItems,
+    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves, adoptState,
   };
 }

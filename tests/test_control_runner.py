@@ -1831,6 +1831,35 @@ def test_combined_collection_report_counts_raw_outcome_failures() -> None:
     assert report["failed_posts"] == 3
 
 
+def test_combined_collection_report_keeps_the_run_that_selected_posts() -> None:
+    report = ControlRunner._combined_collection_report(
+        [
+            {
+                "run_id": "retry-empty-first",
+                "status": "succeeded",
+                "selected_posts": 0,
+                "outcomes": {},
+            },
+            {
+                "run_id": "retry-worked",
+                "status": "partial",
+                "selected_posts": 6,
+                "outcomes": {"fetch_failed": 6},
+            },
+            {
+                "run_id": "retry-empty-tail",
+                "status": "succeeded",
+                "selected_posts": 0,
+                "outcomes": {},
+            },
+        ]
+    )
+
+    assert report["run_id"] == "retry-worked"
+    assert report["selected_posts"] == 6
+    assert report["failed_posts"] == 6
+
+
 def test_full_content_refetches_every_post_for_one_board(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

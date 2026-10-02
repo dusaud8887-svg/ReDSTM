@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampAaZoom, createTapJudge, fitAaZoomValue, minimapScroll, minimapWindow, pinchAaZoom, scrollKeepingPoint } from "../public/aa-viewer.js";
+import { clampAaZoom, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "../public/aa-viewer.js";
 
 test("AA zoom keeps its 10–300% range and three decimals", () => {
   assert.equal(clampAaZoom(0.01), 0.1);
@@ -46,4 +46,36 @@ test("the minimap shows the visible part of a wide picture and moves it", () => 
   assert.equal(minimapScroll(0.5, { clientWidth: 400, scrollWidth: 1600 }), 600);
   assert.equal(minimapScroll(0, { clientWidth: 400, scrollWidth: 1600 }), 0);
   assert.equal(minimapScroll(1, { clientWidth: 400, scrollWidth: 1600 }), 1200);
+});
+
+test("scenes start only at the original 레스 header lines", () => {
+  for (const line of [
+    "2405 ： ◆nXsLRB5hfY ： 2024/11/29(金) 22:44:32 ID:udvPw2Ed",
+    "3324 ： 隔壁内の名無しさん ： 2025/01/18(土) 18:49:39.36 ID:sQnTeehH",
+    "83 ： 名無しさん＠狐板 ： 2022/08/18(木) 00:36:59 ID:EVfAk+RG",
+  ]) assert.equal(isSceneHeader(line), true, line);
+  for (const line of [
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "    │제24회 동탁은 후궁을 불태우고 원가를 멸망시키다. 계속",
+    "2024/11/29 에 올렸다",
+    "（　´∀｀）",
+    `1 ： ${"가".repeat(300)} ： 2024/11/29`,
+  ]) assert.equal(isSceneHeader(line), false, line);
+});
+
+test("the current scene and ‹ › targets follow the header positions", () => {
+  const tops = [100, 500, 900];
+  assert.equal(sceneAt(tops, 0), 0);
+  assert.equal(sceneAt(tops, 497), 0);
+  assert.equal(sceneAt(tops, 500), 1);
+  assert.equal(sceneAt(tops, 2000), 2);
+  assert.equal(sceneTarget(tops, 0, 1), 1);
+  assert.equal(sceneTarget(tops, 100, 1), 1);
+  assert.equal(sceneTarget(tops, 900, 1), -1);
+  assert.equal(sceneTarget(tops, 500, -1), 0);
+  assert.equal(sceneTarget(tops, 100, -1), -1);
+  assert.equal(sceneTarget(tops, 700, -1), 1);
+  // At the end of the scroll the last header on screen is the current scene.
+  assert.equal(sceneY(tops, { scrollTop: 300, clientHeight: 700, scrollHeight: 2000, offset: 60 }), 360);
+  assert.equal(sceneY(tops, { scrollTop: 300, clientHeight: 700, scrollHeight: 1000, offset: 60 }), 900);
 });

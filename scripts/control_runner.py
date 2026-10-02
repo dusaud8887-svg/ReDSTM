@@ -2031,6 +2031,19 @@ class ControlRunner:
             if isinstance(raw_failures, list):
                 failures.update(str(code) for code in raw_failures if isinstance(code, str))
         result = dict(reports[-1])
+        # An empty trailing cycle has its own crawl run. Keep the latest run that selected posts
+        # so the command report does not point at that zero-capture row.
+        selected_run_id = next(
+            (
+                report["run_id"]
+                for report in reversed(reports)
+                if _integer(report.get("selected_posts")) > 0
+                and isinstance(report.get("run_id"), str)
+            ),
+            None,
+        )
+        if selected_run_id is not None:
+            result["run_id"] = selected_run_id
         result.update(
             outcomes=outcomes,
             failures=sorted(failures),
