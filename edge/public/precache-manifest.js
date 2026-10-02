@@ -170,7 +170,7 @@ export default [
   },
   {
     "url": "/store.js",
-    "revision": "5d73b48d93e89d4e"
+    "revision": "d166ea9a07041c0f"
   },
   {
     "url": "/styles/aa.css",

@@ -46,6 +46,14 @@ test("legacy reconciliation catches the gap after a local write, including a bac
   assert.equal(original.raw, '{"scroll":2}');
 });
 
+test("an unchanged legacy source cannot overwrite newer IDB state after a mirror failure", () => {
+  const original = { key: "position", raw: '{"scroll":1}', updatedAt: "" };
+  const committed = new Map([["position", { raw: '{"scroll":2}', sourceRaw: original.raw, updatedAt: "2026-10-02" }]]);
+  assert.deepEqual(pendingLegacy([original], committed), []);
+  const changed = { ...original, raw: '{"scroll":3}' };
+  assert.deepEqual(pendingLegacy([changed], committed), [changed]);
+});
+
 test("capability fallbacks and flags are explicit; sync and unverified defaults stay off", (context) => {
   const previous = globalThis.localStorage;
   context.after(() => { globalThis.localStorage = previous; });

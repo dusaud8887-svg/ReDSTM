@@ -44,7 +44,7 @@ export async function writeTransaction(db, changes) {
 export function pendingLegacy(records, committed) {
   return records.filter((record) => {
     const previous = committed.get(record.key);
-    return !previous || record.raw !== previous.raw || record.updatedAt > previous.updatedAt;
+    return !previous || record.raw !== (previous.sourceRaw ?? previous.raw) || record.updatedAt > previous.updatedAt;
   });
 }
 
@@ -94,9 +94,18 @@ export async function openStore(ownerHash) {
     const transaction = db.transaction(["meta", "outbox"], "readwrite");
     const value = JSON.parse(record.raw);
     try {
-      await transaction.objectStore("meta").put({ ...record, key: `legacy:${record.key}` });
+      const previous = await transaction.objectStore("meta").get(`legacy:${record.key}`);
+      const opId = crypto.randomUUID();
+      // A full state supersedes its unsent predecessor. Keep attempted operations, and never
+      // compact annotations/tombstones here. The original migration bytes remain a rollback copy.
+      if (previous?.pendingOpId) {
+        const pending = await transaction.objectStore("outbox").get(previous.pendingOpId);
+        if (pending?.state === "pending" && pending.attempts === 0) await transaction.objectStore("outbox").delete(pending.opId);
+      }
+      await transaction.objectStore("meta").put({ ...record, key: `legacy:${record.key}`,
+        sourceRaw: record.sourceRaw ?? record.raw, originalRaw: previous?.originalRaw ?? record.raw, pendingOpId: opId });
       await transaction.objectStore("outbox").add({
-        opId: crypto.randomUUID(), key: `legacy:${record.key}`, value, baseRev: 0,
+        opId, key: `legacy:${record.key}`, value, baseRev: 0,
         createdAt: record.updatedAt, attempts: 0, state: "pending",
       });
       await transaction.done;
@@ -126,6 +135,13 @@ export async function openStore(ownerHash) {
         localStorage.setItem(key, raw);
         await bridgeLegacy({ key, raw, updatedAt: value?.updatedAt || new Date().toISOString() });
       });
+      notify([key]);
+    },
+    async writeState(key, raw) {
+      if (!["redstm.userState.v2", "redstm.textState.v1"].includes(key) || typeof raw !== "string") throw new TypeError("잘못된 읽기 상태");
+      const value = JSON.parse(raw);
+      if (value?.schema_version !== (key === "redstm.userState.v2" ? 2 : 1)) throw new TypeError("지원하지 않는 읽기 상태");
+      await locked(() => bridgeLegacy({ key, raw, sourceRaw: localStorage.getItem(key) ?? raw, updatedAt: new Date().toISOString() }));
       notify([key]);
     },
     async reconcileLegacy(keys) {
