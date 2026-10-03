@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
-import subprocess
+import time
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -14,14 +15,19 @@ from scripts.storage_policy import disk_low_bytes
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
 
-# Memory policy on the shared 1 GB Oracle host (docs/18): TypeMoon comes first. While one of its
-# units runs, the memory it may still grow into (its expected peak minus what it uses now) is
-# reserved, and a text operation starts only when its own need plus a margin for the OS fits in
-# what is left. When TypeMoon is idle the same rule applies with nothing reserved.
+# Memory policy on the shared 1 GB Oracle host (docs/18): TypeMoon comes first. While it runs a
+# heavy step (the lane file below), the memory it may still grow into (its expected peak minus
+# what it uses now) is reserved, and a text operation starts only when its own need plus a margin
+# for the OS fits in what is left. When TypeMoon is idle the same rule applies with nothing
+# reserved.
 _TYPEMOON_UNITS = ("redstm-control.service", "redstm-schedule.service")
 # Scrapy closes a batch at 560 MiB (MEMUSAGE_LIMIT_MB) plus the runner process; the unit hard
 # stop is 700 MiB.
 _TYPEMOON_PEAK = 620 * _MIB
+# Written by scripts/control_runner.py while a heavy TypeMoon child runs; readable by text
+# (other r) next to the publish lock it already reaches.
+TYPEMOON_LANE_PATH = Path("/srv/redstm/static/.typemoon-lane.json")
+_LANE_STALE_SECONDS = 180
 _OS_MARGIN = 150 * _MIB
 _DEFAULT_NEED = 150 * _MIB
 # Heavy text steps (import, media, publish) run one at a time; the collector is light.
@@ -57,34 +63,25 @@ def _unit_memory(cgroup_root: Path, unit: str) -> int | None:
         return None
 
 
-def _unit_active(runner: object, unit: str) -> bool:
-    if not callable(runner):
-        raise RuntimeWindowError("systemd_check_unavailable")
+def typemoon_reserve(cgroup_root: Path, lane_path: Path, now: float | None = None) -> int:
+    """Memory TypeMoon may still claim while it runs a heavy step.
+
+    The control runner writes the lane file while a crawl, export or publish child runs and
+    refreshes it every 30 s (docs/18). Its short every-minute poll and its outage backoff sleeps
+    write nothing, so they no longer hold text back. A file text cannot read is taken as a
+    heavy step at its start (the whole peak is reserved).
+    """
     try:
-        result = runner(
-            ["systemctl", "is-active", "--quiet", unit],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeWindowError("systemd_check_unavailable") from exc
-    if result.returncode not in (0, 3):
-        raise RuntimeWindowError("typemoon_state_unknown")
-    return result.returncode == 0
-
-
-def typemoon_reserve(cgroup_root: Path, run: object) -> int:
-    """Memory a running TypeMoon unit may still claim. A unit that systemd reports active but
-    whose cgroup cannot be read is assumed to be at its start (the whole peak is reserved)."""
-    reserve = 0
-    for unit in _TYPEMOON_UNITS:
-        current = _unit_memory(cgroup_root, unit)
-        if current is None and not _unit_active(run, unit):
-            continue
-        reserve = max(reserve, _TYPEMOON_PEAK - (current or 0))
-    return max(0, reserve)
+        lane = json.loads(lane_path.read_text(encoding="utf-8"))
+        updated = float(lane["updated_at"])
+    except FileNotFoundError:
+        return 0
+    except OSError, ValueError, KeyError, TypeError:
+        return _TYPEMOON_PEAK
+    if (now if now is not None else time.time()) - updated > _LANE_STALE_SECONDS:
+        return 0  # a runner that died without clearing it
+    current = max((_unit_memory(cgroup_root, unit) or 0) for unit in _TYPEMOON_UNITS)
+    return max(0, _TYPEMOON_PEAK - current)
 
 
 @contextmanager
@@ -94,12 +91,12 @@ def operation_window(
     need_bytes: int = _DEFAULT_NEED,
     exclusive: bool = False,
     publish_lock: Path = Path("/srv/redstm/static/.publish.lock"),
+    lane_path: Path = TYPEMOON_LANE_PATH,
     operation_lock: Path = _TEXT_OPERATION_LOCK,
     meminfo_path: Path = Path("/proc/meminfo"),
     status_path: Path = Path("/proc/self/status"),
     cgroup_root: Path = Path("/sys/fs/cgroup"),
     root_path: Path = Path("/"),
-    run: object = subprocess.run,
 ) -> Iterator[None]:
     """Yield to TypeMoon publishing and memory for one bounded operation."""
     with ExitStack() as stack:
@@ -110,14 +107,16 @@ def operation_window(
             except (Timeout, OSError) as exc:
                 raise RuntimeWindowError("text_operation_busy") from exc
             stack.callback(text_lock.release)
+        # Probe only: text never holds TypeMoon's publish lock, or a text step could fail
+        # TypeMoon's publish confirmation, which takes the lock without waiting.
         lock = FileLock(str(publish_lock))
         try:
             lock.acquire(timeout=lock_wait_seconds)
         except (Timeout, OSError) as exc:
             raise RuntimeWindowError("typemoon_publish_busy") from exc
-        stack.callback(lock.release)
+        lock.release()
 
-        reserve = typemoon_reserve(cgroup_root, run)
+        reserve = typemoon_reserve(cgroup_root, lane_path)
         try:
             available = _available_memory(meminfo_path.read_text(encoding="ascii"))
             resident = _resident_memory(status_path.read_text(encoding="ascii"))

@@ -6,6 +6,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
@@ -781,30 +782,27 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
         lambda _path: SimpleNamespace(total=200 * 1024**3, free=41 * 1024**3),
     )
 
-    def inactive(_command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(_command, 3)
-
     with runtime.operation_window(
         publish_lock=publish_lock,
+        lane_path=tmp_path / "no-lane.json",
         meminfo_path=meminfo,
         status_path=status,
         root_path=tmp_path,
-        run=inactive,
     ):
-        assert publish_lock.exists()
+        # Probe only: TypeMoon can take its publish lock at once while text works.
+        with runtime.FileLock(str(publish_lock), timeout=0):
+            pass
 
-    def active(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(command, 0)
-
-    # systemd says a TypeMoon unit runs but its cgroup is unreadable: its whole peak is reserved.
+    # TypeMoon announces a heavy step but its cgroup is unreadable: its whole peak is reserved.
+    lane = _typemoon_lane(tmp_path)
     with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
         with runtime.operation_window(
             publish_lock=publish_lock,
+            lane_path=lane,
             meminfo_path=meminfo,
             status_path=status,
             cgroup_root=tmp_path / "no-cgroup",
             root_path=tmp_path,
-            run=active,
         ):
             pytest.fail("a starting TypeMoon run keeps its memory")
 
@@ -842,18 +840,21 @@ def test_operation_window_defers_below_resource_floors(
         lambda _path: SimpleNamespace(total=200 * 1024**3, free=disk_free),
     )
 
-    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(command, 3)
-
     with pytest.raises(runtime.RuntimeWindowError, match=reason):
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
             status_path=status,
             root_path=tmp_path,
-            run=inactive,
+            lane_path=tmp_path / "no-lane.json",
         ):
             pytest.fail("resource limits must defer the text operation")
+
+
+def _typemoon_lane(root: Path) -> Path:
+    lane = root / ".typemoon-lane.json"
+    lane.write_text(json.dumps({"phase": "crawling", "updated_at": time.time()}), encoding="utf-8")
+    return lane
 
 
 def _typemoon_cgroup(root: Path, unit: str, current: int) -> Path:
@@ -878,23 +879,26 @@ def test_operation_window_leaves_typemoon_its_measured_headroom(
         lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
     )
 
-    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(command, 3)
+    lane = _typemoon_lane(tmp_path)
 
-    def window(cgroups: Path, need: int = 150 * 1024**2) -> Any:
+    def window(cgroups: Path, need: int = 150 * 1024**2, lane_path: Path = lane) -> Any:
         return runtime.operation_window(
             publish_lock=publish_lock,
+            lane_path=lane_path,
             need_bytes=need,
             meminfo_path=meminfo,
             status_path=status,
             cgroup_root=cgroups,
             root_path=tmp_path,
-            run=inactive,
         )
 
     # A crawl just starting (100 MiB of its 620 MiB peak) keeps 520 MiB: no room for text.
     early = _typemoon_cgroup(tmp_path / "early", "redstm-control.service", 100 * 1024**2)
-    assert runtime.typemoon_reserve(early, inactive) == 520 * 1024**2
+    assert runtime.typemoon_reserve(early, lane) == 520 * 1024**2
+    # The every-minute control poll and outage sleeps write no lane file: nothing is reserved,
+    # and a lane file the runner left behind when it died goes stale.
+    assert runtime.typemoon_reserve(early, tmp_path / "no-lane.json") == 0
+    assert runtime.typemoon_reserve(early, lane, now=time.time() + 600) == 0
     with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
         with window(early):
             pytest.fail("text must wait while TypeMoon can still grow into the free memory")
@@ -904,10 +908,11 @@ def test_operation_window_leaves_typemoon_its_measured_headroom(
         pass
     # Idle TypeMoon reserves nothing; a small collector step needs less than a publish.
     meminfo.write_text("MemAvailable: 150000 kB\n")
-    with window(tmp_path / "idle", need=60 * 1024**2):
+    idle = tmp_path / "no-lane.json"
+    with window(tmp_path / "idle", need=60 * 1024**2, lane_path=idle):
         pass
     with pytest.raises(runtime.RuntimeWindowError, match="memory_below_floor"):
-        with window(tmp_path / "idle"):
+        with window(tmp_path / "idle", lane_path=idle):
             pytest.fail("a publish-sized step must wait for memory")
 
 
@@ -926,9 +931,6 @@ def test_heavy_text_operations_run_one_at_a_time(
         lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
     )
 
-    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(command, 3)
-
     options: dict[str, Any] = {
         "publish_lock": publish_lock,
         "operation_lock": operation_lock,
@@ -936,7 +938,7 @@ def test_heavy_text_operations_run_one_at_a_time(
         "status_path": status,
         "cgroup_root": tmp_path / "cgroup",
         "root_path": tmp_path,
-        "run": inactive,
+        "lane_path": tmp_path / "no-lane.json",
     }
     with runtime.FileLock(str(operation_lock)):
         with pytest.raises(runtime.RuntimeWindowError, match="text_operation_busy"):
@@ -963,16 +965,13 @@ def test_operation_window_defers_only_for_typemoon_publish(
         lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
     )
 
-    def inactive(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(command, 3)
-
     with runtime.FileLock(str(control_lock)):
         with runtime.operation_window(
             publish_lock=publish_lock,
             meminfo_path=meminfo,
             status_path=status,
             root_path=tmp_path,
-            run=inactive,
+            lane_path=tmp_path / "no-lane.json",
         ):
             pass
     with runtime.FileLock(str(publish_lock)):
@@ -982,7 +981,7 @@ def test_operation_window_defers_only_for_typemoon_publish(
                 meminfo_path=meminfo,
                 status_path=status,
                 root_path=tmp_path,
-                run=inactive,
+                lane_path=tmp_path / "no-lane.json",
             ):
                 pytest.fail("a held TypeMoon publish lock must defer the text operation")
 

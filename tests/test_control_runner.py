@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -2952,3 +2953,18 @@ def test_storage_maintenance_runs_daily_and_never_fails_the_run(
     monkeypatch.setattr("scripts.control_runner.collect_static_garbage", broken)
     forced = runner._maintain_storage(force=True)
     assert forced is not None and forced["static"]["status"] == "failed"
+
+
+def test_a_heavy_child_announces_the_lane_to_text_only_while_it_runs(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    runner.profile.static_root.mkdir(parents=True)
+    lane = runner.profile.static_root / ".typemoon-lane.json"
+    seen = tmp_path / "seen.json"
+    child = f"import shutil; shutil.copyfile({str(lane)!r}, {str(seen)!r})"
+
+    assert runner._wait([sys.executable, "-c", child], "run-1", "crawling") == 0
+
+    announced = json.loads(seen.read_text(encoding="utf-8"))
+    assert announced["phase"] == "crawling"
+    assert isinstance(announced["updated_at"], float)
+    assert not lane.exists()

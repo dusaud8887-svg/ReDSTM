@@ -42,7 +42,7 @@ Oracle에는 전용 계정·SFTP chroot·2GiB quota·단발 systemd 서비스/�
 | `scripts/text_archive/importer.py` | Newtomi ready batch 검증, idempotent 수입, 안전한 receipt | 고정 production 경로, revision 1→2만 허용, 본문 충돌 보류 |
 | `scripts/text_archive/collector.py` | 블랙툰/마루마루의 페이지·작품·무료 회차 JSON 한 요청 실행 | 표준 `requests`, `trust_env=False`, redirect 거부, 5초 그룹 간격, 영속 checkpoint/cooldown |
 | `scripts/text_archive/publisher.py` | 별도 R2용 immutable object/index/release와 pointer-last 게시 | `r2text:` 및 `/etc/redstm-text/rclone.conf`만 명시, readback SHA 필수 |
-| `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | TypeMoon `control`/`schedule` 유닛이 활성이면 피크 620MiB에서 현재 cgroup 사용량을 뺀 값을 예약(읽기 실패 시 피크 전체). `MemAvailable + 자체 VmRSS − 예약 ≥ 필요량 + OS 150MiB`일 때만 시작. 필요량은 수집 60, 수입 100, 미디어 120, 게시 150MiB. 디스크는 볼륨 20%를 5–40GiB로 자른 TypeMoon 경고선. cgroup `MemoryMax=150M`, `MemorySwapMax=0`. 수입·미디어·게시는 `.operation.lock` 배타, 수집기는 그 잠금을 잡지 않음 |
+| `scripts/text_archive/runtime.py` | 작업 창과 기존 TypeMoon schedule/publish lock 검사 | TypeMoon runner가 무거운 자식을 돌리는 동안 쓰는 lane 파일(아래 2026-10-03)이 있으면 피크 620MiB에서 현재 cgroup 사용량을 뺀 값을 예약(파일 읽기 실패 시 피크 전체). `MemAvailable + 자체 VmRSS − 예약 ≥ 필요량 + OS 150MiB`일 때만 시작. 필요량은 수집 60, 수입 100, 미디어 120, 게시 150MiB. 디스크는 볼륨 20%를 5–40GiB로 자른 TypeMoon 경고선. cgroup `MemoryMax=150M`, `MemorySwapMax=0`. 수입·미디어·게시는 `.operation.lock` 배타, 수집기는 그 잠금을 잡지 않음 |
 | `edge/public/text-library.js`, `edge/src/text-archive.js` | 기존 Reader 안의 텍스트 탐색/읽기와 고정 R2 read route | 같은 Access·검색/설정 shell, `redstm.textState.v1`, GET/HEAD만 |
 | `text-edge/` | 기존 주소 호환용 redirect | R2 binding/UI 없음, 사람 Access 확인 후 `/text`로 이동 |
 | `deploy/text-archive/` | 격리된 sshd/systemd 설치·갱신 스크립트와 템플릿 | Oracle에 설치·enable 완료 |
@@ -91,7 +91,7 @@ DB 연결 시 숫자 source ID로 보완한다.
   알 수 없는 `bodyJson` block, HTML, 빈/과대
   본문은 `parse_review`/held로 끝나며 성공 본문이 되지 않는다. 본문 최대 2MiB, HTTP 응답 최대 8MiB.
 - 작품 목록 페이지를 상세보다 먼저 체크포인트하고, 작품·회차 목록 색인은 5분 timer와 공통 출처 쿨다운으로 계속 진행한다. 소설 회차 본문은 첫 100작품/누적 1,000회 시도에서 멈추지 않고, 미처리 큐만 1,000건으로 유지해 완료한 만큼 보충한다. 게시의 소설 1,000건·아카라이브 2만 건 시험용 상한도 없다. 아카라이브에 변경이 없으면 검증된 원격 pointer만 읽어 확인해 15분마다 전체 파일을 다시 빌드하지 않는다.
-- 모든 페이지/작품/회차 요청 전 runtime window를 다시 평가하고 TypeMoon publish lock을 요청 중에만 잡는다.
+- 모든 페이지/작품/회차 요청 전 runtime window를 다시 평가하고 TypeMoon publish lock은 확인만 한다(2026-10-03).
   장기 TypeMoon 수집이 보유하는 control lock은 텍스트 수집을 막지 않으며 실제 가용 메모리·디스크로 양보한다.
   수집기 timer가 TypeMoon 작업 창을 오래 막지 않는다. timer가 비활성 상태인 기간/락 점유 시간은 장애가 아니다.
 
@@ -435,3 +435,17 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
   짧게 잡는다. TypeMoon 게시는 이 잠금을 즉시(0초) 요구해 텍스트 수집기(5초 간격)가 잡고 있던
   순간 게시 전체가 `another static publish`로 실패할 수 있었다. TypeMoon 쪽은 이제 최대 10분
   기다린다(텍스트 작업은 배치·단계 단위로 짧게 잡는다).
+
+## 2026-10-03 레인 신호: 상태 파일과 잠금 확인만
+
+- **메모리 예약 기준**: 위의 "unit이 실행 중이면 예약"은 매분 몇 초 도는 control poll과 장애 대기(sleep)까지
+  크롤로 셌다(poll 중 약 40 MiB를 쓰면 약 580 MiB를 예약해 텍스트 단계가 거의 늘 미뤄짐). 이제 TypeMoon runner가
+  크롤·export·게시 자식을 띄운 동안만 `/srv/redstm/static/.typemoon-lane.json`(`{"phase","updated_at"}`, 0644,
+  30초마다 갱신, 자식이 끝나면 삭제)을 쓰고, 텍스트는 이 파일이 있을 때만 620 MiB − 현재 cgroup 사용량을 예약한다.
+  180초 넘게 갱신되지 않은 파일(runner가 죽음)은 무시하고, 읽을 수 없는 파일은 피크 전체를 예약한다.
+  텍스트 사용자는 `/srv/redstm/static`에 `--x`만 있어 이름을 아는 이 파일만 읽는다(unit 변경 없음).
+- **게시 잠금은 확인만**: 텍스트는 `.publish.lock`을 잡았다가 바로 놓아(TypeMoon 게시 중이면
+  `typemoon_publish_busy`로 미룸) 작업 내내 쥐지 않는다. TypeMoon 게시 확인(smoke confirmation)이 0초 대기로
+  잠금을 요구하다 텍스트 작업과 겹쳐 실패하던 경로를 없애고, 그 대기도 30초로 늘렸다.
+- **배포 순서**: Oracle runner(이 파일을 쓰는 쪽)를 먼저, 텍스트 아카이브를 그다음에 갱신한다. 반대 순서면
+  그 사이 TypeMoon 크롤 중에도 텍스트가 예약 없이 돈다.

@@ -42,6 +42,7 @@ from scripts.publish_static import collect_static_garbage
 from scripts.retention import prune_reports, prune_warc
 from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, warc_budget_bytes
 
+_TYPEMOON_LANE_FILE = ".typemoon-lane.json"
 _RUN_KINDS = {
     "sync-now": "manual-sync",
     "full-catalog": "manual-sync",
@@ -1873,12 +1874,14 @@ class ControlRunner:
                 stdin=subprocess.DEVNULL,
                 stdout=output,
             )
+            self._announce_lane(step)
             while True:
                 try:
                     return_code = process.wait(timeout=30)
                     self._claim_marker()
                     return return_code
                 except subprocess.TimeoutExpired:
+                    self._announce_lane(step)
                     self._claim_marker()
                     if command_id is not None:
                         # Bookkeeping only: a busy control.sqlite must not fail a healthy child.
@@ -1920,8 +1923,33 @@ class ControlRunner:
                     process.wait()
             raise
         finally:
+            self._clear_lane()
             if output_handle is not None:
                 output_handle.close()
+
+    def _announce_lane(self, step: str) -> None:
+        """Tell the text lane a heavy TypeMoon child runs (scripts/text_archive/runtime.py).
+
+        Only while a crawl, export or publish child is alive: the every-minute poll and outage
+        backoff sleeps leave no file, so text is not held back by them. Advisory only.
+        """
+        lane = self.profile.static_root / _TYPEMOON_LANE_FILE
+        temporary = lane.with_name(f"{lane.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps({"phase": step, "updated_at": time.time()}),
+                encoding="utf-8",
+            )
+            temporary.chmod(0o644)
+            temporary.replace(lane)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+
+    def _clear_lane(self) -> None:
+        try:
+            (self.profile.static_root / _TYPEMOON_LANE_FILE).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _claim_marker(self) -> None:
         try:
@@ -1972,7 +2000,8 @@ class ControlRunner:
         return value
 
     def _confirm_publish_smoke(self, release_key: str) -> None:
-        lock = FileLock(str(self.profile.static_root / ".publish.lock"), timeout=0)
+        # A short wait: the collector's ExecCondition probes this lock for an instant.
+        lock = FileLock(str(self.profile.static_root / ".publish.lock"), timeout=30)
         try:
             with lock:
                 self._confirm_publish_smoke_locked(release_key)
