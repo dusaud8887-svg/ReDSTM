@@ -438,10 +438,7 @@ test("Home resumes the most recent text chapter; Back walks chapter → list →
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
   await page.locator('#result-list [data-key="chapter:5"]').click();
   await expect(page.locator("#reader-title")).toHaveText("5화");
-  await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("5화");
-  await expect(page.locator("#continue-work")).toHaveText("긴 소설");
-  await page.locator("#continue-reading").click();
+  await page.goto("/?continue=1");
   await expect(page.locator("#reader-title")).toHaveText("5화");
   await page.goBack();
   await expect(page.locator('#result-list [data-key="chapter:5"]')).toBeVisible();
@@ -586,10 +583,7 @@ test("Home continues a finished text chapter at the next chapter", async ({ page
   await expect(page.locator("#reader-title")).toHaveText("5화");
   await page.locator("#end-previous").click();
   await expect(page.locator("#reader-title")).toHaveText("4화");
-  await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("4화");
-  await expect(page.locator("#continue-meta")).toContainText("다음 화로 이어서");
-  await page.locator("#continue-reading").click();
+  await page.goto("/?continue=1");
   await expect(page.locator("#reader-title")).toHaveText("5화");
   await page.goBack();
   await expect(page.locator('#result-list [data-key="chapter:5"]')).toBeVisible();
@@ -1445,7 +1439,7 @@ test("Backup v3 carries TypeMoon and text records, and 합쳐서 가져오기 me
 });
 
 // T28: the continue-reading mini bar rides on the phone tab bar outside the Reader.
-test("The mini bar continues reading from any list, folds on scroll and steps aside for Home's card", async ({ page }) => {
+test("The mini bar continues reading from any list, Home included, and folds on scroll", async ({ page }) => {
   test.skip(!mobileWidth(page), "phone tab bar only");
   await useLongCollection(page, 40);
   await page.goto("/read/board_a/2");
@@ -1454,8 +1448,9 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   await expect(bar).toBeHidden();
   await page.locator("#reader-bottom-list").click();
   await page.locator('.bottom-nav [data-destination="library"]').click();
-  await expect(page.locator("#continue-reading")).toBeVisible();
-  await expect(bar).toBeHidden();
+  // Home has no big continue card any more (읽던 작품 starts with the same work): the bar continues.
+  await expect(page.locator("#continue-reading")).toBeHidden();
+  await expect(bar).toBeVisible();
 
   await page.locator('.bottom-nav [data-destination="browse"]').click();
   await expect(bar).toBeVisible();
@@ -1477,9 +1472,9 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   await expect(bar).toBeHidden();
 });
 
-// docs/24 §8.2: a first visit gets one block of ways in; once there is a record, the continue card
-// shows the sentence the reader last saw, taken only from the original text.
-test("Home greets a first visit with sources and later quotes the last sentence read", async ({ page }) => {
+// docs/24 §8.2: a first visit gets one block of ways in; once there is a record, Home leads with
+// 읽던 작품 instead.
+test("Home greets a first visit with sources and later leads with the works being read", async ({ page }) => {
   await useLongCollection(page, 3);
   await page.goto("/");
   const onboarding = page.locator("#home-onboarding");
@@ -1496,9 +1491,8 @@ test("Home greets a first visit with sources and later quotes the last sentence 
       loc: { v: 2, tm: 1, rev: "", start: 30, end: 30 + text.length, exact: text, prefix: "본문 4. 그리고 ", suffix: "의 끝. 다음 문장" } } },
   })), exact);
   await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("2편 제목");
-  await expect(page.locator("#continue-quote")).toHaveText("그리고 2편 본문 5의 끝. 다음 문장");
-  await expect(page.locator("#continue-cover .type-cover")).toBeVisible();
+  await expect(page.locator("#reading-works")).toBeVisible();
+  await expect(page.locator("#continue-reading")).toBeHidden();
   await expect(onboarding).toBeHidden();
 });
 

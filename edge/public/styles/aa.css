@@ -28,6 +28,7 @@
 /* 굵게: a stroke painted around each glyph in its own colour. It changes no font, weight, advance or
    line, so the grid stays exactly as drawn (docs/24 §8.16 keeps font-weight 400). */
 :is(.archive-body.aa, .comment-body.aa-comment).aa-bold { -webkit-text-stroke: .04em currentColor; }
+:is(.archive-body.aa, .comment-body.aa-comment).aa-bold-light { -webkit-text-stroke: .03em currentColor; }
 .aa-control-group button[aria-pressed="true"]#aa-bold { border-color: var(--accent); color: var(--accent); }
 
 /* AA host (docs/24 §8.17): the toolbar, the picture, its minimap and the zoom message go full

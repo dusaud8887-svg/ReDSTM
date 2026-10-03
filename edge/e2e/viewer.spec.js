@@ -1842,11 +1842,7 @@ test("offers the next collection episode from Home after finishing the latest ch
     bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
   })));
   await useCollectionFixture(page, { collectionV2: true });
-  await page.goto("/");
-  await expect(page.locator("#archive-state")).toHaveText("보존본");
-  await expect(page.locator("#continue-block")).toBeVisible();
-  await expect(page.locator("#continue-title")).toHaveText("둘째");
-  await page.locator("#continue-reading").click();
+  await page.goto("/?continue=1");
   await expect(page.locator("#reader-title")).toHaveText("둘째");
 });
 
@@ -2149,22 +2145,25 @@ test("keeps the filtered result status unchanged while reading and saving", asyn
   await expect(status).toHaveText("자유게시판 · 3건");
 });
 
-test("offers starred and recent boards on Home as one-tap shortcuts", async ({ page }) => {
+test("Browse never takes Search's words, and each tab keeps its own conditions", async ({ page }) => {
   await useBoardFilterFixture(page);
-  await page.goto("/");
+  await page.goto("/browse?board=write_free");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
-  await expect(page.locator("#home-boards")).toBeHidden();
-  await page.evaluate(() => localStorage.setItem("redstm.boardNav.v1", JSON.stringify({
-    favorites: ["write_free"], recents: ["aa_19", "write_free", "gone_board"], expanded: [],
-  })));
-  // Arrive at Home from a filtered search: the shortcut must not inherit those filters.
-  await page.goto("/search?q=AA&mode=aa&target=title");
-  await expect(page.locator("#archive-state")).toHaveText("보존본");
-  await page.locator('[data-destination="library"]').filter({ visible: true }).first().click();
-  // Favourites first, then recents, without duplicates or boards missing from this release.
-  await expect(page.locator("#home-board-list button")).toHaveText(["창작집담", "19금 AA"]);
-  await page.locator("#home-board-list button", { hasText: "창작집담" }).click();
+  await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
+  await page.locator('[data-destination="search"]').filter({ visible: true }).first().click();
+  // Search opened from a board searches that board.
+  await expect(page).toHaveURL(/\/search\?board=write_free$/);
+  await page.locator("#board-dock-clear").click();
+  await page.locator("#search-input").fill("AA");
+  await expect(page).toHaveURL(/\/search\?q=AA$/);
+  await page.locator('[data-destination="browse"]').filter({ visible: true }).first().click();
+  // Browse has no search field, so the words must not filter it; its board comes back.
   await expect(page).toHaveURL(/\/browse\?board=write_free$/);
+  await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
+  await page.locator('[data-destination="search"]').filter({ visible: true }).first().click();
+  await expect(page.locator("#search-input")).toHaveValue("AA");
+  // A /browse link with words still shows the whole board.
+  await page.goto("/browse?board=write_free&q=AA");
   await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
 });
 
@@ -2199,25 +2198,6 @@ test("leaves browser shortcuts with modifier keys to the browser", async ({ page
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "false");
   await page.keyboard.press("f");
   await expect(page.locator("body")).toHaveClass(/immersive/);
-});
-
-test("draws the reading progress along the Home continue card", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
-    schema_version: 2, settings: {}, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null,
-    history: { "board_a:3": { readAt: "2026-09-28T00:00:00Z", progress: 0.42 } },
-  })));
-  await useCollectionFixture(page);
-  await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("비소속");
-  await expect(page.locator("#continue-meta")).toContainText("42%");
-  expect(await page.locator("#continue-reading").evaluate((card) =>
-    card.style.getPropertyValue("--continue-progress"))).toBe("42%");
-  const piece = await page.locator("#continue-reading").evaluate((card) => {
-    const after = getComputedStyle(card, "::after");
-    return Number.parseFloat(after.width) / card.getBoundingClientRect().width;
-  });
-  expect(piece).toBeGreaterThan(0.38);
-  expect(piece).toBeLessThan(0.46);
 });
 
 test("the 이어서 읽기 app shortcut opens the continued post with Home behind it", async ({ page }) => {

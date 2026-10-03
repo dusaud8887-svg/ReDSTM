@@ -121,7 +121,7 @@ const elements = Object.fromEntries(
     "aa-source-styles", "aa-color", "aa-bold", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit", "aa-host", "aa-fullscreen", "aa-minimap",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
-    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
+    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
     "discover", "discover-shuffle", "discover-picks-group", "discover-picks", "discover-hot-group", "discover-hot",
     "discover-day-group", "discover-day-title", "discover-day",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
@@ -729,10 +729,13 @@ function applySettings() {
   elements["aa-color"].ariaLabel = settings.aaPreserveStyles ? "AA 색: 원본색 (누르면 단색)" : "AA 색: 단색 (누르면 원본색)";
   // 색 only does something when the picture has its own colours; without them the button is left out.
   elements["aa-color"].hidden = !elements["archive-body"].querySelector('font[color], span[style*="color"]');
-  elements["aa-bold"].setAttribute("aria-pressed", String(settings.aaBold));
+  // 굵게 has two strengths: 살짝 (light) and 굵게 (true); the button steps 끔 → 살짝 → 굵게.
+  elements["aa-bold"].setAttribute("aria-pressed", String(Boolean(settings.aaBold)));
+  elements["aa-bold"].textContent = settings.aaBold === "light" ? "살짝 굵게" : "굵게";
   for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
     surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
-    surface.classList.toggle("aa-bold", settings.aaBold);
+    surface.classList.toggle("aa-bold", settings.aaBold === true);
+    surface.classList.toggle("aa-bold-light", settings.aaBold === "light");
   }
   const canvas = elements["archive-body"].querySelector(".aa-canvas");
   if (canvas) canvas.dataset.width = settings.aaCanvasWidth ?? "auto";
@@ -743,7 +746,7 @@ function applySettings() {
   }
   let backgroundPresetSelected = false;
   elements["aa-bold"].addEventListener("click", () => {
-  settings.aaBold = !settings.aaBold;
+  settings.aaBold = settings.aaBold === false ? "light" : settings.aaBold === "light";
   saveSettings();
 });
 for (const button of document.querySelectorAll("[data-aa-background]")) {
@@ -1016,7 +1019,6 @@ function renderCover(
   const firstVisit = !historyEntries.length && !bookmarks.length && !textLibrary.latestReading();
   elements["home-onboarding"].hidden = !showContinue || !firstVisit;
   elements["empty-reader"].classList.toggle("home-alert", Boolean(actionLabel) || title !== "내 장서");
-  renderHomeBoards();
   void renderReadingWorks();
   void personalLibrary?.renderHome().catch(() => {});
   void renderDiscovery();
@@ -1085,21 +1087,6 @@ async function discoveryPicks(dayKey) {
     // Popular works are likelier, but every unread series can come up.
     weight: (collection) => index.hasStats ? 1 + Math.log10(1 + collection.views + 5 * collection.comments) : 1,
   });
-}
-
-// Starred and recently opened boards (board picker preferences) as one-tap entries on Home.
-function renderHomeBoards() {
-  const ids = boardNavigator.shortcuts().filter((id) => boardById.has(id)).slice(0, 8);
-  elements["home-boards"].hidden = !ids.length;
-  elements["home-board-list"].replaceChildren(...ids.map((id) => {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.board = id;
-    button.textContent = boardLabel(id);
-    item.append(button);
-    return item;
-  }));
 }
 
 function renderTextContinue(text) {
@@ -2097,6 +2084,7 @@ function openBrowseSource(source) {
   if (source === "typemoon") {
     if (currentDestination === "browse") return;
     setScope("posts");
+    restoreCatalogConditions("browse");
     showDestination("browse");
     return;
   }
@@ -2172,6 +2160,33 @@ function currentSearchState() {
     collectionKind: elements["collection-kind-filter"].value,
     collectionRead: elements["collection-read-filter"].value,
   };
+}
+
+// 둘러보기 and 검색 keep their own conditions (DESIGN §4.3): words typed in Search never filter
+// Browse (which has no search field), and Browse finds its own board, format and sort again when
+// you come back to it. Search opened from Browse searches the board on screen (removable in the
+// dock) and keeps its last words. Links and Back still restore exactly what their URL says.
+const catalogConditions = new Map();
+let catalogConditionsRemembered = false;
+function rememberCatalogConditions() {
+  if (["browse", "search"].includes(currentDestination)) catalogConditions.set(currentDestination, currentSearchState());
+}
+// Called just before showDestination(destination); the tab being left is remembered first.
+function restoreCatalogConditions(destination) {
+  rememberCatalogConditions();
+  catalogConditionsRemembered = true;
+  const saved = catalogConditions.get(destination);
+  const scope = destination === "search" && currentDestination === "browse" ? catalogConditions.get("browse") : saved;
+  elements["search-input"].value = destination === "search" ? saved?.query ?? "" : "";
+  elements["mode-filter"].value = scope?.mode ?? "all";
+  // The board options follow the format filter; rebuild them before picking the board.
+  populateBoardFilter();
+  elements["board-filter"].value = scope?.boardId ?? "";
+  elements["sort-filter"].value = allowedSort(currentScope, saved?.sort);
+  elements["search-target"].value = saved?.target ?? "all";
+  elements["search-match"].value = saved?.match ?? "and";
+  elements["collection-kind-filter"].value = saved?.collectionKind ?? "all";
+  elements["collection-read-filter"].value = saved?.collectionRead ?? "all";
 }
 
 function searchUrl(state = currentSearchState(), destination = currentDestination) {
@@ -2598,6 +2613,10 @@ function showDestination(destination, navigate = true, view = destination === "b
   cancelReaderSelection(preserveOverlays);
   setImmersive(false, false);
   const leavingCatalog = ["browse", "search"].includes(currentDestination);
+  if (destination !== currentDestination && !catalogConditionsRemembered) rememberCatalogConditions();
+  catalogConditionsRemembered = false;
+  // Browse has no search field, so no words may filter it unseen (a /browse?q= link included).
+  if (destination === "browse") elements["search-input"].value = "";
   if (!["browse", "search"].includes(destination)) setScope("posts");
   if (destination === "bookmarks" && leavingCatalog) {
     elements["board-filter"].value = "";
@@ -4625,20 +4644,6 @@ elements["discover-shuffle"].addEventListener("click", () => {
   discoverShuffle += 1;
   void renderDiscovery();
 });
-// A board shortcut opens that whole board with default filters, like picking it in the sheet.
-elements["home-board-list"].addEventListener("click", (event) => {
-  const boardId = event.target.closest("[data-board]")?.dataset.board;
-  if (!boardId) return;
-  boardNavigator.remember(boardId);
-  setScope("posts");
-  elements["search-input"].value = "";
-  resetSheetFilterValues();
-  elements["sort-filter"].value = "latest";
-  // The board options were narrowed by the previous format filter; rebuild them first.
-  populateBoardFilter();
-  elements["board-filter"].value = boardId;
-  showDestination("browse");
-});
 elements["reading-works-all"].addEventListener("click", () => showDestination("bookmarks", true, "reading"));
 elements["recent-all"].addEventListener("click", () => showDestination("bookmarks", true, "history"));
 elements["home-action"].addEventListener("click", () => location.reload());
@@ -4871,8 +4876,19 @@ elements["search-suggest"].addEventListener("click", (event) => {
     selectBoard(row.dataset.suggestId);
   }
 });
+// Suggestions are for typing. Submitting (the keyboard's 검색) or scrolling the results puts
+// them away with the keyboard so the results get the screen; tapping the field brings them back.
+function dismissSuggestions() {
+  if (elements["search-suggest"].hidden) return;
+  suggester.cancel();
+  elements["search-suggest"].hidden = true;
+  elements["search-input"].blur();
+}
+// Gestures, not "scroll": new results reset the list's position while the person is still typing.
+for (const type of ["touchmove", "wheel"]) elements["result-list"].addEventListener(type, dismissSuggestions, { passive: true });
 elements["search-input"].addEventListener("search", () => {
   clearTimeout(searchTimer);
+  dismissSuggestions();
   if (currentDestination === "text") {
     textLibrary.searchChanged(elements["search-input"].value);
     return;
@@ -4938,6 +4954,7 @@ for (const button of elements["kind-chips"].querySelectorAll("[data-kind]")) {
 }
 elements["search-input"].addEventListener("focus", () => {
   if (currentDestination === "library") showDestination("search");
+  else updateSuggestions();
 });
 for (const filter of [
   elements["board-filter"], elements["mode-filter"], elements["sort-filter"],
@@ -4994,7 +5011,10 @@ for (const button of document.querySelectorAll("[data-destination]")) {
       openBrowseSource(rememberedBrowseSource());
       return;
     }
-    if (["browse", "search"].includes(button.dataset.destination)) setScope("posts");
+    if (["browse", "search"].includes(button.dataset.destination)) {
+      setScope("posts");
+      if (button.dataset.destination !== tab) restoreCatalogConditions(button.dataset.destination);
+    }
     showDestination(button.dataset.destination === "browse" && currentDestination === "text" ? "text" : button.dataset.destination);
   });
 }

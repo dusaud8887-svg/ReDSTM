@@ -267,6 +267,9 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .home-action { min-height: 44px; margin-top: 18px; padding: 0 14px; border: 1px solid var(--accent); border-radius: 6px; background: transparent; color: var(--accent); font-weight: 650; cursor: pointer; }
 .home-action:hover { background: var(--accent-soft); }
 .continue-block { width: min(720px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: 16px 0 0; align-items: stretch; }
+/* Home no longer shows the big card: 읽던 작품 starts with the same work and the mini bar continues
+   it (2026-10-03). The card still resolves the next chapter for the app's 이어서 읽기 shortcut. */
+#continue-block { display: none !important; }
 .continue-reading { width: 100%; min-height: 88px; display: grid; gap: 4px; margin: 0; padding: 14px 18px; text-align: left; border: 1px solid var(--line); border-left: 3px solid var(--ribbon); border-radius: 10px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .continue-reading:hover, .continue-toc:hover { background: var(--accent-soft); }
 .continue-reading { position: relative; overflow: hidden; }
@@ -287,11 +290,6 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
   .discover > header { grid-column: 1 / -1; }
 }
 .home-badge { margin-right: 6px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
-.home-boards { margin-top: 24px; }
-.home-boards h2 { margin: 0 0 10px; font-size: 16px; font-weight: 680; }
-.home-board-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.home-board-list button { min-height: 40px; max-width: 16rem; overflow: hidden; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg); color: var(--ink); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.home-board-list button:hover { border-color: var(--accent); color: var(--accent); }
 .reading-works > header, .home-grid section > header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-strong); }
 .reading-works h2, .home-grid h2 { margin: 0; font-size: 16px; font-weight: 680; }
 .reading-works header button, .home-grid header button { min-height: 44px; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 650; cursor: pointer; }
@@ -489,7 +487,7 @@ body.reading .home { display: none; }
 }
 
 /* Search suggestions (docs/24 §8.4): matches, then 초성, then similar titles; a Latin-keys hint. */
-.search-suggest { display: grid; gap: 4px; margin: 4px 12px 8px; padding: 8px; border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--e1); }
+.search-suggest { display: grid; gap: 4px; max-height: min(50dvh, 420px); overflow-y: auto; overscroll-behavior-y: contain; margin: 4px 12px 8px; padding: 8px; border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--e1); }
 .search-suggest h3 { margin: 6px 6px 2px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
 .search-suggest ul { margin: 0; padding: 0; list-style: none; }
 .suggest-row { width: 100%; min-height: 48px; display: grid; gap: 2px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
