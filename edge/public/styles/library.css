@@ -290,9 +290,9 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
   .discover > header { grid-column: 1 / -1; }
 }
 .home-badge { margin-right: 6px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
-.reading-works > header, .home-grid section > header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-strong); }
-.reading-works h2, .home-grid h2 { margin: 0; font-size: 16px; font-weight: 680; }
-.reading-works header button, .home-grid header button { min-height: 44px; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 650; cursor: pointer; }
+.reading-works > header, .home-grid section > header, .home-excerpt > header, .home-week > header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-strong); }
+.reading-works h2, .home-grid h2, .home-excerpt h2, .home-week h2 { margin: 0; font-size: 16px; font-weight: 680; }
+.reading-works header button, .home-grid header button, .home-excerpt header button, .home-week header button { min-height: 44px; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 650; cursor: pointer; }
 .reading-works ol { margin: 0; padding: 0; list-style: none; }
 .home-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 42px; margin-top: 32px; }
 .home-grid ol { margin: 0; padding: 0; list-style: none; }
@@ -466,7 +466,7 @@ body.reading .home { display: none; }
 .continue-quote[hidden] { display: none; }
 .continue-toc { justify-self: end; min-height: 40px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); }
 
-.reading-works > header, .home-grid section > header { border-bottom: 0; }
+.reading-works > header, .home-grid section > header, .home-excerpt > header, .home-week > header { border-bottom: 0; }
 .shelf { display: flex; gap: 12px; margin: 0; padding: 4px 2px 10px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; list-style: none; }
 .shelf::-webkit-scrollbar { display: none; }
 .reading-works .shelf li { flex: 0 0 104px; border: 0; scroll-snap-align: start; }

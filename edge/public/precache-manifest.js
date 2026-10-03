@@ -182,15 +182,15 @@ export default [
   },
   {
     "url": "/styles/components.css",
-    "revision": "474e02915bfeddcf"
+    "revision": "a6d4989c670f13ca"
   },
   {
     "url": "/styles/library.css",
-    "revision": "69c424c1deafc23a"
+    "revision": "2524a30307831808"
   },
   {
     "url": "/styles/reader.css",
-    "revision": "1d961f459fde0ae6"
+    "revision": "57c7362ad29cbf0f"
   },
   {
     "url": "/styles/shell.css",
