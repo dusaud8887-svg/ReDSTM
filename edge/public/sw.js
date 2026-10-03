@@ -1092,7 +1092,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/styles/shell.css",
-      "revision": "ccea474d483a7459"
+      "revision": "3f81ca911dbf1cde"
     },
     {
       "url": "/styles/tokens.css",

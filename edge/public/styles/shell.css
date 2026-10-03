@@ -89,7 +89,8 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   .catalog { grid-column: 1; }
   body.home-open .reader-pane, body.reading .reader-pane { grid-column: 1; }
   body.reading-context .reader-pane { grid-column: 2; }
-  body.reading-context .catalog { width: 340px; }
+  /* base.css places this list in the rail layout's column 2; without a rail it is column 1. */
+  body.reading-context .catalog { grid-column: 1; width: 340px; }
   body.catalog-collapsed.reading-context { grid-template-columns: minmax(0, 1fr); }
   body.catalog-collapsed.reading-context .workspace { grid-template-columns: 0 minmax(0, 1fr); }
   body.catalog-collapsed .catalog { visibility: hidden; }
