@@ -114,7 +114,7 @@ export default [
   },
   {
     "url": "/media.js",
-    "revision": "38b903c157b1e2fd"
+    "revision": "d6b996791383b391"
   },
   {
     "url": "/offline.js",
@@ -190,7 +190,7 @@ export default [
   },
   {
     "url": "/styles/reader.css",
-    "revision": "fbc79b15dc0ede0a"
+    "revision": "1d961f459fde0ae6"
   },
   {
     "url": "/styles/shell.css",
