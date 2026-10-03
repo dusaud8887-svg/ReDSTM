@@ -419,6 +419,23 @@ test("text archive API exposes only fixed private read routes", async () => {
   assert.equal((await workerFetch(request(`/api/v1/text/object/${"a".repeat(64)}`, { method: "POST" }), env)).status, 405);
 });
 
+test("manual archive reads use authenticated fixed routes", async () => {
+  let key;
+  const env = environment({ TEXT_ARCHIVE: {
+    async get(selected) { key = selected; return archiveObject('{}'); },
+  } });
+  for (const [path, expected] of [
+    ["release/manual", "published/manual/release.json"],
+    [`index/manual/${"a".repeat(64)}.json`, `published/indexes/manual/${"a".repeat(64)}.json`],
+    [`release-manifest/manual/${"a".repeat(64)}.json`, `published/releases/manual/${"a".repeat(64)}.json`],
+  ]) {
+    const response = await workerFetch(request(`/api/v1/text/${path}`), env);
+    assert.equal(response.status, 200);
+    assert.equal(key, expected);
+    assert.equal((await workerFetch(new Request(`https://archive.example/api/v1/text/${path}`), env)).status, 401);
+  }
+});
+
 test("text archive status is served uncached from its fixed key", async () => {
   let key;
   const env = environment({

@@ -12,7 +12,7 @@ import {
 } from "/text-shelves.js";
 
 const STATE_KEY = "redstm.textState.v1";
-const LANES = new Set(["novel", "arcalive"]);
+const LANES = new Set(["novel", "arcalive", "manual"]);
 const VIEWS = new Set([...LANES, "saved"]);
 const HASH = /^[a-f0-9]{64}$/;
 const FINISHED = 0.95;
@@ -179,6 +179,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (lane === "arcalive" && arcaliveView === "works") params.set("view", "works");
     if (lane === "arcalive" && arcaliveView === "files" && folderBoard) params.set("board", folderBoard);
     if (lane === "arcalive" && arcaliveView === "files" && folderCategory) params.set("category", folderCategory);
+    if (lane === "manual" && folderCategory) params.set("category", folderCategory);
     if (lane === "novel" && novelView === "shelves") params.set("view", "shelves");
     if (lane === "novel" && shelfFilter) params.set("shelf", shelfFilter);
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
@@ -189,6 +190,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function defaultSort() {
     if (work) return "oldest";
+    if (lane === "manual") return "title";
     // Posts in an Arcalive category read like a board: newest first. Works, like TypeMoon's
     // collections, start with the ones updated most recently.
     if (postsView()) return "latest";
@@ -201,7 +203,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function postsView() {
-    return lane === "arcalive" && arcaliveView === "files" && Boolean(folderCategory);
+    return (lane === "manual" || lane === "arcalive" && arcaliveView === "files") && Boolean(folderCategory);
   }
 
   function readSort(params) {
@@ -690,6 +692,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         parts = [
           flatSearch() ? [[entry.board, entry.category].filter(Boolean).join(" · "), "result-board"] : "",
           entry.author, flatSearch() ? "" : entry.category,
+          lane === "manual" ? shortDate(entry.created_at) : "",
           value >= FINISHED ? "다 읽음" : value > 0 ? `${Math.round(value * 100)}%` : record ? "열어 봄" : "",
         ];
         badges = [history.bookmarks[identity(entry, "arcalive", null)] ? "저장" : ""];
@@ -772,7 +775,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const copy = [...rows];
     if (postsView() && (sortMode === "latest" || sortMode === "oldest")) {
       const direction = sortMode === "latest" ? -1 : 1;
-      copy.sort((left, right) => direction * ((Number(left.post_id) || 0) - (Number(right.post_id) || 0)) || title(left, right));
+      copy.sort((left, right) => direction * (lane === "manual" ? Date.parse(left.created_at) - Date.parse(right.created_at) : (Number(left.post_id) || 0) - (Number(right.post_id) || 0)) || title(left, right));
     } else if (sortMode === "recent" && progress) {
       const readAt = (item) => progress.get(item.work_id)?.lastReadAt ?? "";
       copy.sort((left, right) => readAt(right).localeCompare(readAt(left)) || title(left, right));
@@ -827,6 +830,23 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         normalize(`${item.title || ""} ${item.entry?.label || ""} ${item.note || ""} ${(item.tags ?? []).join(" ")}`).includes(query))), { kind: "saved" });
       return;
     }
+    if (lane === "manual") {
+      const matching = catalog.filter((item) => normalize(`${item.title} ${item.category}`).includes(query));
+      if (folderCategory || query) {
+        const scoped = folderCategory ? matching.filter((item) => item.category === folderCategory) : matching;
+        return renderRows(orderedWorks(scoped), { kind: "posts" });
+      }
+      const folders = new Map();
+      for (const item of matching) {
+        const folder = folders.get(item.category) || {
+          folder_label: item.category === "." ? "폴더 없음" : item.category,
+          folder_key: item.category, folder_count: 0,
+        };
+        folder.folder_count += 1;
+        folders.set(item.category, folder);
+      }
+      return renderRows([...folders.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR", { numeric: true })), { kind: "categories" });
+    }
     const group = (items, key) => {
       const grouped = new Map();
       for (const item of items) {
@@ -866,7 +886,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function syncBackButton() {
     const button = document.querySelector("#text-work-back");
-    const shown = Boolean(work || folderBoard || (lane === "novel" && shelfFilter));
+    const shown = Boolean(work || folderBoard || folderCategory || (lane === "novel" && shelfFilter));
     // Inside a work the list-level views (전체 목록/분류별/분류 관리) do not apply.
     document.querySelector("#novel-views").hidden = !active || lane !== "novel" || Boolean(work);
     if (!work) {
@@ -877,7 +897,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     button.hidden = !shown;
     button.textContent = work ? "← 작품 목록"
       : lane === "novel" ? "← 분류 목록"
-        : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
+        : lane === "manual" ? "← 폴더 목록"
+          : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
   }
 
   async function json(path) {
@@ -888,9 +909,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   async function loadCatalog(selectedLane, onFirstPage) {
     const pointer = await json(`/api/v1/text/release/${selectedLane}`).catch((error) => {
+      if (selectedLane === "manual" && error.message === "request_404") return null;
       if (selectedLane === "novel" && error.message === "request_404") throw new Error("novel_unpublished");
       throw error;
     });
+    if (!pointer) return [];
     if (pointer.schema !== 1 || pointer.lane !== selectedLane || !HASH.test(pointer.sha256)) {
       throw new Error("release_pointer_invalid");
     }
@@ -1005,7 +1028,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     work = null;
     chapterSource = [];
     folderBoard = lane === "arcalive" && arcaliveView === "files" ? params.get("board") : null;
-    folderCategory = lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
+    folderCategory = lane === "manual" || lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
     readSort(params);
     closeReader();
     syncBackButton();
@@ -1087,7 +1110,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       }
       return false;
     }
-    if (params.has("item") && lane === "arcalive") {
+    if (params.has("item") && (lane === "arcalive" || lane === "manual")) {
       const found = catalog.find((item) => item.identity === params.get("item"));
       if (found) await openBody(found, { navigation: "route", activeRequest });
       return Boolean(found);
@@ -1117,7 +1140,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     readNovelView(params);
     setLaneButtons();
     folderBoard = lane === "arcalive" && arcaliveView === "files" ? params.get("board") : null;
-    folderCategory = lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
+    folderCategory = lane === "manual" || lane === "arcalive" && arcaliveView === "files" ? params.get("category") : null;
     const workId = lane === "novel" || arcaliveView === "works" ? params.get("work") : null;
     if (!workId) {
       work = null;
@@ -1165,9 +1188,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const entries = canonicalChapters(chapters);
       return { unit: "화", entries, index: entries.findIndex((chapter) => sameChapter(chapter, entry)), toc: true };
     }
-    if (lane === "arcalive" && listKind === "posts") {
+    if ((lane === "arcalive" || lane === "manual") && listKind === "posts") {
       // The posts shown, in posting order: the list sort never changes 이전/다음 글.
-      const entries = visible.slice().sort((left, right) => (Number(left.post_id) || 0) - (Number(right.post_id) || 0));
+      const entries = visible.slice().sort((left, right) => lane === "manual" ? left.title.localeCompare(right.title, "ko-KR", { numeric: true }) : (Number(left.post_id) || 0) - (Number(right.post_id) || 0));
       return { unit: "글", entries, index: entries.findIndex((item) => sameChapter(item, entry)), toc: false };
     }
     return null;
@@ -1238,7 +1261,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (activeRequest !== requestId) return;
     const isNovel = currentLane === "novel";
     const entryIdentity = savedIdentity || identity(entry, currentLane, itemWork);
-    const parsed = isNovel ? novelBody(text) : arcaliveBody(text);
+    const parsed = currentLane === "manual" ? { text, sourceUrl: "" } : isNovel ? novelBody(text) : arcaliveBody(text);
     current = { lane: currentLane, viewLane, entry, identity: entryIdentity, work: itemWork };
     sequence = sequenceFor(entry, currentLane, chapters);
     if (sequence && sequence.index < 0) sequence = null;
@@ -1257,9 +1280,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     pruneHistory();
     persist();
     shell.open({
-      kicker: isNovel ? (itemWork?.title || "소설") : ["아카라이브", entry.board].filter(Boolean).join(" · "),
+      kicker: currentLane === "manual" ? "수동 문서" : isNovel ? (itemWork?.title || "소설") : ["아카라이브", entry.board].filter(Boolean).join(" · "),
       title: isNovel ? (entry.label || itemWork?.title || "회차") : (entry.title || "아카라이브 글"),
-      meta: isNovel
+      meta: currentLane === "manual" ? [entry.category, entry.created_at ? new Date(entry.created_at).toLocaleDateString("ko-KR") : ""].filter(Boolean).join(" · ") : isNovel
         ? [itemWork?.author || "작가 미상", chapterKind(entry.kind)].filter(Boolean).join(" · ")
         : [entry.author, entry.category || "미분류", entry.post_id ? `#${entry.post_id}` : ""].filter(Boolean).join(" · "),
       text: parsed.text,
@@ -1295,7 +1318,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const query = search.value.trim() ? ` · “${search.value.trim()}”` : "";
     if (current?.viewLane === "saved") return { kicker: "텍스트 저장함", title: `저장한 자료${query}` };
     if (current?.work) return { kicker: "회차 목록", title: `${current.work.title}${sorted}${query}` };
-    return { kicker: "아카라이브", title: `${[folderBoard, folderCategory].filter(Boolean).join(" · ") || "글 목록"}${sorted}${query}` };
+    return { kicker: lane === "manual" ? "수동 문서" : "아카라이브", title: `${[folderBoard, folderCategory].filter(Boolean).join(" · ") || "글 목록"}${sorted}${query}` };
   }
 
   function isCurrentRow(item) {
@@ -1467,7 +1490,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return;
     }
     if (listKind === "categories") {
-      folderCategory = selected.folder_label;
+      folderCategory = selected.folder_key ?? selected.folder_label;
       sortMode = defaultSort();
       syncBackButton();
       onChange();
@@ -1871,6 +1894,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (shelfFolders()) return "분류 이름 검색";
     if (lane === "novel" || lane === "arcalive" && arcaliveView === "works") return "작품 제목·작가 검색";
     if (lane === "saved") return "저장한 자료·메모·태그 검색";
+    if (lane === "manual") return "파일 제목·폴더 검색";
     if (folderCategory) return "글 제목 검색";
     return "게시판·분류 검색";
   }
@@ -1917,7 +1941,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       identity: saved.identity,
       title: saved.lane === "novel" ? `${saved.work?.title || saved.title || "소설"} · ${saved.entry?.label || "회차"}`
         : (saved.entry?.title || saved.title || "아카라이브 글"),
-      meta: [saved.lane === "novel" ? "소설" : ["아카라이브", saved.entry?.board].filter(Boolean).join(" · "),
+      meta: [saved.lane === "novel" ? "소설" : (saved.lane === "manual" ? "수동 문서" : ["아카라이브", saved.entry?.board].filter(Boolean).join(" · ")),
         ...(saved.tags ?? []).map((tag) => `#${tag}`)].join(" · "),
       note: saved.note || "",
       savedAt: saved.savedAt || "",

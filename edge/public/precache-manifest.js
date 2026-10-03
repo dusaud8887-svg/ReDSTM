@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "abd09df3a2a86e1d"
+    "revision": "94734852498f0958"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "3031ab2a1b0c7759"
+    "revision": "cd77aed784bfe331"
   },
   {
     "url": "/arca-media.js",
@@ -118,7 +118,7 @@ export default [
   },
   {
     "url": "/offline.js",
-    "revision": "5b77a2869302e3b0"
+    "revision": "8d7b6978e505ad6d"
   },
   {
     "url": "/overlay-manager.js",
@@ -186,7 +186,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "538412982c9d6509"
+    "revision": "35c492f4ca36a3a1"
   },
   {
     "url": "/styles/reader.css",
@@ -206,7 +206,7 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "a1dfa04b7d8ec2f4"
+    "revision": "4943836f6bb5f1db"
   },
   {
     "url": "/text-model.js",
@@ -230,7 +230,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "53de3e13e8aac5df"
+    "revision": "8c43e2ab74884d30"
   },
   {
     "url": "/work-header.js",

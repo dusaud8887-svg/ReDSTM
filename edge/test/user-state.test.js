@@ -22,6 +22,21 @@ const defaults = {
   theme: "system", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseFont: "serif",
   aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
 };
+
+test("manual document reading and bookmarks survive backup import", () => {
+  const identity = `manual:${"a".repeat(64)}`;
+  const text = { schema_version: 1, history: {
+    [identity]: { readAt: "2026-10-01T00:00:00Z", progress: 0.5, title: "1~5권", route: `/text?lane=manual&item=${identity}` },
+  }, bookmarks: {
+    [identity]: { savedAt: "2026-10-01T00:00:00Z", lane: "manual", title: "1~5권", entry: {
+      identity, title: "1~5권", created_at: "2026-10-01T00:00:00Z", sha256: "b".repeat(64), category: "작품",
+    } },
+  } };
+  const backup = JSON.parse(exportUserState(defaultUserState(defaults), text));
+  assert.equal(backup.text.history[identity].progress, 0.5);
+  assert.equal(backup.text.bookmarks[identity].lane, "manual");
+  assert.equal(backup.text.bookmarks[identity].entry.created_at, "2026-10-01T00:00:00Z");
+});
 const summary = (extension = "zst", hash = "a") => ({
   board_id: "write_free21",
   external_post_id: 62068,

@@ -300,8 +300,8 @@ def build_publish_tree(
     headroom: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Build deterministic, content-addressed artifacts without touching remote storage."""
-    if lane not in {"novel", "arcalive"}:
-        raise ValueError("lane must be novel or arcalive")
+    if lane not in {"novel", "arcalive", "manual"}:
+        raise ValueError("lane must be novel, arcalive or manual")
     output_root.mkdir(parents=True, exist_ok=True)
     plans = {
         kind: output_root / f".publish-{lane}-{kind}.jsonl"
@@ -451,8 +451,32 @@ def build_publish_tree(
                 for offset in range(0, len(catalog), _INDEX_PAGE_SIZE):
                     page(catalog[offset : offset + _INDEX_PAGE_SIZE])
                 work_count = len(catalog)
-            else:
+            elif lane == "manual":
                 page_items: list[dict[str, Any]] = []
+                for row in db.execute(
+                    """SELECT i.identity,i.title,i.content_sha256,i.bytes,m.created_at,m.folder
+                       FROM text_archive_items i JOIN text_manual_documents m USING(identity)
+                       WHERE i.lane='manual' ORDER BY m.folder,i.title,i.identity"""
+                ):
+                    page_items.append(
+                        {
+                            "identity": row["identity"],
+                            "title": row["title"],
+                            "sha256": row["content_sha256"],
+                            "bytes": row["bytes"],
+                            "created_at": row["created_at"],
+                            "category": row["folder"],
+                            "board": "수동 문서",
+                        }
+                    )
+                    if len(page_items) == _INDEX_PAGE_SIZE:
+                        page(page_items)
+                        page_items = []
+                if page_items:
+                    page(page_items)
+                work_count = 0
+            else:
+                page_items = []
                 source_rows: list[dict[str, Any]] = []
                 # Only the columns the pages and works use: the whole lane (25k+ rows) is held
                 # at once inside the unit's 150 MiB cgroup.
@@ -1108,7 +1132,7 @@ def publish_lane(
     # while it writes local files. A TypeMoon unit that starts mid-build stops the step.
     with _window():
         pass
-    if lane in {"arcalive", "novel"} and not (lane == "arcalive" and metadata_updated):
+    if lane in {"arcalive", "novel", "manual"} and not (lane == "arcalive" and metadata_updated):
         with sqlite3.connect(db_path) as db:
             pending = db.execute(
                 "SELECT 1 FROM text_archive_items i LEFT JOIN text_archive_publications p "
@@ -1259,9 +1283,9 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Publish the independent text archive")
-    parser.add_argument("lane", choices=("novel", "arcalive", "both"))
+    parser.add_argument("lane", choices=("novel", "arcalive", "manual", "both"))
     args = parser.parse_args()
-    lanes = ("novel", "arcalive") if args.lane == "both" else (args.lane,)
+    lanes = ("novel", "arcalive", "manual") if args.lane == "both" else (args.lane,)
     results = []
     for lane in lanes:
         try:

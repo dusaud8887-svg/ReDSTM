@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _MAX_ITEMS = 100
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+_MAX_MANUAL_FILE_BYTES = 32 * 1024 * 1024
 _MAX_BATCH_BYTES = 32 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 256 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -58,6 +60,8 @@ _ITEM_FIELDS = {
     "content_lane",
     "completed_at",
     "relative_path",
+    "created_at",
+    "folder",
 }
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS text_archive_items (
@@ -71,6 +75,10 @@ CREATE TABLE IF NOT EXISTS text_archive_items (
   text_sha256 TEXT,
   canonical_work_id TEXT, canonical_chapter_id TEXT, batch_id TEXT NOT NULL,
   imported_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS text_manual_documents (
+  identity TEXT PRIMARY KEY REFERENCES text_archive_items(identity),
+  created_at TEXT NOT NULL, folder TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS text_archive_objects (
   sha256 TEXT PRIMARY KEY, bytes INTEGER NOT NULL, object_key TEXT NOT NULL UNIQUE,
@@ -290,6 +298,29 @@ def _json_file(path: Path, limit: int) -> tuple[dict[str, Any], bytes]:
 
 def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None, str | None]:
     kind = item.get("kind")
+    if kind == "manual_document":
+        identity, created, folder = item.get("identity"), item.get("created_at"), item.get("folder")
+        valid = (
+            isinstance(identity, str)
+            and re.fullmatch(r"manual:[a-f0-9]{64}", identity) is not None
+            and isinstance(created, str)
+            and len(created) <= 40
+            and isinstance(folder, str)
+            and len(folder) <= 2000
+            and not PurePosixPath(folder).is_absolute()
+            and ".." not in PurePosixPath(folder).parts
+            and "\\" not in folder
+            and "\x00" not in folder
+            and isinstance(item.get("title"), str)
+            and bool(item["title"].strip())
+            and item.get("source_url") == ""
+        )
+        if valid and isinstance(created, str):
+            try:
+                valid = datetime.fromisoformat(created).utcoffset() is not None
+            except ValueError:
+                valid = False
+        return bool(valid), "manual", "manual", None, None
     if kind == "novel_chapter":
         site, work_id, chapter_id = (
             item.get("site"),
@@ -841,7 +872,7 @@ def _safe_batch(
         if not reason and (
             not isinstance(size, int)
             or isinstance(size, bool)
-            or not 1 <= size <= _MAX_FILE_BYTES
+            or not 1 <= size <= (_MAX_MANUAL_FILE_BYTES if lane == "manual" else _MAX_FILE_BYTES)
             or not isinstance(digest, str)
             or not _SHA256.fullmatch(digest)
         ):
@@ -881,11 +912,14 @@ def _safe_batch(
                             reason = "text_sha256_mismatch"
                     if not reason and body is not None:
                         try:
-                            text = body.decode("utf-8")
+                            decoder = codecs.getincrementaldecoder("utf-8")()
+                            for offset in range(0, len(body), 64 * 1024):
+                                end = offset + 64 * 1024
+                                decoder.decode(body[offset:end], final=end >= len(body))
                         except UnicodeDecodeError:
                             reason = "body_not_utf8"
                         else:
-                            if "\x00" in text:
+                            if b"\x00" in body:
                                 reason = "body_contains_nul"
         candidates.append(
             {
@@ -1394,6 +1428,12 @@ def import_batch(
                             now,
                         ),
                     )
+                    if candidate["lane"] == "manual":
+                        db.execute(
+                            "INSERT INTO text_manual_documents(identity,created_at,folder) "
+                            "VALUES(?,?,?)",
+                            (identity, data["created_at"], data["folder"]),
+                        )
                     if candidate["lane"] == "novel":
                         text_digest = novel_text_sha256(body)
                         db.execute(

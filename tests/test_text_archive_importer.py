@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from scripts.text_archive import importer, runtime, status
+from scripts.text_archive import importer, publisher, runtime, status
 
 _ROOT = Path(__file__).parent
 _FIXTURE = _ROOT / "fixtures" / "text_archive_contract.json"
@@ -25,6 +26,102 @@ _BATCHES = (
     "20260923T120002Z-pc-00000003",
     "20260923T120003Z-pc-00000004",
 )
+
+
+def test_manual_document_import_publish_duplicate_and_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(publisher, "_window", nullcontext)
+    identity = "manual:" + "a" * 64
+    item: dict[str, object] = {
+        "kind": "manual_document",
+        "identity": identity,
+        "title": "1~5권",
+        "created_at": "2026-10-01T12:00:00+09:00",
+        "folder": "작품/회차",
+        "source_url": "",
+    }
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    body = "# 본문 첫 줄은 제목이 아님\n원본: 본문 그대로\n".encode()
+    _batch(inbox, _BATCHES[0], body=body, item=item)
+    receipt = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "accepted"
+    tree = publisher.build_publish_tree(db_path, objects, tmp_path / "build", "manual")
+    release = json.loads((tmp_path / "build" / tree["release_key"]).read_text(encoding="utf-8"))
+    page_path = tmp_path / "build" / release["catalog_pages"][0]["key"]
+    page = json.loads(page_path.read_text(encoding="utf-8"))
+    document = page["items"][0]
+    assert document["title"] == "1~5권"
+    assert document["created_at"] == item["created_at"]
+    assert document["category"] == "작품/회차"
+    with sqlite3.connect(db_path) as db:
+        row = db.execute("SELECT lane,title,object_key FROM text_archive_items").fetchone()
+    assert row[:2] == ("manual", "1~5권")
+    assert (objects / row[2]).read_bytes() == body
+    _batch(inbox, _BATCHES[1], body=body, item=item)
+    receipt = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "duplicate"
+    _batch(inbox, _BATCHES[2], body=b"modified", item=item)
+    receipt = importer.import_batch(inbox, _BATCHES[2], db_path, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "held_conflict"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"created_at": "yesterday"},
+        {"created_at": "2026-10-01T12:00:00"},
+        {"folder": "../escape"},
+        {"identity": "arcalive:novel:1:text"},
+        {"source_url": "file:///private"},
+    ],
+)
+def test_manual_document_rejects_invalid_metadata(change: dict[str, str]) -> None:
+    item = {
+        "kind": "manual_document",
+        "identity": "manual:" + "a" * 64,
+        "title": "제목",
+        "created_at": "2026-10-01T12:00:00Z",
+        "folder": ".",
+        "source_url": "",
+    }
+    assert not importer._identity_matches({**item, **change})[0]
+
+
+def test_large_manual_utf8_validation_is_bounded(tmp_path: Path) -> None:
+    item: dict[str, object] = {
+        "kind": "manual_document",
+        "identity": "manual:" + "b" * 64,
+        "title": "여러 권",
+        "created_at": "2026-10-01T12:00:00Z",
+        "folder": ".",
+        "source_url": "",
+    }
+    # One non-BMP character would expand a full decoded ASCII body fourfold.
+    body = b"a" * (3 * 1024 * 1024 - 1) + "😀".encode()
+    inbox = tmp_path / "inbox"
+    _batch(inbox, _BATCHES[0], body=body, item=item)
+    tracemalloc.start()
+    try:
+        _, _, _, validation = importer._safe_batch(inbox, _BATCHES[0])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert validation["candidates"][0]["reason"] == ""
+    assert peak < len(body) * 2
+    receipt = importer.import_batch(
+        inbox, _BATCHES[0], tmp_path / "db", tmp_path / "objects", tmp_path / "receipts"
+    )
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "accepted"
 
 
 def test_bookkor_chapter_identity_requires_matching_work_and_chapter() -> None:

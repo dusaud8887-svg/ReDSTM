@@ -28,6 +28,7 @@ export function createOffline({ onAuthExpired = () => {}, onUpdateReady = () => 
     } catch {
       return null; // service workers unsupported or blocked: online only
     }
+    if (!registration) return null;
     send({ type: "SET_OWNER", owner });
     // A new version waits until the page applies it at a safe point (T23).
     const watch = (worker) => worker?.addEventListener("statechange", () => {

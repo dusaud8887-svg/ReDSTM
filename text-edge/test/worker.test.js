@@ -75,6 +75,14 @@ test("legacy API paths do not serve the retired duplicate viewer", async () => {
   assert.equal(response.headers.get("Location"), "https://redstm-edge.redstm-archive-private.workers.dev/text");
 });
 
+test("manual document links preserve their folder and identity", async () => {
+  const response = await worker.fetch(request("/?lane=manual&category=book%2Fchapters&item=manual:" + "a".repeat(64)), environment());
+  const target = new URL(response.headers.get("Location"));
+  assert.equal(target.searchParams.get("lane"), "manual");
+  assert.equal(target.searchParams.get("category"), "book/chapters");
+  assert.equal(target.searchParams.get("item"), "manual:" + "a".repeat(64));
+});
+
 test("unauthenticated and service identities are rejected", async () => {
   const missing = await worker.fetch(request("/", null), environment());
   assert.equal(missing.status, 401);

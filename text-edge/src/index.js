@@ -6,8 +6,8 @@ function redirect(request) {
   const target = new URL(READER_URL);
   const source = new URL(request.url).searchParams;
   const lane = source.get("lane");
-  if (["novel", "arcalive", "saved"].includes(lane)) target.searchParams.set("lane", lane);
-  for (const key of ["q", "work", "chapter", "item"]) {
+  if (["novel", "arcalive", "manual", "saved"].includes(lane)) target.searchParams.set("lane", lane);
+  for (const key of ["q", "work", "chapter", "item", "category"]) {
     const value = source.get(key);
     if (value && value.length <= 256) target.searchParams.set(key, value);
   }
