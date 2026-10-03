@@ -53,6 +53,13 @@ export function createMiniBar({ element, homeCard }) {
       return;
     }
     const last = lastTops.get(scroller) ?? 0;
+    // Folding hands the bar's row back to the list (shell.css), so at the list's end the browser
+    // pulls the position back by that much. That is not a scroll up: unfolding then would take the
+    // row again and the two would chase each other at the bottom.
+    if (top < last && top >= scroller.scrollHeight - scroller.clientHeight - 1) {
+      lastTops.set(scroller, top);
+      return;
+    }
     if (Math.abs(top - last) < FOLD_DISTANCE) return;
     lastTops.set(scroller, top);
     fold(top > last);

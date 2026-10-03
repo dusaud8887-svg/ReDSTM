@@ -1060,7 +1060,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/shell.js",
-      "revision": "0fcfd70ad853e684"
+      "revision": "0457b3f84b658dc8"
     },
     {
       "url": "/stats.js",

@@ -1506,6 +1506,20 @@ test("The mini bar continues reading from any list, Home included, and folds on 
   await list.evaluate((element) => { element.scrollTop = 200; });
   await expect(bar).not.toHaveClass(/folded/);
   await expect(bar).toHaveJSProperty("inert", false);
+  // At the very end the fold's give-back must not start a fold/unfold chase (the list holds still).
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(bar).toHaveClass(/folded/);
+  const settled = await list.evaluate(async (element) => {
+    const samples = [];
+    for (let frame = 0; frame < 20; frame += 1) {
+      await new Promise(requestAnimationFrame);
+      samples.push(element.scrollTop);
+    }
+    return new Set(samples.slice(5)).size;
+  });
+  expect(settled).toBe(1);
+  await list.evaluate((element) => { element.scrollTop -= 200; });
+  await expect(bar).not.toHaveClass(/folded/);
   // The list keeps room for the bar and the tabs together.
   const listBottom = await page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom));
   expect(listBottom).toBeGreaterThanOrEqual(102);

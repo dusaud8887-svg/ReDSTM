@@ -162,7 +162,7 @@ export default [
   },
   {
     "url": "/shell.js",
-    "revision": "0fcfd70ad853e684"
+    "revision": "0457b3f84b658dc8"
   },
   {
     "url": "/stats.js",
