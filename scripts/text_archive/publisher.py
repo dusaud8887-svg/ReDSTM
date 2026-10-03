@@ -384,7 +384,8 @@ def build_publish_tree(
                         str(alias["alias_work_id"])
                     )
                 rows = db.execute(
-                    """SELECT i.*,c.source_episode_number_raw,
+                    """SELECT i.*,c.chapter_label AS current_chapter_label,
+                              c.chapter_kind AS current_chapter_kind,c.source_episode_number_raw,
                               c.source_episode_number_normalized,c.source_toc_position,
                               c.source_published_at
                        FROM text_archive_items i LEFT JOIN text_novel_chapters c
@@ -400,7 +401,17 @@ def build_publish_tree(
                     seen_works += 1
                     if seen_works % 50 == 0:
                         _check_headroom(headroom)
-                    chapters = _unique_novel_chapters([dict(row) for row in work_rows])
+                    chapters = _unique_novel_chapters(
+                        [
+                            {
+                                **dict(row),
+                                "chapter_label": row["current_chapter_label"]
+                                or row["chapter_label"],
+                                "chapter_kind": row["current_chapter_kind"] or row["chapter_kind"],
+                            }
+                            for row in work_rows
+                        ]
+                    )
                     first = chapters[0]
                     chapters.sort(key=_chapter_sort_key)
                     work = {
