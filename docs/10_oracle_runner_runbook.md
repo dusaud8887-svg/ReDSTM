@@ -682,3 +682,17 @@ Oracle runner 전환 완료는 다음을 모두 의미한다.
 - D1 outage 중 schedule이 계속되고 duplicate remote command가 한 run만 만든다.
 - public listener는 SSH 외에 없고 viewer는 Cloudflare에서만 제공된다.
 - 외부 backup이 deferred인 동안 legacy data는 삭제하지 않고 Oracle resource도 보존된다.
+
+## 수집 공백 점검과 따라잡기 (2026-10-03)
+
+예약 timer(`redstm-schedule.timer`)가 꺼진 채 수동 명령만 돌던 8월 중순~10월 3일 사이, 대부분 게시판의
+`boards.last_incremental_at`이 8월 15일에 멈춰 있었다. 증분 수집은 게시판당 3 page(`REDSTM_SYNC_MAX_PAGES`)만 읽으므로
+공백이 3 page를 넘으면 정규 수집으로는 영영 따라잡지 못한다.
+
+- 점검: 게시판별 `reported_post_count`(사이트) 대 `posts` 수, `last_incremental_at`, 최근 `crawl_runs`(kind=sync).
+  `posts.first_seen_at`이 오래 멈춘 게시판이 공백 후보다.
+- 따라잡기: `control.lock`을 잡고 일반(비 inventory) 수집을 페이지 상한만 크게 줘서 돌린다. 증분 경계(기준 글 번호 + 2 page)에서
+  멈추므로 전체 목차보다 훨씬 짧다(47개 게시판 약 1시간, 새 글 1,208건 발견).
+  `python -m scripts.crawl_cycle --archive … --max-pages 400 --max-posts 1` (본문은 이어서 `recover_queue --missing-only` 반복).
+  같은 시간 lane 파일(`/srv/redstm/static/.typemoon-lane.json`)을 30초마다 갱신해 텍스트 레인이 메모리를 양보하게 한다.
+- 예방: 예약 timer를 켜 둔다(10-03에 다시 켬). 꺼져 있으면 `/ops` 머리에 `자동 수집 꺼짐`이 뜬다.

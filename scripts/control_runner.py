@@ -277,6 +277,38 @@ class RunnerProfile:
     report_keep_days: int = _DEFAULT_REPORT_KEEP_DAYS
 
 
+class _OutagePolicy:
+    """How a manual command waits out an origin outage: the stepped backoff curve, reset by
+    progress, and a total deadline after which the command ends resumable."""
+
+    def __init__(self) -> None:
+        self.retries = 0
+        self.since: float | None = None
+
+    def wait(
+        self,
+        runner: ControlRunner,
+        run_id: str,
+        step: str,
+        command_id: str | None,
+        pause_file: Path,
+    ) -> bool:
+        """Sleep the next backoff step; False once the outage outlasted the deadline."""
+        now = time.monotonic()
+        self.since = self.since or now
+        if now - self.since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+            return False
+        backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+        delay = backoff[min(self.retries, len(backoff) - 1)]
+        self.retries += 1
+        runner._backoff(delay, run_id, step, command_id, pause_file)
+        return True
+
+    def reset(self) -> None:
+        self.retries = 0
+        self.since = None
+
+
 class ControlRunner:
     def __init__(self, profile: RunnerProfile, client: ControlClient, store: ControlStore) -> None:
         if (
@@ -917,8 +949,7 @@ class ControlRunner:
                 )
             reports: list[dict[str, Any]] = []
             auth_retried = False
-            outage_retries = 0
-            outage_since: float | None = None
+            outage = _OutagePolicy()
             stuck_cycles = 0
             previous_signature: tuple[int, int] | None = None
             crawl_step = "full-catalog" if action == "full-catalog" else "crawling"
@@ -1026,16 +1057,12 @@ class ControlRunner:
                 # durable inventory_next_page cursors; wait and resume indefinitely. Closing the
                 # command would force an operator re-click despite recoverable progress.
                 if status in {"site_unreachable", "rate_limited", "auth_failed"}:
-                    outage_since = outage_since or time.monotonic()
-                    if time.monotonic() - outage_since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+                    if not outage.wait(self, run_id, crawl_step, command_id, pause_file):
                         combined = self._outage_deadline_report(reports)
                         combined["inventory_pass_complete"] = False
                         return self._with_inventory_coverage(
                             combined, str(inventory_started_at), board_id
                         )
-                    delay = backoff[min(outage_retries, len(backoff) - 1)]
-                    outage_retries += 1
-                    self._backoff(delay, run_id, crawl_step, command_id, pause_file)
                     continue
                 if status in {"runner_failed", "failed"}:
                     combined = self._combined_collection_report(reports)
@@ -1064,8 +1091,7 @@ class ControlRunner:
                 stuck_cycles = 0
                 # Page progress after an outage resets the outage budget so a later multi-hour
                 # dribble still gets the full stepped backoff curve.
-                outage_retries = 0
-                outage_since = None
+                outage.reset()
         if action in {"full-content", "fill-missing-content", "retry-batch"}:
             full_content_checkpoint = (
                 self._ensure_full_content_pass_started(board_id)
@@ -1118,8 +1144,7 @@ class ControlRunner:
                 command.append("--missing-only")
             reports = []
             auth_retried = False
-            outage_retries = 0
-            outage_since = None
+            outage = _OutagePolicy()
             killed_retries = 0
             previous_remaining: int | None = None
             recovery_step = (
@@ -1144,7 +1169,7 @@ class ControlRunner:
                 # command (later batches would revive what this run just retired again).
                 if action == "fill-missing-content" and command_id is not None and not reports:
                     cycle_command = [*command, "--revive-dead"]
-                if outage_retries:
+                if outage.retries:
                     cycle_command = cycle_command.copy()
                     cycle_command[cycle_command.index("--max-posts") + 1] = "1"
                 report = self._execute_report(
@@ -1182,13 +1207,8 @@ class ControlRunner:
                 if status in {"site_unreachable", "rate_limited", "auth_failed"}:
                     if max_seconds is not None:
                         return self._combined_collection_report(reports)
-                    backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
-                    outage_since = outage_since or time.monotonic()
-                    if time.monotonic() - outage_since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+                    if not outage.wait(self, run_id, recovery_step, command_id, pause_file):
                         return self._outage_deadline_report(reports)
-                    delay = backoff[min(outage_retries, len(backoff) - 1)]
-                    outage_retries += 1
-                    self._backoff(delay, run_id, recovery_step, command_id, pause_file)
                     continue
                 if status in {"runner_failed", "failed"}:
                     return self._combined_collection_report(reports)
@@ -1202,16 +1222,10 @@ class ControlRunner:
                     and max_seconds is None
                     and not (action == "full-content" and report.get("full_content_remaining") == 0)
                 ):
-                    backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
-                    outage_since = outage_since or time.monotonic()
-                    if time.monotonic() - outage_since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+                    if not outage.wait(self, run_id, recovery_step, command_id, pause_file):
                         return self._outage_deadline_report(reports)
-                    delay = backoff[min(outage_retries, len(backoff) - 1)]
-                    outage_retries += 1
-                    self._backoff(delay, run_id, recovery_step, command_id, pause_file)
                 else:
-                    outage_retries = 0
-                    outage_since = None
+                    outage.reset()
                 if action in {"fill-missing-content", "retry-batch"}:
                     if _integer(report.get("selected_posts")) == 0:
                         combined = self._combined_collection_report(reports)
