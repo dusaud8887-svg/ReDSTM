@@ -454,8 +454,12 @@ def build_publish_tree(
             else:
                 page_items: list[dict[str, Any]] = []
                 source_rows: list[dict[str, Any]] = []
+                # Only the columns the pages and works use: the whole lane (25k+ rows) is held
+                # at once inside the unit's 150 MiB cgroup.
                 for row in db.execute(
-                    "SELECT * FROM text_archive_items WHERE lane=? ORDER BY imported_at,identity",
+                    """SELECT identity,source_board,source_post_id,source_category,title,author,
+                              content_lane,content_sha256,bytes,imported_at
+                       FROM text_archive_items WHERE lane=? ORDER BY imported_at,identity""",
                     (lane,),
                 ):
                     source_rows.append(dict(row))
