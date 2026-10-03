@@ -11,6 +11,7 @@ from scripts.control_client import (
     _CONNECT_TIMEOUT_SECONDS,
     _MAX_RETRY_DELAY_SECONDS,
     _PROTOCOL_ERROR_ATTEMPTS,
+    _REPEATED_UNAVAILABLE_ATTEMPTS,
     _TOTAL_REQUEST_TIMEOUT_SECONDS,
     _UNAVAILABLE_COOLDOWN_SECONDS,
     ControlClient,
@@ -684,3 +685,35 @@ def test_missing_control_credentials_can_be_explicitly_offline(
         is DeliveryResult.RETRYABLE_QUEUED
     )
     assert store.stats()["rows"] == 1
+
+
+def test_one_report_the_worker_keeps_failing_cannot_silence_the_runner(tmp_path: Path) -> None:
+    store = ControlStore(tmp_path / "control.sqlite")
+
+    def worker(
+        path: str, _body: bytes, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        if path.endswith("/runs"):
+            return 503, {}, b""
+        return 200, {}, _response(headers, {"accepted": True})
+
+    client = ControlClient(
+        "https://archive.example", "client-id", "client-secret", sender=worker, sleep=lambda _: None
+    )
+    run_start = {"run_id": "run-1", "kind": "retry", "source": "command"}
+    client.send_or_enqueue(store, "run_start", "/api/v1/runner/runs", run_start, "start-run-0001")
+    assert store.stats()["rows"] == 1
+    # Heartbeats go straight out even while that report waits in the queue.
+    heartbeat = {"runner_version": "git-1", "state": "running"}
+    for attempt in range(_REPEATED_UNAVAILABLE_ATTEMPTS):
+        client._unavailable_until = 0.0
+        assert client.send_latest("/api/v1/runner/heartbeat", heartbeat, f"heartbeat-{attempt:04}")
+        with sqlite3.connect(tmp_path / "control.sqlite") as connection:
+            connection.execute("UPDATE outbox SET next_attempt_at = NULL")
+        connection.close()
+        client.flush(store)
+    # The Worker answers everything else, so the item is set aside instead of blocking forever.
+    assert store.stats()["rows"] == 0
+    rejection = store.rejection()
+    assert rejection is not None
+    assert rejection["last_code"] == "control_unavailable_repeated"

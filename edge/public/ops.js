@@ -26,6 +26,7 @@ export const safeCodeLabels = {
   full_content_succeeded: "전체 본문 재수집 완료",
   missing_content_succeeded: "본문 없는 글 처리 완료",
   content_retry_deferred: "일부 본문 실패 · 지연 재시도 예약됨",
+  outage_deadline: "원본 장애가 12시간 넘게 이어져 멈춤 · 다음 실행이 이어서 처리",
   bootstrap_recovery_succeeded: "최초 본문 채우기 완료",
   recovery_succeeded: "본문 재시도 완료", publish_succeeded: "Reader 반영 완료",
   scheduled_succeeded: "예약 실행 완료", scheduled_partial: "예약 실행 일부 완료",

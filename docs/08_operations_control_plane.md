@@ -200,6 +200,13 @@ authorization test는 URL prefix 전체와 unknown method를 포함한다.
   identity를 재사용하며 payload가 다른데 key만 같은 요청을 일반적으로 동일하다고 가정하지 않는다.
 - 3회 실패하면 local cycle은 계속하고 10MiB 또는 10,000 event 중 먼저 도달한 bounded outbox에
   둔다. 초과 시 heartbeat/step/terminal을 우선하고 세부 progress를 합친다.
+- heartbeat는 최신 값만 의미가 있어 outbox를 거치지 않고 바로 보내며, 실패하면 버린다(30초 안에 다음 heartbeat).
+  outbox에 밀린 report가 있어도 runner 상태가 끊기지 않는다(2026-10-03).
+- Worker가 다른 요청에는 답하는데(최근 10분 안 성공) 같은 queued report만 10회 연속 unavailable이면 그 항목을
+  `control_unavailable_repeated`로 격리(rejection 기록)해 뒤의 report를 막지 않는다. 전체 장애 중에는 성공이 없으므로
+  격리하지 않는다.
+- run 도중 marker(pause/resume)를 처리할 때는 idle 대신 그 run의 마지막 heartbeat 상태를 다시 보내, active run이
+  지워져 8시간 stale reaper에 잘못 걸리지 않게 한다.
 - WebSocket, Durable Object, Queue, Oracle inbound API는 이 트래픽 규모에 추가하지 않는다.
 
 D1 prepared binding과 transactional batch는 현재 공식 Worker API를 사용하고, Free 한도 초과 시
@@ -412,7 +419,8 @@ Remote command와 무관하게 systemd가 실행한다.
 |---|---|
 | incremental cycle | 6시간 |
 | 최신 글 증분 수집 | 6시간마다; 이전 cycle 실행 중이면 이번 slot은 pass |
-| 본문 미확보 채우기 | 증분 앞에 `fill-missing-content` 최대 4시간·120건; 남은 분량은 다음 slot로 이어감 |
+| 본문 미확보 채우기 | 증분 뒤에 `fill-missing-content` 최대 4시간·120건; 남은 분량은 다음 slot로 이어감 |
+| 원본 장애 마감 | 수동 명령은 원본 장애로 진척 없이 12시간(`REDSTM_OUTAGE_DEADLINE_SECONDS`) 대기하면 `site_unreachable`/`outage_deadline`으로 끝난다. pass marker·게시판 cursor·frontier는 남아 다음 명령이나 예약 slot이 이어 가고, 그동안 `control.lock`은 예약 실행·배포·텍스트 레인에 풀린다 |
 | delta publish | marker 유무와 무관하게 증분 reconcile |
 | 전체 board 목차 | 수동 `full-catalog`; 첫 page부터 끝까지 다시 수집한 뒤 누락 본문 pass로 이어감 |
 | 전체 게시글 본문 | `full-catalog` 완료 후 같은 command에서 자동 실행하거나 수동 `full-content`로 전부 다시 수집 |
@@ -422,7 +430,7 @@ pause-after-current는 진행 중 collection에 협력적 stop marker를 전달�
 보류한다. resume-schedule은 두 marker를 해제한다.
 운영 목표 상태는 자동 enabled지만, 웹의 `일시정지 해제`는 비활성 systemd timer를 켜지 않는다.
 
-각 6시간 cycle은 본문 미확보 글 채우기(최대 4시간·120건), 최신 page incremental, 변경분 게시를 이 순서로
+각 6시간 cycle은 최신 page incremental, 본문 미확보 글 채우기(최대 4시간·120건), 변경분 게시를 이 순서로
 수행한다(`scripts/control_runner.py` scheduled run).
 직전 기준 게시글이 발견된 page 뒤 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와
 전체 본문 pass는 자동 cycle에 섞지 않는다.

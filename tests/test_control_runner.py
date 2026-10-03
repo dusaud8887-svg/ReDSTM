@@ -2133,7 +2133,6 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
     runner, _store = _runner(tmp_path, api)
     reports = iter(
         [
-            {"ok": True, "status": "succeeded"},
             {
                 "ok": False,
                 "status": "partial",
@@ -2145,6 +2144,7 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
                     }
                 ],
             },
+            {"ok": True, "status": "succeeded"},
             {"ok": True, "status": "succeeded", "safe_code": "publish_no_change"},
         ]
     )
@@ -2165,7 +2165,7 @@ def test_scheduled_run_preserves_the_first_actionable_failure_code(
     assert sync_event["safe_message"] == "parse_drift"
 
 
-def test_scheduled_run_collects_missing_content_before_a_failed_sync(
+def test_scheduled_run_collects_missing_content_after_a_failed_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api = Api([])
@@ -2185,10 +2185,10 @@ def test_scheduled_run_collects_missing_content_before_a_failed_sync(
     report = runner.run_scheduled()
 
     assert report["status"] == "failed"
-    assert actions == ["fill-missing-content", "sync-now", "publish-if-changed"]
+    assert actions == ["sync-now", "fill-missing-content", "publish-if-changed"]
 
 
-def test_scheduled_run_collects_missing_then_latest_and_publishes(
+def test_scheduled_run_collects_latest_then_missing_and_publishes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner, _store = _runner(tmp_path, Api([]))
@@ -2249,17 +2249,17 @@ def test_scheduled_run_collects_missing_then_latest_and_publishes(
 
     assert runner.run_scheduled()["status"] == "succeeded"
     assert [command[command.index("-m") + 1] for command in commands] == [
-        "scripts.recover_queue",
         "scripts.crawl_cycle",
+        "scripts.recover_queue",
         "scripts.export_static",
         "scripts.publish_static",
         "scripts.release_smoke",
     ]
-    recovery = commands[0]
+    recovery = commands[1]
     assert recovery[recovery.index("--max-posts") + 1] == "120"
     assert recovery[recovery.index("--max-seconds") + 1] == str(4 * 60 * 60)
     assert "--missing-only" in recovery
-    crawl = commands[1]
+    crawl = commands[0]
     assert "--inventory" not in crawl
     assert crawl[crawl.index("--disk-stop-bytes") + 1] == "0"
 
@@ -2420,6 +2420,37 @@ def test_full_catalog_resumes_after_transient_site_unreachable(
     assert report["safe_code"] == "full_catalog_succeeded"
     assert report["inventory_completed_boards"] >= 1
     assert report["inventory_pass_complete"] is True
+
+
+def test_a_command_stops_waiting_out_an_outage_after_the_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    clock = [0.0]
+    calls = 0
+
+    def execute(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "status": "site_unreachable", "selected_posts": 1, "boards": []}
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr(runner, "_execute_report", execute)
+    monkeypatch.setattr("scripts.control_runner.time.sleep", sleep)
+    monkeypatch.setattr("scripts.control_runner.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("scripts.control_runner.REDSTM_OUTAGE_DEADLINE_SECONDS", 3600)
+
+    report = runner._execute_action(
+        "fill-missing-content", "fill-outage", "fill-outage", command_id="manual"
+    )
+
+    # It waited about an hour of backoff, then ended resumable instead of holding the lock.
+    assert 3600 <= clock[0] <= 3600 + 600
+    assert calls > 1
+    assert report["status"] == "site_unreachable"
+    assert report["safe_code"] == "outage_deadline"
 
 
 def test_full_catalog_retries_once_after_session_expiry(
@@ -2757,6 +2788,14 @@ def test_running_process_claims_pause_marker(
         if path.endswith("/commands/claim") and payload.get("command_kind") == "marker"
     )
     assert marker_claim["runner_id"] == "oracle-primary"
+    # The pause claimed mid-run keeps reporting the run: an idle heartbeat would clear it and
+    # let the stale-run reaper close a healthy long run.
+    heartbeats = [payload for path, payload in api.calls if path.endswith("/heartbeat")]
+    running = [index for index, beat in enumerate(heartbeats) if beat.get("active_run_id")]
+    assert running
+    assert all(
+        heartbeats[index].get("active_run_id") for index in range(running[0], running[-1] + 1)
+    )
     finish = next(
         payload for path, payload in api.calls if "/runs/" in path and path.endswith("/finish")
     )

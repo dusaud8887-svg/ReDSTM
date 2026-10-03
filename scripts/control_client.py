@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
 import os
 import random
 import re
@@ -21,6 +22,9 @@ _MAX_RESPONSE_BYTES = 128 * 1024
 _RETRY_DELAYS = (2.0, 5.0, 15.0)
 _MAX_RETRY_DELAY_SECONDS = 60.0
 _UNAVAILABLE_COOLDOWN_SECONDS = 60.0
+# A queued report failing this often while other requests succeed is set aside.
+_REPEATED_UNAVAILABLE_ATTEMPTS = 10
+_RECENT_DELIVERY_SECONDS = 600.0
 # Unreadable replies to one queued report before it is dropped so it cannot block the queue.
 _PROTOCOL_ERROR_ATTEMPTS = 3
 _CONNECT_TIMEOUT_SECONDS = 5.0
@@ -126,6 +130,7 @@ class ControlClient:
         self._sender = sender or self._send_once
         self._sleep = sleep
         self._unavailable_until = 0.0
+        self._delivered_at = -math.inf
 
     @classmethod
     def from_environment(cls, *, allow_offline: bool = False) -> ControlClient:
@@ -162,7 +167,26 @@ class ControlClient:
             "X-Request-Id": request_id,
             "X-ReDSTM-Protocol": "1",
         }
-        return self._request(path, body, headers, request_id)
+        data = self._request(path, body, headers, request_id)
+        self._delivered_at = time.monotonic()
+        return data
+
+    def send_latest(self, path: str, payload: dict[str, Any], idempotency_key: str) -> bool:
+        """Send telemetry where only the newest value matters (heartbeats), never queued.
+
+        It does not wait behind queued reports: one report the Worker keeps failing must not
+        silence the runner. A failed send is dropped; the next one follows within a minute.
+        """
+        if time.monotonic() < self._unavailable_until:
+            return False
+        try:
+            self.post(path, payload, idempotency_key)
+        except ControlUnavailableError:
+            self._unavailable_until = time.monotonic() + _UNAVAILABLE_COOLDOWN_SECONDS
+            return False
+        except ControlRejectedError, ControlProtocolError:
+            return False
+        return True
 
     def release_smoke(
         self,
@@ -363,8 +387,16 @@ class ControlClient:
                 store.reject(int(item["id"]), error.code)
                 continue
             except ControlUnavailableError:
-                self._unavailable_until = time.monotonic() + _UNAVAILABLE_COOLDOWN_SECONDS
                 attempts = int(item["attempts"])
+                # The Worker answers other requests but keeps failing this one (a payload D1
+                # rejects the same way every time): set it aside instead of blocking the queue.
+                if (
+                    attempts + 1 >= _REPEATED_UNAVAILABLE_ATTEMPTS
+                    and time.monotonic() - self._delivered_at < _RECENT_DELIVERY_SECONDS
+                ):
+                    store.reject(int(item["id"]), "control_unavailable_repeated")
+                    continue
+                self._unavailable_until = time.monotonic() + _UNAVAILABLE_COOLDOWN_SECONDS
                 delay = _RETRY_DELAYS[min(attempts, len(_RETRY_DELAYS) - 1)]
                 store.defer(int(item["id"]), datetime.now(UTC) + timedelta(seconds=delay))
                 break

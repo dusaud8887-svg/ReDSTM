@@ -173,6 +173,9 @@ REDSTM_RETRY_AFTER_MAX_SECONDS = 24 * 60 * 60
 # and resumes the same pass instead of closing the command. Backoff table is reused forever
 # (last entry caps the delay); the pass marker is never abandoned for origin outage alone.
 REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS = (90, 180, 300, 300, 420, 420, 600, 600)
+# A manual command stops waiting out an origin outage after this long (no progress since the
+# outage began) and ends resumable, so it does not hold control.lock for days.
+REDSTM_OUTAGE_DEADLINE_SECONDS = 12 * 60 * 60
 # Identical inventory cursor signatures in a row before full_catalog_no_progress. Origin
 # outage uses the outage backoff path and does not consume this budget.
 REDSTM_FULL_CATALOG_STUCK_CYCLES = 5

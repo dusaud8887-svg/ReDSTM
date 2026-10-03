@@ -28,6 +28,7 @@ from crawler.settings import (
     REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS,
     REDSTM_FULL_CATALOG_STUCK_CYCLES,
     REDSTM_FULL_CONTENT_MAX_POSTS,
+    REDSTM_OUTAGE_DEADLINE_SECONDS,
     REDSTM_RECOVERY_MAX_POSTS,
     REDSTM_RECOVERY_TIME_BUDGET_SECONDS,
 )
@@ -43,6 +44,8 @@ from scripts.retention import prune_reports, prune_warc
 from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, warc_budget_bytes
 
 _TYPEMOON_LANE_FILE = ".typemoon-lane.json"
+# A run heartbeats at least every 30 s; a marker claimed within this keeps reporting that run.
+_LIVE_HEARTBEAT_SECONDS = 120
 _RUN_KINDS = {
     "sync-now": "manual-sync",
     "full-catalog": "manual-sync",
@@ -297,6 +300,7 @@ class ControlRunner:
         self.profile = profile
         self.client = client
         self.store = store
+        self._live_heartbeat: tuple[float, str, str | None, str | None, str | None] | None = None
         self._progress_sequences: dict[str, itertools.count[int]] = {}
         self.profile.state_dir.mkdir(parents=True, exist_ok=True)
         self.profile.report_dir.mkdir(parents=True, exist_ok=True)
@@ -427,7 +431,9 @@ class ControlRunner:
         intentional_pause = False
         terminal_safe_code: str | None = None
         sequence = 1
-        for action in ("fill-missing-content", "sync-now", "publish-if-changed"):
+        # Latest posts first: up to four hours of body backlog must not delay new posts; both
+        # still go out in this slot's publish.
+        for action in ("sync-now", "fill-missing-content", "publish-if-changed"):
             self._claim_marker()
             if (self.profile.state_dir / "schedule.paused").exists():
                 paused = True
@@ -655,7 +661,13 @@ class ControlRunner:
             f"finish-{command_id}",
         )
         self._finish_command_reporting(command_id, delivery)
-        self._heartbeat("paused" if marker.exists() else "idle")
+        live = self._live_heartbeat
+        if live is not None and time.monotonic() - live[0] < _LIVE_HEARTBEAT_SECONDS:
+            # Claimed inside a run (pause/resume between batches): an idle heartbeat would clear
+            # the active run, and the stale-run reaper could then close a healthy multi-day run.
+            self._heartbeat(live[1], run_id=live[2], step=live[3], command_id=live[4])
+        else:
+            self._heartbeat("paused" if marker.exists() else "idle")
         return {"ok": True, "status": terminal["state"], "command_id": command_id}
 
     def _run_process_action(
@@ -888,6 +900,7 @@ class ControlRunner:
             reports: list[dict[str, Any]] = []
             auth_retried = False
             outage_retries = 0
+            outage_since: float | None = None
             stuck_cycles = 0
             previous_signature: tuple[int, int] | None = None
             crawl_step = "full-catalog" if action == "full-catalog" else "crawling"
@@ -995,6 +1008,13 @@ class ControlRunner:
                 # durable inventory_next_page cursors; wait and resume indefinitely. Closing the
                 # command would force an operator re-click despite recoverable progress.
                 if status in {"site_unreachable", "rate_limited", "auth_failed"}:
+                    outage_since = outage_since or time.monotonic()
+                    if time.monotonic() - outage_since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+                        combined = self._outage_deadline_report(reports)
+                        combined["inventory_pass_complete"] = False
+                        return self._with_inventory_coverage(
+                            combined, str(inventory_started_at), board_id
+                        )
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
                     self._backoff(delay, run_id, crawl_step, command_id, pause_file)
@@ -1027,6 +1047,7 @@ class ControlRunner:
                 # Page progress after an outage resets the outage budget so a later multi-hour
                 # dribble still gets the full stepped backoff curve.
                 outage_retries = 0
+                outage_since = None
         if action in {"full-content", "fill-missing-content", "retry-batch"}:
             full_content_checkpoint = (
                 self._ensure_full_content_pass_started(board_id)
@@ -1080,6 +1101,7 @@ class ControlRunner:
             reports = []
             auth_retried = False
             outage_retries = 0
+            outage_since = None
             killed_retries = 0
             previous_remaining: int | None = None
             recovery_step = (
@@ -1143,6 +1165,9 @@ class ControlRunner:
                     if max_seconds is not None:
                         return self._combined_collection_report(reports)
                     backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+                    outage_since = outage_since or time.monotonic()
+                    if time.monotonic() - outage_since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+                        return self._outage_deadline_report(reports)
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
                     self._backoff(delay, run_id, recovery_step, command_id, pause_file)
@@ -1160,11 +1185,15 @@ class ControlRunner:
                     and not (action == "full-content" and report.get("full_content_remaining") == 0)
                 ):
                     backoff = REDSTM_FULL_CATALOG_OUTAGE_BACKOFF_SECONDS
+                    outage_since = outage_since or time.monotonic()
+                    if time.monotonic() - outage_since > REDSTM_OUTAGE_DEADLINE_SECONDS:
+                        return self._outage_deadline_report(reports)
                     delay = backoff[min(outage_retries, len(backoff) - 1)]
                     outage_retries += 1
                     self._backoff(delay, run_id, recovery_step, command_id, pause_file)
                 else:
                     outage_retries = 0
+                    outage_since = None
                 if action in {"fill-missing-content", "retry-batch"}:
                     if _integer(report.get("selected_posts")) == 0:
                         combined = self._combined_collection_report(reports)
@@ -1799,6 +1828,22 @@ class ControlRunner:
                 """
             ).fetchone()
         return bool(row and int(row[0]))
+
+    def _outage_deadline_report(self, reports: list[dict[str, Any]]) -> dict[str, Any]:
+        """Stop waiting out an origin outage that outlasted the deadline.
+
+        The pass checkpoints (inventory marker, board cursors, frontier) stay, so the next
+        command or scheduled slot resumes; meanwhile control.lock is free for scheduled runs,
+        deploys and the text lane.
+        """
+        combined = self._combined_collection_report(reports)
+        combined.update(
+            ok=False,
+            status="site_unreachable",
+            safe_code="outage_deadline",
+            stop_reason="outage_deadline",
+        )
+        return combined
 
     def _execute_report(
         self,
@@ -2599,6 +2644,9 @@ class ControlRunner:
         command_id: str | None = None,
         warning_code: str | None = None,
     ) -> None:
+        self._live_heartbeat = (
+            (time.monotonic(), state, run_id, step, command_id) if run_id is not None else None
+        )
         # Heartbeats are best-effort telemetry; a local failure (disk probe, state DB,
         # timer inspection) must never abort the command or run being reported on.
         try:
@@ -2689,12 +2737,8 @@ class ControlRunner:
                     "active_command_id": command_id,
                 }
             )
-        self._send(
-            "heartbeat",
-            "/api/v1/runner/heartbeat",
-            payload,
-            f"heartbeat-{uuid4().hex}",
-        )
+        # Latest value wins, so it never waits behind (or joins) the report queue.
+        self.client.send_latest("/api/v1/runner/heartbeat", payload, f"heartbeat-{uuid4().hex}")
 
     def _send(
         self,
