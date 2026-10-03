@@ -391,6 +391,20 @@ async function heartbeat(request, env, requestId) {
       ),
     );
   }
+  if (body.active_run_id != null) {
+    // A command queued while a run holds the runner waits for it instead of expiring after
+    // 15 minutes; the runner claims it on its first poll after the run (docs/08).
+    statements.push(
+      env.CONTROL_DB.prepare(
+        `UPDATE commands SET expires_at = ?
+         WHERE state = 'queued' AND expires_at > ? AND expires_at < ?`,
+      ).bind(
+        new Date(Date.parse(now) + COMMAND_TTL_MS).toISOString(),
+        now,
+        new Date(Date.parse(now) + COMMAND_TTL_MS).toISOString(),
+      ),
+    );
+  }
   const results = await env.CONTROL_DB.batch(statements);
   return envelope(requestId, {
     accepted: true,

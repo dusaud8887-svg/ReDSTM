@@ -2083,3 +2083,30 @@ test("other terminal failures stay immutable", async () => {
   assert.deepEqual(runRow(db), { state: "failed", safe_summary_json: '{"code":"crawl_failed"}' });
   assert.deepEqual(commandRow(db), { state: "failed", safe_message: "crawl_failed" });
 });
+
+test("a command queued during a run waits for it instead of expiring", async () => {
+  const { db, env } = sqliteD1();
+  const soon = new Date(Date.now() + 60_000).toISOString();
+  db.prepare(
+    `INSERT INTO commands (
+       command_id, idempotency_key, action, operation, collection_mode, args_json,
+       requested_by_hash, requested_at, expires_at, state
+     ) VALUES ('11111111-1111-4111-8111-111111111111', 'queued-during-run', 'sync-now',
+       'sync-now', NULL, '{}', 'hash', ?, ?, 'queued')`,
+  ).run(new Date().toISOString(), soon);
+  const expires = () => db.prepare("SELECT expires_at FROM commands").get().expires_at;
+  const beat = (body, key) => controlApiResponse(
+    request("/api/v1/runner/heartbeat", {
+      method: "POST",
+      body: { runner_version: "git-1", ...body },
+      headers: { "Idempotency-Key": key },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+
+  assert.equal((await beat({ state: "idle" }, "heartbeat-idle-1")).status, 200);
+  assert.equal(expires(), soon);
+  assert.equal((await beat({ state: "running", active_run_id: "scheduled-1" }, "heartbeat-run-1")).status, 200);
+  assert.ok(Date.parse(expires()) > Date.now() + 14 * 60_000);
+});

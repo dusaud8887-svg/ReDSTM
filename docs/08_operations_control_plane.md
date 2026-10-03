@@ -383,7 +383,9 @@ Oracle은 60초마다 또는 local cycle 종료 직후 poll한다. claim은 한 
 runner는 active command의 lease를 heartbeat와 함께 갱신한다. claim lease가 끝난 command는
 local ledger가 running/terminal이면 그 결과를 replay하고, 실행 흔적이 없고 attempts가 2 미만일
 때만 queued로 되돌린다. attempts가 2에 도달하면 failed/claim_lost로 끝낸다. expires_at이 지난
-queued command는 expired가 된다. Oracle local command ledger에도 command_id와 terminal result를
+queued command는 expired가 된다. 단 runner가 `active_run_id`를 담은 heartbeat를 보내는 동안(예약 실행 등 다른 run이
+runner를 쓰는 중)은 queued command의 expires_at을 매번 15분 뒤로 미뤄, 그 run이 끝난 뒤 첫 poll에서 실행된다
+(2026-10-03, 예약 run 중 누른 명령이 조용히 만료되던 문제). Oracle local command ledger에도 command_id와 terminal result를
 기록해 D1 replay가 중복 실행을 만들지 못하게 한다.
 terminal 결과의 전송 상태는 `pending`, `delivered`, `permanently_rejected`로 별도 기록한다. 일시적
 단절은 `pending`과 outbox를 유지하지만 재시도해도 성공하지 않는 4xx는 결과와 rejection evidence를
