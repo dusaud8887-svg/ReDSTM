@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3036,3 +3037,20 @@ def test_a_heavy_child_announces_the_lane_to_text_only_while_it_runs(tmp_path: P
     assert announced["phase"] == "crawling"
     assert isinstance(announced["updated_at"], float)
     assert not lane.exists()
+
+
+def test_storage_maintenance_removes_partial_files_left_by_a_killed_export(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    board = runner.profile.static_root / "posts" / "aa"
+    board.mkdir(parents=True)
+    stale = board / ".1.json.zst.abc.partial"
+    fresh = board / ".2.json.zst.def.partial"
+    kept = board / "1.json.zst"
+    for path in (stale, fresh, kept):
+        path.write_bytes(b"x" * 10)
+    os.utime(stale, (time.time() - 2 * 60 * 60,) * 2)
+
+    result = runner._prune_local_files()
+
+    assert result["partial_files"] == 1 and result["partial_bytes"] == 10
+    assert not stale.exists() and fresh.exists() and kept.exists()

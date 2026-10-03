@@ -46,6 +46,7 @@ from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, warc_budget_
 _TYPEMOON_LANE_FILE = ".typemoon-lane.json"
 # A run heartbeats at least every 30 s; a marker claimed within this keeps reporting that run.
 _LIVE_HEARTBEAT_SECONDS = 120
+_STALE_PARTIAL_SECONDS = 60 * 60
 _RUN_KINDS = {
     "sync-now": "manual-sync",
     "full-catalog": "manual-sync",
@@ -334,11 +335,28 @@ class ControlRunner:
             max_bytes=self.profile.warc_max_bytes or warc_budget_bytes(total),
         )
         reports = prune_reports(self.profile.report_dir, keep_days=self.profile.report_keep_days)
+        # An export or publish killed mid-write (OOM, deploy) leaves its temporary .partial
+        # files behind; GC skips them on purpose, so nothing else removes them. This runs under
+        # control.lock after the scheduled run, when no export or publish can be writing.
+        stale_before = time.time() - _STALE_PARTIAL_SECONDS
+        partial_files = partial_bytes = 0
+        if self.profile.static_root.is_dir():
+            for path in self.profile.static_root.rglob("*.partial"):
+                try:
+                    stat = path.stat()
+                    if path.is_file() and stat.st_mtime < stale_before:
+                        path.unlink()
+                        partial_files += 1
+                        partial_bytes += stat.st_size
+                except OSError:
+                    continue
         return {
             "warc_files": warc.files,
             "warc_bytes": warc.bytes,
             "report_files": reports.files,
             "report_bytes": reports.bytes,
+            "partial_files": partial_files,
+            "partial_bytes": partial_bytes,
         }
 
     def _maintain_storage(self, *, force: bool = False) -> dict[str, Any] | None:
