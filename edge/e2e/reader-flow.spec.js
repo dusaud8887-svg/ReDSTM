@@ -1472,6 +1472,37 @@ test("The mini bar continues reading from any list, Home included, and folds on 
   await expect(bar).toBeHidden();
 });
 
+// 2026-10-03: on a phone the list header folds while the list scrolls down and returns on the way
+// up, without moving the rows under the finger.
+test("The phone list header folds away on scroll down and returns on scroll up", async ({ page }) => {
+  test.skip(!mobileWidth(page), "phone layout only");
+  await useLongCollection(page, 40);
+  await page.goto("/browse");
+  const list = page.locator("#result-list");
+  const catalog = page.locator(".catalog");
+  await expect(page.locator(".result-item")).toHaveCount(40);
+  await expect(page.locator("#catalog-title")).toBeHidden();
+  const row = page.locator(".result-item").nth(15);
+  const start = await row.evaluate((element) => element.getBoundingClientRect().top);
+  // A person's scroll (a code-set position such as Back's restore keeps the header).
+  const scrollBy = (delta) => list.evaluate((element, by) => {
+    element.dispatchEvent(new WheelEvent("wheel", { deltaY: by }));
+    element.scrollTop += by;
+  }, delta);
+  await list.evaluate((element) => { element.scrollTop = 30; });
+  await expect(catalog).not.toHaveClass(/head-folded/);
+  await scrollBy(370);
+  await expect(catalog).toHaveClass(/head-folded/);
+  await expect(page.locator("#board-dock")).toBeHidden();
+  await expect(page.locator("#source-switch")).toBeHidden();
+  // The row is where the scroll alone would have put it.
+  expect(Math.abs(await row.evaluate((element) => element.getBoundingClientRect().top) - (start - 400))).toBeLessThan(2);
+  await scrollBy(-60);
+  await expect(catalog).not.toHaveClass(/head-folded/);
+  await expect(page.locator("#board-dock")).toBeVisible();
+  expect(Math.abs(await row.evaluate((element) => element.getBoundingClientRect().top) - (start - 340))).toBeLessThan(2);
+});
+
 // docs/24 §8.2: a first visit gets one block of ways in; once there is a record, Home leads with
 // 읽던 작품 instead.
 test("Home greets a first visit with sources and later leads with the works being read", async ({ page }) => {
@@ -2306,6 +2337,25 @@ test("T16/T17 novel work search uses original text and returns to its work", asy
   await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
 });
 
+
+test("Arcalive works narrow to one board and come back to it from a work", async ({ page }) => {
+  const novelPosts = [1, 2].map((id) => arcalivePost({ id, title: `${id}편` }));
+  const freePosts = [3, 4].map((id) => arcalivePost({ id, board: "free", category: "잡담", title: `${id}편` }));
+  const novel = arcaliveWork({ key: "n", title: "소설판 연재", posts: novelPosts });
+  const free = arcaliveWork({ key: "f", title: "자유판 연재", board: "free", category: "잡담", posts: freePosts });
+  await useTextArchive(page, { posts: [...novelPosts, ...freePosts], works: [novel, free] });
+  await page.goto("/text?lane=arcalive&view=works");
+  const titles = page.locator("#result-list .result-item[data-key] .result-title");
+  await expect(titles).toHaveCount(2);
+  await page.locator("#text-source-filter").selectOption("free");
+  await expect(titles).toHaveText(["자유판 연재"]);
+  await expect(page).toHaveURL(/view=works&board=free/);
+  await page.locator("#result-list .result-item[data-key]").first().click();
+  await expect(page.locator("#text-work-summary")).toContainText("자유판 연재");
+  await page.locator("#text-work-back").click();
+  await expect(titles).toHaveText(["자유판 연재"]);
+  await expect(page.locator("#text-source-filter")).toHaveValue("free");
+});
 
 test("T16/T17 Arcalive work search returns to its filtered chapter list", async ({ page }) => {
   const posts = [1, 2, 3].map((id) => arcalivePost({ id, title: `${id}편` }));

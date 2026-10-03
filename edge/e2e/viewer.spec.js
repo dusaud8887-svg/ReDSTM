@@ -694,7 +694,7 @@ test("restores search controls from the URL and browser history", async ({ page 
   await page.locator("#search-input").fill("첫째");
   await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("첫째");
   await expect.poll(() => page.evaluate(() => history.state?.redstmSearch)).toEqual({
-    query: "첫째", boardId: "board_a", mode: "aa", sort: "latest",
+    query: "첫째", boardId: "board_a", category: "", mode: "aa", sort: "latest",
     target: "all", match: "and", collectionKind: "all", collectionRead: "all",
   });
   await page.locator(".result-item", { hasText: "첫째" }).click();
@@ -2143,6 +2143,44 @@ test("keeps the filtered result status unchanged while reading and saving", asyn
   await page.keyboard.press("b");
   await expect(page.locator("#bookmark-post")).toHaveAttribute("aria-pressed", "true");
   await expect(status).toHaveText("자유게시판 · 3건");
+});
+
+test("a board's own categories narrow it and travel in the URL", async ({ page }) => {
+  const hash = (n) => String(n).repeat(64).slice(0, 64);
+  await page.route("**/archive/**", (route) => {
+    const key = new URL(route.request().url()).pathname.slice("/archive/".length);
+    const payload = key === "release.json" ? {
+      schema_version: 1, search: { object_key: "search/e2e.json.zst" }, collections: { object_key: collectionIndexKey },
+      boards: [{ board_id: "write_plus", name: "일반창작1관", group_name: "창작", post_count: 4 }],
+    } : key === "search/e2e.json.zst" ? {
+      schema_version: 1,
+      fields: ["board_id", "external_post_id", "title", "author", "category", "created_at_raw", "payload_sha256", "is_aa"],
+      posts: [
+        ["write_plus", 4, "장편 넷", "작성자", "장편", "2026-07-11", hash(4), false],
+        ["write_plus", 3, "단편 셋", "작성자", "단편", "2026-07-10", hash(5), false],
+        ["write_plus", 2, "장편 둘", "작성자", "장편", "2026-07-09", hash(6), false],
+        ["write_plus", 1, "분류 없음", "작성자", null, "2026-07-08", hash(7), false],
+      ],
+    } : key === collectionIndexKey ? { schema_version: 1, collections: [] } : null;
+    if (!payload) return route.fulfill({ status: 404, body: "not found" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/browse");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  await expect(page.locator("#category-chips")).toBeHidden();
+  await page.goto("/browse?board=write_plus");
+  const chips = page.locator("#category-chips button");
+  await expect(chips).toHaveText(["전체 3", "장편 2", "단편 1"]);
+  // The board's categories take the format chips' row.
+  await expect(page.locator("#mode-chips")).toBeHidden();
+  await chips.filter({ hasText: "장편" }).click();
+  await expect(page).toHaveURL(/\/browse\?board=write_plus&category=%EC%9E%A5%ED%8E%B8$/);
+  await expect(page.locator(".result-item .result-title")).toHaveText(["장편 넷", "장편 둘"]);
+  await page.reload();
+  await expect(chips.filter({ hasText: "장편" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".result-item .result-title")).toHaveText(["장편 넷", "장편 둘"]);
+  await chips.filter({ hasText: "전체" }).click();
+  await expect(page.locator(".result-item")).toHaveCount(4);
 });
 
 test("Browse never takes Search's words, and each tab keeps its own conditions", async ({ page }) => {

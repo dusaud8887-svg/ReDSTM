@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "2ae246a9d4f52917"
+    "revision": "076c9526d0d4c1a5"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "24c7b2f7cc0f29be"
+    "revision": "7b16728be4dad893"
   },
   {
     "url": "/arca-media.js",
@@ -142,7 +142,7 @@ export default [
   },
   {
     "url": "/search-core.js",
-    "revision": "dd7e1d3757eac475"
+    "revision": "73326929310a3871"
   },
   {
     "url": "/search-suggest.js",
@@ -150,7 +150,7 @@ export default [
   },
   {
     "url": "/search-worker.js",
-    "revision": "44c36e6680b7c838"
+    "revision": "85086cd626000601"
   },
   {
     "url": "/sequence.js",
@@ -162,7 +162,7 @@ export default [
   },
   {
     "url": "/shell.js",
-    "revision": "21c71986ae46dd39"
+    "revision": "7fc9df7a4afddbfb"
   },
   {
     "url": "/stats.js",
@@ -186,7 +186,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "aad2598e37cf9522"
+    "revision": "69c424c1deafc23a"
   },
   {
     "url": "/styles/reader.css",
@@ -206,7 +206,7 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "4943836f6bb5f1db"
+    "revision": "2fb6eefa532cd4ab"
   },
   {
     "url": "/text-model.js",

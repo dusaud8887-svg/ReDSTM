@@ -41,7 +41,7 @@ import { createTextLibrary } from "/text-library.js";
 import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
 import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
-import { createMiniBar } from "/shell.js";
+import { createHeaderFold, createMiniBar } from "/shell.js";
 import { excerptOfTheDay, fillContinueCard, fillWeekBars, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
 import { fillWorkCover, showWorkBarcode } from "/work-header.js";
@@ -105,7 +105,7 @@ const elements = Object.fromEntries(
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls", "aa-scenes", "aa-scene-previous", "aa-scene-output", "aa-scene-next",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
-    "mode-chips", "kind-chips",
+    "mode-chips", "kind-chips", "category-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
@@ -381,6 +381,10 @@ document.querySelector("#find-return-button").addEventListener("click", () => {
 });
 
 const miniBar = createMiniBar({ element: document.querySelector("#mini-bar"), homeCard: elements["continue-block"] });
+const headerFold = createHeaderFold({
+  catalog: document.querySelector(".catalog"), list: elements["result-list"],
+  active: () => isNarrowScreen() && ["browse", "search", "text"].includes(currentDestination) && !document.body.classList.contains("reading"),
+});
 
 const boardNavigator = createBoardNavigator({
   dialog: elements["board-dialog"],
@@ -2149,10 +2153,22 @@ function refreshSortChoices() {
   return true;
 }
 
+// A board's 분류 (TypeMoon's 장편·단편·칼럼 tabs, or per-work tags) narrows that board only: it
+// belongs to the board it was picked on and stops applying as soon as the board changes.
+let categoryFilter = { boardId: "", category: "" };
+function activeCategory() {
+  const boardId = elements["board-filter"].value;
+  return boardId && currentScope === "posts" && categoryFilter.boardId === boardId ? categoryFilter.category : "";
+}
+function setCategory(category, boardId = elements["board-filter"].value) {
+  categoryFilter = { boardId, category: boardId ? category ?? "" : "" };
+}
+
 function currentSearchState() {
   return {
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    category: activeCategory(),
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
     target: elements["search-target"].value,
@@ -2182,6 +2198,7 @@ function restoreCatalogConditions(destination) {
   // The board options follow the format filter; rebuild them before picking the board.
   populateBoardFilter();
   elements["board-filter"].value = scope?.boardId ?? "";
+  setCategory(scope?.category, scope?.boardId ?? "");
   elements["sort-filter"].value = allowedSort(currentScope, saved?.sort);
   elements["search-target"].value = saved?.target ?? "all";
   elements["search-match"].value = saved?.match ?? "and";
@@ -2194,6 +2211,7 @@ function searchUrl(state = currentSearchState(), destination = currentDestinatio
   if (currentScope === "collections") params.set("scope", "collections");
   if (state.query) params.set("q", state.query);
   if (state.boardId) params.set("board", state.boardId);
+  if (currentScope === "posts" && state.category) params.set("category", state.category);
   if (currentScope === "posts" && state.mode !== "all") params.set("mode", state.mode);
   if (currentScope === "posts" && state.target !== "all") params.set("target", state.target);
   if (currentScope === "posts" && state.match !== "and") params.set("match", state.match);
@@ -2223,6 +2241,7 @@ function applyCatalogRoute(destination) {
     ? "collections" : "posts");
   elements["search-input"].value = params.get("q") ?? "";
   elements["board-filter"].value = params.get("board") ?? "";
+  setCategory(params.get("category"), params.get("board") ?? "");
   const mode = params.get("mode");
   elements["mode-filter"].value = searchSupportsAa && (mode === "aa" || mode === "prose") ? mode : "all";
   elements["search-target"].value = ["title", "author"].includes(params.get("target")) ? params.get("target") : "all";
@@ -2324,11 +2343,56 @@ function updateDestinationLayout() {
     : browsing ? "게시판별 보존 글" : "제목·작성자·분류로 찾기";
   applyBoardFilterOptions();
   renderBoardDock();
+  headerFold.reset();
   syncFilterChips();
+  void renderCategoryChips();
   renderActiveFilters();
   elements["search-clear"].hidden = !elements["search-input"].value;
   elements["filter-toggle"].hidden = saved || text || (browsing && !isNarrowScreen());
   if (text) applyTextSortOptions();
+}
+
+// The board's 분류 row takes the format chips' place: one board is almost always one format, and
+// the format stays in the filter sheet. Counts come from the search index (worker), per board.
+const categoryCache = new Map();
+let categoryRender = 0;
+async function renderCategoryChips() {
+  const row = elements["category-chips"];
+  const boardId = elements["board-filter"].value;
+  const shown = ["browse", "search"].includes(currentDestination) && currentScope === "posts" && Boolean(boardId);
+  const render = ++categoryRender;
+  if (!shown) {
+    row.hidden = true;
+    return;
+  }
+  const mode = elements["mode-filter"].value;
+  const key = `${boardId}|${mode}`;
+  if (!categoryCache.has(key)) {
+    categoryCache.set(key, workerRequest({ type: "categories", boardId, mode }).catch(() => {
+      categoryCache.delete(key);
+      return [];
+    }));
+  }
+  const categories = await categoryCache.get(key);
+  if (render !== categoryRender) return;
+  const total = categories.reduce((sum, item) => sum + item.count, 0);
+  const selected = activeCategory();
+  row.hidden = categories.length < 2;
+  if (row.hidden) return;
+  elements["mode-chips"].hidden = true;
+  const chip = (label, value, count) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.category = value;
+    button.setAttribute("aria-pressed", String(value === selected));
+    const number = document.createElement("small");
+    number.textContent = count.toLocaleString("ko-KR");
+    button.append(label, " ", number);
+    return button;
+  };
+  row.replaceChildren(chip("전체", "", total), ...categories.slice(0, 40).map((item) => chip(item.label, item.label, item.count)));
+  // A link or Back can land on a category further along the row.
+  row.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function syncFilterChips() {
@@ -2553,7 +2617,7 @@ function restoreCatalogPosition() {
   if (currentSummary || !state || state.destination !== currentDestination || state.view !== currentView ||
       (state.scope ?? "posts") !== currentScope) return;
   const current = currentSearchState();
-  if (state.query !== current.query || state.boardId !== current.boardId ||
+  if (state.query !== current.query || state.boardId !== current.boardId || (state.category ?? "") !== current.category ||
       (state.mode ?? "all") !== current.mode ||
       (state.target ?? "all") !== current.target ||
       (state.match ?? "and") !== current.match ||
@@ -2840,7 +2904,7 @@ function handleWorkerMessage({ data }) {
       error.code = data.code;
       pending.reject(error);
     }
-    else pending.resolve(data.type === "page" || data.type === "discover" ? data : data.summaries);
+    else pending.resolve(data.type === "page" || data.type === "discover" ? data : data.type === "categories" ? data.categories : data.summaries);
     return;
   }
   if (data.type === "error") {
@@ -2960,6 +3024,7 @@ function requestSearch(offset = 0) {
     id,
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    category: activeCategory(),
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
     target: elements["search-target"].value,
@@ -4367,6 +4432,7 @@ function listDescriptor() {
     const params = {
       query: query.get("q") ?? "",
       boardId: query.get("board") ?? "",
+      category: query.get("board") ? query.get("category") ?? "" : "",
       mode: searchSupportsAa && ["aa", "prose"].includes(query.get("mode")) ? query.get("mode") : "all",
       sort: allowedSort("posts", query.get("sort")),
       target: ["title", "author"].includes(query.get("target")) ? query.get("target") : "all",
@@ -4376,6 +4442,7 @@ function listDescriptor() {
       : sortChoices("posts").find(([, value]) => value === params.sort)?.[0] ?? "";
     const conditions = [
       params.query && params.boardId ? boardLabel(params.boardId) : "",
+      params.category,
       params.mode === "aa" ? "AA" : params.mode === "prose" ? "소설·일반" : "",
       sortLabel,
     ].filter(Boolean);
@@ -4944,6 +5011,17 @@ for (const button of elements["mode-chips"].querySelectorAll("[data-mode]")) {
     renderCurrentView();
   });
 }
+elements["category-chips"].addEventListener("click", (event) => {
+  const button = event.target.closest("[data-category]");
+  if (!button) return;
+  setCategory(button.dataset.category);
+  for (const chip of elements["category-chips"].querySelectorAll("[data-category]")) {
+    chip.setAttribute("aria-pressed", String(chip === button));
+  }
+  syncSearchRoute();
+  renderCurrentView();
+  elements["result-list"].scrollTop = 0;
+});
 for (const button of elements["kind-chips"].querySelectorAll("[data-kind]")) {
   button.addEventListener("click", () => {
     elements["collection-kind-filter"].value = button.dataset.kind;

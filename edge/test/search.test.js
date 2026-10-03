@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SEARCH_FIELDS, discoverPosts, findPost, prepareSearch, searchPage, searchPosts } from "../public/search-core.js";
+import { SEARCH_FIELDS, boardCategories, discoverPosts, findPost, prepareSearch, searchPage, searchPosts } from "../public/search-core.js";
 import { createIndexLoader } from "../public/search-worker.js";
 
 const payload = {
@@ -333,4 +333,26 @@ test("pages a result list around the current post with its list neighbours", () 
   assert.equal(missing.next, null);
   assert.equal(searchPage(index, { boardId: "a", page: 99, pageSize: 5 }).offset, 10);
   assert.throws(() => searchPage(index, { pageSize: 0 }), /page size/);
+});
+
+test("lists a board's categories by use, merging spellings that normalise alike", () => {
+  const index = prepareSearch({
+    schema_version: 1,
+    fields: SEARCH_FIELDS,
+    posts: [
+      ["free", 5, "가", "a", "Ori", "2026-03-05", "a".repeat(64)],
+      ["free", 4, "나", "a", "ori", "2026-03-04", "b".repeat(64)],
+      ["free", 3, "다", "a", "Ori", "2026-03-03", "c".repeat(64)],
+      ["free", 2, "라", "a", "FGO", "2026-03-02", "d".repeat(64)],
+      ["free", 1, "마", "a", null, "2026-03-01", "e".repeat(64)],
+      ["other", 1, "바", "a", "FGO", "2026-03-01", "f".repeat(64)],
+    ],
+  });
+  assert.deepEqual(boardCategories(index, { boardId: "free" }), [
+    { label: "Ori", key: "ori", count: 3 },
+    { label: "FGO", key: "fgo", count: 1 },
+  ]);
+  assert.deepEqual(boardCategories(index, { boardId: "" }), []);
+  // The label a chip carries filters the same posts as its count.
+  assert.equal(searchPosts(index, { boardId: "free", category: "Ori" }).total, 3);
 });

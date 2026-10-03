@@ -87,6 +87,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let novelView = "all";
   let shelfFilter = "";
   let sourceFilter = "";
+  // Arcalive 작품별 within one board (2026-10-03), like TypeMoon's works within a board.
+  let workBoard = "";
   let listKind = "works";
   let hiddenWorks = 0;
   let renderedQuery = null;
@@ -185,6 +187,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
     if (worksView() && readFilter !== "all") params.set("read", readFilter);
     if (worksView() && lane === "novel" && sourceFilter) params.set("source", sourceFilter);
+    // Kept inside a work too, so going back up returns to the same board's works.
+    if (lane === "arcalive" && arcaliveView === "works" && workBoard) params.set("board", workBoard);
     return params;
   }
 
@@ -211,6 +215,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     sortMode = SORT_LABELS[requested] ? requested : defaultSort();
     readFilter = READ_FILTER_VALUES.has(params.get("read")) ? params.get("read") : "all";
     sourceFilter = /^[a-z0-9_-]{1,32}$/.test(params.get("source") || "") ? params.get("source") : "";
+    workBoard = lane === "arcalive" && arcaliveView === "works" && /^[A-Za-z0-9_-]{1,64}$/.test(params.get("board") || "")
+      ? params.get("board") : "";
   }
 
   function listRoute() {
@@ -333,6 +339,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return state.state === readFilter;
   }
 
+  function inWorkBoard(item) {
+    return !workBoard || lane !== "arcalive" || item.board === workBoard;
+  }
+
   function sourcesOf(works) {
     return [...new Set(works.map((item) => item.source_site).filter(Boolean))].sort();
   }
@@ -342,7 +352,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!chips) return;
     chips.hidden = !active || !progress;
     if (chips.hidden) return;
-    const works = currentWorks();
+    const works = currentWorks().filter(inWorkBoard);
     const counts = { all: works.length, reading: 0, new: 0, unread: 0, finished: 0 };
     for (const item of works) {
       const state = workState(item, progress.get(item.work_id));
@@ -358,7 +368,25 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       chip.disabled = value !== "all" && value !== readFilter && counts[value] === 0;
       return chip;
     });
-    // 출처: the novel counterpart of TypeMoon's board filter, when more than one site is present.
+    // 출처 (novels) or 게시판 (Arcalive works): the counterpart of TypeMoon's board filter, when
+    // the list spans more than one.
+    const boardCounts = new Map();
+    if (lane === "arcalive") for (const item of currentWorks()) boardCounts.set(item.board, (boardCounts.get(item.board) ?? 0) + 1);
+    const boards = [...boardCounts].filter(([board]) => board).sort((left, right) => right[1] - left[1]);
+    if (boards.length > 1) {
+      const label = document.createElement("label");
+      label.className = "text-source-field";
+      const caption = document.createElement("span");
+      caption.className = "sr-only";
+      caption.textContent = "게시판";
+      const select = document.createElement("select");
+      select.id = "text-source-filter";
+      select.append(new Option(`모든 게시판 ${currentWorks().length.toLocaleString("ko-KR")}`, ""),
+        ...boards.map(([board, count]) => new Option(`${board} ${count.toLocaleString("ko-KR")}`, board)));
+      select.value = boardCounts.has(workBoard) ? workBoard : "";
+      label.append(caption, select);
+      nodes.unshift(label);
+    }
     const sources = lane === "novel" ? sourcesOf(works) : [];
     if (sources.length > 1) {
       const label = document.createElement("label");
@@ -740,7 +768,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
       empty.textContent = !(kind === "works" ? currentWorks() : catalog).length ? "아직 게시된 자료가 없습니다."
-        : kind === "works" && (readFilter !== "all" || sourceFilter) && !query ? "이 조건의 작품이 없습니다."
+        : kind === "works" && (readFilter !== "all" || sourceFilter || workBoard) && !query ? "이 조건의 작품이 없습니다."
           : "검색 결과가 없습니다.";
       list.append(empty);
     }
@@ -820,6 +848,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         }
         return normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query)
           && (!sourceFilter || lane !== "novel" || item.source_site === sourceFilter)
+          && inWorkBoard(item)
           && matchesReadFilter(workState(item, progress.get(item.work_id)));
       };
       renderRows(orderedWorks(currentWorks().filter(matchesWork), progress), { kind: "works" });
@@ -1671,7 +1700,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   });
   document.querySelector("#text-read-chips")?.addEventListener("change", (event) => {
     if (event.target.id !== "text-source-filter" || !worksView()) return;
-    sourceFilter = event.target.value;
+    if (lane === "arcalive") workBoard = event.target.value;
+    else sourceFilter = event.target.value;
     renderCatalog();
     list.scrollTop = 0;
     if (!current) window.history.replaceState(window.history.state, "", listRoute());

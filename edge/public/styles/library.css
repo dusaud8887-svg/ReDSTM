@@ -383,6 +383,11 @@ body.reading .home { display: none; }
   .catalog-heading { min-height: 44px; padding: 6px 14px 2px; }
   .catalog-heading strong { font-size: 19px; }
   .catalog-heading #catalog-subtitle { display: none; }
+  /* The highlighted tab and the source switch already say where you are; the list gets the row. */
+  body:is(.browse-open, .search-open, .text-library-open) .catalog-heading { display: none; }
+  /* Folded while the list scrolls down (shell.js createHeaderFold); any scroll up brings it back. */
+  .catalog.head-folded :is(.catalog-heading, .source-switch, .scope-tabs, .board-dock, .arcalive-views, .novel-views,
+    .text-work-back, .text-work-summary-host, .catalog-toolbar, .result-bar) { display: none !important; }
   /* The board picker is a compact line under the tabs, not a second bar stacked on the tab bar. */
   .board-dock { margin: 2px 12px 6px; }
   .board-dock-button { min-height: 40px; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; padding: 2px 10px; border-radius: 999px; }
@@ -503,6 +508,7 @@ body.reading .home { display: none; }
 .catalog-toolbar::-webkit-scrollbar { display: none; }
 .catalog-toolbar > * { flex: 0 0 auto; }
 .filter-chips { flex-wrap: nowrap; }
+.category-chips small { color: inherit; font-size: 12px; font-weight: 450; opacity: .7; font-variant-numeric: tabular-nums; }
 .filter-chips button, .active-filters button, .filter-toggle {
   min-height: 32px; height: 32px; padding: 0 12px; border: 0; border-radius: 999px;
   background: var(--surface-2); color: var(--ink-2); font-size: 14px; font-weight: 550; white-space: nowrap;
