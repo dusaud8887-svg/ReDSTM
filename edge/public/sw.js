@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "cd77aed784bfe331"
+      "revision": "802739365d1909aa"
     },
     {
       "url": "/arca-media.js",
@@ -1016,7 +1016,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/offline.js",
-      "revision": "8d7b6978e505ad6d"
+      "revision": "b55e221951acba31"
     },
     {
       "url": "/overlay-manager.js",
@@ -1140,17 +1140,35 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   var OWNER_CACHE = "redstm-sw-owner";
   var DAY = 24 * 60 * 60;
   var owner = "anon";
+  var owners = /* @__PURE__ */ new Map();
   async function loadOwner() {
     const saved = await (await caches.open(OWNER_CACHE)).match("/owner");
     if (saved) owner = await saved.text();
   }
   var ownerLoaded = loadOwner().catch(() => {
   });
-  var named = (base) => `${base}-${owner}`;
-  var offlineCacheName = () => named("offline-v1");
-  function tell(message) {
+  var named = (base, account) => `${base}-${account}`;
+  var offlineCacheName = (account) => named("offline-v1", account);
+  async function ownerFor(clientId) {
+    await ownerLoaded;
+    if (!clientId) return "anon";
+    if (!owners.has(clientId)) owners.set(clientId, (async () => {
+      const saved = await (await caches.open(OWNER_CACHE)).match(`/owner/${clientId}`);
+      if (saved) return saved.text();
+      try {
+        const response = await fetch("/api/v1/me", { credentials: "same-origin" });
+        if (authFailure(new Request(new URL("/api/v1/me", self.location.origin)), response)) return owner;
+        const me = response.ok ? await response.json() : null;
+        return /^[a-f0-9]{16}$/.test(me?.ownerHash ?? "") ? me.ownerHash : "anon";
+      } catch {
+        return owner;
+      }
+    })());
+    return owners.get(clientId);
+  }
+  function tell(message, clientId) {
     void self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) client.postMessage(message);
+      for (const client of clients) if (!clientId || client.id === clientId) client.postMessage(message);
     });
   }
   var api = (url) => url.pathname.startsWith("/api/") || url.pathname.startsWith("/archive/");
@@ -1160,8 +1178,8 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     return api(new URL(request.url)) && (response.headers.get("Content-Type") ?? "").toLowerCase().includes("text/html");
   }
   var guard = {
-    async fetchDidSucceed({ request, response }) {
-      if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url });
+    async fetchDidSucceed({ request, response, event }) {
+      if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url }, event?.clientId);
       return response;
     },
     async cacheWillUpdate({ request, response }) {
@@ -1170,14 +1188,15 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   };
   function ownedStrategy(Strategy, base, options = {}) {
     return async (context) => {
-      await ownerLoaded;
-      return new Strategy({ ...options, cacheName: named(base), plugins: [guard, ...options.plugins ?? []] }).handle(context);
+      const account = await ownerFor(context.event?.clientId);
+      if (account === "anon") return new B({ plugins: [guard] }).handle(context);
+      return new Strategy({ ...options, cacheName: named(base, account), plugins: [guard, ...options.plugins ?? []] }).handle(context);
     };
   }
   function savedFirst(fallback) {
     return async (context) => {
-      await ownerLoaded;
-      const saved = await (await caches.open(offlineCacheName())).match(context.request);
+      const account = await ownerFor(context.event?.clientId);
+      const saved = account === "anon" ? null : await (await caches.open(offlineCacheName(account))).match(context.request);
       return saved ?? fallback(context);
     };
   }
@@ -1217,18 +1236,19 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     return await shellRequest() ?? Response.error();
   }, { denylist: [/^\/ops/, /^\/cdn-cgi\//] }));
   var cancelled = /* @__PURE__ */ new Set();
-  async function saveOffline({ id, urls, requires = [] }) {
-    await ownerLoaded;
-    cancelled.delete(id);
-    const cache = await caches.open(offlineCacheName());
+  async function saveOffline({ id, urls, requires = [] }, clientId) {
+    const account = await ownerFor(clientId);
+    const runKey = `${account}:${id}`;
+    cancelled.delete(runKey);
+    const cache = await caches.open(offlineCacheName(account));
     const statics = await caches.open("static-v");
     let done = 0;
     let failed = 0;
     let bytes = 0;
     const queue = [...urls];
-    const report = (type) => tell({ type, id, done, failed, total: urls.length, bytes });
+    const report = (type) => tell({ type, id, done, failed, total: urls.length, bytes }, clientId);
     async function take() {
-      while (queue.length && !cancelled.has(id)) {
+      while (queue.length && !cancelled.has(runKey)) {
         const url = queue.shift();
         try {
           const cached = await cache.match(url);
@@ -1237,10 +1257,11 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
           } else {
             const response = await fetch(url, { credentials: "same-origin" });
             if (response.status !== 200 || authFailure(new Request(url), response)) {
-              if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url });
+              if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url }, clientId);
               throw new Error(String(response.status));
             }
             bytes += (await response.clone().arrayBuffer()).byteLength;
+            if (cancelled.has(runKey)) break;
             await cache.put(url, response);
           }
           done += 1;
@@ -1257,33 +1278,42 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
       }
     }
     await Promise.all(Array.from({ length: Math.min(4, urls.length) }, take));
-    report(cancelled.has(id) ? "offline-cancelled" : "offline-done");
+    report(cancelled.has(runKey) ? "offline-cancelled" : "offline-done");
   }
-  async function deleteOffline({ id, urls }) {
-    await ownerLoaded;
-    cancelled.add(id);
-    const cache = await caches.open(offlineCacheName());
+  async function deleteOffline({ id, urls }, clientId) {
+    const account = await ownerFor(clientId);
+    cancelled.add(`${account}:${id}`);
+    const cache = await caches.open(offlineCacheName(account));
     await Promise.all(urls.map((url) => cache.delete(url)));
-    tell({ type: "offline-deleted", id });
+    tell({ type: "offline-deleted", id }, clientId);
   }
   self.addEventListener("message", (event) => {
     const data = event.data ?? {};
     if (data.type === "SAVE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
-      event.waitUntil(saveOffline(data));
+      event.waitUntil(saveOffline(data, event.source?.id));
       return;
     }
     if (data.type === "DELETE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
-      event.waitUntil(deleteOffline(data));
+      event.waitUntil(deleteOffline(data, event.source?.id));
       return;
     }
     if (data.type === "CANCEL_OFFLINE" && typeof data.id === "string") {
-      cancelled.add(data.id);
+      event.waitUntil(ownerFor(event.source?.id).then((account) => cancelled.add(`${account}:${data.id}`)));
       return;
     }
     if (data.type === "SET_OWNER" && /^(?:[a-f0-9]{16}|anon)$/.test(data.owner ?? "")) {
+      if (event.source?.id) owners.set(event.source.id, data.owner);
       event.waitUntil((async () => {
+        await ownerLoaded;
         owner = data.owner;
-        await (await caches.open(OWNER_CACHE)).put("/owner", new Response(owner));
+        const cache = await caches.open(OWNER_CACHE);
+        await cache.put("/owner", new Response(data.owner));
+        if (event.source?.id) await cache.put(`/owner/${event.source.id}`, new Response(data.owner));
+        const live = new Set((await self.clients.matchAll({ includeUncontrolled: true })).map((client) => client.id));
+        for (const request of await cache.keys()) {
+          const id = new URL(request.url).pathname.slice("/owner/".length);
+          if (new URL(request.url).pathname.startsWith("/owner/") && !live.has(id)) await cache.delete(request);
+        }
       })());
     } else if (data.type === "SKIP_WAITING") {
       void self.skipWaiting();

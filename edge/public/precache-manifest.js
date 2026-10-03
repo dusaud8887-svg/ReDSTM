@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "cd77aed784bfe331"
+    "revision": "802739365d1909aa"
   },
   {
     "url": "/arca-media.js",
@@ -118,7 +118,7 @@ export default [
   },
   {
     "url": "/offline.js",
-    "revision": "8d7b6978e505ad6d"
+    "revision": "b55e221951acba31"
   },
   {
     "url": "/overlay-manager.js",

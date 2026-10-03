@@ -5592,6 +5592,8 @@ function ownerIdentity() {
       const me = response.ok ? await response.json().catch(() => null) : null;
       const hash = /^[a-f0-9]{16}$/.test(me?.ownerHash ?? "") ? me.ownerHash : null;
       const previous = rememberedOwner();
+      if (!hash && (response.redirected || [401, 403].includes(response.status) ||
+          (response.headers.get("Content-Type") ?? "").toLowerCase().includes("text/html"))) return previous;
       if (hash && previous && previous !== hash) setOtherOwners([...otherOwners(), previous]);
       if (hash) setOtherOwners(otherOwners().filter((value) => value !== hash));
       if (hash) {
@@ -6337,12 +6339,14 @@ async function showOfflineControl(collection) {
 
 async function writeSnapshot(snapshot) {
   const store = await ownerStore();
-  if (!store) return;
+  if (!store) return false;
   const { stored: _stored, ...value } = snapshot;
   try {
     await store.commit([{ store: "offline", value }]);
+    return true;
   } catch {
     showReaderFeedback("저장 상태를 기록하지 못했어요", 2400);
+    return false;
   }
 }
 
@@ -6353,7 +6357,10 @@ elements["offline-save"].addEventListener("click", async () => {
   // Ask once to keep saved works through storage pressure (granted silently or not at all).
   void navigator.storage?.persist?.().catch(() => {});
   const value = { ...snapshot, state: "interrupted", savedAt: new Date().toISOString() };
-  await writeSnapshot(value);
+  elements["offline-save"].disabled = true;
+  const recorded = await writeSnapshot(value);
+  elements["offline-save"].disabled = false;
+  if (!recorded) return;
   offlineRuns.set(snapshot.workKey, { done: 0, failed: 0, total: snapshot.entries.length });
   renderOfflineControl();
   offline.save(snapshot.workKey, snapshot.entries.map((entry) => entry.url), snapshot.requires);
@@ -6385,7 +6392,7 @@ async function offlineProgress(message) {
     if (stored) {
       const finished = { ...stored, done: message.done, failed: message.failed, bytes: message.bytes,
         state: message.type === "offline-done" && !message.failed && message.done === stored.entries.length ? "complete" : message.failed ? "partial" : "interrupted" };
-      await writeSnapshot(finished);
+      if (!(await writeSnapshot(finished))) { renderOfflineControl(); return; }
       if (offlineWork?.workKey === message.id) offlineWork = { ...offlineWork, stored: finished };
     }
     showReaderFeedback(message.failed ? `저장하지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "저장을 멈췄어요" : "이 기기에 저장했어요", 2400);
@@ -6424,8 +6431,23 @@ document.querySelector("#update-apply").addEventListener("click", () => {
 });
 document.querySelector("#reset-app-cache").addEventListener("click", async () => {
   if (!confirm("앱 캐시와 이 기기에 저장한 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
-  await offline.reset();
-  location.reload();
+  try {
+    const store = await ownerStore();
+    const cachedOwners = (await caches.keys()).map((name) => name.match(/-([a-f0-9]{16})$/)?.[1]);
+    for (const owner of new Set([await ownerIdentity(), ...otherOwners(), ...cachedOwners].filter(Boolean))) {
+      const target = store?.name === `redstm:${owner}` ? store : await openStore(owner);
+      try {
+        const works = await target.getAll("offline");
+        await target.commit(works.map((work) => ({ store: "offline", value: { ...work, state: "interrupted", done: 0, failed: 0, bytes: 0 } })));
+      } finally {
+        if (target !== store) target.close();
+      }
+    }
+    await offline.reset();
+    location.reload();
+  } catch {
+    showReaderFeedback("앱 캐시를 지우지 못했어요 · 다시 시도해 주세요", 2400);
+  }
 });
 let authSheetClosed = false;
 elements["auth-dialog"].addEventListener("close", () => { authSheetClosed = true; });
@@ -7035,6 +7057,13 @@ const offline = createOffline({
   },
 });
 void restoreMirroredStates();
-const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
+const startOffline = () => void ownerIdentity().then((hash) => {
+  offline.setOwner(hash);
+  return offline.register();
+}).then(async () => {
+  if (activeCollectionId === null) return;
+  const collection = await loadCollectionDetail(activeCollectionId);
+  if (collection) await showOfflineControl(collection);
+}).catch(() => {});
 if (document.readyState === "complete") startOffline();
 else addEventListener("load", startOffline, { once: true });
