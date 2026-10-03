@@ -894,6 +894,46 @@ test("더보기 copies a link that reopens the same chapter", async ({ page, con
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(page.url());
 });
 
+// 2026-10-03: a wide AA scrolls both ways in one scroller (the reader pane), so one diagonal drag
+// moves it both ways; the tools, title and comments stay on screen while the picture moves sideways.
+test("A wide AA scrolls both ways in one scroller while everything around it stays on screen", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: true,
+        body_html: `<div class="AA_Text">${Array.from({ length: 120 }, () => `<p>${"＿".repeat(200)}</p>`).join("")}</div>`,
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#aa-controls")).toBeVisible();
+  const pane = page.locator("#reader-pane");
+  const sizes = await pane.evaluate((element) => ({
+    across: element.scrollWidth - element.clientWidth, down: element.scrollHeight - element.clientHeight,
+    bodyScrolls: document.querySelector("#archive-body").scrollWidth > document.querySelector("#archive-body").clientWidth + 1,
+  }));
+  expect(sizes.across).toBeGreaterThan(200);
+  expect(sizes.down).toBeGreaterThan(200);
+  // The picture is not a scroller of its own any more.
+  expect(sizes.bodyScrolls).toBe(false);
+  const left = (selector) => page.locator(selector).evaluate((element) => Math.round(element.getBoundingClientRect().left));
+  const titleLeft = await left("#reader-title");
+  const toolsLeft = await left("#aa-controls");
+  const pictureLeft = await left("#archive-body");
+  await pane.evaluate((element) => { element.scrollLeft = 200; });
+  await expect.poll(() => left("#archive-body")).toBe(pictureLeft - 200);
+  await expect.poll(() => left("#reader-title")).toBe(titleLeft);
+  await expect.poll(() => left("#aa-controls")).toBe(toolsLeft);
+  await pane.evaluate((element) => { element.scrollTop = 400; });
+  await expect.poll(() => left("#aa-controls")).toBe(toolsLeft);
+  await expect.poll(() => page.locator("#aa-minimap").evaluate((map) => Number.parseFloat(map.style.getPropertyValue("--window-left")))).toBeGreaterThan(0);
+});
+
 test("AA 맞춤 shrinks a wide picture to the stage width and never enlarges past 100%", async ({ page }) => {
   await useLongCollection(page, 3);
   await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
@@ -911,7 +951,8 @@ test("AA 맞춤 shrinks a wide picture to the stage width and never enlarges pas
   await page.goto("/read/board_a/2");
   await expect(page.locator("#archive-body")).toHaveClass(/(^|\s)aa(\s|$)/);
   await expect(page.locator("#reader-length")).toBeHidden();
-  const overflow = () => page.locator("#archive-body").evaluate((body) => body.scrollWidth - body.clientWidth);
+  // A wide picture scrolls with the reader pane, both directions in one scroller (aa.css).
+  const overflow = () => page.locator("#reader-pane").evaluate((pane) => pane.scrollWidth - pane.clientWidth);
   expect(await overflow()).toBeGreaterThan(100);
   await page.locator("#aa-fit").click();
   await expect(page.locator("#aa-zoom-output")).not.toHaveText("100%");
@@ -1300,7 +1341,7 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
   await expect(page.locator("#aa-controls [data-aa-size-delta]")).toHaveCount(0);
   await page.locator('[data-aa-zoom-delta="0.25"]').click();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
-  await page.locator("#archive-body").evaluate((body) => { body.scrollLeft = 300; body.dispatchEvent(new Event("scroll")); });
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollLeft = 300; });
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews?.["board_a:1"]?.left)).toBe(300);
 
   // Another picture keeps its own default zoom.
@@ -1310,7 +1351,7 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
 
   await page.goto("/read/board_a/1");
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
-  await expect.poll(() => page.locator("#archive-body").evaluate((body) => body.scrollLeft)).toBe(300);
+  await expect.poll(() => page.locator("#reader-pane").evaluate((pane) => pane.scrollLeft)).toBe(300);
 
   // 넓은 AA 화면에 맞추기 fits a picture with no zoom of its own, without remembering it.
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
@@ -1458,6 +1499,8 @@ test("The mini bar continues reading from any list, Home included, and folds on 
   const list = page.locator("#result-list");
   await list.evaluate((element) => { element.scrollTop = 600; });
   await expect(bar).toHaveClass(/folded/);
+  // The folded bar's row goes back to the list: no empty band under the last row.
+  await expect.poll(() => page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom))).toBeLessThan(70);
   // Out of sight is out of the tab order too.
   await expect(bar).toHaveJSProperty("inert", true);
   await list.evaluate((element) => { element.scrollTop = 200; });

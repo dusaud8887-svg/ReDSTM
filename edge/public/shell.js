@@ -25,6 +25,8 @@ export function createMiniBar({ element, homeCard }) {
   function fold(folded) {
     element.classList.toggle("folded", folded);
     element.inert = folded;
+    // The list gives the folded bar's row back (shell.css) instead of ending in an empty band.
+    document.body.classList.toggle("mini-bar-folded", folded);
   }
 
   function update() {

@@ -826,16 +826,28 @@ function restoreAaView() {
   requestAnimationFrame(() => {
     if (currentAaKey() !== key) return;
     if (!saved?.zoom && settings.aaAutoFit === "on") fitAaZoom({ remember: false });
-    elements["archive-body"].scrollLeft = saved?.left ?? 0;
+    aaScroller().scrollLeft = saved?.left ?? 0;
     updateAaOverflowCue(true);
   });
 }
 
+// What scrolls an AA picture sideways (aa.css): the reader pane, or the AA host in full screen,
+// scrolling both directions at once; the body itself where scroll-driven animations are missing.
+const aaPanSupported = CSS.supports("animation-timeline: scroll()");
+function aaScroller() {
+  if (!aaPanSupported) return elements["archive-body"];
+  return document.fullscreenElement === elements["aa-host"] ? elements["aa-host"] : elements["reader-pane"];
+}
+
 function updateAaOverflowCue(showHint = false) {
   const body = elements["archive-body"];
-  const overflow = currentMode === "aa" && body.scrollWidth > body.clientWidth + 1;
-  const canScrollRight = overflow && body.scrollLeft < body.scrollWidth - body.clientWidth - 2;
+  const scroller = aaScroller();
+  const overflow = currentMode === "aa" && scroller.scrollWidth > scroller.clientWidth + 1;
+  const canScrollRight = overflow && scroller.scrollLeft < scroller.scrollWidth - scroller.clientWidth - 2;
   body.classList.toggle("aa-can-scroll", canScrollRight);
+  // The parts around the picture follow the sideways scroll by exactly this much at its end.
+  const panMax = `${overflow ? scroller.scrollWidth - scroller.clientWidth : 0}px`;
+  for (const host of [elements["reader-pane"], elements["aa-host"]]) host.style.setProperty("--aa-pan-max", panMax);
   updateAaMinimap();
   if (showHint && overflow && !aaHintShown) {
     aaHintShown = true;
@@ -905,9 +917,8 @@ function moveAaScene(direction) {
 
 function updateAaMinimap() {
   scheduleAaScene();
-  const body = elements["archive-body"];
   const map = elements["aa-minimap"];
-  const view = currentMode === "aa" ? minimapWindow(body) : null;
+  const view = currentMode === "aa" ? minimapWindow(aaScroller()) : null;
   map.hidden = !view;
   if (!view) return;
   map.style.setProperty("--window-left", `${view.left * 100}%`);
@@ -945,10 +956,12 @@ function fitAaZoom({ remember = true } = {}) {
   const content = canvas.getBoundingClientRect().width;
   canvas.style.removeProperty("min-width");
   const style = getComputedStyle(body);
-  const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+  // The stage is what is on screen: the scroller's width, not the body grown around a wide picture.
+  const stage = aaPanSupported ? aaScroller().clientWidth : body.clientWidth;
+  const available = stage - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
   if (!(content > 0) || !(available > 0)) return;
   setAaZoom(fitAaZoomValue(effectiveAaZoom(), available, content), false, { remember, fit: true });
-  body.scrollLeft = 0;
+  aaScroller().scrollLeft = 0;
 }
 
 function renderHomeList(element, posts, emptyText, limit = 6, listHint = "") {
@@ -5561,9 +5574,12 @@ new PinchGesture(elements["archive-body"], ({ first, last, movement: [scale], or
   canvas.style.removeProperty("transform");
   canvas.style.removeProperty("transform-origin");
   const before = body.getBoundingClientRect();
+  const scroller = aaScroller();
+  // The point's place across the visible stage (the scroller's box), where the scroll is counted from.
+  const stageLeft = scroller === body ? before.left : scroller.getBoundingClientRect().left;
   const offsetY = pointY - before.top;
   setAaZoom(zoom);
-  body.scrollLeft = scrollKeepingPoint({ scrollLeft: body.scrollLeft, scrollTop: 0, x: pointX - before.left, y: 0, from, to: zoom }).left;
+  scroller.scrollLeft = scrollKeepingPoint({ scrollLeft: scroller.scrollLeft, scrollTop: 0, x: pointX - stageLeft, y: 0, from, to: zoom }).left;
   const pane = elements["reader-pane"];
   pane.scrollTop += body.getBoundingClientRect().top + offsetY * (zoom / from) - pointY;
 }, { pointer: { touch: true }, pinchOnWheel: false, eventOptions: { passive: true } });
@@ -5582,10 +5598,10 @@ const aaTap = createTapJudge({
 // Minimap: drag or tap a point to bring that part of the picture to the middle; arrows step.
 new DragGesture(elements["aa-minimap"], ({ xy: [x] }) => {
   const box = elements["aa-minimap"].getBoundingClientRect();
-  elements["archive-body"].scrollLeft = minimapScroll((x - box.left) / box.width, elements["archive-body"]);
+  aaScroller().scrollLeft = minimapScroll((x - box.left) / box.width, aaScroller());
 }, { pointer: { capture: true } });
 elements["aa-minimap"].addEventListener("keydown", (event) => {
-  const body = elements["archive-body"];
+  const body = aaScroller();
   const step = { ArrowLeft: -0.25, ArrowRight: 0.25 }[event.key];
   if (step) body.scrollLeft += step * body.clientWidth;
   else if (event.key === "Home") body.scrollLeft = 0;
@@ -5609,7 +5625,7 @@ elements["aa-fullscreen"].addEventListener("click", async () => {
   const key = currentAaKey();
   aaFullscreenReturn = {
     key, view: key && aaViews[key] ? { ...aaViews[key] } : null, auto: aaAutoZoom, zoom: settings.aaZoom,
-    left: elements["archive-body"].scrollLeft,
+    left: aaScroller().scrollLeft,
   };
   try {
     await elements["aa-host"].requestFullscreen({ navigationUI: "hide" });
@@ -5643,7 +5659,7 @@ document.addEventListener("fullscreenchange", () => {
   applySettings();
   persistUserState();
   requestAnimationFrame(() => {
-    elements["archive-body"].scrollLeft = back.left;
+    aaScroller().scrollLeft = back.left;
     updateAaOverflowCue();
   });
 });
@@ -6791,16 +6807,22 @@ elements["archive-body"].addEventListener("dblclick", () => {
   const zoom = effectiveAaZoom();
   setAaZoom(zoom < 1.25 ? 1.5 : zoom < 1.75 ? 2 : 1);
 });
-elements["archive-body"].addEventListener("scroll", () => {
-  updateAaOverflowCue();
-  // The sideways position of a wide AA is kept with its zoom.
-  if (!currentAaKey()) return;
-  clearTimeout(aaLeftTimer);
-  aaLeftTimer = setTimeout(() => {
-    rememberAaView({ left: elements["archive-body"].scrollLeft });
-    persistUserState();
-  }, 300);
-}, { passive: true });
+// The sideways position of a wide AA is kept with its zoom. The pane also scrolls down, so only a
+// change of the sideways place counts.
+let aaLastLeft = 0;
+for (const scroller of [elements["archive-body"], elements["reader-pane"], elements["aa-host"]]) {
+  scroller.addEventListener("scroll", () => {
+    if (scroller !== aaScroller() || currentMode !== "aa" || scroller.scrollLeft === aaLastLeft) return;
+    aaLastLeft = scroller.scrollLeft;
+    updateAaOverflowCue();
+    if (!currentAaKey()) return;
+    clearTimeout(aaLeftTimer);
+    aaLeftTimer = setTimeout(() => {
+      rememberAaView({ left: aaScroller().scrollLeft });
+      persistUserState();
+    }, 300);
+  }, { passive: true });
+}
 function touchDistance(event) {
   return Math.hypot(
     event.touches[0].clientX - event.touches[1].clientX,

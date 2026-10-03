@@ -73,3 +73,22 @@ body.reader-controls-hidden .aa-minimap { opacity: 0; visibility: hidden; pointe
   body:not(.reader-controls-hidden) .aa-minimap { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }
 body.reader-controls-hidden .archive-body.aa.aa-can-scroll { box-shadow: none; }
+
+/* One scroller for both directions (2026-10-03): a wide AA no longer scrolls sideways inside its own
+   box while the page scrolls down, which kept a finger to one direction at a time. The reader pane
+   (the AA host in full screen) scrolls both ways, so a diagonal drag and its fling are the
+   browser's own. Everything around the picture follows the sideways scroll on the compositor
+   (scroll-driven translate), so titles, tools and comments stay on screen. Without scroll-driven
+   animations the old sideways box stays (app.js aaScroller). */
+@supports (animation-timeline: scroll()) {
+  .reader-pane:has(#archive-body.aa) { overflow-x: auto; background: var(--reader-bg); scroll-timeline: --aa-pan x; }
+  .aa-host:fullscreen:has(#archive-body.aa) { scroll-timeline: --aa-pan x; }
+  .archive-body.aa { width: max-content; min-width: 100%; overflow: visible; }
+  .archive-body.aa.aa-can-scroll { box-shadow: none; }
+  .reader:has(#archive-body.aa) > :not(.aa-host),
+  .aa-host:has(#archive-body.aa) > :not(.archive-body, .aa-zoom-indicator) {
+    animation: aa-pan-follow linear both;
+    animation-timeline: --aa-pan;
+  }
+}
+@keyframes aa-pan-follow { from { translate: 0 0; } to { translate: var(--aa-pan-max, 0px) 0; } }

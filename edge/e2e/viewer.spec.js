@@ -958,7 +958,8 @@ test("AA full screen keeps its tools inside and returns to the same view; the mi
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
   });
   await openPost(page, aaKey);
-  const body = page.locator("#archive-body");
+  // The picture scrolls sideways with the reader pane (one scroller for both directions).
+  const body = page.locator("#reader-pane");
   const map = page.locator("#aa-minimap");
   await expect(map).toBeVisible();
   const windowLeft = () => map.evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--window-left")));

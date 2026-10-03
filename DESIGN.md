@@ -532,6 +532,11 @@ Reader context bar의 8px 점에만 쓴다.
 - **가로 전체화면**: 전체화면 대상은 stage만이 아니라 **AA host**(stage + 얇은 도구 막대 + 토스트 영역 + 밝기 overlay).
   `requestFullscreen()` → `screen.orientation.lock('landscape')`(Android, 실패해도 전체화면 유지). Back/Esc는
   `fullscreenchange`로만 상태를 맞춘다(중복 처리 금지). 오류·설정도 host 안에 표시.
+- **한 스크롤러**(2026-10-03): 넓은 AA는 본문 칸이 따로 가로 스크롤하지 않고 Reader pane(전체화면에서는 AA host)이
+  가로·세로를 함께 스크롤한다 — 대각선 드래그와 관성이 브라우저 기본 동작. 그림 밖 요소(상단 바·제목·도구줄·미니맵·댓글·끝 카드)는
+  scroll-driven animation(`animation-timeline: --aa-pan`, `translate`)으로 가로 스크롤을 compositor에서 따라가 화면에 남는다.
+  끝 이동량 `--aa-pan-max`는 크기·배율이 바뀔 때 JS가 갱신. scroll-driven animation이 없는 브라우저는 예전 본문 칸 가로 스크롤
+  (`app.js aaScroller`).
 - 미니맵: stage가 화면보다 넓으면 아래에 48px 폭 비례 막대(현재 보이는 가로 구간 표시, 끌어서 이동).
 - 장면 이동: 원본에 명확한 블록 경계가 있으면 `‹ 장면 3/12 ›`.
 - AA stage는 앱 테마·작품색·반투명·산문 설정의 영향을 받지 않는다. 밝기·따뜻하게 overlay만 예외.
