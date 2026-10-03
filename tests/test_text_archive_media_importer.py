@@ -242,3 +242,38 @@ def test_main_drains_ready_batches_in_one_run(
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [line["batch_id"] for line in lines] == [_BATCH, second]
     assert media_importer.next_ready_batch(inbox) is None
+
+
+def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox = tmp_path / "inbox"
+    attempts = tmp_path / "attempts"
+    _batch(inbox, {"000001.webp": _WEBP}, [_item(_PATH_A, "000001.webp", _WEBP, "image/webp")])
+
+    def broken(*_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+        raise subprocess.CalledProcessError(1, ["rclone", "copy"])
+
+    monkeypatch.setattr(media_importer, "import_media_batch", broken)
+    monkeypatch.setattr(media_importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(media_importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(media_importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["media_importer"])
+    with pytest.raises(SystemExit) as stopped:
+        media_importer.main()
+    assert stopped.value.code == 1
+    # Waiting out the backoff, the lane does not retry it on every tick.
+    assert media_importer.next_ready_batch(inbox, attempts) is None
+    for _attempt in range(media_importer._IMPORT_ATTEMPTS - 1):
+        record = attempts / f"{_BATCH}.json"
+        if record.exists():
+            data = json.loads(record.read_text(encoding="utf-8"))
+            data["next_at"] = 0
+            record.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            media_importer.main()
+        except SystemExit:
+            pass
+    capsys.readouterr()
+    assert (inbox / "receipts" / f"{_BATCH}.status.json").exists()
+    assert media_importer.next_ready_batch(inbox, attempts) is None

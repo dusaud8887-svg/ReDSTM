@@ -194,7 +194,7 @@ export default [
   },
   {
     "url": "/styles/shell.css",
-    "revision": "ccea474d483a7459"
+    "revision": "3f81ca911dbf1cde"
   },
   {
     "url": "/styles/tokens.css",

@@ -399,7 +399,7 @@ def record_rejection(receipts_root: Path, batch_id: str, reason: str) -> None:
     )
 
 
-def next_ready_batch(inbox_root: Path) -> str | None:
+def next_ready_batch(inbox_root: Path, attempts_root: Path | None = None) -> str | None:
     drop = inbox_root / "drop"
     receipts = inbox_root / "receipts"
     if drop.is_symlink() or not drop.is_dir():
@@ -413,8 +413,49 @@ def next_ready_batch(inbox_root: Path) -> str | None:
             and not (receipts / f"{name}.json").exists()
             and not (receipts / f"{name}.status.json").exists()
         ):
+            # The oldest ready batch waits out its failure backoff; later ones stay behind it.
+            if attempts_root is not None and _backoff_active(attempts_root, name):
+                return None
             return name
     return None
+
+
+# A batch failing on an unexpected error (rclone, OSError, SQLite) is retried with growing
+# waits and rejected after this many attempts, so it cannot block the media lane forever.
+_IMPORT_ATTEMPTS = 5
+_IMPORT_BACKOFF_SECONDS = (300, 900, 1800, 3600)
+
+
+def _backoff_active(attempts_root: Path, batch_id: str) -> bool:
+    try:
+        record = json.loads((attempts_root / f"{batch_id}.json").read_text(encoding="utf-8"))
+        return float(record["next_at"]) > time.time()
+    except OSError, ValueError, KeyError, TypeError:
+        return False
+
+
+def record_failure(
+    receipts_root: Path, attempts_root: Path, batch_id: str, error: BaseException
+) -> dict[str, Any]:
+    path = attempts_root / f"{batch_id}.json"
+    try:
+        attempts = int(json.loads(path.read_text(encoding="utf-8"))["attempts"]) + 1
+    except OSError, ValueError, KeyError, TypeError:
+        attempts = 1
+    reason = f"import_failed:{type(error).__name__}"
+    if attempts >= _IMPORT_ATTEMPTS:
+        record_rejection(receipts_root, batch_id, reason)
+        path.unlink(missing_ok=True)
+        return {"status": "rejected", "batch_id": batch_id, "reason": reason}
+    delay = _IMPORT_BACKOFF_SECONDS[min(attempts, len(_IMPORT_BACKOFF_SECONDS)) - 1]
+    attempts_root.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps({"attempts": attempts, "next_at": time.time() + delay, "reason": reason}),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return {"status": "failed", "batch_id": batch_id, "reason": reason, "attempt": attempts}
 
 
 # One run drains ready batches in order, well inside the unit's 20 min timeout.
@@ -423,6 +464,7 @@ _DRAIN_BATCHES = 10
 _INBOX_ROOT = Path("/srv/redstm-text-inbox")
 _DB_PATH = Path("/srv/redstm-text/text-archive.sqlite")
 _BUILD_ROOT = Path("/srv/redstm-text/build")
+_ATTEMPTS_ROOT = Path("/srv/redstm-text/media-attempts")
 
 
 def main() -> None:
@@ -435,7 +477,7 @@ def main() -> None:
     seen: set[str] = set()
     done = 0
     while True:
-        batch_id = args.batch_id or next_ready_batch(inbox_root)
+        batch_id = args.batch_id or next_ready_batch(inbox_root, _ATTEMPTS_ROOT)
         if batch_id is None or batch_id in seen:
             if not done:
                 print(json.dumps({"status": "idle", "reason": "no_ready_media_batch"}))
@@ -457,7 +499,13 @@ def main() -> None:
         except MediaBatchRejectedError as exc:
             record_rejection(receipts_root, batch_id, str(exc))
             print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
+        except (OSError, sqlite3.Error, ValueError, subprocess.SubprocessError) as exc:
+            failure = record_failure(receipts_root, _ATTEMPTS_ROOT, batch_id, exc)
+            print(json.dumps(failure))
+            if failure["status"] == "failed":
+                parser.exit(1, f"media import of {batch_id} failed: {exc!r}\n")
         else:
+            (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
             if receipt is None:
                 parser.exit(0, "media batch not ready; no receipt written\n")
             counts: dict[str, int] = {}

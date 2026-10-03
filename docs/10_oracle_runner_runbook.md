@@ -160,6 +160,8 @@ R2 writer key와 Access service token은 별도 credential file로만
 - systemd service는 `Restart=no`인 oneshot이다. 실패를 즉시 무한 재시작하지 않고 다음 control timer가
   checkpointed full-catalog/full-content command를 같은 run으로 재개한다. 짧은 증분 작업은 durable
   frontier를 보존하고 실패를 명시 보고한 뒤 다음 요청/예약 실행에서 복구한다.
+- TypeMoon unit은 `MemoryLow=256M`, 텍스트 unit은 `MemoryHigh=128M`(상한 150M 아래)을 둔다(2026-10-03). 메모리가 모자라면
+  커널이 텍스트 쪽을 먼저 회수·감속하고 TypeMoon 몫을 보호한다 — lane 파일 기반 예약(docs/18)에 더한 커널 쪽 우선순위다.
 - `MemoryMax=700M` cgroup 아래에서 kernel이 자식 process(주로 Scrapy worker)를 OOM kill해도
   `OOMPolicy=continue`로 runner 본체는 살아남아 해당 board를 실패로 보고하고 command를 정상
   종결한다. runner 자체가 죽으면 다음 poll이 command를 `runner_interrupted`로 닫으며 `/ops` 실행
