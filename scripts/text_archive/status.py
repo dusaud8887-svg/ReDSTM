@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.text_archive.runtime import operation_window
+from scripts.text_archive.runtime import DEFERRALS_PATH, operation_window
 
 _STATUS_KEY = "published/status/text.json"
 _TEXT_BATCH = re.compile(r"\d{8}T\d{6}Z-pc-[a-f0-9]{8}\Z")
@@ -76,13 +76,35 @@ def _drop_state(inbox_root: Path) -> dict[str, int]:
     }
 
 
-def build_status(db_path: Path, inbox_root: Path, *, now: float | None = None) -> dict[str, Any]:
+def _deferrals(path: Path) -> dict[str, dict[str, str]]:
+    """Each step's last deferral (runtime.record_deferral), reduced to known short fields."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(step)[:32]: {"reason": str(entry["reason"])[:64], "at": str(entry["at"])[:32]}
+        for step, entry in raw.items()
+        if isinstance(entry, dict) and "reason" in entry and "at" in entry
+    }
+
+
+def build_status(
+    db_path: Path,
+    inbox_root: Path,
+    *,
+    now: float | None = None,
+    deferrals_path: Path = DEFERRALS_PATH,
+) -> dict[str, Any]:
     """A bounded summary; no bodies, titles, paths or credentials."""
     generated = datetime.now(UTC) if now is None else datetime.fromtimestamp(now, UTC)
     status: dict[str, Any] = {
         "schema": 1,
         "generated_at": generated.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "drop": _drop_state(inbox_root),
+        "deferrals": _deferrals(deferrals_path),
     }
     if not db_path.is_file():
         status["database"] = "missing"

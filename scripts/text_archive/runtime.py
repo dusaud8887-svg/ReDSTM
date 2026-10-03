@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -28,6 +31,8 @@ _TYPEMOON_PEAK = 620 * _MIB
 # (other r) next to the publish lock it already reaches.
 TYPEMOON_LANE_PATH = Path("/srv/redstm/static/.typemoon-lane.json")
 _LANE_STALE_SECONDS = 180
+# Why each text step last deferred (step -> reason, time); read into the status document.
+DEFERRALS_PATH = Path("/srv/redstm-text/deferrals.json")
 _OS_MARGIN = 150 * _MIB
 _DEFAULT_NEED = 150 * _MIB
 # Heavy text steps (import, media, publish) run one at a time; the collector is light.
@@ -84,6 +89,77 @@ def typemoon_reserve(cgroup_root: Path, lane_path: Path, now: float | None = Non
     return max(0, _TYPEMOON_PEAK - current)
 
 
+def record_deferral(reason: str, path: Path) -> None:
+    """Remember why a text step was deferred, for the status document (docs/18). Best-effort:
+    a step that cannot write it still defers the same way."""
+    main = sys.modules.get("__main__")
+    spec = getattr(main, "__spec__", None)
+    step = spec.name.rsplit(".", 1)[-1] if spec is not None and spec.name else "unknown"
+    try:
+        try:
+            deferrals = json.loads(path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            deferrals = {}
+        if not isinstance(deferrals, dict):
+            deferrals = {}
+        at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        deferrals[step] = {"reason": reason, "at": at}
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(deferrals, sort_keys=True), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        return
+
+
+def _admit(
+    stack: ExitStack,
+    *,
+    lock_wait_seconds: float,
+    need_bytes: int,
+    exclusive: bool,
+    publish_lock: Path,
+    lane_path: Path,
+    operation_lock: Path,
+    meminfo_path: Path,
+    status_path: Path,
+    cgroup_root: Path,
+    root_path: Path,
+) -> None:
+    if exclusive:
+        text_lock = FileLock(str(operation_lock))
+        try:
+            text_lock.acquire(timeout=lock_wait_seconds)
+        except (Timeout, OSError) as exc:
+            raise RuntimeWindowError("text_operation_busy") from exc
+        stack.callback(text_lock.release)
+    # Probe only: text never holds TypeMoon's publish lock, or a text step could fail
+    # TypeMoon's publish confirmation, which takes the lock without waiting.
+    lock = FileLock(str(publish_lock))
+    try:
+        lock.acquire(timeout=lock_wait_seconds)
+    except (Timeout, OSError) as exc:
+        raise RuntimeWindowError("typemoon_publish_busy") from exc
+    lock.release()
+
+    reserve = typemoon_reserve(cgroup_root, lane_path)
+    try:
+        available = _available_memory(meminfo_path.read_text(encoding="ascii"))
+        resident = _resident_memory(status_path.read_text(encoding="ascii"))
+    except OSError as exc:
+        raise RuntimeWindowError("memory_metrics_unavailable") from exc
+    # /proc/meminfo already excludes this process; add it back to estimate the headroom
+    # this bounded text operation started with.
+    if available + resident - reserve < need_bytes + _OS_MARGIN:
+        raise RuntimeWindowError("typemoon_memory_reserved" if reserve else "memory_below_floor")
+    try:
+        usage = shutil.disk_usage(root_path)
+    except OSError as exc:
+        raise RuntimeWindowError("disk_metrics_unavailable") from exc
+    # Text stops at TypeMoon's warning level, so the space below it stays TypeMoon's.
+    if usage.free < disk_low_bytes(usage.total):
+        raise RuntimeWindowError("disk_below_floor")
+
+
 @contextmanager
 def operation_window(
     *,
@@ -97,42 +173,25 @@ def operation_window(
     status_path: Path = Path("/proc/self/status"),
     cgroup_root: Path = Path("/sys/fs/cgroup"),
     root_path: Path = Path("/"),
+    deferrals_path: Path = DEFERRALS_PATH,
 ) -> Iterator[None]:
     """Yield to TypeMoon publishing and memory for one bounded operation."""
     with ExitStack() as stack:
-        if exclusive:
-            text_lock = FileLock(str(operation_lock))
-            try:
-                text_lock.acquire(timeout=lock_wait_seconds)
-            except (Timeout, OSError) as exc:
-                raise RuntimeWindowError("text_operation_busy") from exc
-            stack.callback(text_lock.release)
-        # Probe only: text never holds TypeMoon's publish lock, or a text step could fail
-        # TypeMoon's publish confirmation, which takes the lock without waiting.
-        lock = FileLock(str(publish_lock))
         try:
-            lock.acquire(timeout=lock_wait_seconds)
-        except (Timeout, OSError) as exc:
-            raise RuntimeWindowError("typemoon_publish_busy") from exc
-        lock.release()
-
-        reserve = typemoon_reserve(cgroup_root, lane_path)
-        try:
-            available = _available_memory(meminfo_path.read_text(encoding="ascii"))
-            resident = _resident_memory(status_path.read_text(encoding="ascii"))
-        except OSError as exc:
-            raise RuntimeWindowError("memory_metrics_unavailable") from exc
-        # /proc/meminfo already excludes this process; add it back to estimate the headroom
-        # this bounded text operation started with.
-        if available + resident - reserve < need_bytes + _OS_MARGIN:
-            raise RuntimeWindowError(
-                "typemoon_memory_reserved" if reserve else "memory_below_floor"
+            _admit(
+                stack,
+                lock_wait_seconds=lock_wait_seconds,
+                need_bytes=need_bytes,
+                exclusive=exclusive,
+                publish_lock=publish_lock,
+                lane_path=lane_path,
+                operation_lock=operation_lock,
+                meminfo_path=meminfo_path,
+                status_path=status_path,
+                cgroup_root=cgroup_root,
+                root_path=root_path,
             )
-        try:
-            usage = shutil.disk_usage(root_path)
-        except OSError as exc:
-            raise RuntimeWindowError("disk_metrics_unavailable") from exc
-        # Text stops at TypeMoon's warning level, so the space below it stays TypeMoon's.
-        if usage.free < disk_low_bytes(usage.total):
-            raise RuntimeWindowError("disk_below_floor")
+        except RuntimeWindowError as error:
+            record_deferral(str(error), deferrals_path)
+            raise
         yield

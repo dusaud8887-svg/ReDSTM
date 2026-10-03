@@ -212,6 +212,12 @@ async function loadTextStatus() {
   renderTextStatus(await response.json());
 }
 
+const TEXT_STEPS = { collector: "수집", importer: "수입", media_importer: "이미지", publisher: "게시", status: "상태" };
+const DEFERRAL_REASONS = {
+  typemoon_memory_reserved: "TypeMoon 메모리 우선", memory_below_floor: "메모리 부족", disk_below_floor: "디스크 부족",
+  typemoon_publish_busy: "TypeMoon 게시 중", text_operation_busy: "다른 텍스트 작업 중",
+};
+
 function sumCounts(counts, predicate) {
   return Object.entries(counts || {}).reduce((total, [key, value]) => total + (predicate(key) ? Number(value) || 0 : 0), 0);
 }
@@ -254,7 +260,14 @@ function renderTextStatus(status) {
   byId("text-cooldown-detail").textContent = cooling.length
     ? cooling.map((group) => `${group.last_status ?? "-"} · ${time(group.cooldown_until)}까지`).join(" / ")
     : "403·429·5xx 뒤 쉬는 출처";
-  byId("text-archive-as-of").textContent = `기준 ${time(status.generated_at)} (${age(status.generated_at)}) · Oracle 텍스트 게시기 기록`;
+  // The latest deferral of any text step (memory kept for TypeMoon, disk floor, a busy step).
+  const deferral = Object.entries(status.deferrals || {})
+    .map(([step, entry]) => ({ step, ...entry }))
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))[0];
+  const deferred = deferral && Date.now() - Date.parse(deferral.at) < 60 * 60 * 1000
+    ? ` · 최근 미룸: ${TEXT_STEPS[deferral.step] || deferral.step}(${DEFERRAL_REASONS[deferral.reason] || deferral.reason}) ${age(deferral.at)}`
+    : "";
+  byId("text-archive-as-of").textContent = `기준 ${time(status.generated_at)} (${age(status.generated_at)}) · Oracle 텍스트 게시기 기록${deferred}`;
 }
 
 function runnerState(runner) {

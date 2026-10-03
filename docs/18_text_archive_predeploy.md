@@ -451,5 +451,8 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
   `/srv/redstm-text/import-attempts/<batch>.json`에 횟수를 남기고 5·15·30·60분 간격으로 다시 시도하며, 5회째에 기존
   거부 경로(`import_failed:<예외>` status receipt)로 넘겨 뒤 묶음이 진행된다. 순서는 바꾸지 않는다(대기 중에는 뒤 묶음도
   기다린다). 예전에는 같은 묶음이 매 tick 같은 예외로 죽어 drop 전체가 멈췄다.
+- **미룸 기록**: 작업 창이 단계를 미루면 `/srv/redstm-text/deferrals.json`에 단계별 마지막 이유·시각을 남기고, 상태
+  문서의 `deferrals`로 게시한다. `/ops` 텍스트 장서 기준 줄에 1시간 안의 마지막 미룸을 `최근 미룸: 게시(TypeMoon 메모리
+  우선) 3분 전`처럼 붙인다(exit 75 성공 처리 때문에 보이지 않던 정체).
 - **배포 순서**: Oracle runner(이 파일을 쓰는 쪽)를 먼저, 텍스트 아카이브를 그다음에 갱신한다. 반대 순서면
   그 사이 TypeMoon 크롤 중에도 텍스트가 예약 없이 돈다.

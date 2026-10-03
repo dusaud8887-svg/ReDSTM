@@ -1094,3 +1094,31 @@ def test_status_upload_is_read_back(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result["status"] == "published"
     assert json.loads(stored[key])["schema"] == 1
     assert hashlib.sha256(stored[key]).hexdigest()
+
+
+def test_a_deferred_step_leaves_its_reason_for_the_status_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish_lock = tmp_path / "static" / ".publish.lock"
+    publish_lock.parent.mkdir()
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 100000 kB\n")
+    deferrals = tmp_path / "deferrals.json"
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _: SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3),
+    )
+    with pytest.raises(runtime.RuntimeWindowError, match="memory_below_floor"):
+        with runtime.operation_window(
+            publish_lock=publish_lock,
+            lane_path=tmp_path / "no-lane.json",
+            meminfo_path=meminfo,
+            status_path=_process_status(tmp_path),
+            root_path=tmp_path,
+            deferrals_path=deferrals,
+        ):
+            pytest.fail("not enough memory")
+
+    recorded = status._deferrals(deferrals)
+    assert [entry["reason"] for entry in recorded.values()] == ["memory_below_floor"]
