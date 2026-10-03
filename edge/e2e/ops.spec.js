@@ -123,6 +123,17 @@ test.beforeAll(async () => {
   await mkdir(".wrangler/screenshots", { recursive: true });
 });
 
+test("operations distinguishes published manual documents from imported ones", async ({ page }) => {
+  await useOperationsFixture(page, []);
+  await page.route("**/api/v1/text/status", (route) => route.fulfill({ json: {
+    schema: 1, generated_at: now,
+    lanes: { manual: { items: 5, published: 3, last_published_at: now } },
+  } }));
+  await page.goto("/ops");
+  await expect(page.locator("#text-manual")).toHaveText("3 / 5");
+  await expect(page.locator("#text-manual-detail")).toContainText("마지막 게시");
+});
+
 test("renders bounded operations and confirms a fixed command", async ({ page }, testInfo) => {
   const received = [];
   await useOperationsFixture(page, received);

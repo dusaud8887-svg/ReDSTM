@@ -225,7 +225,7 @@ function sumCounts(counts, predicate) {
 function renderTextStatus(status) {
   if (status?.schema !== 1) throw new Error("text_status_invalid");
   const lanes = status.lanes || {};
-  for (const [lane, id] of [["arcalive", "text-arcalive"], ["novel", "text-novel"]]) {
+  for (const [lane, id] of [["arcalive", "text-arcalive"], ["novel", "text-novel"], ["manual", "text-manual"]]) {
     const value = lanes[lane] || {};
     byId(id).textContent = `${number(value.published)} / ${number(value.items)}`;
     byId(`${id}-detail`).textContent = value.last_published_at
