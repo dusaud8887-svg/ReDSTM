@@ -4,13 +4,17 @@ const EXCLUDED = "#comments, .media-failed, .media-retry, figcaption, button, sc
 
 export function createTextModel(root) {
   let text = "";
+  // The last character is tracked instead of asking the growing string: endsWith() flattens the
+  // concatenated text on every block, which made a 20 MB document take seconds per capture.
+  let last = "";
   const segments = [];
   const positions = new WeakMap();
-  const newline = () => { if (text && !text.endsWith("\n")) text += "\n"; };
+  const newline = () => { if (text && last !== "\n") { text += "\n"; last = "\n"; } };
   function visit(node) {
     if (node.nodeType === 3) {
       const start = text.length;
       text += node.data;
+      if (node.data.length) last = node.data[node.data.length - 1];
       if (node.data.length) {
         const segment = { node, start, end: text.length };
         segments.push(segment);

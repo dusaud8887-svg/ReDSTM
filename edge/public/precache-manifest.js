@@ -210,7 +210,7 @@ export default [
   },
   {
     "url": "/text-model.js",
-    "revision": "fa21d3ed59ac7e20"
+    "revision": "1da05f0471645dd8"
   },
   {
     "url": "/text-shelves.js",
