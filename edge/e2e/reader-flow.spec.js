@@ -240,7 +240,7 @@ test("TypeMoon: 200 → next → next → Back returns to the same table-of-cont
   await expect.poll(async () => Math.abs(await anchorOffset(page) - before)).toBeLessThanOrEqual(4);
 });
 
-test("TypeMoon: the chapter-end card leads to the next episode before comments", async ({ page }) => {
+test("TypeMoon: comments come right after the text, then the chapter-end card", async ({ page }) => {
   await useLongCollection(page, 3);
   await page.goto("/collections/1");
   await page.locator('.collection-entry[data-key="1"]').click();
@@ -250,8 +250,9 @@ test("TypeMoon: the chapter-end card leads to the next episode before comments",
   const order = await page.evaluate(() => {
     const end = document.getElementById("chapter-end");
     const comments = document.getElementById("comments");
-    return Boolean(end.compareDocumentPosition(comments) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return Boolean(comments.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING);
   });
+  // Text → comments → next/previous → list (2026-10-03 reading order).
   expect(order).toBe(true);
   await expect(page.locator("#end-toc")).toBeVisible();
   await page.locator("#end-toc").click();
@@ -1643,7 +1644,11 @@ test("The scrubber moves through the chapter and offers the place before the mov
   await page.mouse.wheel(0, 400);
   await expect(page.locator("body")).toHaveClass(/reader-controls-hidden/);
   const before = await pane.evaluate((element) => element.scrollTop);
-  await page.locator("#reader-status").click();
+  // Phones keep nothing over the text: the top bar's position opens the scrubber there.
+  const phone = page.viewportSize().width < 760;
+  const position = page.locator(phone ? "#reader-topbar-position" : "#reader-status");
+  if (phone) await page.mouse.wheel(0, -400);
+  await position.click();
   const sheet = page.locator("#scrubber");
   await expect(sheet).toBeVisible();
   await expect(page.locator("#scrubber-run-label")).toHaveText("2/3편");
@@ -1654,7 +1659,7 @@ test("The scrubber moves through the chapter and offers the place before the mov
   await expect(page.locator("#scrubber-output")).toHaveText("90%");
   await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(before + 200);
   await sheet.getByRole("button", { name: "닫기" }).click();
-  await page.locator("#reader-status").evaluate((badge) => badge.click());
+  await position.evaluate((badge) => badge.click());
   await expect(sheet.locator("#scrubber-return")).toHaveText("이동 전 위치로");
   await sheet.locator("#scrubber-return").click();
   await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(before + 80);

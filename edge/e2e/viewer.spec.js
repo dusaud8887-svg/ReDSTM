@@ -563,10 +563,16 @@ test("keeps primary navigation and Operations reachable at every breakpoint", as
   const settings = page.locator(width >= 1200 ? ".rail-secondary [data-destination='settings']" : ".app-settings");
   await expect(settings).toBeVisible();
   await expect(page.locator(width >= 1200 ? ".wordmark" : ".app-home")).toBeVisible();
-  const operations = page.locator(`${width >= 1200 ? ".rail" : ".app-bar"} a[href="/ops"]`);
-  await expect(operations).toBeVisible();
-  await expect(operations).toHaveAccessibleName(/운영/);
-  if (width < 1200) await expect(operations).toContainText("운영");
+  // Phones leave Operations out of the app bar (a reader's screen); it stays in 설정 › 운영 현황.
+  if (width >= 760) {
+    const operations = page.locator(`${width >= 1200 ? ".rail" : ".app-bar"} a[href="/ops"]`);
+    await expect(operations).toBeVisible();
+    await expect(operations).toHaveAccessibleName(/운영/);
+    if (width < 1200) await expect(operations).toContainText("운영");
+  } else {
+    await expect(page.locator('.app-bar a[href="/ops"]')).toBeHidden();
+    await expect(page.locator('#settings-ops[href="/ops"]')).toHaveCount(1);
+  }
 
   await page.locator(`${navigation} [data-destination="browse"]`).click();
   await expect(page).toHaveURL(/\/browse$/);
@@ -834,7 +840,7 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
     await expect(themeColors.nth(1)).toHaveAttribute("content", "#121413");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
   } else {
-    await expect(page.locator('.app-bar a[href="/ops"]')).toBeVisible();
+    await expect(page.locator('.app-bar a[href="/ops"]')).toBeHidden();
   }
   await expect(page.locator('.home-operations[href="/ops"]')).toBeVisible();
 
@@ -1101,47 +1107,30 @@ test("prose settings and theme never change an AA picture", async ({ page }) => 
 
 // T29 (docs/24 §8.7 D14): comments stay one DOM below the body, folded until asked for; the
 // chapter-end shortcut unfolds them in place and 본문으로 returns to the reading place.
-test("comments unfold in place from the chapter end and 본문으로 returns to the text", async ({ page }) => {
+test("comments sit open under the text, fold from their heading, and 본문으로 returns to the text", async ({ page }) => {
   await useCollectionFixture(page);
   await openPost(page, firstKey);
   const list = page.locator("#comment-list");
   const toggle = page.locator("#comments-toggle");
-  await expect(list).toBeHidden();
-  await expect(list).toHaveAttribute("hidden", "until-found");
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await expect(toggle).toContainText("댓글 2");
-  const shortcut = page.locator("#end-comments");
-  await expect(shortcut).toContainText("댓글 2");
-  const pane = page.locator("#reader-pane");
-  await shortcut.scrollIntoViewIfNeeded();
-  const before = await pane.evaluate((element) => element.scrollTop);
-  await shortcut.click();
-  await expect(list).toBeVisible();
+  // Text → comments → next/previous: comments start unfolded and the chapter end has no shortcut.
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toContainText("댓글 2");
   await expect(page.locator(".comment")).toHaveCount(2);
-  await expect(page.locator("#comments-title")).toBeInViewport();
-  const back = page.locator("#comments-return");
-  await expect(back).toBeVisible();
-  await expect(back).toHaveText("본문으로");
+  await expect(page.locator("#end-comments")).toBeHidden();
   // One DOM: nothing was copied into a sheet, so no id appears twice.
   expect(await page.evaluate(() => {
     const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
     return ids.length - new Set(ids).size;
   })).toBe(0);
-  await back.click();
-  await expect(back).toBeHidden();
-  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(before + 80);
-  // The heading folds them again; browser find (beforematch) unfolds and the heading follows.
+  // The heading folds them; browser find (beforematch) unfolds and the heading follows.
   await toggle.click();
   await expect(list).toBeHidden();
+  await expect(list).toHaveAttribute("hidden", "until-found");
   await list.evaluate((element) => {
     element.removeAttribute("hidden");
     element.dispatchEvent(new Event("beforematch"));
   });
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  // A new post starts folded.
-  await openPost(page, secondKey);
-  await expect(list).toHaveAttribute("hidden", "until-found");
 });
 
 test("applies and persists prose typography over legacy source styles", async ({ page }) => {
@@ -1296,7 +1285,8 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
     };
     await expect(body).toHaveClass(/reader-controls-hidden/);
     await expect(page.locator("#reader-status")).toHaveText(/^\d+%$/);
-    await expect(page.locator("#reader-status")).toHaveCSS("opacity", "1");
+    // Wider screens show the badge in the margin; a phone keeps nothing over the text.
+    await expect(page.locator("#reader-status")).toHaveCSS("opacity", page.viewportSize().width >= 760 ? "1" : "0");
     // A lone pointerup (the end of a scroll) must not count as a tap.
     await page.locator("#archive-body").dispatchEvent("pointerup", { isPrimary: true, pointerType: "touch", clientX: 120, clientY: 400 });
     await expect(body).toHaveClass(/reader-controls-hidden/);
@@ -1923,8 +1913,8 @@ test("uses a full-width discovery canvas and hides the empty reader pane", async
   }
   if (page.viewportSize().width < 760) {
     const firstTop = await page.locator(".result-item").first().evaluate((element) => element.getBoundingClientRect().top);
-    // Heading, source switch (타입문넷 · 소설 · 아카라이브), scope tabs and chips sit above the list.
-    expect(firstTop).toBeLessThan(300);
+    // Heading, source switch (타입문넷 · 소설 · 아카라이브), scope tabs, the board picker and chips.
+    expect(firstTop).toBeLessThan(360);
   }
 
   await page.locator(".result-item").first().click();
