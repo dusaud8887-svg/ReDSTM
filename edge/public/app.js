@@ -319,7 +319,7 @@ function refreshContinuous() {
     const node = document.createElement("div"); node.className = elements["archive-body"].className;
     if (next.sourceLane) {
       const raw = await response.text();
-      const parsed = next.sourceLane === "novel" ? novelBody(raw) : arcaliveBody(raw);
+      const parsed = next.sourceLane === "manual" ? { text: raw, sourceUrl: "" } : next.sourceLane === "novel" ? novelBody(raw) : arcaliveBody(raw);
       renderPlainTextWithMedia(node, parsed.text, { sourceUrl: parsed.sourceUrl });
     } else {
       const payload = await response.json();
@@ -1112,13 +1112,13 @@ function renderTextContinue(text) {
   elements["continue-title"].textContent = text.title || "텍스트 장서";
   const finished = postReadingState(text.progress) === "finished";
   elements["continue-meta"].textContent = [
-    text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    text.identity.startsWith("manual:") ? "수동 문서" : text.identity.startsWith("novel:") ? "소설" : "아카라이브",
     finished ? (text.identity.startsWith("novel:") ? "다 읽음 · 다음 화로 이어서" : "다 읽음") : postReadingLabel(text.progress, { seen: true }),
   ].filter(Boolean).join(" · ");
   elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
   setContinueProgress(finished ? 0 : text.progress);
   fillContinueCard(continueCardParts(), {
-    title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("manual:") ? "수동 문서" : text.identity.startsWith("novel:") ? "소설" : "아카라이브",
     hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished || settings.homeQuote === "off" ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
   });
 }
@@ -1129,6 +1129,7 @@ function continueCardParts() {
 
 // Stable cover keys (DESIGN §2.5) for records that only know an identity.
 function textHueKey(text) {
+  if (text.identity?.startsWith("manual:")) return text.identity;
   if (text.identity?.startsWith("novel:")) return workKey({ source: "novel", id: text.workId || text.work || text.identity });
   return workKey({ source: "arcalive", board: text.board || "", id: text.workId || text.work || text.identity });
 }
@@ -1478,7 +1479,7 @@ const kwic = createKwic({
   parse(entry, raw) {
     const body = document.createElement("div");
     if (entry.type === "typemoon") body.innerHTML = JSON.parse(raw).post.body_html;
-    else body.textContent = (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text;
+    else body.textContent = (entry.type === "manual" ? raw : (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text);
     return createTextModel(body).text;
   },
   async onOpen(hit, parent) {
@@ -2085,7 +2086,7 @@ const browseSourceKey = "redstm.browseSource";
 function rememberedBrowseSource() {
   try {
     const source = localStorage.getItem(browseSourceKey);
-    return ["novel", "arcalive"].includes(source) ? source : "typemoon";
+    return ["novel", "arcalive", "manual"].includes(source) ? source : "typemoon";
   } catch {
     return "typemoon";
   }

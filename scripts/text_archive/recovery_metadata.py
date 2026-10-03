@@ -22,4 +22,10 @@ def metadata_fingerprint(db_path: Path, lane: str) -> str:
         ):
             digest.update(json.dumps(list(row), ensure_ascii=False, separators=(",", ":")).encode())
             digest.update(b"\n")
+        if lane == "manual":
+            for row in db.execute(
+                "SELECT identity,created_at,folder FROM text_manual_documents ORDER BY identity"
+            ):
+                digest.update(json.dumps(list(row), ensure_ascii=False).encode())
+                digest.update(b"\n")
     return digest.hexdigest()

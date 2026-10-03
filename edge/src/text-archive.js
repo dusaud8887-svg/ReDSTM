@@ -1,7 +1,7 @@
 import { textMediaResponse } from "./text-media.js";
 
 const HASH = /^[a-f0-9]{64}$/;
-const LANES = new Set(["novel", "arcalive"]);
+const LANES = new Set(["novel", "arcalive", "manual"]);
 
 function jsonError(status) {
   return new Response(JSON.stringify({ error: status === 404 ? "not_found" : "method_not_allowed" }), {
@@ -38,13 +38,13 @@ export function textArchiveResponse(request, env) {
   if (path === "/api/v1/text/status") {
     return readObject(request, env, "published/status/text.json", "application/json; charset=utf-8", false);
   }
-  let match = path.match(/^\/api\/v1\/text\/release\/(novel|arcalive)$/);
+  let match = path.match(/^\/api\/v1\/text\/release\/(novel|arcalive|manual)$/);
   if (match) return readObject(request, env, `published/${match[1]}/release.json`, "application/json; charset=utf-8", false);
-  match = path.match(/^\/api\/v1\/text\/release-manifest\/(novel|arcalive)\/([a-f0-9]{64})\.json$/);
+  match = path.match(/^\/api\/v1\/text\/release-manifest\/(novel|arcalive|manual)\/([a-f0-9]{64})\.json$/);
   if (match && LANES.has(match[1]) && HASH.test(match[2])) {
     return readObject(request, env, `published/releases/${match[1]}/${match[2]}.json`, "application/json; charset=utf-8");
   }
-  match = path.match(/^\/api\/v1\/text\/index\/(novel|arcalive)\/([a-f0-9]{64})\.json$/);
+  match = path.match(/^\/api\/v1\/text\/index\/(novel|arcalive|manual)\/([a-f0-9]{64})\.json$/);
   if (match && LANES.has(match[1]) && HASH.test(match[2])) {
     return readObject(request, env, `published/indexes/${match[1]}/${match[2]}.json`, "application/json; charset=utf-8");
   }

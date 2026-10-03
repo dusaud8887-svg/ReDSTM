@@ -113,7 +113,7 @@ def build_status(
     db.row_factory = sqlite3.Row
     try:
         lanes: dict[str, Any] = {}
-        for lane in ("novel", "arcalive"):
+        for lane in ("novel", "arcalive", "manual"):
             row = db.execute(
                 """SELECT COUNT(*) AS items,MAX(imported_at) AS last_imported_at,
                           SUM(p.key IS NOT NULL) AS published,

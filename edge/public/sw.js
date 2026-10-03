@@ -900,7 +900,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   var precache_manifest_default = [
     {
       "url": "/",
-      "revision": "abd09df3a2a86e1d"
+      "revision": "94734852498f0958"
     },
     {
       "url": "/aa-viewer.js",
@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "3031ab2a1b0c7759"
+      "revision": "cd77aed784bfe331"
     },
     {
       "url": "/arca-media.js",
@@ -1016,7 +1016,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/offline.js",
-      "revision": "5b77a2869302e3b0"
+      "revision": "8d7b6978e505ad6d"
     },
     {
       "url": "/overlay-manager.js",
@@ -1104,7 +1104,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "a1dfa04b7d8ec2f4"
+      "revision": "4943836f6bb5f1db"
     },
     {
       "url": "/text-model.js",
@@ -1128,7 +1128,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/user-state.js",
-      "revision": "53de3e13e8aac5df"
+      "revision": "8c43e2ab74884d30"
     },
     {
       "url": "/work-header.js",
@@ -1186,7 +1186,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   q(path((p2) => p2.startsWith("/ops") || p2.startsWith("/cdn-cgi/")), new B());
   q(path((p2) => p2.startsWith("/api/v1/sync") || p2 === "/api/v1/rum" || p2 === "/api/v1/me"), new B());
   q(path((p2) => p2 === "/api/v1/text/status"), new B());
-  q(path((p2) => /^\/api\/v1\/text\/release\/(?:novel|arcalive)$/.test(p2)), ownedStrategy(K, "text-pointer", { networkTimeoutSeconds: 3 }));
+  q(path((p2) => /^\/api\/v1\/text\/release\/(?:novel|arcalive|manual)$/.test(p2)), ownedStrategy(K, "text-pointer", { networkTimeoutSeconds: 3 }));
   q(path((p2) => p2.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(M, "text-meta"));
   q(path((p2) => p2.startsWith("/api/v1/text/index/")), ownedStrategy(M, "text-meta", { plugins: [expiring(200)] }));
   q(
