@@ -33,6 +33,8 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 TasksMax=64
 MemoryMax=700M
+# Kernel-side priority on the 1 GB host: the crawl keeps this much before text work is reclaimed.
+MemoryLow=256M
 # Match redstm-control.service: survive a child OOM kill so the scheduled run finishes
 # with a truthful failure report instead of an unreported interruption.
 OOMPolicy=continue

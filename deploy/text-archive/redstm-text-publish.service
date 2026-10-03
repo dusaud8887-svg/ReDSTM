@@ -14,6 +14,7 @@ ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.publ
 SuccessExitStatus=75
 Restart=no
 TimeoutStartSec=infinity
+MemoryHigh=128M
 MemoryMax=150M
 MemorySwapMax=0
 CPUWeight=10
