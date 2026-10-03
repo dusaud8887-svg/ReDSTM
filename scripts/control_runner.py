@@ -46,6 +46,18 @@ from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, warc_budget_
 _TYPEMOON_LANE_FILE = ".typemoon-lane.json"
 # A run heartbeats at least every 30 s; a marker claimed within this keeps reporting that run.
 _LIVE_HEARTBEAT_SECONDS = 120
+# Expected peak (MiB) of each heavy child the text lane makes room for. A body fill or recovery
+# batch fetches one detail at a time (283 MiB measured on 2026-10-03); a listing crawl and the
+# export/publish can reach the 560 MiB Scrapy limit plus the runner.
+_LANE_PEAK_MIB = {
+    "crawling": 620,
+    "full-catalog": 620,
+    "exporting": 620,
+    "publishing": 620,
+    "recovery": 360,
+    "fill-missing-content": 360,
+    "full-content": 360,
+}
 _STALE_PARTIAL_SECONDS = 60 * 60
 _RUN_KINDS = {
     "sync-now": "manual-sync",
@@ -2033,7 +2045,13 @@ class ControlRunner:
         temporary = lane.with_name(f"{lane.name}.{os.getpid()}.tmp")
         try:
             temporary.write_text(
-                json.dumps({"phase": step, "updated_at": time.time()}),
+                json.dumps(
+                    {
+                        "phase": step,
+                        "updated_at": time.time(),
+                        "peak_mib": _LANE_PEAK_MIB.get(step, _LANE_PEAK_MIB["crawling"]),
+                    }
+                ),
                 encoding="utf-8",
             )
             temporary.chmod(0o644)

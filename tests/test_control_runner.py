@@ -3035,6 +3035,7 @@ def test_a_heavy_child_announces_the_lane_to_text_only_while_it_runs(tmp_path: P
 
     announced = json.loads(seen.read_text(encoding="utf-8"))
     assert announced["phase"] == "crawling"
+    assert announced["peak_mib"] == 620
     assert isinstance(announced["updated_at"], float)
     assert not lane.exists()
 

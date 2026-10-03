@@ -899,6 +899,13 @@ def test_operation_window_leaves_typemoon_its_measured_headroom(
     # and a lane file the runner left behind when it died goes stale.
     assert runtime.typemoon_reserve(early, tmp_path / "no-lane.json") == 0
     assert runtime.typemoon_reserve(early, lane, now=time.time() + 600) == 0
+    # A step that names a smaller peak (a body fill) keeps only that much back.
+    fill = tmp_path / "fill-lane.json"
+    fill.write_text(
+        json.dumps({"phase": "recovery", "updated_at": time.time(), "peak_mib": 360}),
+        encoding="utf-8",
+    )
+    assert runtime.typemoon_reserve(early, fill) == 260 * 1024**2
     with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
         with window(early):
             pytest.fail("text must wait while TypeMoon can still grow into the free memory")

@@ -85,8 +85,14 @@ def typemoon_reserve(cgroup_root: Path, lane_path: Path, now: float | None = Non
         return _TYPEMOON_PEAK
     if (now if now is not None else time.time()) - updated > _LANE_STALE_SECONDS:
         return 0  # a runner that died without clearing it
+    # The step names its own expected peak (a body fill stays near 300 MiB, a full crawl does
+    # not); without one, or with an implausible one, the crawl peak is assumed.
+    peak = _TYPEMOON_PEAK
+    declared = lane.get("peak_mib")
+    if isinstance(declared, int) and not isinstance(declared, bool) and 64 <= declared <= 620:
+        peak = declared * _MIB
     current = max((_unit_memory(cgroup_root, unit) or 0) for unit in _TYPEMOON_UNITS)
-    return max(0, _TYPEMOON_PEAK - current)
+    return max(0, peak - current)
 
 
 def record_deferral(reason: str, path: Path) -> None:

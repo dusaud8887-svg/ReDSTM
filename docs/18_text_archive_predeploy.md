@@ -445,6 +445,8 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
   크롤·export·게시 자식을 띄운 동안만 `/srv/redstm/static/.typemoon-lane.json`(`{"phase","updated_at"}`, 0644,
   30초마다 갱신, 자식이 끝나면 삭제)을 쓰고, 텍스트는 이 파일이 있을 때만 620 MiB − 현재 cgroup 사용량을 예약한다.
   180초 넘게 갱신되지 않은 파일(runner가 죽음)은 무시하고, 읽을 수 없는 파일은 피크 전체를 예약한다.
+  파일에 `peak_mib`가 있으면 620 MiB 대신 그 값을 쓴다(10-03: 본문 채우기·recovery는 360 — 실측 최대 283 MiB, 크롤·export·게시는
+  620). 몇 시간짜리 본문 채우기 동안 텍스트 게시가 통째로 막히던 문제.
   텍스트 사용자는 `/srv/redstm/static`에 `--x`만 있어 이름을 아는 이 파일만 읽는다(unit 변경 없음).
 - **게시 잠금은 확인만**: 텍스트는 `.publish.lock`을 잡았다가 바로 놓아(TypeMoon 게시 중이면
   `typemoon_publish_busy`로 미룸) 작업 내내 쥐지 않는다. TypeMoon 게시 확인(smoke confirmation)이 0초 대기로
