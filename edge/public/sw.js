@@ -1084,7 +1084,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/styles/library.css",
-      "revision": "538412982c9d6509"
+      "revision": "35c492f4ca36a3a1"
     },
     {
       "url": "/styles/reader.css",

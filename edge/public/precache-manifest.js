@@ -186,7 +186,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "538412982c9d6509"
+    "revision": "35c492f4ca36a3a1"
   },
   {
     "url": "/styles/reader.css",

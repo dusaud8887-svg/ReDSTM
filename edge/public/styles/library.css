@@ -423,9 +423,12 @@ body.reading .home { display: none; }
 }
 
 /* 둘러보기 source switch (DESIGN §7.1 segmented): TypeMoon, novels, Arcalive. */
-.source-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; margin: 4px 12px 8px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
+.source-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; margin: 4px 12px 8px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
 .source-switch button { min-height: 40px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font-size: 14px; font-weight: 550; white-space: nowrap; cursor: pointer; }
 .source-switch button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 650; box-shadow: var(--e1); }
+@media (max-width: 380px) {
+  .source-switch button { font-size: 12px; padding-inline: 2px; }
+}
 
 /* 서재 (DESIGN §7.3, §9; docs/24 §8.2). Modules run top to bottom in the order of the markup;
    the title and freshness close the page, and rise to the top only for an error. */
