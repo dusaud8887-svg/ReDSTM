@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
@@ -93,6 +94,34 @@ def test_manual_document_rejects_invalid_metadata(change: dict[str, str]) -> Non
         "source_url": "",
     }
     assert not importer._identity_matches({**item, **change})[0]
+
+
+def test_large_manual_utf8_validation_is_bounded(tmp_path: Path) -> None:
+    item: dict[str, object] = {
+        "kind": "manual_document",
+        "identity": "manual:" + "b" * 64,
+        "title": "여러 권",
+        "created_at": "2026-10-01T12:00:00Z",
+        "folder": ".",
+        "source_url": "",
+    }
+    # One non-BMP character would expand a full decoded ASCII body fourfold.
+    body = b"a" * (3 * 1024 * 1024 - 1) + "😀".encode()
+    inbox = tmp_path / "inbox"
+    _batch(inbox, _BATCHES[0], body=body, item=item)
+    tracemalloc.start()
+    try:
+        _, _, _, validation = importer._safe_batch(inbox, _BATCHES[0])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert validation["candidates"][0]["reason"] == ""
+    assert peak < len(body) * 2
+    receipt = importer.import_batch(
+        inbox, _BATCHES[0], tmp_path / "db", tmp_path / "objects", tmp_path / "receipts"
+    )
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "accepted"
 
 
 def test_bookkor_chapter_identity_requires_matching_work_and_chapter() -> None:

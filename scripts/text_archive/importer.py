@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
 import json
 import os
@@ -911,11 +912,14 @@ def _safe_batch(
                             reason = "text_sha256_mismatch"
                     if not reason and body is not None:
                         try:
-                            text = body.decode("utf-8")
+                            decoder = codecs.getincrementaldecoder("utf-8")()
+                            for offset in range(0, len(body), 64 * 1024):
+                                end = offset + 64 * 1024
+                                decoder.decode(body[offset:end], final=end >= len(body))
                         except UnicodeDecodeError:
                             reason = "body_not_utf8"
                         else:
-                            if "\x00" in text:
+                            if b"\x00" in body:
                                 reason = "body_contains_nul"
         candidates.append(
             {
