@@ -447,5 +447,9 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
 - **게시 잠금은 확인만**: 텍스트는 `.publish.lock`을 잡았다가 바로 놓아(TypeMoon 게시 중이면
   `typemoon_publish_busy`로 미룸) 작업 내내 쥐지 않는다. TypeMoon 게시 확인(smoke confirmation)이 0초 대기로
   잠금을 요구하다 텍스트 작업과 겹쳐 실패하던 경로를 없애고, 그 대기도 30초로 늘렸다.
+- **실패하는 묶음**: 검증 거부가 아닌 예외(OSError·SQLite·JSON 오류)로 import가 실패한 묶음은
+  `/srv/redstm-text/import-attempts/<batch>.json`에 횟수를 남기고 5·15·30·60분 간격으로 다시 시도하며, 5회째에 기존
+  거부 경로(`import_failed:<예외>` status receipt)로 넘겨 뒤 묶음이 진행된다. 순서는 바꾸지 않는다(대기 중에는 뒤 묶음도
+  기다린다). 예전에는 같은 묶음이 매 tick 같은 예외로 죽어 drop 전체가 멈췄다.
 - **배포 순서**: Oracle runner(이 파일을 쓰는 쪽)를 먼저, 텍스트 아카이브를 그다음에 갱신한다. 반대 순서면
   그 사이 TypeMoon 크롤 중에도 텍스트가 예약 없이 돈다.

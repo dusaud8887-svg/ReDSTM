@@ -1005,6 +1005,47 @@ def test_main_drains_every_ready_batch_in_one_run(
     assert not (inbox / "receipts" / f"{_BATCHES[2]}.json").exists()
 
 
+def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox = tmp_path / "inbox"
+    attempts = tmp_path / "attempts"
+    _batch(inbox, _BATCHES[0])
+    _batch(inbox, _BATCHES[1], body=b"second body")
+    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
+    monkeypatch.setattr(importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["importer"])
+    real_import = importer.import_batch
+
+    def broken(inbox_root: Path, batch_id: str, *args: Any) -> Any:
+        if batch_id == _BATCHES[0]:
+            raise OSError("existing content object failed verification")
+        return real_import(inbox_root, batch_id, *args)
+
+    monkeypatch.setattr(importer, "import_batch", broken)
+    with pytest.raises(SystemExit) as stopped:
+        importer.main()
+    assert stopped.value.code == 1
+    # Waiting out the backoff, the later batch does not overtake it.
+    assert importer._next_ready_batch(inbox, attempts) is None
+    for _attempt in range(importer._IMPORT_ATTEMPTS - 1):
+        record = attempts / f"{_BATCHES[0]}.json"
+        if record.exists():
+            data = json.loads(record.read_text(encoding="utf-8"))
+            data["next_at"] = 0
+            record.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            importer.main()
+        except SystemExit:
+            pass
+    capsys.readouterr()
+    assert (inbox / "receipts" / f"{_BATCHES[0]}.status.json").exists()
+    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
+
+
 def _imported_for_status(tmp_path: Path) -> tuple[Path, Path]:
     inbox = tmp_path / "inbox"
     _batch(inbox, _BATCHES[0])
