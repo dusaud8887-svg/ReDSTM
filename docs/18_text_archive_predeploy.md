@@ -120,7 +120,9 @@ DB 연결 시 숫자 source ID로 보완한다.
    마지막에 교체하고 다시 readback한다. 이전 pointer는 그전까지 유지된다. failure는 pointer를 건드리지
    않는다. batch 안의 accepted/duplicate 모든 항목이 pointer 게시까지 검증된 뒤 receipt를 revision 2로
    원자 갱신하고 item-level `published_at`을 준다. revision 2는 importer 재실행으로 revision 1에
-   되돌아가지 않는다. SFTP 수신 파일/receipt는 게시 뒤에도 보존한다.
+   되돌아가지 않는다. receipt는 게시 뒤에도 보존한다. 수신 batch(drop)는 2026-10-03부터 뉴토미가 revision 2 receipt나
+   거부 status를 읽은 뒤 SFTP로 지운다(media batch와 같은 규칙). 수입 결과는 DB와 objects에 있어 drop 원본이 필요 없고,
+   지우지 않으면 2GiB drop이 찬다(10-03에 받은 지 오래된 텍스트 batch 711개·1.1GB가 남아 있어 655개를 서버에서 정리).
 5. novel lane의 R2 pointer/readback과 revision-2 receipt 뒤에
    `receipts/availability/novel/snapshots/<snapshot_id>/page-NNNNNN.json`과 `manifest.json`을
    content-addressed/immutable하게 쓴 다음 `current.json`을 마지막에 교체한다. `snapshot_id`는
@@ -310,7 +312,7 @@ Worker/D1/TypeMoon 배포는 변경하지 않았고 `scripts.release status`의 
 검증한다. `redstm-text-import.path`가 `/srv/redstm-text-inbox/drop`의 확정 batch rename을
 감시해 수입을 깨우며 기존 5분 timer는 누락 이벤트 복구용으로 남는다. path unit은 enabled/active,
 실제 신규 batch 수입도 확인했다. 2GiB 수신 quota, 150MiB 프로세스 상한, TypeMoon 양보
-조건과 원본/수신 batch 자동 삭제 금지는 유지한다. 1.39만 건의 수입·R2 게시 완료 및
+조건은 유지한다(수신 batch 삭제 규칙은 2026-10-03에 바뀌었다 — 위 4.). 1.39만 건의 수입·R2 게시 완료 및
 장기 비용은 완료 수치로 별도 확인해야 한다.
 
 2026-09-24 운영 상한 해제: 본문 첫 100작품·누적 1,000회 요청과 게시 소설 1,000건·
@@ -454,5 +456,7 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
 - **미룸 기록**: 작업 창이 단계를 미루면 `/srv/redstm-text/deferrals.json`에 단계별 마지막 이유·시각을 남기고, 상태
   문서의 `deferrals`로 게시한다. `/ops` 텍스트 장서 기준 줄에 1시간 안의 마지막 미룸을 `최근 미룸: 게시(TypeMoon 메모리
   우선) 3분 전`처럼 붙인다(exit 75 성공 처리 때문에 보이지 않던 정체).
+- **실패하는 미디어 묶음**: media importer도 같은 규칙(`/srv/redstm-text/media-attempts/`, 5·15·30·60분, 5회째 거부
+  status)으로 rclone·OSError·SQLite 실패를 다룬다. 예전에는 같은 묶음이 매 tick 죽어 미디어 레인이 멈췄다.
 - **배포 순서**: Oracle runner(이 파일을 쓰는 쪽)를 먼저, 텍스트 아카이브를 그다음에 갱신한다. 반대 순서면
   그 사이 TypeMoon 크롤 중에도 텍스트가 예약 없이 돈다.
