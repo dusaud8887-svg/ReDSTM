@@ -7041,7 +7041,13 @@ personalLibrary = createPersonalLibrary({
 
 applySettings();
 // Text archive routes do not depend on the TypeMoon search index; start them immediately.
-if (location.pathname === "/text") void handleRoute();
+if (location.pathname === "/text") {
+  // A reload on a body (or a tab Chrome restored) rebuilds the list and the work's chapters before
+  // the body; those steps stay hidden so the reader is the first screen that shows (styles/base.css).
+  const params = new URLSearchParams(location.search);
+  if (params.has("item") || params.has("chapter")) document.body.classList.add("restoring-text");
+  void handleRoute().finally(() => document.body.classList.remove("restoring-text"));
+}
 
 // Service worker (docs/24 §12.6): registered once the page has settled; its caches are the owner's.
 const offline = createOffline({

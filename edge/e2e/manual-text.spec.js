@@ -35,8 +35,20 @@ test("manual folders preserve full bodies, natural file order and saved reading 
   await expect(page.locator("#archive-body")).toContainText("# 본문 첫 줄");
   await expect(page.locator("#archive-body")).toContainText("원본: 그대로 보관");
   await expect(page.locator("#reader-title")).toHaveText("2화");
+  // A reload on the body goes straight to it: the list it is rebuilt from never shows on the way.
+  await page.addInitScript(() => {
+    window.listSeen = false;
+    const sample = () => {
+      if (document.body?.classList.contains("reading")) return;
+      if ([...document.querySelectorAll("#result-list .result-item")].some((row) => row.checkVisibility({ visibilityProperty: true }))) window.listSeen = true;
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
   await page.reload();
   await expect(page.locator("#archive-body")).toContainText("2화 본문");
+  expect(await page.evaluate(() => window.listSeen)).toBe(false);
+  await expect(page.locator("body")).not.toHaveClass(/restoring-text/);
   await page.locator("#next-post:visible, #reader-bottom-next:visible").first().click();
   await expect(page.locator("#reader-title")).toHaveText("10화");
   await page.goto("/text?lane=manual&category=작품%2F회차");

@@ -18,6 +18,9 @@ body.home-open .reader-pane,
 body.reading .reader-pane { grid-column: 2; }
 body.reading-context .catalog { display: grid; grid-column: 2; }
 body.reading-context .reader-pane { grid-column: 3; }
+/* Reopening a text body by URL: home and the list it passes through stay hidden (app.js). */
+body.restoring-text:not(.reading) .catalog,
+body.restoring-text:not(.reading) .reader-pane { visibility: hidden; }
 
 button, input, select { font: inherit; letter-spacing: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
