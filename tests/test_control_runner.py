@@ -2591,6 +2591,35 @@ def test_frontier_failure_telemetry_bounds_a_legacy_error_message(tmp_path: Path
     assert payload["items"][0]["error_code"] == "legacy_error"
 
 
+def test_one_board_inside_an_open_all_board_pass_keeps_the_other_cursors(tmp_path: Path) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute(
+            "INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at) "
+            "VALUES ('bb', 'BB', 'https://source.invalid/bb', 'now', 'now')"
+        )
+    started_at = runner._ensure_inventory_pass_started(None)
+    with connect_archive(runner.profile.archive) as connection:
+        connection.execute("UPDATE boards SET inventory_next_page = 40")
+
+    assert runner._ensure_inventory_pass_started("aa") == started_at
+    runner._complete_inventory_pass(started_at, "aa")
+
+    with connect_archive(runner.profile.archive) as connection:
+        pages = dict(connection.execute("SELECT board_id, inventory_next_page FROM boards"))
+    # Only the requested board starts over; the all-board pass and its other cursors remain.
+    assert pages == {"aa": 1, "bb": 40}
+    assert (runner.profile.state_dir / "inventory.started").is_file()
+    assert runner._ensure_inventory_pass_started(None) == started_at
+    with connect_archive(runner.profile.archive) as connection:
+        assert (
+            connection.execute(
+                "SELECT inventory_next_page FROM boards WHERE board_id = 'bb'"
+            ).fetchone()[0]
+            == 40
+        )
+
+
 def test_full_catalog_refetches_even_after_a_completed_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

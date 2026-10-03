@@ -1687,6 +1687,19 @@ class ControlRunner:
         existing = self._inventory_marker_time(marker, "started_at")
         if payload is not None and existing is not None and payload.get("board_id") == board_id:
             return existing.isoformat(timespec="seconds").replace("+00:00", "Z")
+        if payload is not None and existing is not None and board_id is not None:
+            if payload.get("board_id") is None:
+                # One board inside an unfinished all-board pass: re-read that board only and
+                # keep the pass, so the other boards' cursors (days of progress) survive.
+                with archive_transaction(self.profile.archive) as connection:
+                    cursor = connection.execute(
+                        "UPDATE boards SET inventory_next_page = 1 "
+                        "WHERE board_id = ? AND is_enabled = 1",
+                        (board_id,),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError("board is missing or disabled")
+                return existing.isoformat(timespec="seconds").replace("+00:00", "Z")
         # A checkpoint with another scope belongs to an earlier interrupted command whose
         # own record is already closed; the freshly requested scope supersedes it. Commands
         # are serialized behind control.lock, so this never clobbers an active pass.
@@ -1703,6 +1716,10 @@ class ControlRunner:
         return started_at
 
     def _complete_inventory_pass(self, started_at: str, board_id: str | None = None) -> None:
+        started = self._marker_payload(self.profile.state_dir / _INVENTORY_STARTED)
+        inside_open_pass = (
+            board_id is not None and started is not None and started.get("board_id") is None
+        )
         with archive_transaction(self.profile.archive) as connection:
             board_filter = " AND board_id = ?" if board_id is not None else ""
             parameters: tuple[object, ...] = (board_id,) if board_id is not None else ()
@@ -1720,6 +1737,8 @@ class ControlRunner:
                 """,
                 parameters,
             )
+        if inside_open_pass:
+            return  # the all-board pass it belongs to completes (and records) on its own
         self._write_inventory_marker(
             self.profile.state_dir / _INVENTORY_COMPLETED,
             {
