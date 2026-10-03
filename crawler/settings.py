@@ -145,6 +145,15 @@ REDSTM_FRONTIER_MAX_ATTEMPTS = 5
 # Origin/network failures remain retryable forever with capped backoff. Parser and local
 # storage failures require manual review after the bounded attempt budget.
 REDSTM_CAPPED_RETRY_ERROR_CODES = frozenset({"parse_drift", "storage_error", "incomplete_comments"})
+# A whole-origin outage trips the network breaker after a few posts, so one post sees about one
+# attempt per run; with the 6 h backoff cap this many network failures of the same post span days
+# of runs in which other posts were fetched. Such a post is broken at the origin (a live probe of
+# aa_i4p3ia/65573 sent headers and then nothing for 397 s on its 90th attempt), so it stops as
+# origin_unresponsive instead of failing every fill-missing run. Only a person requeues it.
+REDSTM_NETWORK_MAX_ATTEMPTS = 24
+REDSTM_ORIGIN_UNRESPONSIVE_CODE = "origin_unresponsive"
+# Secret and permission-walled posts are re-checked this rarely while their listing is unchanged.
+REDSTM_LOCKED_REVISIT_DAYS = 30
 REDSTM_FRONTIER_BACKOFF_BASE_SECONDS = 120
 REDSTM_FRONTIER_BACKOFF_CAP_SECONDS = 6 * 60 * 60
 REDSTM_LISTING_OVERLAP_UNCHANGED = 20

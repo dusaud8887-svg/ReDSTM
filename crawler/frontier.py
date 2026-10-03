@@ -12,6 +12,7 @@ from crawler.settings import (
     REDSTM_CAPPED_RETRY_ERROR_CODES,
     REDSTM_FRONTIER_BACKOFF_BASE_SECONDS,
     REDSTM_FRONTIER_BACKOFF_CAP_SECONDS,
+    REDSTM_LOCKED_REVISIT_DAYS,
     REDSTM_RECOVERY_GROUP_ORDER,
 )
 
@@ -198,15 +199,28 @@ class FrontierStore:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT title, category, comment_count, latest_version_id
-                FROM posts
-                WHERE board_id = ? AND external_post_id = ?
+                SELECT post.title, post.category, post.comment_count, post.latest_version_id,
+                    post.availability, frontier.last_attempt_at
+                FROM posts AS post
+                LEFT JOIN crawl_frontier AS frontier
+                  ON frontier.board_id = post.board_id
+                 AND frontier.external_post_id = post.external_post_id
+                WHERE post.board_id = ? AND post.external_post_id = ?
                 """,
                 (board_id, external_post_id),
             ).fetchone()
+        # A locked post (secret post, permission wall) has no body by nature. Refetching it on
+        # every listing pass only spends the sync budget, so an unchanged listing row leaves it
+        # alone until the slow revisit window passes (the author may unlock it).
+        locked_recently = False
+        if row is not None and row["availability"] == "restricted" and row["last_attempt_at"]:
+            attempted = datetime.fromisoformat(str(row["last_attempt_at"]))
+            locked_recently = datetime.now(UTC) - attempted < timedelta(
+                days=REDSTM_LOCKED_REVISIT_DAYS
+            )
         return bool(
             row is not None
-            and row["latest_version_id"] is not None
+            and (row["latest_version_id"] is not None or locked_recently)
             and row["title"] == title
             and (category is None or row["category"] == category)
             and row["comment_count"] == comment_count
@@ -512,6 +526,35 @@ class FrontierStore:
                 [(row["board_id"], row["external_post_id"]) for row in rows],
             )
         return [(str(row["board_id"]), int(row["external_post_id"])) for row in rows]
+
+    def revive_missing_dead(self, *, board_id: str | None = None) -> int:
+        """Give body-less rows that used up a capped budget one fresh budget.
+
+        A person asking to fill missing bodies wants parser and local storage failures tried
+        again (a deploy may have fixed them). origin_unresponsive stays dead: it costs minutes
+        per attempt and only changes at the source.
+        """
+        codes = sorted(REDSTM_CAPPED_RETRY_ERROR_CODES)
+        board_clause = " AND board_id = ?" if board_id is not None else ""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE crawl_frontier
+                SET state = 'retry', attempts = 0, next_attempt_at = NULL,
+                    last_error_code = NULL, lease_token = NULL, lease_expires_at = NULL
+                WHERE state = 'dead'
+                  AND last_error_code IN ({", ".join("?" for _ in codes)})
+                  {board_clause}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM posts AS post
+                      WHERE post.board_id = crawl_frontier.board_id
+                        AND post.external_post_id = crawl_frontier.external_post_id
+                        AND post.latest_version_id IS NOT NULL
+                  )
+                """,
+                (*codes, *([board_id] if board_id is not None else [])),
+            )
+            return int(cursor.rowcount)
 
     def requeue_dead(
         self, *, error_code: str, limit: int, board_id: str | None = None

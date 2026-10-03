@@ -210,6 +210,7 @@ def test_restricted_detail_is_not_misparsed() -> None:
 
     assert len(items) == 1
     assert items[0]["outcome"] == "restricted"
+    assert items[0]["error_code"] == "permission_denied"
     assert "body_html" not in items[0]
 
 
@@ -223,6 +224,8 @@ def test_password_protected_post_is_restricted_without_retaining_the_form() -> N
     )
     item = list(TypeMoonSpider().parse_detail(response))[0]
     assert item["outcome"] == "restricted"
+    # A secret post is told apart from a permission wall (2026-10-03: 1,308 such posts).
+    assert item["error_code"] == "password_protected"
     assert item["board_id"] == "write_plus"
     assert item["external_post_id"] == 729040
     assert "body_html" not in item

@@ -10,7 +10,7 @@ from crawler.archive import connect_archive, decompress_body, initialize_archive
 from crawler.frontier import FrontierLease, FrontierStore
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
-from crawler.settings import REDSTM_FRONTIER_MAX_ATTEMPTS
+from crawler.settings import REDSTM_FRONTIER_MAX_ATTEMPTS, REDSTM_NETWORK_MAX_ATTEMPTS
 from crawler.store import PARSER_VERSION, ArchiveStore
 
 _NOW = datetime(2026, 7, 11, 2, tzinfo=UTC)
@@ -716,6 +716,28 @@ def test_retry_backoff_keeps_network_failures_retryable(tmp_path: Path) -> None:
         assert row["state"] == "retry"
         assert row["next_attempt_at"] == "2026-07-11T02:32:00+00:00"
         assert row["last_error_code"] == "network_error"
+
+    # The same post failing on the network for its whole long budget is broken at the origin:
+    # it stops as origin_unresponsive (not auto-revived like a network_error dead row).
+    broken = _escalated(REDSTM_NETWORK_MAX_ATTEMPTS, "broken-token")
+    store.record_outcome(
+        run_id,
+        url=broken.url,
+        outcome="fetch_failed",
+        fetched_at=_NOW,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code="network_error",
+        lease=broken,
+        frontier_state="retry",
+    )
+    with connect_archive(path) as connection:
+        row = connection.execute(
+            "SELECT state, next_attempt_at, last_error_code FROM crawl_frontier"
+        ).fetchone()
+        assert row["state"] == "dead"
+        assert row["next_attempt_at"] is None
+        assert row["last_error_code"] == "origin_unresponsive"
 
 
 def test_not_found_requires_two_runs_and_rate_limit_honors_retry_after(tmp_path: Path) -> None:

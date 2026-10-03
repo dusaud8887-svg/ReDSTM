@@ -285,7 +285,9 @@ def connect_archive(path: str | Path, *, read_only: bool = False) -> sqlite3.Con
         connection = sqlite3.connect(f"{archive_path.as_uri()}?mode=ro", uri=True, timeout=5)
         connection.execute("PRAGMA query_only = ON")
     else:
-        connection = sqlite3.connect(archive_path, timeout=5)
+        # Writers share this file (crawl, reconcile, backup, sync); a lock held a few seconds
+        # must not turn a stored post into storage_error, so wait as the text lane does.
+        connection = sqlite3.connect(archive_path, timeout=30)
         # WAL lets readers (runner poll, backup, export) run concurrently with the crawl
         # writer instead of blocking on it — the source of the archive_locked contention.
         # journal_mode is a persistent header property, so a legacy DELETE archive converts
@@ -296,7 +298,7 @@ def connect_archive(path: str | Path, *, read_only: bool = False) -> sqlite3.Con
         connection.execute("PRAGMA synchronous = NORMAL")
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute(f"PRAGMA busy_timeout = {5000 if read_only else 30000}")
     connection.execute("PRAGMA trusted_schema = OFF")
     return connection
 

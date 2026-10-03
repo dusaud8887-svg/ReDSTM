@@ -16,7 +16,12 @@ from crawler.frontier import (
 )
 from crawler.items import DiscoveredPostItem
 from crawler.pipelines import NormalizedPost
-from crawler.settings import REDSTM_CAPPED_RETRY_ERROR_CODES, REDSTM_FRONTIER_MAX_ATTEMPTS
+from crawler.settings import (
+    REDSTM_CAPPED_RETRY_ERROR_CODES,
+    REDSTM_FRONTIER_MAX_ATTEMPTS,
+    REDSTM_NETWORK_MAX_ATTEMPTS,
+    REDSTM_ORIGIN_UNRESPONSIVE_CODE,
+)
 from scripts.legacy_common import normalize_source_timestamp
 
 PARSER_VERSION = "2"
@@ -36,17 +41,28 @@ def _timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
+def _dead_code(error_code: str, attempts: int) -> str | None:
+    """The code a failed attempt ends under when its retries are used up, or None to retry.
+
+    Parser and local storage failures stop after the attempt budget (docs/00 §8.5). A network
+    failure retries far longer; only one post failing for days becomes origin_unresponsive.
+    """
+    if error_code in REDSTM_CAPPED_RETRY_ERROR_CODES and attempts >= REDSTM_FRONTIER_MAX_ATTEMPTS:
+        return error_code
+    if error_code == "network_error" and attempts >= REDSTM_NETWORK_MAX_ATTEMPTS:
+        return REDSTM_ORIGIN_UNRESPONSIVE_CODE
+    return None
+
+
 def _retry_capped(
     connection: sqlite3.Connection, lease: FrontierLease, error_code: str, at: datetime
 ) -> None:
-    """Retry with backoff, or end in dead once a capped error code used up its attempts
-    (docs/00 §8.5; the same rule record_outcome applies)."""
-    if (
-        error_code in REDSTM_CAPPED_RETRY_ERROR_CODES
-        and lease.attempts >= REDSTM_FRONTIER_MAX_ATTEMPTS
-    ):
+    """Retry with backoff, or end in dead once the code used up its attempts (_dead_code;
+    the same rule record_outcome applies)."""
+    dead_code = _dead_code(error_code, lease.attempts)
+    if dead_code is not None:
         transition_lease(
-            connection, lease, state="dead", error_code=error_code, next_attempt_at=None
+            connection, lease, state="dead", error_code=dead_code, next_attempt_at=None
         )
         return
     transition_lease(
@@ -449,10 +465,9 @@ class ArchiveStore:
                 state = frontier_state
                 next_attempt_at = None
                 if state == "retry":
-                    if error_code in REDSTM_CAPPED_RETRY_ERROR_CODES and (
-                        lease.attempts >= REDSTM_FRONTIER_MAX_ATTEMPTS
-                    ):
-                        state = "dead"
+                    dead_code = _dead_code(error_code or "", lease.attempts)
+                    if dead_code is not None:
+                        state, error_code = "dead", dead_code
                     else:
                         next_attempt_at = retry_backoff(lease.attempts, fetched_at)
                         if retry_after_at is not None:

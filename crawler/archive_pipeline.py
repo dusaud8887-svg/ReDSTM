@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from crawler.frontier import FrontierLease
 from crawler.items import CapturedPostItem, DiscoveredPostItem
 from crawler.pipelines import normalize_captured_post
 from crawler.store import ArchiveStore
+
+logger = logging.getLogger(__name__)
 
 
 def _optional_text(value: object) -> str | None:
@@ -81,7 +84,13 @@ class ArchivePipeline:
             if outcome not in {"restricted", "missing", "parse_failed", "fetch_failed"}:
                 raise ValueError(f"unsupported capture outcome: {outcome!r}")
             if outcome == "restricted":
-                error_code, frontier_state = "permission_denied", "done"
+                # A secret post (author's password) is told apart from a permission wall.
+                error_code = (
+                    "password_protected"
+                    if item.get("error_code") == "password_protected"
+                    else "permission_denied"
+                )
+                frontier_state = "done"
             elif outcome == "missing":
                 # An explicit source "post is gone" message is authoritative in one pass, so
                 # the frontier entry is settled (done) rather than retried like a 404.
@@ -115,20 +124,27 @@ class ArchivePipeline:
             )
             return item
         except Exception:
+            # The cause goes to the journal: storage_error alone left two dead posts unexplained.
+            logger.exception("storing %s/%s failed", lease.board_id, lease.external_post_id)
+            # A page the origin cut off is the origin's failure: it retries under the network
+            # budget (ending as origin_unresponsive) instead of the 5-attempt storage budget.
+            truncated = "truncated_body" in (item.get("warnings") or ())
             try:
                 self.store.record_outcome(
                     self.run_id,
                     url=lease.url,
-                    outcome="parse_failed",
+                    outcome="fetch_failed" if truncated else "parse_failed",
                     fetched_at=captured_at,
                     board_id=lease.board_id,
                     external_post_id=lease.external_post_id,
-                    error_code="storage_error",
+                    error_code="network_error" if truncated else "storage_error",
                     lease=lease,
                     frontier_state="retry",
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "recording the failure of %s/%s failed", lease.board_id, lease.external_post_id
+                )
             raise
 
     @staticmethod

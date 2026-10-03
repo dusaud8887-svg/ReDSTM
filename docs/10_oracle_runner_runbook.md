@@ -232,8 +232,8 @@ restricted/parse/fetch/storage 실패는 기대값을 보존한다. 전 board �
 목차-only pending/retry backlog는 수동 전체 본문 작업으로 비운다.
 inventory는 listing coverage이며 기존 detail 전체 재요청은 별도 수동 작업이다(본문이 있고 listing이 그대로인 글은
 frontier row가 없던 경우에도 `done`으로 들어가고, 30일 stale audit이 bounded하게 다시 연다). dead는
-`parse_drift`·`storage_error`·`incomplete_comments`를 오류별·건수 제한으로 명시 재개한다(`network_error`는
-dead가 되지 않는다).
+`parse_drift`·`storage_error`·`incomplete_comments`를 오류별·건수 제한으로 명시 재개한다. `network_error`는 같은 글이
+24회 실패하면 `origin_unresponsive` dead가 되며, 원본에서 열리는지 사람이 확인한 뒤에만 다시 넣는다.
 
 ### G2. board cycle command
 

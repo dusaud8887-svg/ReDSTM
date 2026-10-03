@@ -228,8 +228,13 @@ def _has_login_form(response: scrapy.http.HtmlResponse) -> bool:
     return False
 
 
+def _is_password_protected(response: scrapy.http.HtmlResponse) -> bool:
+    """A secret post: the author set a password, so only they (or an admin) can open it."""
+    return bool(response.css('form input[type="password"][name="wr_password"]'))
+
+
 def _looks_restricted(response: scrapy.http.HtmlResponse) -> bool:
-    if response.css('form input[type="password"][name="wr_password"]'):
+    if _is_password_protected(response):
         return True
     visible_text = " ".join(response.css("body ::text").getall()).casefold()
     return any(phrase.casefold() in visible_text for phrase in _RESTRICTED_PHRASES)
@@ -1110,6 +1115,11 @@ class TypeMoonSpider(scrapy.Spider):
                 external_post_id=external_post_id,
                 canonical_url=canonical_url,
                 outcome="restricted",
+                error_code=(
+                    "password_protected"
+                    if _is_password_protected(response)
+                    else "permission_denied"
+                ),
                 warnings=[],
                 **capture_metadata,
             )
@@ -1138,6 +1148,10 @@ class TypeMoonSpider(scrapy.Spider):
                 )
                 return
         warnings = []
+        # A cut-off page with its title and content is still stored, but the pipeline treats a
+        # failure to store it as the origin's (network_error), not as local storage_error.
+        if response.request is not None and response.request.meta.get("redstm_truncated"):
+            warnings.append("truncated_body")
         views: int | None = None
         if title is None:
             warnings.append("missing_title")

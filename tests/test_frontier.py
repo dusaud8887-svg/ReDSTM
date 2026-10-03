@@ -400,6 +400,79 @@ def test_outline_only_discovered_post_is_not_unchanged(tmp_path: Path) -> None:
     )
 
 
+def test_locked_post_is_unchanged_until_the_slow_revisit_window(tmp_path: Path) -> None:
+    """A secret post has no body; an unchanged listing row is not refetched for a month."""
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    recent = (datetime.now(UTC) - timedelta(days=2)).isoformat(timespec="seconds")
+    old = (datetime.now(UTC) - timedelta(days=40)).isoformat(timespec="seconds")
+    with connect_archive(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO boards (board_id, name, canonical_url, first_seen_at, last_seen_at)
+            VALUES ('write_plus', 'plus', 'https://www.typemoon.net/write_plus', 'now', 'now')
+            """
+        )
+        for post_id, attempted in ((1, recent), (2, old)):
+            connection.execute(
+                """
+                INSERT INTO posts (
+                    board_id, external_post_id, canonical_url, title, category,
+                    first_seen_at, last_seen_at, comment_count, availability
+                ) VALUES ('write_plus', ?, ?, 'title', NULL, 'now', 'now', 0, 'restricted')
+                """,
+                (post_id, f"https://www.typemoon.net/write_plus/{post_id}"),
+            )
+            connection.execute(
+                """
+                INSERT INTO crawl_frontier (
+                    board_id, external_post_id, url, state, attempts, last_error_code,
+                    last_attempt_at
+                ) VALUES ('write_plus', ?, 'u', 'done', 1, 'password_protected', ?)
+                """,
+                (post_id, attempted),
+            )
+
+    assert store.listing_is_unchanged(
+        "write_plus", 1, title="title", category=None, comment_count=0
+    )
+    assert not store.listing_is_unchanged(
+        "write_plus", 1, title="renamed", category=None, comment_count=0
+    )
+    assert not store.listing_is_unchanged(
+        "write_plus", 2, title="title", category=None, comment_count=0
+    )
+
+
+def test_revive_missing_dead_retries_capped_codes_but_not_origin_unresponsive(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    with connect_archive(path) as connection:
+        for post_id, code in ((1, "storage_error"), (2, "parse_drift"), (3, "origin_unresponsive")):
+            connection.execute(
+                """
+                INSERT INTO crawl_frontier (
+                    board_id, external_post_id, url, state, attempts, last_error_code
+                ) VALUES ('aa_19', ?, ?, 'dead', 5, ?)
+                """,
+                (post_id, f"https://www.typemoon.net/aa_19/{post_id}", code),
+            )
+
+    assert store.revive_missing_dead() == 2
+    with connect_archive(path) as connection:
+        rows = {
+            int(row["external_post_id"]): (row["state"], row["attempts"])
+            for row in connection.execute(
+                "SELECT external_post_id, state, attempts FROM crawl_frontier"
+            )
+        }
+    assert rows == {1: ("retry", 0), 2: ("retry", 0), 3: ("dead", 5)}
+
+
 def test_full_content_requeue_uses_a_stable_rowid_and_time_checkpoint(
     tmp_path: Path,
 ) -> None:

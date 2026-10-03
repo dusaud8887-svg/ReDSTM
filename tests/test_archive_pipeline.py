@@ -112,6 +112,22 @@ def test_pipeline_records_terminal_outcome_without_warning_text(
     assert tuple(frontier_row) == (expected_state, error_code, None)
 
 
+def test_pipeline_keeps_a_secret_post_apart_from_a_permission_wall(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    pipeline, frontier, run_id = _setup(path)
+    lease = _claim(frontier, 2)
+    item = _item(lease, "restricted")
+    item["error_code"] = "password_protected"
+
+    pipeline.process_item(item)
+
+    with connect_archive(path) as connection:
+        capture = connection.execute(
+            "SELECT outcome, error_code FROM captures WHERE run_id = ?", (run_id,)
+        ).fetchone()
+    assert tuple(capture) == ("restricted", "password_protected")
+
+
 def test_pipeline_requeues_a_mismatched_lease_as_storage_error(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     pipeline, frontier, run_id = _setup(path)
@@ -193,3 +209,28 @@ def test_pipeline_records_storage_error_before_reraising(
                 "SELECT state FROM crawl_frontier WHERE external_post_id = 4"
             ).fetchone()
         ) == ("retry",)
+
+
+def test_a_cut_off_page_that_cannot_be_stored_retries_as_the_origins_network_error(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    pipeline, frontier, run_id = _setup(path)
+    lease = _claim(frontier, 5)
+    item = _item(lease, "stored")
+    item["warnings"] = ["truncated_body"]
+    # The origin cut the page inside the comments: one is left empty and cannot be stored.
+    item["comments"] = [{"position": 1, "content_html": "<script></script>"}]
+
+    with pytest.raises(ValueError):
+        pipeline.process_item(item)
+
+    with connect_archive(path) as connection:
+        capture = connection.execute(
+            "SELECT outcome, error_code FROM captures WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        state = connection.execute(
+            "SELECT state, last_error_code FROM crawl_frontier WHERE external_post_id = 5"
+        ).fetchone()
+    assert tuple(capture) == ("fetch_failed", "network_error")
+    assert tuple(state) == ("retry", "network_error")

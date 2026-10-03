@@ -1060,15 +1060,23 @@ storage_error
   구현되지 않았다.
 - HTTP 404 `not_found`는 서로 다른 run에서 두 번 확인하고, 원본의 명시적 삭제 오류 페이지는 1회
   positive signal로 `missing`을 확정한다.
-- `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다.
+- `permission_denied`/restricted는 retry storm을 만들지 않고 현재 frontier를 `done`으로 끝낸다. 글쓴이가 비밀번호를 건
+  비밀글(`wr_password` 입력 폼)은 `password_protected`로 따로 기록한다(2026-10-03 실측: 본문 없는 1,311건 중 1,308건이
+  비밀글). restricted 글은 목록 메타데이터가 그대로면 30일(`REDSTM_LOCKED_REVISIT_DAYS`)이 지나기 전에는 다시 요청하지
+  않는다. Operations는 이 글들을 `본문 미확보`에서 빼고 `원본 잠김`(`body_locked`)으로 따로 센다.
 - frontier retry는 `next_attempt_at` backoff를 갖는다: 2분에서 시작해 시도마다 배증하고
   6시간에서 멈춘다. `parse_drift`·`storage_error`·`incomplete_comments`는 5회 시도 후 `dead`로 전이하고
-  `network_error`는 원본 outage가 항목을 영구 탈락시키지 않도록 무기한 retry하며, `auth_required`는
+  `network_error`는 원본 outage가 항목을 탈락시키지 않도록 길게 retry하되, 같은 글이 24회
+  (`REDSTM_NETWORK_MAX_ATTEMPTS`, outage breaker 때문에 run당 약 1회라 여러 날)를 실패하면 원본에서 고장 난 글로 보고
+  `origin_unresponsive`로 `dead`가 된다(실측: `aa_i4p3ia/65573`은 90회째에도 헤더 뒤 397초 무응답). 원본이 끊은 응답
+  (`truncated_body`)을 저장하지 못하면 `storage_error`가 아니라 `network_error`로 센다. `auth_required`는
   session 복구에 운영자 개입이 필요할 수 있으므로 상한 없이 retry로 보류한다.
 - `parse_drift`는 raw capture와 fixture 후보를 남기고 board/run을 partial로 끝낸다.
 - `dead`는 metadata change만으로 자동 재개하지 않는다. 운영자가 `parse_drift`·`storage_error`·
   `incomplete_comments`를 오류별·건수 제한으로 선택해 다시 pending에 넣으며(`--requeue-dead`),
-  그 실행 수를 report한다. `network_error`는 dead가 되지 않으므로 재투입 대상이 아니다.
+  그 실행 수를 report한다. Operations의 `본문 없는 글 채우기`(사람이 누른 명령)는 첫 batch 전에 본문 없는 위 세 코드의
+  dead 행을 한 번 새 예산으로 되돌린다(`--revive-dead`). `origin_unresponsive`는 시도마다 수 분이 들고 원본에서만 바뀌므로
+  자동으로 되돌리지 않는다.
 - 429는 같은 request 안에서 재시도하지 않는다. `rate_limited`로 기록하고 frontier 기본 backoff와
   `Retry-After` 중 더 긴 시각까지 미룬다. `Retry-After`는 최대 24시간으로 제한한다.
 
