@@ -2,8 +2,10 @@
 
 개인용 TypeMoon 수집·보존·열람 도구다. Cloudflare Access + Worker + private R2의 Reader/Operations와
 schema v4 Oracle canonical runner가 배포돼 있다. 2026-09-29에는 full export/publish baseline과
-verified delta publish·인증 smoke를 통과했다. 자동 수집 schedule은 crawl/rollback canary와 실제
-Android acceptance가 남아 있어 disabled다. 최신 날짜별 판정은 [`docs/README.md`](docs/README.md),
+verified delta publish·인증 smoke를 통과했다. 프론트 M7 배포와 2026-10-03 자동 수집 재개 기록은
+[`docs/24 §19`](docs/24_frontend_redesign_spec.md#19-변경-기록)와
+[`Oracle 운영 기록`](docs/10_oracle_runner_runbook.md#수집-공백-점검과-따라잡기-2026-10-03)을 참조한다.
+최신 날짜별 판정은 [`docs/README.md`](docs/README.md),
 릴리스 절차는 [`docs/12_release_and_recovery.md`](docs/12_release_and_recovery.md)를 따른다.
 
 ## 먼저 읽기
@@ -20,7 +22,7 @@ Android acceptance가 남아 있어 disabled다. 최신 날짜별 판정은 [`do
 
 필수 도구:
 
-- Python 3.14
+- Python 3.14.5 이상, 3.15 미만
 - uv 0.11.28
 - Node.js 22 이상과 npm
 - Google Chrome (Playwright E2E)

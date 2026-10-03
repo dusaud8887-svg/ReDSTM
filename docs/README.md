@@ -1,6 +1,6 @@
 # ReDSTM 문서 인덱스
 
-- 갱신: 2026-10-02 (프론트 개편 M0–M6 반영, 확정 설계는 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md))
+- 갱신: 2026-10-03 (프론트 개편 M7·수집 재개 기록·코드 점검 반영, 확정 설계는 [`24`](24_frontend_redesign_spec.md)·[`DESIGN.md`](../DESIGN.md))
 - 제품·데이터 계약: [`00_initial_product_architecture.md`](00_initial_product_architecture.md)
 - 남은 출시 조건: [`04_implementation_plan.md`](04_implementation_plan.md)
 - 배포·복구 절차: [`12_release_and_recovery.md`](12_release_and_recovery.md)
@@ -14,15 +14,17 @@
 없다. [CI](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/36583050028)와 릴리스 사전 검증이
 통과했으며 당시 원격 D1에 적용할 새 migration은 없었다.
 
-`redstm-control.timer`는 enabled/active다. `redstm-schedule.timer`는 disabled/inactive다. 자동 수집
+당시 `redstm-control.timer`는 enabled/active, `redstm-schedule.timer`는 disabled/inactive였다. 자동 수집
 스케줄은 인증된 crawl/publish/rollback canary를 통과하기 전에는 켜지 않는다. 2026-09-28의
 `aa_19` crawl canary는 `listing_boundary_incomplete`로 partial이었다. 실제 Android 사용성 검증과
 자동 수집 장애·되돌리기 관문은 아직 완료 증거가 없다. 따라서 위 배포 성공을 완전 자동 운영 완료로
 해석하지 않는다. 숫자와 릴리스 ID는 이 날짜의 스냅샷이며 현재 운영 상태는 새 smoke/report로 확인한다.
 
+후속 기록: 프론트 M7은 2026-10-03 배포됐다([`24 §19`](24_frontend_redesign_spec.md#19-변경-기록)). 같은 날 수집 공백을 따라잡고 예약 timer를 다시 켠 기록이 [`10`](10_oracle_runner_runbook.md#수집-공백-점검과-따라잡기-2026-10-03)에 있다. 이번 로컬 코드 점검에서는 원격 상태를 새로 조회하지 않았다.
+
 ## 현재 계약
 
-프론트 개편 M0 진행: Linux 시각 회귀 기준 48개를 CI에서 생성·검증했다. Access 사용자 전용 `GET /api/v1/me`의 `ownerHash`가 이후 로컬 기록 namespace의 기준이며 응답은 저장하지 않는다. 버전 글꼴·vendor 자산에는 1년 immutable 헤더를 적용한다. 구현·검증 기록과 실기기 확인 대기는 [`24 §19`](24_frontend_redesign_spec.md#19-변경-기록).
+프론트 개편 M0–M7 구현·배포 기록이 있으며, 실제 기기 확인은 별도로 남아 있다. Linux 시각 회귀 기준 48개를 CI에서 생성·검증했다. Access 사용자 전용 `GET /api/v1/me`의 `ownerHash`가 로컬 기록 namespace의 기준이며 응답은 저장하지 않는다. 버전 글꼴·vendor 자산에는 1년 immutable 헤더를 적용한다. 구현·검증 기록과 실기기 확인 대기는 [`24 §19`](24_frontend_redesign_spec.md#19-변경-기록).
 
 작품 안 KWIC 찾기(P6-3)는 TypeMoon·소설·아카라이브에 연결됐다. 기본 범위는 실제 열어 본 회차+현재 회차이며 작품 전체는 명시적으로 선택한다. 결과 문장으로 이동한 뒤 Back에서 검색어·범위·텍스트 작품 정렬을 복원한다. 전체 E2E 689 pass/23 조건부 skip, 실기기 확인은 대기 중이다.
 
@@ -41,9 +43,10 @@ P6-7 본문 서체에 고운바탕을 더했고 고른 때만 받는다. P6-8 AA
 | [`08`](08_operations_control_plane.md), [`09`](09_frontend_strategy_and_roadmap.md) | 운영 화면·프런트엔드 구조 |
 | [`10`](10_oracle_runner_runbook.md), [`11`](11_configuration_and_policy.md), [`12`](12_release_and_recovery.md) | Oracle·설정·릴리스 운영 |
 | [`13`](13_crawler_comparison_and_adoption.md) | crawler 선택 근거 |
+| [`25`](25_project_review_20261003.md) | 2026-10-03 프로젝트 코드·기능 점검, 재현한 결함 수정과 검증·남은 완성도 항목 |
 | [`15`](15_reader_navigation_refresh.md), [`19`](19_mobile_reader_redesign.md) | Reader 탐색과 모바일 구현 계약. 이동·Back 동작은 `19`가 우선 |
 | [`18`](18_text_archive_predeploy.md), [`20`](20_arcalive_media_archive.md) | 별도 텍스트 장서와 이미지 보관 계약 |
-| [`24`](24_frontend_redesign_spec.md) v3.2, [`DESIGN.md`](../DESIGN.md) v2.2 | 프론트 개편(Ribbon Library) 확정 설계·개발 지시서: 외부 검토 판정(부록 D), 결정 확정(§17), 마일스톤 M0–M7 티켓·에이전트 지시문(§18)(구현 전, 의존성·vendor·글꼴 자산 준비 완료). 근거 조사 [`디자인 개편/`](디자인%20개편/), 시안 [`assets/2026-09-30-redesign/`](assets/2026-09-30-redesign/prototype.html) |
+| [`24`](24_frontend_redesign_spec.md) v3.2, [`DESIGN.md`](../DESIGN.md) v2.2 | 프론트 개편(Ribbon Library) 확정 설계·개발 지시서: 외부 검토 판정(부록 D), 결정 확정(§17), 마일스톤 M0–M7 티켓(§18)과 구현·배포 기록(§19). 근거 조사 [`디자인 개편/`](디자인%20개편/), 시안 [`assets/2026-09-30-redesign/`](assets/2026-09-30-redesign/prototype.html) |
 
 `00`과 `04`의 오래된 수치·계획 문단은 작성 당시 기록이다. 현재 배포 판정에는 위 날짜별
 체크포인트와 최신 검증 report를 사용한다. 공개 동작, schema, API, 설정, 권한이 바뀌면 해당 계약을
