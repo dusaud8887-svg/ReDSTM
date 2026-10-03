@@ -278,7 +278,8 @@ unique index를 둔다. 별도 conflict column이나 기존 row rewrite 없이, 
 사이에 두 요청이 경합해도 DB가 각 group 하나만 허용한다. constraint race는 stable
 `409 command_conflict`로 변환한다.
 
-run 진행/종료의 `archive_snapshot` event는 `outline_only`, frontier state counts,
+run 진행/종료의 `archive_snapshot` event는 `outline_only`(본문 없음, 삭제·원본 잠김 제외), `body_locked`(비밀글·권한
+제한으로 원본에서 열리지 않는 글), `missing_body_pending`/`missing_body_dead`, frontier state counts,
 `inventory_completed_boards`/`inventory_total_boards`와 실행 중 canonical capture의 stored 및
 parse/fetch failure 집계를 담고 `recorded_at`을 as-of로 쓴다.
 post/comment 원문이나

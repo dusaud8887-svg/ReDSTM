@@ -362,6 +362,7 @@ function renderArchiveSnapshot(snapshot) {
   byId("outline-only").textContent = number(counters.outline_only);
   byId("missing-body-pending").textContent = number(counters.missing_body_pending);
   byId("missing-body-dead").textContent = number(counters.missing_body_dead);
+  byId("body-locked").textContent = number(counters.body_locked);
   byId("frontier-waiting").textContent = number(waiting);
   byId("inventory-progress").textContent = total
     ? `${inProgress ? "진행 중" : pending ? "대기" : "완료"} · ${number(finished)}/${number(total)}`

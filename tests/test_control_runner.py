@@ -318,7 +318,8 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
         connection.execute(
             "UPDATE boards SET last_inventory_at = '2026-07-12 01:02:03' WHERE board_id = 'aa'"
         )
-        for post_id, availability in ((1, "unknown"), (2, "missing")):
+        # A secret post (restricted) is locked at the source: counted apart, not as missing.
+        for post_id, availability in ((1, "unknown"), (2, "missing"), (3, "restricted")):
             url = f"https://www.typemoon.net/aa/{post_id}"
             connection.execute(
                 """
@@ -351,7 +352,8 @@ def test_board_status_normalizes_sqlite_inventory_timestamp(tmp_path: Path) -> N
     )
     assert snapshot["events"][0]["counters"]["inventory_total_boards"] == 1
     assert snapshot["events"][0]["counters"]["outline_only"] == 1
-    assert snapshot["events"][0]["counters"]["discovered_posts"] == 2
+    assert snapshot["events"][0]["counters"]["body_locked"] == 1
+    assert snapshot["events"][0]["counters"]["discovered_posts"] == 3
     assert snapshot["events"][0]["counters"]["body_collected"] == 0
     assert snapshot["events"][0]["counters"]["missing_body_pending"] == 1
     assert snapshot["events"][0]["counters"]["missing_body_dead"] == 0

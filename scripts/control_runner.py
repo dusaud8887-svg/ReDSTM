@@ -1099,8 +1099,12 @@ class ControlRunner:
                     )
                     return combined
                 cycle_command = command
+                # A person's fill-missing gives capped dead rows one fresh budget, once per
+                # command (later batches would revive what this run just retired again).
+                if action == "fill-missing-content" and command_id is not None and not reports:
+                    cycle_command = [*command, "--revive-dead"]
                 if outage_retries:
-                    cycle_command = command.copy()
+                    cycle_command = cycle_command.copy()
                     cycle_command[cycle_command.index("--max-posts") + 1] = "1"
                 report = self._execute_report(
                     cycle_command, report_path, run_id, recovery_step, command_id=command_id
@@ -2207,7 +2211,8 @@ class ControlRunner:
                            (SELECT COUNT(*) FROM posts
                             WHERE posts.board_id = boards.board_id
                               AND latest_version_id IS NULL
-                              AND availability <> 'missing') AS outline_only
+                              AND availability NOT IN ('missing', 'restricted'))
+                               AS outline_only
                     FROM boards WHERE board_id = ?
                     """,
                     (board_id,),
@@ -2327,18 +2332,27 @@ class ControlRunner:
                     SELECT
                         COUNT(post.external_post_id) AS discovered_posts,
                         COALESCE(SUM(post.latest_version_id IS NOT NULL), 0) AS body_collected,
+                        -- Locked posts (secret posts, permission walls) have no body by
+                        -- nature: counted apart, never as work left to do.
                         COALESCE(SUM(
                             post.latest_version_id IS NULL
-                            AND (post.availability IS NULL OR post.availability <> 'missing')
+                            AND post.availability = 'restricted'
+                        ), 0) AS body_locked,
+                        COALESCE(SUM(
+                            post.latest_version_id IS NULL
+                            AND (post.availability IS NULL
+                                 OR post.availability NOT IN ('missing', 'restricted'))
                         ), 0) AS outline_only,
                         COALESCE(SUM(
                             post.latest_version_id IS NULL
-                            AND (post.availability IS NULL OR post.availability <> 'missing')
+                            AND (post.availability IS NULL
+                                 OR post.availability NOT IN ('missing', 'restricted'))
                             AND frontier.state IN ('pending', 'running', 'retry')
                         ), 0) AS missing_body_pending,
                         COALESCE(SUM(
                             post.latest_version_id IS NULL
-                            AND (post.availability IS NULL OR post.availability <> 'missing')
+                            AND (post.availability IS NULL
+                                 OR post.availability NOT IN ('missing', 'restricted'))
                             AND frontier.state = 'dead'
                         ), 0) AS missing_body_dead
                     FROM posts AS post
@@ -2464,6 +2478,7 @@ class ControlRunner:
             "discovered_posts": int(post_coverage["discovered_posts"]),
             "body_collected": int(post_coverage["body_collected"]),
             "outline_only": int(post_coverage["outline_only"]),
+            "body_locked": int(post_coverage["body_locked"]),
             "missing_body_pending": int(post_coverage["missing_body_pending"]),
             "missing_body_dead": int(post_coverage["missing_body_dead"]),
             "frontier_pending": frontier.get("pending", 0),

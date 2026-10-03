@@ -131,7 +131,7 @@ dd { margin: 5px 0 0; font-size: 14px; font-weight: 620; overflow-wrap: anywhere
 .collection-kpis dd { margin-top: 8px; font-size: clamp(21px, 2vw, 28px); letter-spacing: -.035em; }
 .collection-kpis .kpi-note, .queue-progress .kpi-note, .source-note { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .collection-kpis .kpi-note, .queue-progress .kpi-note { display: block; margin: 6px 0 0; letter-spacing: normal; }
-.queue-progress { margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
+.queue-progress { margin: 0; display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--line); }
 .queue-progress > div { padding: 16px 20px 16px 0; }
 .queue-progress > div + div { padding-left: 20px; border-left: 1px solid var(--line); }
 .queue-progress dd { font-size: 18px; }

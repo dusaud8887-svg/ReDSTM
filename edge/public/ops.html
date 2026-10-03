@@ -84,11 +84,12 @@
           <div><dt>파악된 게시글</dt><dd id="discovered-posts">—</dd><dd class="kpi-note">Oracle 원본 DB에 등록된 전체 게시글</dd></div>
           <div><dt>원본 본문 확보</dt><dd id="body-collected">—</dd><dd class="kpi-note">현재 본문 버전이 저장된 게시글</dd></div>
           <div><dt>Reader 반영 글</dt><dd id="reader-posts">—</dd><dd class="kpi-note">마지막 게시 시점에 Reader에서 읽을 수 있는 글</dd></div>
-          <div><dt>본문 미확보</dt><dd id="outline-only">—</dd><dd class="kpi-note">목차는 있으나 본문을 아직 확보하지 못한 글</dd></div>
+          <div><dt>본문 미확보</dt><dd id="outline-only">—</dd><dd class="kpi-note">목차는 있으나 본문을 아직 확보하지 못한 글(원본 잠김 제외)</dd></div>
         </dl>
         <dl class="queue-progress">
           <div><dt>자동 처리 대상</dt><dd id="missing-body-pending">—</dd><dd class="kpi-note">본문 미확보 중 대기·처리·재시도 상태</dd></div>
-          <div><dt>재검토 필요</dt><dd id="missing-body-dead">—</dd><dd class="kpi-note">본문 미확보 중 자동 재시도를 마친 항목</dd></div>
+          <div><dt>재검토 필요</dt><dd id="missing-body-dead">—</dd><dd class="kpi-note">자동 재시도를 마쳤거나 원본이 응답하지 않는 글 · 본문 없는 글 채우기가 다시 시도</dd></div>
+          <div><dt>원본 잠김</dt><dd id="body-locked">—</dd><dd class="kpi-note">비밀글·권한 제한으로 원본에서 열리지 않는 글 · 30일마다 다시 확인</dd></div>
           <div><dt>전체 작업 큐</dt><dd id="frontier-waiting">—</dd><dd class="kpi-note">기존 본문 갱신까지 포함한 전체 대기 작업</dd></div>
           <div><dt>전체 목차</dt><dd id="inventory-progress">—</dd><dd class="kpi-note" id="inventory-detail">게시판별 전체 목록 확인 이력 집계</dd></div>
         </dl>

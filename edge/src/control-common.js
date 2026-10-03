@@ -10,6 +10,7 @@ const counterNames = new Set([
   "discovered_posts",
   "body_collected",
   "outline_only",
+  "body_locked",
   "missing_body_pending",
   "missing_body_dead",
   "frontier_pending",

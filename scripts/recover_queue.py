@@ -133,7 +133,11 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 requeued_dead = len(candidates)
                 revisited_posts = 0
             else:
-                requeued_dead = 0
+                requeued_dead = (
+                    frontier.revive_missing_dead(board_id=board_id)
+                    if missing_only and getattr(args, "revive_dead", False)
+                    else 0
+                )
                 candidates, revisited_posts = _recovery_batch(
                     frontier,
                     limit=args.max_posts,
@@ -293,6 +297,11 @@ def _parse_args() -> argparse.Namespace:
         choices=tuple(sorted(REDSTM_CAPPED_RETRY_ERROR_CODES)),
         help="Requeue at most max-posts matching dead entries before recovery",
     )
+    parser.add_argument(
+        "--revive-dead",
+        action="store_true",
+        help="With --missing-only: retry body-less dead entries of capped codes once",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if min(args.max_posts, args.max_seconds, args.lease_seconds) < 1:
@@ -304,6 +313,8 @@ def _parse_args() -> argparse.Namespace:
         parser.error("full-content-max-rowid must be non-negative")
     if args.requeue_dead and args.full_content_before is not None:
         parser.error("requeue-dead cannot be combined with full-content mode")
+    if args.revive_dead and not args.missing_only:
+        parser.error("revive-dead requires missing-only")
     if args.missing_only and (args.requeue_dead or args.full_content_before is not None):
         parser.error("missing-only cannot be combined with requeue-dead or full-content mode")
     return args
