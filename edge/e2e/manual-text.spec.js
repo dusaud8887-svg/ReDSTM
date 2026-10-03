@@ -37,8 +37,7 @@ test("manual folders preserve full bodies, natural file order and saved reading 
   await expect(page.locator("#reader-title")).toHaveText("2화");
   await page.reload();
   await expect(page.locator("#archive-body")).toContainText("2화 본문");
-  const next = (page.viewportSize()?.width ?? 1440) <= 768 ? "#reader-bottom-next" : "#next-post";
-  await page.locator(next).click();
+  await page.locator("#next-post:visible, #reader-bottom-next:visible").first().click();
   await expect(page.locator("#reader-title")).toHaveText("10화");
   await page.goto("/text?lane=manual&category=작품%2F회차");
   await expect(page.locator("#result-list .result-title")).toHaveText(["2화", "10화"]);
