@@ -840,7 +840,10 @@ test("shows the archive cover and uses a single-plane mobile reader", async ({ p
     await expect(themeColors.nth(1)).toHaveAttribute("content", "#121413");
     await page.screenshot({ path: ".wrangler/screenshots/desktop-cover-night.png" });
   } else {
-    await expect(page.locator('.app-bar a[href="/ops"]')).toBeHidden();
+    // Phones leave Operations out of the app bar; wider screens keep it there.
+    const appBarOps = page.locator('.app-bar a[href="/ops"]');
+    if (page.viewportSize().width < 760) await expect(appBarOps).toBeHidden();
+    else await expect(appBarOps).toBeVisible();
   }
   await expect(page.locator('.home-operations[href="/ops"]')).toBeVisible();
 
