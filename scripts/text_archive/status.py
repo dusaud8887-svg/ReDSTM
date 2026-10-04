@@ -13,6 +13,7 @@ drop), the Oracle collector's queue and per-source cooldowns, and what is publis
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -230,3 +231,105 @@ def publish_status(
     if readback != body:
         raise OSError("text status readback mismatch")
     return {"status": "published", "bytes": len(body)}
+
+
+PC_STATE_NAME = "publish-status.json"
+
+
+def _novel_snapshot(receipts_root: Path) -> dict[str, Any] | None:
+    pointer_path = receipts_root / "availability" / "novel" / "current.json"
+    try:
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        manifest_path = receipts_root / str(pointer["manifest_key"]).removeprefix("receipts/")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        written = pointer_path.stat().st_mtime
+    except OSError, ValueError, KeyError, TypeError:
+        return None
+    return {
+        "snapshot_id": str(pointer.get("snapshot_id", ""))[:64],
+        "item_count": int(manifest.get("item_count") or 0),
+        "written_at": _iso(written),
+    }
+
+
+def build_pc_state(
+    db_path: Path,
+    receipts_root: Path,
+    *,
+    outcome: str,
+    reason: str = "",
+    previous: dict[str, Any] | None = None,
+    now: float | None = None,
+    deferrals_path: Path = DEFERRALS_PATH,
+) -> dict[str, Any]:
+    """What Newtomi needs to tell "not published yet" from "lost": the last publish run and
+    why it waited, the batches imported but not yet published (revision 1), and the novel
+    availability snapshot it reads. Ids, counts and times only."""
+    at = datetime.now(UTC) if now is None else datetime.fromtimestamp(now, UTC)
+    at_text = at.isoformat(timespec="seconds").replace("+00:00", "Z")
+    last_success = (previous or {}).get("last_success_at")
+    state: dict[str, Any] = {
+        "schema": 1,
+        "last_run": {"at": at_text, "outcome": outcome, "reason": reason[:120]},
+        "last_success_at": at_text if outcome == "published" else last_success,
+        "deferrals": _deferrals(deferrals_path),
+        "novel_snapshot": _novel_snapshot(receipts_root),
+    }
+    if not db_path.is_file():
+        state["pending"] = None
+        return state
+    db = sqlite3.connect(f"{db_path.absolute().as_uri()}?mode=ro", uri=True, timeout=30)
+    try:
+        count, items = db.execute(
+            """SELECT COUNT(*),COALESCE(SUM(json_array_length(receipt_json,'$.items')),0)
+               FROM text_archive_batches WHERE revision<2"""
+        ).fetchone()
+        oldest = db.execute(
+            """SELECT batch_id,imported_at FROM text_archive_batches WHERE revision<2
+               ORDER BY imported_at,batch_id LIMIT 1"""
+        ).fetchone()
+    finally:
+        db.close()
+    state["pending"] = {
+        "batches": int(count),
+        "items": int(items),
+        "oldest_batch_id": oldest[0] if oldest else None,
+        "oldest_imported_at": oldest[1] if oldest else None,
+    }
+    return state
+
+
+def write_pc_state(
+    db_path: Path,
+    receipts_root: Path,
+    *,
+    outcome: str,
+    reason: str = "",
+    now: float | None = None,
+    deferrals_path: Path = DEFERRALS_PATH,
+) -> Path:
+    """Replace receipts/publish-status.json (read by the inbox SFTP group, 0640) atomically.
+    Written on every publisher run, including deferred and failed ones."""
+    target = receipts_root / PC_STATE_NAME
+    try:
+        previous = json.loads(target.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        previous = None
+    state = build_pc_state(
+        db_path,
+        receipts_root,
+        outcome=outcome,
+        reason=reason,
+        previous=previous if isinstance(previous, dict) else None,
+        now=now,
+        deferrals_path=deferrals_path,
+    )
+    body = (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode()
+    receipts_root.mkdir(parents=True, exist_ok=True)
+    temporary = receipts_root / f".{PC_STATE_NAME}.tmp"
+    temporary.write_bytes(body)
+    temporary.chmod(0o640)
+    if os.name == "posix":
+        os.chown(temporary, -1, receipts_root.stat().st_gid)  # type: ignore[attr-defined]
+    temporary.replace(target)
+    return target

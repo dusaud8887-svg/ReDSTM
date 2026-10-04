@@ -758,11 +758,71 @@ def novel_text_sha256(raw: bytes) -> str:
     return hashlib.sha256(canonical_novel_bytes(raw) or raw).hexdigest()
 
 
-def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes | None) -> bool:
-    """True when both stored files reduce to the same known novel body."""
+# Arcalive post Markdown (Newtomi extractors/arcalive.py _format_post_markdown): a header of
+# "# title" and "- key: value" lines, a "---" line, then the body. Image lines are
+# "[image] <url>"; Newtomi and edge/public/arca-media.js name an Arcalive CDN image by its path
+# key, which survives a new expires/key signature, type=orig and the ac-o/ac host swap.
+_ARCA_MEDIA_HOST = re.compile(r"(?:^|\.)(?:arca\.live|namu\.la)\Z", re.IGNORECASE)
+_ARCA_PATH_KEY = re.compile(r"[a-z0-9]{2,20}/[a-f0-9]{16,128}\.(?:png|jpe?g|webp|gif|avif)\Z")
+_ARCA_IMAGE_LINE = re.compile(r"^\[image\] (\S+)$", re.MULTILINE)
+ARCALIVE_EQUIVALENCE_RULE = "arcalive_body_v1"
+NOVEL_EQUIVALENCE_RULE = "novel_text_v1"
+
+
+def arcalive_path_key(url: str) -> str | None:
+    """``https://ac-o.arca.live/20230607sac/<hash>.webp?expires=…`` → its path key,
+    ``20230607sac/<hash>.webp`` (Newtomi core/arca_media.py path_key)."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme not in {"http", "https"} or not _ARCA_MEDIA_HOST.search(parts.hostname or ""):
+        return None
+    key = parts.path.lstrip("/")
+    return key if _ARCA_PATH_KEY.fullmatch(key) else None
+
+
+def canonical_arcalive_bytes(raw: bytes) -> bytes | None:
+    """Version-1 Arcalive body: the text after the header's "---" line, with each known
+    Arcalive image URL replaced by its path key. Header metadata (title, category, author,
+    created) is not part of it; ordinary links, video lines and every other character are."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\x00" in text or not text.startswith("# "):
+        return None
+    head, separator, body = text.partition("\n---\n")
+    if not separator or not all(line.startswith("- ") for line in head.split("\n")[1:] if line):
+        return None
+
+    def keyed(match: re.Match[str]) -> str:
+        key = arcalive_path_key(match.group(1))
+        return f"[image] arca-media:{key}" if key else match.group(0)
+
+    return _ARCA_IMAGE_LINE.sub(keyed, body).encode("utf-8")
+
+
+def canonical_text_bytes(lane: str, raw: bytes) -> bytes | None:
+    """The bytes two submissions must share to be the same text, by lane (None: no rule)."""
+    if lane == "novel":
+        return canonical_novel_bytes(raw)
+    if lane == "arcalive":
+        return canonical_arcalive_bytes(raw)
+    return None
+
+
+def _equivalent_text(lane: str, object_root: Path, object_key: str, incoming: bytes | None) -> bool:
+    """True when the stored file and the incoming one reduce to the same known body."""
     if incoming is None:
         return False
-    incoming_text = canonical_novel_bytes(incoming)
+    # Newtomi applies a receipt's equivalence proof only once its receipt_contract knows the
+    # Arcalive rule; until then an Arcalive proof would fail the whole receipt there. The
+    # operator turns this on (REDSTM_TEXT_ARCALIVE_EQUIVALENCE=1) after that release.
+    if lane == "arcalive" and os.environ.get("REDSTM_TEXT_ARCALIVE_EQUIVALENCE") != "1":
+        return False
+    incoming_text = canonical_text_bytes(lane, incoming)
     if incoming_text is None or not object_key:
         return False
     match = re.fullmatch(r"objects/sha256/([a-f0-9]{2})/([a-f0-9]{64})\.md", object_key)
@@ -777,8 +837,12 @@ def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes |
         return False
     return (
         hashlib.sha256(stored).hexdigest() == match[2]
-        and canonical_novel_bytes(stored) == incoming_text
+        and canonical_text_bytes(lane, stored) == incoming_text
     )
+
+
+def _equivalent_novel_text(object_root: Path, object_key: str, incoming: bytes | None) -> bool:
+    return _equivalent_text("novel", object_root, object_key, incoming)
 
 
 def _safe_batch(
@@ -902,7 +966,7 @@ def _safe_batch(
                         reason = "sha256_mismatch"
                     claimed_text = item.get("text_sha256")
                     if not reason and claimed_text is not None and body is not None:
-                        canonical = canonical_novel_bytes(body)
+                        canonical = canonical_text_bytes(lane, body)
                         if (
                             not isinstance(claimed_text, str)
                             or not _SHA256.fullmatch(claimed_text)
@@ -1305,8 +1369,11 @@ def import_batch(
                     (identity,),
                 ).fetchone()
                 if existing is not None and existing["content_sha256"] != digest:
-                    if candidate["lane"] == "novel" and _equivalent_novel_text(
-                        object_root, str(existing["object_key"]), candidate["body"]
+                    if _equivalent_text(
+                        candidate["lane"],
+                        object_root,
+                        str(existing["object_key"]),
+                        candidate["body"],
                     ):
                         canonical_work_id = existing["canonical_work_id"]
                         canonical_chapter_id = existing["canonical_chapter_id"]
@@ -1320,9 +1387,15 @@ def import_batch(
                                 "submitted_raw_sha256": digest,
                                 "stored_object_sha256": existing["content_sha256"],
                                 "text_sha256": hashlib.sha256(
-                                    canonical_novel_bytes(candidate["body"]) or b""
+                                    canonical_text_bytes(candidate["lane"], candidate["body"])
+                                    or b""
                                 ).hexdigest(),
                                 "equivalence_version": 1,
+                                "equivalence_rule": (
+                                    NOVEL_EQUIVALENCE_RULE
+                                    if candidate["lane"] == "novel"
+                                    else ARCALIVE_EQUIVALENCE_RULE
+                                ),
                             }
                         )
                         continue

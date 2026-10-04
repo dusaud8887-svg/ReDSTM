@@ -33,7 +33,7 @@ from scripts.text_archive.importer import (
 )
 from scripts.text_archive.recovery_metadata import metadata_fingerprint
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
-from scripts.text_archive.status import publish_status
+from scripts.text_archive.status import publish_status, write_pc_state
 
 _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
@@ -872,9 +872,11 @@ def _finalize_receipts(db_path: Path, receipts_root: Path) -> None:
                     for item in receipt["items"]
                     if item.get("status") in {"accepted", "duplicate"}
                 ]
-                if not eligible:
-                    continue
-                keys = [f"item:{item['identity']}" for item in eligible]
+                # A batch whose every item was rejected or held has nothing to publish: its
+                # receipt is already final. Skipping it left it at revision 1 forever, so the PC
+                # waited on it (Newtomi feedback 2026-10-04). Items keep their own statuses.
+                # ("" only keeps the IN list valid when there is no eligible item.)
+                keys = [f"item:{item['identity']}" for item in eligible] or [""]
                 placeholders = ",".join("?" for _ in keys)
                 publications = {
                     str(row["key"]): row
@@ -1297,20 +1299,36 @@ def main() -> None:
     parser.add_argument("lane", choices=("novel", "arcalive", "manual", "both"))
     args = parser.parse_args()
     lanes = ("novel", "arcalive", "manual") if args.lane == "both" else (args.lane,)
+    db_path = Path("/srv/redstm-text/text-archive.sqlite")
+    receipts_root = Path("/srv/redstm-text-inbox/receipts")
+
+    def tell_pc(outcome: str, reason: str = "") -> None:
+        # Newtomi reads receipts/publish-status.json to tell "waiting" from "lost" (its
+        # 2026-10-04 feedback). Best-effort: it never changes the publish outcome.
+        try:
+            write_pc_state(db_path, receipts_root, outcome=outcome, reason=reason)
+        except OSError, sqlite3.Error:
+            pass
+
     results = []
     for lane in lanes:
         try:
             results.append(
                 publish_lane(
-                    Path("/srv/redstm-text/text-archive.sqlite"),
+                    db_path,
                     Path("/srv/redstm-text/objects"),
                     Path("/srv/redstm-text/build"),
-                    Path("/srv/redstm-text-inbox/receipts"),
+                    receipts_root,
                     lane,
                 )
             )
         except RuntimeWindowError as exc:
+            tell_pc("deferred", str(exc))
             parser.exit(75, f"text publish deferred: {exc}\n")
+        except Exception as exc:
+            tell_pc("failed", type(exc).__name__)
+            raise
+    tell_pc("published")
     # Operational status (docs/18 §5.2 "운영 상태"). It never fails the publish.
     try:
         results.append(

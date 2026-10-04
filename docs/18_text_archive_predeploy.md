@@ -120,7 +120,10 @@ DB 연결 시 숫자 source ID로 보완한다.
    마지막에 교체하고 다시 readback한다. 이전 pointer는 그전까지 유지된다. failure는 pointer를 건드리지
    않는다. batch 안의 accepted/duplicate 모든 항목이 pointer 게시까지 검증된 뒤 receipt를 revision 2로
    원자 갱신하고 item-level `published_at`을 준다. revision 2는 importer 재실행으로 revision 1에
-   되돌아가지 않는다. receipt는 게시 뒤에도 보존한다. 수신 batch(drop)는 2026-10-03부터 뉴토미가 revision 2 receipt나
+   되돌아가지 않는다. 게시할 항목(accepted/duplicate)이 하나도 없는 batch(모두 rejected·held_conflict)는
+   게시를 기다리지 않고 다음 publisher 실행에서 바로 revision 2로 확정한다(항목 상태는 그대로, `published_at` 없음;
+   2026-10-04 전에는 revision 1로 영원히 남아 PC가 대기로 보았다 — 9/26 `source_identity_invalid` 65개).
+   receipt는 게시 뒤에도 보존한다. 수신 batch(drop)는 2026-10-03부터 뉴토미가 revision 2 receipt나
    거부 status를 읽은 뒤 SFTP로 지운다(media batch와 같은 규칙). 수입 결과는 DB와 objects에 있어 drop 원본이 필요 없고,
    지우지 않으면 2GiB drop이 찬다(10-03에 받은 지 오래된 텍스트 batch 711개·1.1GB가 남아 있어 655개를 서버에서 정리).
 5. novel lane의 R2 pointer/readback과 revision-2 receipt 뒤에
@@ -133,6 +136,23 @@ DB 연결 시 숫자 source ID로 보완한다.
    snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 500건씩 파일로
    내보낸다. 게시 트리는 같은 SQLite 읽기 시점에서 500건 페이지와 JSONL 게시 계획을 파일로
    내보내며, 원문 객체 확인 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
+5-1. PC 상태 전달(2026-10-04, 뉴토미 피드백): publisher는 **매 실행마다**(게시·양보·실패 모두)
+   `receipts/publish-status.json`(0640, inbox read group)을 원자 교체한다. 내용은 ID·건수·시각만:
+   `last_run{at, outcome: published|deferred|failed, reason}`, `last_success_at`,
+   `pending{batches, items, oldest_batch_id, oldest_imported_at}`(revision 1 batch),
+   단계별 마지막 양보 사유(`deferrals`), `novel_snapshot{snapshot_id, item_count, written_at}`.
+   R2의 `published/status/text.json`은 성공한 실행에서만 갱신되므로 PC는 이 파일로 "게시 대기"와 "유실"을 구분한다.
+5-2. 본문 동등성(receipt `equivalence_version: 1` + `equivalence_rule`): 같은 identity의 새 원본 SHA가 달라도
+   규칙상 같은 본문이면 `held_conflict` 대신 증명 필드(`submitted_raw_sha256`·`stored_object_sha256`·
+   `text_sha256`)를 단 `duplicate`. 저장 객체는 최초 원본 그대로다.
+   - `novel_text_v1`: Newtomi `novel_text.canonical_novel_bytes`와 같은 규칙.
+   - `arcalive_body_v1`(`importer.canonical_arcalive_bytes`): 헤더(`# 제목`, `- key: value`)는 제외하고 `---` 뒤 본문만,
+     `[image] <url>` 줄의 알려진 아카라이브 CDN 이미지(호스트 `arca.live`/`namu.la`, 경로 키
+     `[a-z0-9]{2,20}/[a-f0-9]{16,128}.(png|jpe?g|webp|gif|avif)`)는 `[image] arca-media:<경로 키>`로 바꾼다
+     (서명 `expires`/`key`, `type=orig`, `ac-o`↔`ac` 차이 무시). 일반 링크의 쿼리, `[video]` 줄, 그 밖의 모든 글자는 그대로 비교.
+     Newtomi `receipt_contract.validate_content_receipt`가 `arcalive_post`의 이 규칙을 알기 전에는 증명을 받으면
+     receipt 전체를 거부하므로, Oracle에서 `REDSTM_TEXT_ARCALIVE_EQUIVALENCE=1`을 켜기 전까지는 꺼져 있다
+     (꺼진 동안 동작은 이전과 같음: `held_conflict`). 들어오는 `text_sha256`은 lane 규칙으로 검사한다.
 6. 게시 보존: 새 pointer readback이 끝난 뒤에만 lane별로 가장 최근에 검증된 release 5개
    (`publisher._RELEASE_RETENTION`)와 활성 pointer의 release, 그리고 이들이 참조하는 catalog·work
    catalog·작품 상세 index를 남긴다. 나머지 `published/releases/{lane}/`·`published/indexes/{lane}/`
