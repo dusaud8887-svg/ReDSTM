@@ -106,6 +106,12 @@ def test_normalize_source_timestamp_resolves_two_digit_year_gnuboard_dates() -> 
     assert normalize_source_timestamp("26-07-15") == "2026-07-14T15:00:00+00:00"
 
 
+def test_normalize_source_timestamp_keeps_a_leap_day_ahead_of_the_capture_clock() -> None:
+    # "02-29" a little ahead of the capture clock has no previous-year date to roll back to.
+    base = datetime(2028, 2, 28, 10, 0, tzinfo=_KST)
+    assert normalize_source_timestamp("02-29 23:00", base=base) == "2028-02-29T14:00:00+00:00"
+
+
 def test_normalize_source_timestamp_anchors_year_less_and_time_only_forms_to_base() -> None:
     base = datetime(2026, 7, 15, 14, 30, tzinfo=_KST)
     # "MM-DD" earlier in the capture year stays in that year...

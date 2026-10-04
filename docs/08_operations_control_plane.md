@@ -335,7 +335,7 @@ rows와 30일 retention은 충분한 범위다. [D1 limits](https://developers.c
 | action | fixed bound | result |
 |---|---|---|
 | sync-now | one normal incremental board cycle | run report |
-| retry-batch | 내부 20건 chunk로 due 0까지 처리 | outcome counts |
+| retry-batch | due 재시도+오래된 본문 재방문 한 배치(`REDSTM_RECOVERY_MAX_POSTS`건, 최대 2시간) | outcome counts |
 | publish-if-changed | marker 유무와 무관한 bounded incremental reconcile | release/smoke |
 | pause-after-current | current request/transaction 뒤 stop | paused run |
 | resume-schedule | paused marker만 해제 | next schedule |

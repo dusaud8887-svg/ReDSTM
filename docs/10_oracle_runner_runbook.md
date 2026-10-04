@@ -222,8 +222,10 @@ automatic schedule을 활성화한다. 그 전에는 schedule을 disabled로 유
 4. parser warning이나 listing failure가 있으면 boundary 조기 종료를 금지한다.
 5. 자동 cycle은 anchor page 뒤 2 page까지만 확인하고 전체 listing은 수동 `full-catalog`가 담당한다.
 6. `full-catalog`는 목록 완료 뒤 누락 body를 이어서 채우며 레거시 missing도 한 번 재검증한다. 기존 성공 body까지
-   재검증할 때는 수동 `full-content`를 사용한다. 자동 cycle도 due 재시도 20건을 최대 2시간 처리하고,
-   수동 `retry-batch`는 due가 없어질 때까지 이어간다.
+   재검증할 때는 수동 `full-content`를 사용한다. 자동 cycle은 `fill-missing-content`로 누락 본문을
+   120건·최대 4시간 채운다. 수동 `retry-batch`는 due 재시도와 오래된 본문 재방문을 섞은 한 배치
+   (`REDSTM_RECOVERY_MAX_POSTS`건, 최대 2시간 `REDSTM_RECOVERY_TIME_BUDGET_SECONDS`)만 처리하고 끝난다.
+   due 0까지 반복하지 않는 이유: 재방문 몫이 매 배치 다시 채워져 끝나지 않고 일정 공정성을 깨기 때문이다.
 
 받은 listing의 모든 changed row는 `max_posts`와 무관하게 durable frontier에 seed하고, 이번 detail
 scheduling만 cap한다. schema v4의 board별 `inventory_next_page`는 bounded inventory가 다음 page에서

@@ -139,7 +139,11 @@ def _parse_base_anchored(rendered: str, base: datetime) -> datetime | None:
         # place it in the future (a one-day skew tolerance absorbs clock drift), in which
         # case it is last year's post shown without a year rollover.
         if candidate > base_kst + timedelta(days=1):
-            candidate = candidate.replace(year=base_kst.year - 1)
+            try:
+                candidate = candidate.replace(year=base_kst.year - 1)
+            except ValueError:
+                # 02-29 has no previous-year date: it can only be this year's, ahead by skew.
+                pass
         return candidate
     for time_format in _TIME_ONLY_FORMATS:
         try:

@@ -140,9 +140,9 @@ def _timestamp() -> str:
 
 
 def _is_archive_locked(error: BaseException) -> bool:
-    # journal_mode=DELETE means any long reader/writer (orphaned crawl child, backup,
-    # export) surfaces here as OperationalError("database is locked") after the busy
-    # timeout; the distinct safe code separates it from real runner defects on /ops.
+    # Under WAL a second writer (orphaned crawl child, migration, checkpoint) still surfaces
+    # here as OperationalError("database is locked") after the busy timeout; the distinct
+    # safe code separates it from real runner defects on /ops.
     return isinstance(error, sqlite3.OperationalError) and "lock" in str(error).casefold()
 
 
@@ -523,8 +523,14 @@ class ControlRunner:
                 payload = self._finish_payload("failed", safe_code)
             if report.get("stop_reason") == "schedule_paused":
                 intentional_pause = True
+            # A scheduled run has no local ledger: anything raised past run_start would leave
+            # it running in D1 until the stale reaper. Telemetry is best-effort; a lost publish
+            # marker fails the action instead of the process.
             if action in {"sync-now", "inventory"}:
-                self._board_summaries(report)
+                try:
+                    self._board_summaries(report)
+                except OSError, RuntimeError, ValueError, sqlite3.Error:
+                    pass
             if (
                 action
                 in {
@@ -536,7 +542,11 @@ class ControlRunner:
                 }
                 and payload["counters"]["changed_posts"]
             ):
-                self._write_publish_marker()
+                try:
+                    self._write_publish_marker()
+                except OSError as error:
+                    self._write_command_diagnostics(run_id, action, error)
+                    action_state, safe_code = "failed", "runner_failed"
             counters["changed_posts"] += payload["counters"]["changed_posts"]
             counters["failed_posts"] += payload["counters"]["failed_posts"]
             if action == "sync-now":
@@ -558,7 +568,10 @@ class ControlRunner:
                 safe_message=safe_code,
             )
             sequence += 1
-        self._archive_snapshot_event(run_id, sequence)
+        try:
+            self._archive_snapshot_event(run_id, sequence)
+        except OSError, RuntimeError, ValueError, sqlite3.Error:
+            pass
         if not paused:
             self._maintain_storage()
         finish_code = (
@@ -2284,6 +2297,9 @@ class ControlRunner:
         else:
             kind = "command_finish"
             path = f"/api/v1/runner/commands/{command_id}/finish"
+            # The Worker requires runner_id on a command finish; an interrupted or
+            # replayed result recorded without it would be rejected for good.
+            payload = {"runner_id": self.profile.runner_id, **payload}
         delivery = self._send(kind, path, payload, f"finish-{command_id}")
         self._finish_command_reporting(command_id, delivery)
         return {

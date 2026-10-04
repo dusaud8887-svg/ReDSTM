@@ -727,6 +727,24 @@ def test_interrupted_checkpointed_collection_resumes_with_saved_progress(
     }
 
 
+def test_interrupted_marker_command_finish_carries_runner_id(tmp_path: Path) -> None:
+    # A marker command has no run: its replayed finish goes to /commands/{id}/finish,
+    # which the Worker rejects without runner_id.
+    command = _command("pause-after-current")
+    api = Api([])
+    runner, store = _runner(tmp_path, api)
+    store.record_claim(command["command_id"], command["action"])
+    store.begin_command(command["command_id"])
+
+    report = runner.run_once()
+
+    assert report["status"] == "replayed"
+    path, finish = next((path, payload) for path, payload in api.calls if path.endswith("/finish"))
+    assert path.endswith(f"/commands/{command['command_id']}/finish")
+    assert finish["safe_summary_code"] == "runner_interrupted"
+    assert finish["runner_id"] == runner.profile.runner_id
+
+
 def test_interrupted_full_action_without_an_open_checkpoint_is_not_reexecuted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
