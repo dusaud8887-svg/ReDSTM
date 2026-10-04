@@ -142,7 +142,8 @@ def _validate_status(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError("remote status must be a JSON object")
     report = cast(dict[str, Any], payload)
-    if set(report) != {
+    # current_complete arrived later: an older installer on the host omits it.
+    if set(report) - {"current_complete"} != {
         "canonical_previous_count",
         "control_timer",
         "current_release",
@@ -153,6 +154,8 @@ def _validate_status(payload: object) -> dict[str, Any]:
         "schedule_timer",
     }:
         raise RuntimeError("remote status fields are invalid")
+    if "current_complete" in report and type(report["current_complete"]) is not bool:
+        raise RuntimeError("remote current_complete is invalid")
     for key in ("current_release", "previous_release"):
         release = report[key]
         if release is not None and (
@@ -550,7 +553,11 @@ def deploy_release(
             except (OSError, subprocess.SubprocessError, RuntimeError) as status_error:
                 last_error = status_error
             else:
-                if last_status["current_release"] == release:
+                # A pre-marker installer omits current_complete; then the symlink decides.
+                if (
+                    last_status["current_release"] == release
+                    and last_status.get("current_complete") is not False
+                ):
                     return last_status
             if status_attempt + 1 < _POST_INSTALL_STATUS_ATTEMPTS:
                 sleep(2)

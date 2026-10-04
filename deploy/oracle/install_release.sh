@@ -272,8 +272,14 @@ release_status() {
   printf '{"canonical_previous_count":%s,"control_timer":{"active":%s,"enabled":%s},' \
     "$canonical_previous_count" "$(systemd_flag is-active redstm-control.timer)" \
     "$(systemd_flag is-enabled redstm-control.timer)"
-  printf '"current_release":%s,"previous_release":%s,' \
-    "$(release_json "$CURRENT")" "$(release_json "$PREVIOUS")"
+  # Only a current release named by the completion marker is fully installed (docs/12).
+  local current_json current_complete=false
+  current_json="$(release_json "$CURRENT")"
+  if [[ "$current_json" != null ]] && release_is_complete "${current_json//\"/}"; then
+    current_complete=true
+  fi
+  printf '"current_complete":%s,"current_release":%s,"previous_release":%s,' \
+    "$current_complete" "$current_json" "$(release_json "$PREVIOUS")"
   printf '"rclone":{"available":%s,"version":%s},"releases_count":%s,' \
     "$rclone_available" "$rclone_json" "$releases_count"
   printf '"root_free_bytes":%s,"schedule_timer":{"active":%s,"enabled":%s}}\n' \

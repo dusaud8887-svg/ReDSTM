@@ -97,7 +97,7 @@ Oracle marker 부재까지 확인해야 bootstrap이 완료된다.
 
 1. Oracle target, Access machine credential, Cloudflare auth를 쓰기 전에 검증한다.
 2. remote Git ref를 갱신하고 clean/pushed commit인지 확인한다.
-3. 해당 SHA의 detached 임시 worktree를 만들고 그 snapshot에서 전체 Python/Edge gate와 배포를 실행한다. Edge E2E는 workstation 메모리에 맞춰 `npm run test:e2e:local`(project별 실행)이다. CI는 `npm run test:e2e`.
+3. 해당 SHA의 detached 임시 worktree를 만들고 그 snapshot에서 전체 Python/Edge gate와 배포를 실행한다. Edge E2E는 workstation 메모리에 맞춰 `npm run test:e2e:local`(project별 실행)이다. CI는 project별 matrix(desktop/medium/mobile/compact)로 병렬 실행한다.
 4. 현재 Worker deployment/version과 Oracle status를 기록한다.
 5. remote D1 migration을 적용한다.
 6. Worker를 `git:<sha>` message와 `git-<40-character-sha>` tag로 배포한다.
@@ -111,6 +111,8 @@ Oracle marker 부재까지 확인해야 bootstrap이 완료된다.
 
 Oracle installer는 uv/rclone artifact의 version과 SHA-256을 고정하고, release archive hash를 전환 전에
 검증한다. `/opt/redstm/current-release.complete` marker가 있는 상태만 완전한 current로 취급한다.
+installer `status`는 이를 `current_complete`로 보고하고, 설치 오류 뒤 symlink만 새 release를 가리키며
+marker가 없으면 `oracle_install_incomplete_no_automatic_rollback`으로 멈춘다(Worker-only smoke로 ok 처리 금지).
 중단된 전환은 같은 target으로 재실행하면 unit/runtime 상태를 재조정한다. 원격 lock 충돌이나
 active crawler/runner, expected-current 불일치는 mutation을 시작하지 않은 실패로 보고 자동
 rollback하지 않는다. canonical activation과 명시적 rollback도 같은 runner lock을 잡은 뒤에만
@@ -143,7 +145,7 @@ CI에는 production Cloudflare/Oracle/TypeMoon credential을 넣지 않는다. C
 
 ## 5. Workstation 준비
 
-필수 도구는 Git, uv 0.11.28, Python 3.14, Node 22 이상, npm, Google Chrome, Wrangler 4.120.0이다. Cloudflare에는
+필수 도구는 Git, uv 0.11.28, Python 3.14, Node 22 이상, npm, Google Chrome, Wrangler(`edge/package.json` 고정, 2026-10-05 기준 4.147.0)이다. Cloudflare에는
 Wrangler deploy/D1 권한이 있어야 하고 machine smoke에는 다음 값이 process environment에 있어야 한다.
 
 ```text

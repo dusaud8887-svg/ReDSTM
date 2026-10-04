@@ -2,7 +2,7 @@
 // project, so the wrangler/workerd server and the Chrome workers start fresh for each project instead
 // of growing across all ~800 tests (the 2026-10-02 run ran out of memory: workers failed to start
 // with 0xC0000142). Extra arguments go to every run, e.g. `--last-failed`.
-// CI keeps the single `npm run test:e2e` run.
+// CI runs the same projects as a parallel matrix job.
 import { spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 

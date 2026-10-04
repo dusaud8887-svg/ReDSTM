@@ -1096,6 +1096,47 @@ def test_oracle_install_error_is_reconciled_when_remote_is_the_target_release(
     assert report["oracle"]["current_release"] == release
 
 
+def test_oracle_install_error_with_an_incomplete_target_release_is_not_reported_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The symlink already names the release but the completion marker does not: units or
+    # timers were never installed, so a Worker-only smoke must not turn this into ok.
+    key = tmp_path / "oracle.key"
+    key.write_text("test", encoding="utf-8")
+    target = OracleTarget("oracle.example", "ubuntu", key)
+    release = "a" * 40
+    statuses = iter(
+        [
+            {"current_release": "b" * 40, "current_complete": True},
+            {"current_release": release, "current_complete": False},
+        ]
+    )
+    monkeypatch.setattr("scripts.release.status", lambda *_args, **_kwargs: next(statuses))
+    monkeypatch.setattr(
+        "scripts.release.deploy_cloudflare",
+        lambda *_args, **_kwargs: {
+            "previous": {"version_id": _WORKER_OLD},
+            "deployed": {"version_id": _WORKER_NEW},
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.release.deploy_oracle_application",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("enable failed")),
+    )
+
+    with pytest.raises(ReleaseError, match="oracle_install_incomplete_no_automatic_rollback"):
+        deploy_all(
+            tmp_path,
+            target,
+            release,
+            smoke=lambda git_sha, worker_version: {
+                "worker_git_sha": git_sha,
+                "worker_version_id": worker_version,
+                "checks": {"worker_version": True},
+            },
+        )
+
+
 def test_oracle_install_error_with_an_external_current_sha_stops_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -315,7 +315,7 @@ def edge_preflight(
         _node_command(runner, "npm", "run", "check"),
         _node_command(runner, "npm", "run", "lint"),
         # Releases run on the 16 GB workstation (docs/12 §4): one Playwright run per project keeps
-        # the local server and browsers within memory. CI keeps the single `test:e2e` run.
+        # the local server and browsers within memory. CI runs the projects as a parallel matrix.
         _node_command(runner, "npm", "run", "test:e2e:local"),
         _node_command(runner, "npm", "run", "test:d1"),
     ]
@@ -732,6 +732,11 @@ def deploy_all(
                 "oracle_deploy", "oracle_install_ambiguous_no_automatic_rollback"
             ) from status_error
         observed_release = observed_oracle.get("current_release")
+        if observed_release == release and observed_oracle.get("current_complete") is False:
+            # The symlink moved but the install never finished (units, timers, marker).
+            raise ReleaseError(
+                "oracle_deploy", "oracle_install_incomplete_no_automatic_rollback"
+            ) from error
         if observed_release == release:
             oracle = observed_oracle
         elif observed_release != previous_release:
