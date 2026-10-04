@@ -694,9 +694,7 @@ def test_conditional_detail_carries_stored_validators() -> None:
         def __init__(self) -> None:
             self.validators: tuple[str | None, str | None] | None = None
 
-        def latest_conditional_validator(
-            self, url: str
-        ) -> tuple[str | None, str | None] | None:
+        def latest_conditional_validator(self, url: str) -> tuple[str | None, str | None] | None:
             return self.validators
 
     class _Session:
@@ -710,11 +708,10 @@ def test_conditional_detail_carries_stored_validators() -> None:
 
     request = spider.detail_request("write_free21", 62068, _Session())  # type: ignore[arg-type]
 
-    assert request.headers.get("If-None-Match", b"").decode("latin-1") == '"v1"'
-    assert (
-        request.headers.get("If-Modified-Since", b"").decode("latin-1")
-        == "Fri, 10 Jul 2026 00:00:00 GMT"
-    )
+    assert (request.headers.get("If-None-Match") or b"").decode("latin-1") == '"v1"'
+    assert (request.headers.get("If-Modified-Since") or b"").decode(
+        "latin-1"
+    ) == "Fri, 10 Jul 2026 00:00:00 GMT"
 
     store.validators = None
     plain = spider.detail_request("write_free21", 62068, _Session())  # type: ignore[arg-type]
@@ -725,7 +722,7 @@ def test_conditional_detail_carries_stored_validators() -> None:
     store.validators = ('"v2"', None)
     etag_only = spider.detail_request("write_free21", 62068, _Session())  # type: ignore[arg-type]
 
-    assert etag_only.headers.get("If-None-Match", b"").decode("latin-1") == '"v2"'
+    assert (etag_only.headers.get("If-None-Match") or b"").decode("latin-1") == '"v2"'
     assert etag_only.headers.get("If-Modified-Since") is None
 
 

@@ -650,15 +650,17 @@ class TypeMoonSpider(scrapy.Spider):
     def listing_error(self, failure: Any) -> None:
         response = getattr(failure.value, "response", None)
         status = getattr(response, "status", None)
-        block_page = (
-            status in {401, 403} and response is not None and _waf_block_headers(response)
-        )
-        error_code = "network_error" if block_page else (
-            {401: "auth_required", 403: "auth_required", 429: "rate_limited"}.get(
-                status, "listing_fetch_failed"
+        block_page = status in {401, 403} and response is not None and _waf_block_headers(response)
+        error_code = (
+            "network_error"
+            if block_page
+            else (
+                {401: "auth_required", 403: "auth_required", 429: "rate_limited"}.get(
+                    status, "listing_fetch_failed"
+                )
+                if isinstance(status, int) and not isinstance(status, bool)
+                else "listing_fetch_failed"
             )
-            if isinstance(status, int) and not isinstance(status, bool)
-            else "listing_fetch_failed"
         )
         self.failure_codes.add(error_code)
         self._halted = True

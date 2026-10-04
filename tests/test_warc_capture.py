@@ -33,9 +33,7 @@ def test_warc_skips_conditional_hits_and_publishes_validators(tmp_path: Path) ->
     assert middleware.process_response(not_modified, response_304) is response_304
     assert not_modified.meta.get("raw_sha256") is None
 
-    request = Request(
-        "https://www.typemoon.net/write_free21/62068", meta={"redstm_capture": True}
-    )
+    request = Request("https://www.typemoon.net/write_free21/62068", meta={"redstm_capture": True})
     response = HtmlResponse(
         request.url,
         body=b"<html>body</html>",

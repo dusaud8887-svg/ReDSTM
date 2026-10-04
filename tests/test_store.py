@@ -733,9 +733,7 @@ def test_conditional_hit_records_unchanged_without_touching_the_version(tmp_path
     )
     frontier = FrontierStore(path)
     frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
-    lease = frontier.claim_identity(
-        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(hours=1)
-    )
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(hours=1))
     assert lease is not None
     store.record_unmodified_post(
         run_id,
@@ -865,9 +863,7 @@ def test_crash_after_store_before_ack_replays_as_unchanged(tmp_path: Path) -> No
     with connect_archive(path, read_only=True) as db:
         assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM comments").fetchone()[0] == 1
-        outcomes = [
-            row[0] for row in db.execute("SELECT outcome FROM captures ORDER BY id")
-        ]
+        outcomes = [row[0] for row in db.execute("SELECT outcome FROM captures ORDER BY id")]
         assert outcomes == ["stored", "unchanged"]
         assert db.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"
 
@@ -884,9 +880,10 @@ def test_stale_lease_write_is_fenced(tmp_path: Path) -> None:
     frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
     stale = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
     assert stale is not None
-    assert frontier.claim_identity(
-        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(seconds=61)
-    ) is not None
+    assert (
+        frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(seconds=61))
+        is not None
+    )
     with pytest.raises(RuntimeError, match="stale or missing frontier lease"):
         store.store_post(
             run_id,

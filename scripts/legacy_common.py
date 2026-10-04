@@ -172,9 +172,7 @@ def _parse_relative(rendered: str, base: datetime | None) -> datetime | None:
     }
     if base is not None:
         settings["RELATIVE_BASE"] = base.astimezone(_KST)
-    parsed: datetime | None = dateparser.parse(
-        rendered, languages=["ko", "en"], settings=settings
-    )
+    parsed: datetime | None = dateparser.parse(rendered, languages=["ko", "en"], settings=settings)
     return parsed
 
 
