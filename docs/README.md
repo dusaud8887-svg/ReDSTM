@@ -44,6 +44,8 @@ P6-7 본문 서체에 고운바탕을 더했고 고른 때만 받는다. P6-8 AA
 | [`10`](10_oracle_runner_runbook.md), [`11`](11_configuration_and_policy.md), [`12`](12_release_and_recovery.md) | Oracle·설정·릴리스 운영 |
 | [`13`](13_crawler_comparison_and_adoption.md) | crawler 선택 근거 |
 | [`25`](25_project_review_20261003.md) | 2026-10-03 프로젝트 코드·기능 점검, 재현한 결함 수정과 검증·남은 완성도 항목 |
+| [`26`](26_ux_laws_research.md), [`28`](28_mobile_ux_audit_20261004.md) | UX 법칙·HCI·가이드라인 조사(참고)와 이를 적용한 2026-10-04 모바일 화면·흐름 점검 15건·처리 기록 |
+| [`27`](27_dependencies_libraries_research.md), [`29`](29_dependency_review_20261004.md) | 의존성·라이브러리 활용 조사(참고)와 코드·감사 실행으로 검증한 결과·개선·버전 갱신 기록 |
 | [`15`](15_reader_navigation_refresh.md), [`19`](19_mobile_reader_redesign.md) | Reader 탐색과 모바일 구현 계약. 이동·Back 동작은 `19`가 우선 |
 | [`18`](18_text_archive_predeploy.md), [`20`](20_arcalive_media_archive.md) | 별도 텍스트 장서와 이미지 보관 계약 |
 | [`24`](24_frontend_redesign_spec.md) v3.2, [`DESIGN.md`](../DESIGN.md) v2.2 | 프론트 개편(Ribbon Library) 확정 설계·개발 지시서: 외부 검토 판정(부록 D), 결정 확정(§17), 마일스톤 M0–M7 티켓(§18)과 구현·배포 기록(§19). 근거 조사 [`디자인 개편/`](디자인%20개편/), 시안 [`assets/2026-09-30-redesign/`](assets/2026-09-30-redesign/prototype.html) |
