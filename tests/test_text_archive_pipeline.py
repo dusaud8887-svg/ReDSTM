@@ -1477,6 +1477,33 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
         )
 
 
+def test_oracle_keeps_cycling_candidates_after_one_full_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "CREATE TABLE text_collector_hosts(source TEXT PRIMARY KEY, host TEXT NOT NULL, "
+            "failures INTEGER NOT NULL DEFAULT 0, next_offset INTEGER NOT NULL DEFAULT 1, "
+            "blocked INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execute(
+            "INSERT INTO text_collector_hosts(source,host,failures,next_offset) "
+            "VALUES('blacktoon','blacktoon452.com',5000,6)"
+        )
+    session: Any = FakeSession(
+        FakeResponse({}, status=503),
+        FakeResponse({"content": [{"id": 24753, "title": "Novel"}], "total": 1, "size": 96}),
+    )
+    sources = collector.configured_sources({}, db_path)
+    result = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert result["status"] == "listed"
+    assert "blacktoon453.com" in session.calls[-1]
+    assert collector.configured_sources({}, db_path)[0].host == "blacktoon453.com"
+
+
 def test_oracle_does_not_promote_challenged_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

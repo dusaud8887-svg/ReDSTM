@@ -966,8 +966,12 @@ def _host_failure(db_path: Path, unit: RequestUnit) -> RequestUnit | None:
                 "UPDATE text_collector_hosts SET failures=? WHERE source=?",
                 (failures, unit.source.name),
             )
-            if failures < 2 or blocked or offset > 5:
+            if failures < 2 or blocked:
                 return None
+            # The sites move up a number every few weeks, and the next one may not be live yet
+            # when the old one dies. Keep cycling +1..+5 instead of giving up after one pass.
+            if offset > 5:
+                offset = 1
             match = re.fullmatch(r"([a-z]+)(\d+)(\.com)", unit.source.host)
             if match is None:
                 return None

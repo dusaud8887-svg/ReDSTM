@@ -70,9 +70,12 @@ DB 연결 시 숫자 source ID로 보완한다.
 ## 3. 수집·요청 예산
 
 - 대상 host는 명시 설정된 `blacktoonNNN.com`, `marumaruNNN.com` 형식만 허용한다. 현재 기본값은
-  `blacktoon452.com`, `marumaru102.com`이다. 같은 출처의 5xx가 두 번 쌓이면 그 출처만 숫자
-  suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 성공한 호스트를 저장한다. proxy, browser,
-  anti-bot/captcha 우회는 없다.
+  `blacktoon452.com`, `marumaru102.com`이고, 운영 값은 `text_collector_hosts`에 저장된 호스트가
+  우선한다(2026-10-04 `blacktoon454.com`, `marumaru103.com`). 같은 출처의 연결 실패나 5xx가 두 번
+  쌓이면 그 출처만 실패마다 숫자 suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 다 돌면 +1부터 다시
+  돈다(다음 번호가 아직 열리지 않았을 때 영구히 멈추지 않게). 유효한 JSON을 받은 호스트를 저장한다.
+  proxy, browser, anti-bot/captcha 우회는 없다. 사이트가 API에 seo-gate(406)를 걸면 수집은 멈추고
+  held로 남는다.
 - 양쪽 도메인은 한 `blacktoon-marumaru-novel` 요청 그룹으로 persisted 5초 최소 간격을 공유한다.
   403/429/509 cooldown은 출처별 행이라 한 도메인이 막혀도 다른 도메인은 진행한다. 요청은 source별
   round-robin이다. collector timer는 5분마다
