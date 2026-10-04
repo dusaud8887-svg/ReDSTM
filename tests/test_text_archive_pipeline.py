@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import time
 from collections.abc import Iterator
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
@@ -23,7 +24,7 @@ def test_publication_record_closes_sqlite_connection(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     connection = MagicMock()
-    monkeypatch.setattr(publisher.sqlite3, "connect", lambda _: connection)
+    monkeypatch.setattr(publisher.sqlite3, "connect", lambda _, **__: connection)
     publisher._record_publication(tmp_path / "text.sqlite", "key", "digest")
     connection.close.assert_called_once_with()
 
@@ -1007,6 +1008,84 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
     assert body_path.read_text(encoding="utf-8") == "sample chapter\n"
 
 
+def test_work_refresh_keeps_paid_and_review_markers(tmp_path: Path) -> None:
+    # A work list without price fields must not undo what episode details learned: a
+    # reset paid chapter would be fetched again every week.
+    db = importer._connect(tmp_path / "text.sqlite")
+    db.executescript(collector._SCHEMA)
+    unit = collector.RequestUnit(
+        collector.Source("blacktoon", "blacktoon452.com"),
+        "work",
+        "42",
+        "https://blacktoon452.com/api/works/42",
+    )
+    payload = {
+        "work": {"id": 42, "title": "작품", "author": "작가"},
+        "episodes": [{"id": 1, "number": 1}, {"id": 2, "number": 2}, {"id": 3, "number": 3}],
+    }
+    try:
+        collector._apply_work(db, unit, payload, None)
+        with db:
+            db.execute(
+                "UPDATE text_novel_chapters SET access='point',status='waiting' "
+                "WHERE source_chapter_id='1'"
+            )
+            db.execute(
+                "UPDATE text_novel_chapters SET status='parse_review' WHERE source_chapter_id='2'"
+            )
+        collector._apply_work(db, unit, payload, None)
+        rows = db.execute(
+            "SELECT source_chapter_id,access,status FROM text_novel_chapters "
+            "ORDER BY source_chapter_id"
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("1", "point", "waiting"),
+            ("2", "unknown", "parse_review"),
+            ("3", "unknown", "unknown_access"),
+        ]
+        # An explicit free answer still releases a waiting chapter.
+        free = {**payload, "episodes": [{"id": 1, "number": 1, "isFree": True}]}
+        collector._apply_work(db, unit, free, None)
+        assert tuple(
+            db.execute(
+                "SELECT access,status FROM text_novel_chapters WHERE source_chapter_id='1'"
+            ).fetchone()
+        ) == ("free", "discovered")
+    finally:
+        db.close()
+
+
+def test_failed_units_back_off_and_removed_ones_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "text.sqlite"
+    db = importer._connect(db_path)
+    try:
+        db.executescript(collector._SCHEMA)
+        with db:
+            db.executemany(
+                "INSERT INTO text_collector_queue(source,kind,entity_id,status,updated_at) "
+                "VALUES('blacktoon','episode',?,'pending','now')",
+                [("1",), ("2",)],
+            )
+    finally:
+        db.close()
+    unit = collector.RequestUnit(
+        collector.Source("blacktoon", "blacktoon452.com"), "episode", "1", "https://x/1"
+    )
+    for _ in range(3):
+        collector._note_failure(db_path, unit, "http_500", 1_000 + 900, backoff=True, now=1_000)
+    gone = collector.RequestUnit(unit.source, "episode", "2", "https://x/2")
+    collector._note_failure(db_path, gone, "http_404", 1_000 + 900, backoff=True, now=1_000)
+    with sqlite3.connect(db_path) as check:
+        rows = check.execute(
+            "SELECT entity_id,status,attempts,next_check_at FROM text_collector_queue "
+            "ORDER BY entity_id"
+        ).fetchall()
+    # Third failure waits 900 << 2 seconds; a 404 is terminal.
+    assert rows == [("1", "retry", 3, 1_000 + 3_600), ("2", "gone", 1, 1_000 + 900)]
+
+
 def test_work_recrawl_repairs_imported_title_without_changing_identity(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     db.executescript(collector._SCHEMA)
@@ -1527,12 +1606,11 @@ def test_oracle_does_not_promote_challenged_candidate(
     assert result["status"] == "cooldown"
     assert collector.configured_sources({}, db_path)[0].host == "blacktoon452.com"
     with sqlite3.connect(db_path) as db:
-        assert (
-            db.execute(
-                "SELECT blocked FROM text_collector_hosts WHERE source='blacktoon'"
-            ).fetchone()[0]
-            == 1
-        )
+        # The challenge pauses rotation until its cooldown ends, not forever.
+        blocked_until = db.execute(
+            "SELECT blocked FROM text_collector_hosts WHERE source='blacktoon'"
+        ).fetchone()[0]
+    assert time.time() + 5 * 3600 < blocked_until <= time.time() + 6 * 3600 + 60
 
 
 def test_source_comparison_matches_unique_free_chapter_without_storing_body(
@@ -2161,3 +2239,24 @@ def test_old_availability_snapshots_and_receipts_are_pruned(tmp_path: Path) -> N
         os.utime(path, (now - age * 86400, now - age * 86400))
     assert publisher.prune_receipts(receipts, drop, now=now) == 1
     assert not old_gone.exists() and old_pending.exists() and recent.exists()
+
+
+def test_drop_state_counts_only_rejected_status_sidecars(tmp_path: Path) -> None:
+    from scripts.text_archive import status as text_status
+
+    receipts = tmp_path / "receipts"
+    receipts.mkdir()
+    for batch, batch_status in (
+        ("20261001T000000Z-pc-aaaaaaaa", "rejected"),
+        ("20261001T000000Z-pc-bbbbbbbb", "receipt_repair"),
+    ):
+        (tmp_path / "drop" / batch).mkdir(parents=True)
+        (tmp_path / "drop" / batch / "ready.json").write_text("{}")
+        (receipts / f"{batch}.status.json").write_text(
+            json.dumps({"schema": 1, "batch_status": batch_status})
+        )
+        if batch_status == "receipt_repair":
+            (receipts / f"{batch}.json").write_text("{}")
+    state = text_status._drop_state(tmp_path)
+    assert state["text_rejected_in_drop"] == 1
+    assert state["text_waiting"] == 0

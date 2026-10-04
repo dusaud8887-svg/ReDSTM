@@ -73,7 +73,9 @@ DB 연결 시 숫자 source ID로 보완한다.
   `blacktoon452.com`, `marumaru102.com`이고, 운영 값은 `text_collector_hosts`에 저장된 호스트가
   우선한다(2026-10-04 `blacktoon454.com`, `marumaru103.com`). 같은 출처의 연결 실패나 5xx가 두 번
   쌓이면 그 출처만 실패마다 숫자 suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 다 돌면 +1부터 다시
-  돈다(다음 번호가 아직 열리지 않았을 때 영구히 멈추지 않게). 유효한 응답을 받은 호스트를 저장한다.
+  돈다(다음 번호가 아직 열리지 않았을 때 영구히 멈추지 않게). JSON 응답을 받은 호스트는 그 단위의 적용 성공과
+  무관하게 저장하고, 저장된 호스트가 환경변수 `REDSTM_TEXT_*_HOST`(초기값일 뿐)보다 우선한다. 후보 호스트가
+  403/429/509를 주면 그 cooldown이 끝날 때까지만 회전을 멈춘다(`text_collector_hosts.blocked`=종료 epoch).
   proxy, browser, anti-bot/captcha 우회는 없다.
 - API 요청은 브라우저 일관 지문(UA·sec-ch-ua·Accept-Language·Sec-Fetch·동출처 Referer)으로 보낸다.
   `REDSTM_TEXT_COLLECTOR_UA`로 UA를 격상할 수 있다. 이는 올바른 프로토콜 지문이지 우회가 아니다 —
@@ -90,6 +92,10 @@ DB 연결 시 숫자 source ID로 보완한다.
   쓰기가 겹칠 수 있다. 수입기 busy 대기는 30초다. 수집기가 양보하는 조건은 게시 잠금과 메모리·디스크다.
 - 403/509 기본 6시간, 429 기본 1시간 cooldown이며 `Retry-After`가 더 길면 그 값을 우선한다
   (최대 7일). cooldown 중 sibling host로 fallback하지 않는다. 3xx도 redirect를 따라가지 않고 오류로 둔다.
+- 실패한 작품·회차 단위는 15분에서 시도마다 두 배씩 늘려 최대 7일 뒤 다시 시도한다. 404/410은 삭제·이동으로 보고
+  `gone`으로 끝낸다(재시도 없음). 8회 이상 실패한 단위는 본문 큐 1,000건 창을 차지하지 않는다.
+- 주간 작품 갱신은 가격 정보 없는 회차 목록으로 회차 상세가 확인한 `point/waiting`이나 `parse_review`·`held_conflict`를
+  되돌리지 않는다. 명시적으로 무료가 된 회차만 다시 `discovered`가 된다.
 - `REDSTM_TEXT_BODY_SOURCE`가 비어 있으면 목록/작품/회차 상태만 조사하고 본문 요청을 만들지 않는다.
   운영 유닛은 `both`다. 블랙툰과 마루마루 본문 큐를 각각 채우고, 회차 ID나 본문이 같다고 자동 확정하지 않는다.
   `blacktoon` 또는 `marumaru`만 주면 그 출처의 본문만 요청한다.
@@ -407,7 +413,7 @@ Worker version이 이 git SHA와 일치했다. 갱신된 정적 파일은 `text-
 
 ## 2026-09-25 ID·자동 연결 최종 보완
 
-작품 ID는 출처 ID를 재사용하지 않는다. ReDSTM DB가 작품마다 `novel:<UUIDv4>`를 발급하고 `(site, source_work_id)` 관계 및 이전 canonical ID alias를 보존한다. UUID migration은 과거 alias 참조를 새 그룹으로 이동한 뒤 기존 그룹을 제거한다. 정규화 제목·작가가 출처마다 유일한 후보에 대해 본문 SHA 두 회차 일치, 명시적 slug↔상대 ID와 본문 SHA 일치, 또는 10개 이상 회차 라벨의 80% 이상 일치가 확보되면 무인 자동 연결한다. 증거가 약하거나 모호하면 작품만 분리해 두며 수집은 계속한다.
+작품 ID는 출처 ID를 재사용하지 않는다. ReDSTM DB가 작품마다 `novel:<UUIDv4>`를 발급하고 `(site, source_work_id)` 관계 및 이전 canonical ID alias를 보존한다. UUID migration은 과거 alias 참조를 새 그룹으로 이동한 뒤 기존 그룹을 제거한다. 정규화 제목·작가가 출처마다 유일한 후보에 대해 본문 SHA 두 회차 일치, 명시적 slug↔상대 ID와 본문 SHA 일치가 확보되면 무인 자동 연결한다(회차 라벨 일치 근거 `chapter_sequence`는 migration v3에서 제거됐다). 증거가 약하거나 모호하면 작품만 분리해 두며 수집은 계속한다.
 
 연결된 작품의 출처별 원본 회차 row와 availability는 모두 유지한다. Reader용 상세에서만 정규화 회차 라벨/종류와 본문 SHA-256이 모두 같은 교차 출처 사본을 한 회차로 표시하고 `source_variants`에 출처 ID·URL을 보존한다. 본문 SHA가 다르면 별도 회차다. 자동 이관·연결·표시 계약을 importer/publisher 테스트로 검증했다. 운영 규모 처리량·요금은 라이브 지표를 별도로 관찰하며, 미측정 상태를 완료 판정으로 부르지 않는다.
 

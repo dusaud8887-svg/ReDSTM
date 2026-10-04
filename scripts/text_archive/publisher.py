@@ -694,7 +694,7 @@ def _publish_object_batch(
 
 def _record_publication(db_path: Path, key: str, digest: str) -> None:
     verified_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    with closing(sqlite3.connect(db_path)) as db, db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as db, db:
         db.execute(
             "CREATE TABLE IF NOT EXISTS text_archive_publications "
             "(key TEXT PRIMARY KEY, sha256 TEXT NOT NULL, verified_at TEXT NOT NULL)"
@@ -720,7 +720,7 @@ def _published_hash(db: sqlite3.Connection, key: str) -> str | None:
 
 def _retained_keys(db_path: Path, build_root: Path, lane: str, active_release: str) -> set[str]:
     """Active release, the newest verified releases, and every index they reference."""
-    with closing(sqlite3.connect(db_path)) as db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as db:
         recent = [
             str(row[0])
             for row in db.execute(
@@ -757,7 +757,7 @@ def _prune_lane(
             if pattern.fullmatch(key) and key not in keep:
                 path.unlink(missing_ok=True)
                 local_removed += 1
-    with closing(sqlite3.connect(db_path)) as db, db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as db, db:
         candidates = [
             str(row[0])
             for row in db.execute(
@@ -811,7 +811,7 @@ def _prune_lane(
             )
     finally:
         selection.unlink(missing_ok=True)
-    with closing(sqlite3.connect(db_path)) as db, db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as db, db:
         db.executemany(
             "DELETE FROM text_archive_publications WHERE key=? AND sha256=?",
             [(key, _PRUNING) for key in batch],
@@ -1123,7 +1123,7 @@ def publish_lane(
         with _window():
             pass
 
-    with sqlite3.connect(db_path) as state_db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as state_db, state_db:
         item_count = int(
             state_db.execute(
                 "SELECT COUNT(*) FROM text_archive_items WHERE lane=?", (lane,)
@@ -1146,7 +1146,7 @@ def publish_lane(
     with _window():
         pass
     if lane in {"arcalive", "novel", "manual"} and not (lane == "arcalive" and metadata_updated):
-        with sqlite3.connect(db_path) as db:
+        with closing(sqlite3.connect(db_path, timeout=30)) as db, db:
             pending = db.execute(
                 "SELECT 1 FROM text_archive_items i LEFT JOIN text_archive_publications p "
                 "ON p.key='item:'||i.identity AND p.sha256=i.content_sha256 "

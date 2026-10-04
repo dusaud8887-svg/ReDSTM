@@ -341,7 +341,7 @@ def import_media_batch(
     if accepted:
         upload(build_root, batch_id, accepted, runner)
     stored_at = _now()
-    with closing(sqlite3.connect(db_path)) as db, db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as db, db:
         db.executescript(_SCHEMA)
         db.executemany(
             """INSERT INTO text_archive_media(

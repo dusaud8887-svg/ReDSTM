@@ -82,7 +82,8 @@ drop/<YYYYMMDDTHHMMSSZ>-media-<8hex>/
 
 1. `drop/`에서 이름이 `…-media-<8hex>`이고 `ready.json`이 있으며 영수증이 없는 가장 오래된 배치를 고른다(텍스트 importer의 배치 이름 규칙과 겹치지 않는다).
 2. 구조 검증(하나라도 틀리면 배치 전체 거부): ready/manifest 스키마·digest, `producer`, 항목 1–200, 합계 48MiB, 목록에 없는 파일 금지, symlink 금지, 필드 화이트리스트.
-3. 항목 검증(틀린 항목만 거부): 경로 키 규칙, `relative_path`(`files/\d{6}\.(webp|png|jpg|gif)`, 확장자=`content_type`), 크기·sha256 일치, 매직 바이트=`content_type`, 접근 거부 이미지 아님, 가로·세로 1–20000.
+3. 구조 검증(배치 전체 거부): 항목 필드 집합, 경로 키 규칙·중복(경로 키가 곧 R2 키라 `../` 같은 키는 생산자 결함으로 본다), `relative_path` 형식(`files/\d{6}\.(webp|png|jpg|gif)`)·중복, 목록에 없는 파일, 배치 총 크기.
+   항목 검증(틀린 항목만 거부): 확장자=`content_type`, 게시글 id, 크기·sha256 일치, 매직 바이트=`content_type`, 접근 거부 이미지 아님, 가로·세로 1–20000.
 4. 올리기: 통과한 항목을 `build/media/<id>/<type>/<경로 키>` symlink로 모아 형식별로 `rclone copy --copy-links --header-upload "Content-Type: <type>"` → `r2text:redstm-text-archive/media/arca/`. 이어서 `rclone hashsum SHA256 --download --checkfile`로 되읽어 확인한다.
 5. sqlite `text_archive_media(path_key PK, sha256, content_type, bytes, width, height, batch_id, stored_at)`에 기록하고 영수증을 쓴다. 같은 경로 키가 다시 오면 다시 올린다(멱등, 같은 키 덮어쓰기).
 

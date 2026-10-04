@@ -11,7 +11,7 @@ from pathlib import Path
 
 def metadata_fingerprint(db_path: Path, lane: str) -> str:
     digest = hashlib.sha256(b"text-index-input-v2\n")
-    with closing(sqlite3.connect(db_path)) as db:
+    with closing(sqlite3.connect(db_path, timeout=30)) as db:
         db.execute("BEGIN")
         for row in db.execute(
             """SELECT identity,canonical_work_id,canonical_chapter_id,

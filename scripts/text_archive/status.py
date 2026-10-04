@@ -65,7 +65,9 @@ def _drop_state(inbox_root: Path) -> dict[str, int]:
             )
             if lane is None or not (entry / "ready.json").is_file():
                 continue
-            if (receipts / f"{entry.name}.status.json").exists():
+            status_path = receipts / f"{entry.name}.status.json"
+            if status_path.exists() and _batch_status(status_path) == "rejected":
+                # A receipt_repair sidecar is not a rejection.
                 rejected[lane] += 1
             elif not (receipts / f"{entry.name}.json").exists():
                 waiting[lane] += 1
@@ -75,6 +77,16 @@ def _drop_state(inbox_root: Path) -> dict[str, int]:
         "text_rejected_in_drop": rejected["text"],
         "media_rejected_in_drop": rejected["media"],
     }
+
+
+def _batch_status(path: Path) -> str:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        # Unreadable status: count it as before rather than hide a rejection.
+        return "rejected"
+    status = value.get("batch_status") if isinstance(value, dict) else None
+    return status if isinstance(status, str) else "rejected"
 
 
 def _deferrals(path: Path) -> dict[str, dict[str, str]]:

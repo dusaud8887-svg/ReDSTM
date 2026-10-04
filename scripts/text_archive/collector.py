@@ -54,6 +54,12 @@ def _sec_ch_ua(user_agent: str) -> str:
     return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not_A Brand";v="24"'
 
 
+# Failed units back off 15 min, doubling per attempt up to a week (docs/18 §3).
+_RETRY_BACKOFF = 900
+_MAX_RETRY_BACKOFF = 7 * 24 * 3600
+_WINDOW_RETRY_ATTEMPTS = 8
+_GONE_ERRORS = frozenset({"http_404", "http_410"})
+
 _HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d+\.com\Z", re.I),
     "marumaru": re.compile(r"marumaru\d+\.com\Z", re.I),
@@ -116,7 +122,8 @@ def configured_sources(
     sources: list[Source] = []
     for name, default in (("blacktoon", "blacktoon452.com"), ("marumaru", "marumaru102.com")):
         host = (
-            values.get(f"REDSTM_TEXT_{name.upper()}_HOST", remembered.get(name, default))
+            # A host found by rotation outlives the configured seed (docs/18 §3).
+            (remembered.get(name) or values.get(f"REDSTM_TEXT_{name.upper()}_HOST", default))
             .strip()
             .lower()
         )
@@ -544,10 +551,12 @@ def _enqueue(
 
 
 def _fill_body_queue(db: sqlite3.Connection, source: str) -> None:
+    # A unit that keeps failing backs off for days; it must not hold a window slot that a
+    # new free chapter could use.
     queued = db.execute(
         "SELECT COUNT(*) FROM text_collector_queue WHERE source=? AND kind='episode' "
-        "AND status IN ('pending','retry')",
-        (source,),
+        "AND (status='pending' OR (status='retry' AND attempts<?))",
+        (source, _WINDOW_RETRY_ATTEMPTS),
     ).fetchone()[0]
     remaining = max(0, _BODY_QUEUE_WINDOW - int(queued))
     if not remaining:
@@ -728,8 +737,18 @@ def _apply_work(
                    source_episode_number_raw=excluded.source_episode_number_raw,
                    source_episode_number_normalized=excluded.source_episode_number_normalized,
                    source_toc_position=excluded.source_toc_position,
-                   source_published_at=excluded.source_published_at,access=excluded.access,
+                   source_published_at=excluded.source_published_at,
+                   -- A work list without a price field says nothing new: keep what the
+                   -- episode detail learned (paid -> waiting) and any review hold, or the
+                   -- weekly refresh re-queues every paid chapter.
+                   access=CASE WHEN excluded.access='unknown' THEN text_novel_chapters.access
+                               ELSE excluded.access END,
                    status=CASE WHEN text_novel_chapters.status='complete' THEN 'complete'
+                               WHEN text_novel_chapters.status IN ('parse_review','held_conflict')
+                                 AND excluded.status IN ('discovered','unknown_access')
+                                 THEN text_novel_chapters.status
+                               WHEN text_novel_chapters.status='waiting'
+                                 AND excluded.status='unknown_access' THEN 'waiting'
                                ELSE excluded.status END,last_seen_at=excluded.last_seen_at""",
                 (
                     unit.source.name,
@@ -943,7 +962,15 @@ def _cooldown_group(
         db.close()
 
 
-def _note_failure(db_path: Path, unit: RequestUnit, error: str, retry_at: int) -> None:
+def _note_failure(
+    db_path: Path,
+    unit: RequestUnit,
+    error: str,
+    retry_at: int,
+    *,
+    backoff: bool = False,
+    now: int = 0,
+) -> None:
     db = _connect(db_path)
     try:
         with db:
@@ -968,14 +995,25 @@ def _note_failure(db_path: Path, unit: RequestUnit, error: str, retry_at: int) -
                     for token in ("requires_review", "unknown", "invalid", "missing", "too_large")
                 )
                 conflict = "source_id_hash_changed" in error
-                queue_status = "review" if review or conflict else "retry"
+                # A removed chapter or work answers 404/410 for good: retrying it forever
+                # spends the shared request budget and fills the body window.
+                gone = error in _GONE_ERRORS
+                queue_status = "review" if review or conflict else "gone" if gone else "retry"
                 db.execute(
                     """UPDATE text_collector_queue SET status=?,attempts=attempts+1,
-                       last_error=?,next_check_at=?,updated_at=?
+                       last_error=?,
+                       next_check_at=CASE WHEN ? THEN MAX(?, ? + MIN(?, ? << MIN(attempts, 12)))
+                                          ELSE ? END,
+                       updated_at=?
                        WHERE source=? AND kind=? AND entity_id=?""",
                     (
                         queue_status,
                         error[:300],
+                        int(backoff and queue_status == "retry"),
+                        retry_at,
+                        now,
+                        _MAX_RETRY_BACKOFF,
+                        _RETRY_BACKOFF,
                         retry_at,
                         _now(),
                         unit.source.name,
@@ -1016,12 +1054,14 @@ def _host_failure(db_path: Path, unit: RequestUnit) -> RequestUnit | None:
                 "SELECT failures,next_offset,blocked FROM text_collector_hosts WHERE source=?",
                 (unit.source.name,),
             ).fetchone()
-            failures, offset, blocked = int(row[0]) + 1, int(row[1]), int(row[2])
+            # blocked holds the challenge cooldown's end (epoch seconds), so a parked or
+            # challenged candidate pauses rotation only until then; legacy 1 has expired.
+            failures, offset, blocked_until = int(row[0]) + 1, int(row[1]), int(row[2])
             db.execute(
                 "UPDATE text_collector_hosts SET failures=? WHERE source=?",
                 (failures, unit.source.name),
             )
-            if failures < 2 or blocked:
+            if failures < 2 or blocked_until > time.time():
                 return None
             # The sites move up a number every few weeks, and the next one may not be live yet
             # when the old one dies. Keep cycling +1..+5 instead of giving up after one pass.
@@ -1125,17 +1165,17 @@ def run_one(
                 "http_status": status_code,
             }
         if status_code in {403, 429, 509}:
+            default = 6 * 3600 if status_code in {403, 509} else 3600
+            cooldown = _retry_after(retry_header, now, default)
             db = _connect(db_path)
             try:
                 with db:
                     db.execute(
-                        "UPDATE text_collector_hosts SET blocked=1 WHERE source=? AND host!=?",
-                        (unit.source.name, unit.source.host),
+                        "UPDATE text_collector_hosts SET blocked=? WHERE source=? AND host!=?",
+                        (cooldown, unit.source.name, unit.source.host),
                     )
             finally:
                 db.close()
-            default = 6 * 3600 if status_code in {403, 509} else 3600
-            cooldown = _retry_after(retry_header, now, default)
             _cooldown_group(db_path, unit, now, cooldown, status_code, f"http_{status_code}")
             _note_failure(db_path, unit, f"http_{status_code}", cooldown)
             return {
@@ -1167,6 +1207,8 @@ def run_one(
         value = json.loads(raw)
         db = _connect(db_path)
         try:
+            # The host answered with JSON: remember it even if this one unit fails to apply.
+            _host_success(db, unit)
             if unit.kind == "list":
                 result = _apply_list(db, unit, value)
             elif unit.kind == "work":
@@ -1180,7 +1222,6 @@ def run_one(
                    last_status=excluded.last_status,last_error=''""",
                 (_SHARED_GROUP, now, status_code),
             )
-            _host_success(db, unit)
             return result
         finally:
             db.close()
@@ -1193,10 +1234,9 @@ def run_one(
         error = str(exc)[:300]
         if error == "source_group_cooldown":
             return {"status": "deferred", "reason": error}
-        retry_at = int(clock()) + (
-            3600 if "requires_review" in error or "unknown" in error else 900
-        )
-        _note_failure(db_path, unit, error, retry_at)
+        now = int(clock())
+        retry_at = now + (3600 if "requires_review" in error or "unknown" in error else 900)
+        _note_failure(db_path, unit, error, retry_at, backoff=True, now=now)
         return {
             "status": "held",
             "source": unit.source.name,
