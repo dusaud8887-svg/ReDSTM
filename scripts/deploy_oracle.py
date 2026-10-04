@@ -346,9 +346,14 @@ def build_archive(
 ) -> str:
     if re.fullmatch(r"[0-9a-f]{40}", release) is None:
         raise ValueError("release identity is invalid")
+    # The committed bytes, not this checkout's: with core.autocrlf=true (Windows) git archive
+    # rewrites text files to CRLF, and the Oracle releases carried CRLF .py files until
+    # 2026-10-04 (harmless to Python, but not the commit). .gitattributes keeps *.sh LF.
     runner(
         [
             "git",
+            "-c",
+            "core.autocrlf=false",
             "archive",
             "--format=tar.gz",
             f"--output={destination}",

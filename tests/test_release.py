@@ -1523,3 +1523,17 @@ def test_release_report_is_atomic_and_secret_free_by_construction(tmp_path: Path
 
     assert json.loads(path.read_text(encoding="utf-8")) == report
     assert not path.with_suffix(f"{path.suffix}.partial").exists()
+
+
+def test_release_archive_packages_the_committed_bytes(tmp_path: Path) -> None:
+    from scripts.deploy_oracle import build_archive
+
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        calls.append(command)
+        Path(command[-2].removeprefix("--output=")).write_bytes(b"tar")
+        return subprocess.CompletedProcess(command, 0)
+
+    build_archive(tmp_path, "a" * 40, tmp_path / "release.tar.gz", runner=runner)
+    assert calls[0][:4] == ["git", "-c", "core.autocrlf=false", "archive"]
