@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from scrapy import Request, Spider
+from scrapy import Request
 from scrapy.http import HtmlResponse
 
 from crawler.middlewares import OriginProxyMiddleware
@@ -34,7 +34,7 @@ def test_origin_proxy_middleware_sets_typemoon_meta(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("REDSTM_ORIGIN_PROXY", "http://127.0.0.1:18080")
     monkeypatch.setattr("crawler.origin_proxy._proxy_listening", lambda _url: True)
     request = Request("https://www.typemoon.net/aa_a01/1")
-    OriginProxyMiddleware().process_request(request, Spider("test"))
+    OriginProxyMiddleware().process_request(request)
     assert request.meta["proxy"] == "http://127.0.0.1:18080"
 
 
@@ -42,7 +42,7 @@ def test_origin_proxy_middleware_ignores_other_hosts(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("REDSTM_ORIGIN_PROXY", "http://127.0.0.1:18080")
     monkeypatch.setattr("crawler.origin_proxy._proxy_listening", lambda _url: True)
     request = Request("https://example.com/")
-    OriginProxyMiddleware().process_request(request, Spider("test"))
+    OriginProxyMiddleware().process_request(request)
     assert "proxy" not in request.meta
 
 

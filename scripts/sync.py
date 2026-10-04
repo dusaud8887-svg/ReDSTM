@@ -84,18 +84,22 @@ def _project_settings(max_seconds: int | None = None) -> Settings:
     return settings
 
 
+def _finish_reason(crawler: Any) -> str | None:
+    # Scrapy 2.18+ raises RuntimeError for crawler.stats when the crawl never started
+    # (it used to be None); either way there is no finish reason to read.
+    try:
+        stats = crawler.stats
+    except RuntimeError:
+        return None
+    return stats.get_value("finish_reason") if stats is not None else None
+
+
 def _timed_out(crawler: Any) -> bool:
-    return bool(
-        crawler.stats is not None
-        and crawler.stats.get_value("finish_reason") == "closespider_timeout"
-    )
+    return _finish_reason(crawler) == "closespider_timeout"
 
 
 def _memory_limited(crawler: Any) -> bool:
-    return bool(
-        crawler.stats is not None
-        and crawler.stats.get_value("finish_reason") == "memusage_exceeded"
-    )
+    return _finish_reason(crawler) == "memusage_exceeded"
 
 
 def run_sync(args: argparse.Namespace) -> dict[str, Any]:

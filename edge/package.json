@@ -23,11 +23,11 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@floating-ui/dom": "1.8.0",
     "@fontsource/gowun-batang": "5.3.0",
     "@leeoniya/ufuzzy": "1.0.19",
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.63.0",
     "@use-gesture/vanilla": "10.3.1",
     "es-hangul": "2.4.0",
     "esbuild": "0.28.2",
@@ -41,7 +41,7 @@
     "workbox-range-requests": "7.4.1",
     "workbox-routing": "7.4.1",
     "workbox-strategies": "7.4.1",
-    "wrangler": "4.136.3"
+    "wrangler": "4.147.0"
   },
   "dependencies": {
     "jose": "6.2.12"
