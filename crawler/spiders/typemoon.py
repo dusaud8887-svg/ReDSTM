@@ -1096,8 +1096,17 @@ class TypeMoonSpider(scrapy.Spider):
     def parse_detail(
         self, response: scrapy.http.Response, **_: object
     ) -> Iterable[CapturedPostItem]:
-        # An empty 304 body becomes a plain TextResponse; it is not a non-HTML page.
-        if response.status != 304 and not isinstance(response, scrapy.http.HtmlResponse):
+        if response.status == 304 and not isinstance(response, scrapy.http.HtmlResponse):
+            # An empty 304 body becomes a plain TextResponse; it is not a non-HTML page.
+            response = scrapy.http.HtmlResponse(
+                response.url,
+                status=304,
+                headers=response.headers,
+                body=b"",
+                request=response.request,
+                encoding="utf-8",
+            )
+        if not isinstance(response, scrapy.http.HtmlResponse):
             self.logger.error("TypeMoon detail response is not HTML: %s", response.url)
             item = self._leased_parse_failure(response, "non_html")
             if item is not None:
