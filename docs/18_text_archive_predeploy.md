@@ -71,8 +71,14 @@ DB 연결 시 숫자 source ID로 보완한다.
 
 - 대상 host는 명시 설정된 `blacktoonNNN.com`, `marumaruNNN.com` 형식만 허용한다. 현재 기본값은
   `blacktoon452.com`, `marumaru102.com`이다. 같은 출처의 5xx가 두 번 쌓이면 그 출처만 숫자
-  suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 성공한 호스트를 저장한다. proxy, browser,
-  anti-bot/captcha 우회는 없다.
+  suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 성공한 호스트를 저장한다(5칸 소진 후 +1부터
+  다시 순환한다). proxy, browser, anti-bot/captcha 우회는 없다.
+- API 요청은 브라우저 일관 지문(UA·sec-ch-ua·Accept-Language·Sec-Fetch·동출처 Referer)으로 보낸다.
+  `REDSTM_TEXT_COLLECTOR_UA`로 UA를 격상할 수 있다. 이는 올바른 프로토콜 지문이지 우회가 아니다 —
+  우회 금지 계약은 그대로 유지된다. 2026-10-05 기준 양 사이트가 `/seo-gate` 406 필터로 자동화
+  API 접근을 막아 수집은 held 상태다(마루마루 목록 200/작품·회차 406, 블랙툰은 수집기 UA 406).
+  406과 200 HTML 게이트는 블록 신호로 분류되어 6시간 cooldown을 건다(host blocked 플래그는
+  406에서는 건드리지 않는다 — UA 기반 게이트는 모든 host에 동일하므로).
 - 양쪽 도메인은 한 `blacktoon-marumaru-novel` 요청 그룹으로 persisted 5초 최소 간격을 공유한다.
   403/429/509 cooldown은 출처별 행이라 한 도메인이 막혀도 다른 도메인은 진행한다. 요청은 source별
   round-robin이다. collector timer는 5분마다

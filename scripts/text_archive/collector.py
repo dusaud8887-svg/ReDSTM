@@ -35,6 +35,23 @@ _PAGE_SIZE = 96
 _REQUEST_GAP = 5
 _BODY_QUEUE_WINDOW = 1000
 _SHARED_GROUP = "blacktoon-marumaru-novel"
+# The sites' /seo-gate API filter rejects non-browser fingerprints with 406. These are the
+# same coherent browser headers the typemoon crawler already uses (crawler.settings) — correct
+# protocol hygiene, not a bypass: no proxy, no browser automation, no captcha solving
+# (docs/18 boundary). The UA is env-overridable so a major bump needs no code change.
+_BROWSER_UA = (
+    os.environ.get("REDSTM_TEXT_COLLECTOR_UA", "").strip()
+    or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
+
+
+def _sec_ch_ua(user_agent: str) -> str:
+    # Keep the client-hint major in lockstep with the UA: a mismatch (UA says 155, hint
+    # says 150) is itself a bot tell. Falls back to 150 when the UA is not a Chrome one.
+    match = re.search(r"Chrome/(\d+)\.", user_agent)
+    major = match.group(1) if match else "150"
+    return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not_A Brand";v="24"'
 _HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d+\.com\Z", re.I),
     "marumaru": re.compile(r"marumaru\d+\.com\Z", re.I),
@@ -412,6 +429,21 @@ def _response_body(response: requests.Response) -> bytes:
     return b"".join(chunks)
 
 
+def _api_headers(unit: RequestUnit) -> dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "User-Agent": _BROWSER_UA,
+        "sec-ch-ua": _sec_ch_ua(_BROWSER_UA),
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Referer": f"{unit.source.base_url}/",
+    }
+
+
 def _get(
     session: requests.Session, unit: RequestUnit, db_path: Path
 ) -> tuple[int, bytes, dict[str, str]]:
@@ -470,10 +502,7 @@ def _get(
                     timeout=(5, 15),
                     allow_redirects=False,
                     stream=True,
-                    headers={
-                        "Accept": "application/json",
-                        "User-Agent": "ReDSTM-text-archive/1.0",
-                    },
+                    headers=_api_headers(unit),
                 ) as response:
                     response_data = (
                         response.status_code,
@@ -1049,6 +1078,40 @@ def run_one(
     try:
         unit, status_code, raw, headers = _fetch_with_rotation(http, unit, db_path)
         now = int(clock())
+        retry_header = next(
+            (value for key, value in headers.items() if key.lower() == "retry-after"), None
+        )
+        if status_code == 406:
+            # The /seo-gate API filter is a fingerprint rejection, not a host problem: cool
+            # the source down like a 403, but do NOT mark the other remembered hosts blocked
+            # (a UA-based gate affects every host the same way).
+            cooldown = _retry_after(retry_header, now, 6 * 3600)
+            db = _connect(db_path)
+            try:
+                with db:
+                    db.execute(
+                        """INSERT INTO text_collector_groups(
+                           group_id,last_request_at,cooldown_until,last_status,last_error)
+                           VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
+                           cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
+                           last_error=excluded.last_error""",
+                        (
+                            f"{_SHARED_GROUP}:{unit.source.name}",
+                            now,
+                            cooldown,
+                            status_code,
+                            f"http_{status_code}",
+                        ),
+                    )
+            finally:
+                db.close()
+            _note_failure(db_path, unit, f"http_{status_code}", cooldown)
+            return {
+                "status": "cooldown",
+                "source": unit.source.name,
+                "until": cooldown,
+                "http_status": status_code,
+            }
         if status_code in {403, 429, 509}:
             db = _connect(db_path)
             try:
@@ -1060,9 +1123,6 @@ def run_one(
             finally:
                 db.close()
             default = 6 * 3600 if status_code in {403, 509} else 3600
-            retry_header = next(
-                (value for key, value in headers.items() if key.lower() == "retry-after"), None
-            )
             cooldown = _retry_after(retry_header, now, default)
             db = _connect(db_path)
             try:
@@ -1112,6 +1172,40 @@ def run_one(
                 finally:
                     db.close()
             raise CollectorError(f"http_{status_code}")
+        content_type = next(
+            (value for key, value in headers.items() if key.lower() == "content-type"), ""
+        )
+        if raw.lstrip().startswith(b"<") or "text/html" in str(content_type).lower():
+            # A 200 that carries the anti-bot gate page instead of JSON is the same block
+            # signal as a 406 — hold the source down instead of failing every unit on a
+            # JSONDecodeError.
+            cooldown = now + 6 * 3600
+            db = _connect(db_path)
+            try:
+                with db:
+                    db.execute(
+                        """INSERT INTO text_collector_groups(
+                           group_id,last_request_at,cooldown_until,last_status,last_error)
+                           VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
+                           cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
+                           last_error=excluded.last_error""",
+                        (
+                            f"{_SHARED_GROUP}:{unit.source.name}",
+                            now,
+                            cooldown,
+                            status_code,
+                            "html_gate",
+                        ),
+                    )
+            finally:
+                db.close()
+            _note_failure(db_path, unit, "html_gate", cooldown)
+            return {
+                "status": "cooldown",
+                "source": unit.source.name,
+                "until": cooldown,
+                "http_status": status_code,
+            }
         value = json.loads(raw)
         db = _connect(db_path)
         try:
