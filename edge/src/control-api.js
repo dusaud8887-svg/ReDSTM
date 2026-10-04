@@ -1,6 +1,5 @@
 import {
   CLIENT_FUTURE_CLOCK_SKEW_MS,
-  COMMAND_MAX_CLAIM_ATTEMPTS,
   NEXT_SCHEDULE_MAX_AHEAD_MS,
   STALE_COMMAND_SQL,
   STALE_RUN_CODE,
@@ -437,7 +436,7 @@ async function startRun(request, env, requestId) {
       "SELECT action, operation, collection_mode, state, run_id " +
       "FROM commands WHERE command_id = ?",
     ).bind(body.command_id).first();
-    if (!command || command.state !== "claimed" || command.run_id != null ||
+    if (command?.state !== "claimed" || command.run_id != null ||
         commandRunKinds.get(logicalAction(command)) !== body.kind) {
       return failure(requestId, 409, "command_not_startable", "Command cannot start this run");
     }
@@ -902,6 +901,13 @@ export async function controlApiResponse(request, env, auth) {
     return failure(requestId, 404, "route_not_found", "API route was not found");
   } catch (error) {
     const status = Number.isInteger(error?.status) ? error.status : 503;
+    // The client only sees control_unavailable; keep the cause (a D1 constraint, a missing
+    // column) in the Worker log.
+    if (status >= 500) {
+      console.error(JSON.stringify({
+        request_id: requestId, path: url.pathname, error: String(error?.message ?? error).slice(0, 500),
+      }));
+    }
     return failure(
       requestId,
       status,

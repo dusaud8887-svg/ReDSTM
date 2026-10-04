@@ -100,7 +100,7 @@ test("returns an existing idempotent command without inserting", async () => {
     expires_at: new Date(Date.now() + 60_000).toISOString(),
   };
   const env = {
-    CONTROL_DB: database((method, sql, values) => {
+    CONTROL_DB: database((method, sql, _values) => {
       calls += 1;
       assert.equal(method, "first");
       assert.match(sql, /idempotency_key/);
@@ -1675,7 +1675,7 @@ test("finishes marker commands idempotently for the claiming runner", async () =
 
 test("batches idempotent run events and terminal command state", async () => {
   const batches = [];
-  let runState = "running";
+  const runState = "running";
   const run = {
     run_id: "sync-run-001",
     kind: "scheduled",

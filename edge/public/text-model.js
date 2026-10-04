@@ -100,7 +100,7 @@ export function createLocator(model, start, end = start + 48, rev = "") {
 }
 
 export function sanitizeLocator(loc) {
-  if (!loc || loc.v !== 2 || loc.tm !== 1 || !Number.isInteger(loc.start) || loc.start < 0 ||
+  if (loc?.v !== 2 || loc.tm !== 1 || !Number.isInteger(loc.start) || loc.start < 0 ||
       !Number.isInteger(loc.end) || loc.end <= loc.start || typeof loc.exact !== "string" ||
       loc.exact.length > 10_000 || loc.exact.length !== loc.end - loc.start ||
       typeof loc.rev !== "string" || !/^(?:[a-f0-9]{64})?$/.test(loc.rev) ||

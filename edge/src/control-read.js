@@ -83,7 +83,7 @@ async function failuresPage(env, requestId, url) {
   const boardParameters = boardId ? [boardId] : [];
   const columns = "board_id, external_post_id, attempts, error_code, last_attempt_at";
   let rows = [];
-  if (!cursor || cursor[0] !== "") {
+  if (cursor?.[0] !== "") {
     const after = cursor
       ? `AND last_attempt_at <= ? AND (last_attempt_at < ? OR board_id > ? OR ` +
         "(board_id = ? AND external_post_id > ?))"
@@ -245,7 +245,7 @@ async function activeRelease(env) {
   } catch {
     return { error: "release_invalid" };
   }
-  if (!manifest || manifest.schema_version !== 1 ||
+  if (manifest?.schema_version !== 1 ||
       !RELEASE_COUNT_FIELDS.every(
         (key) => Number.isSafeInteger(manifest[key]) && manifest[key] >= 0,
       )) {
@@ -450,6 +450,10 @@ async function releaseSmoke(env, requestId, url) {
          (SELECT inventory_pass_started_at FROM board_status LIMIT 1)
            AS inventory_pass_started_at,
          (SELECT collection_enabled FROM board_status LIMIT 1) AS collection_enabled,
+         (SELECT outline_only FROM board_status LIMIT 1) AS outline_only,
+         (SELECT incremental_anchor_post_id FROM board_status LIMIT 1)
+           AS incremental_anchor_post_id,
+         (SELECT last_incremental_at FROM board_status LIMIT 1) AS last_incremental_at,
          (SELECT operation FROM commands LIMIT 1) AS operation,
          (SELECT collection_mode FROM commands LIMIT 1) AS collection_mode,
          (SELECT active_post_id FROM runner_status LIMIT 1) AS active_post_id,

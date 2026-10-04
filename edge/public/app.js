@@ -4607,7 +4607,7 @@ function renderTypeMoonList() {
 // onOpen(row), onPage(delta) } or null to hide the section.
 function renderReaderList(model) {
   readerListModel = model;
-  elements["reader-list"].hidden = !model || !model.total;
+  elements["reader-list"].hidden = !model?.total;
   if (!model) return;
   elements["reader-list-kicker"].textContent = model.kicker ?? "";
   elements["reader-list-title"].textContent = model.title ?? "";

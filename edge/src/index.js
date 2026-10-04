@@ -115,6 +115,8 @@ function objectHeaders(object, key) {
   if (key === "release.json" && object.uploaded instanceof Date) {
     headers.set("Last-Modified", object.uploaded.toUTCString());
   }
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "no-referrer");
   headers.set(
     "Cache-Control",
     key === "release.json"

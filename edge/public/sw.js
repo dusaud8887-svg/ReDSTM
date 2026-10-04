@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "60be5c13e805daf5"
+      "revision": "0120b9549705e479"
     },
     {
       "url": "/arca-media.js",
@@ -1108,7 +1108,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-model.js",
-      "revision": "1da05f0471645dd8"
+      "revision": "fb6a0bcba7338e3b"
     },
     {
       "url": "/text-shelves.js",

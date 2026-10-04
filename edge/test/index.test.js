@@ -6,7 +6,9 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import worker from "../src/index.js";
 
+// The Workers FixedLengthStream takes a byte length; TransformStream would read it as a transformer.
 globalThis.FixedLengthStream ??= class extends TransformStream {
+  // biome-ignore lint/complexity/noUselessConstructor: drops the length argument on purpose
   constructor() {
     super();
   }
