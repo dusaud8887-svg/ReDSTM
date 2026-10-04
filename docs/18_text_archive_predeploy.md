@@ -219,6 +219,8 @@ import는 5분, publisher는 15분 timer다. TypeMoon 게시 락 중 collector�
 `REDSTM_TEXT_BODY_SOURCE`는 계속 비워 둔다.
 
 Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 versioned release를 설치한다.
+갱신은 직전 release를 복사하되 `.venv`는 `install_oracle.sh`와 같은 CPython(현재 3.14.6)과 고정 패키지로
+다시 만든다. 그래서 interpreter 보안 갱신도 같은 갱신 한 번으로 반영된다.
 계정·마운트·SSH의 최초 설치 계약은 같은 디렉터리의 `install_oracle.sh`, 자격 설치 계약은
 `configure_r2.sh`다. 운영 비밀값은 문서·저장소에 두지 않는다. 전용 자격은 text bucket으로만
 제한하고 R2 `no_check_bucket`을 사용한다. TypeMoon 배포와 D1/Worker/release status는 변경하지 않는다.

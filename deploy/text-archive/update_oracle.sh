@@ -5,10 +5,17 @@ stage="${1:?staged package directory required}"
 [[ $EUID -eq 0 && "$stage" == /tmp/redstm-text-stage-* ]] || exit 2
 [[ -d /opt/redstm-text/current/.venv && -f "$stage/scripts/text_archive/runtime.py" \
    && -f "$stage/crawler/collections.py" ]] || exit 2
+command -v uv >/dev/null
 
 release="/opt/redstm-text/releases/$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -o root -g root -m 0755 "$release"
 cp -a /opt/redstm-text/current/. "$release/"
+# The copied venv points at the previous interpreter; rebuild it on the one install_oracle.sh pins.
+rm -rf "$release/.venv"
+uv python install 3.14.6 --install-dir /opt/redstm-text/python
+uv venv --python /opt/redstm-text/python/cpython-3.14.6-linux-x86_64-gnu/bin/python3.14 \
+  "$release/.venv"
+uv pip install --python "$release/.venv/bin/python" filelock==3.32.2 requests==2.34.2 urllib3==2.8.0
 cp -a "$stage/scripts/text_archive/"*.py "$release/scripts/text_archive/"
 install -o root -g root -m 0644 "$stage/scripts/storage_policy.py" "$release/scripts/"
 install -d -o root -g root -m 0755 "$release/crawler"
