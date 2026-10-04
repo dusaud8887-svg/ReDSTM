@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "aa9fc1343f16ec0f"
+      "revision": "60be5c13e805daf5"
     },
     {
       "url": "/arca-media.js",
@@ -1104,7 +1104,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "8a197848cd89fffa"
+      "revision": "485bf64b60a65a71"
     },
     {
       "url": "/text-model.js",
@@ -1229,7 +1229,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   var shellRequest = () => caches.match("/", { ignoreSearch: true });
   q(new S(async (context) => {
     try {
-      const response = await new K({ cacheName: "pages", networkTimeoutSeconds: 4, plugins: [guard] }).handle(context);
+      const response = await new K({ cacheName: "pages", networkTimeoutSeconds: 4, plugins: [guard, expiring(30, 7 * DAY)] }).handle(context);
       if (response) return response;
     } catch {
     }

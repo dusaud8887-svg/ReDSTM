@@ -1283,14 +1283,25 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     shell.cancelPendingWork();
     const bodyController = new AbortController();
     shell.trackPendingWork(() => bodyController.abort());
-    const [response, chapters] = await Promise.all([
-      fetch(`/api/v1/text/object/${hash}`, { credentials: "same-origin", redirect: "error", signal: bodyController.signal }),
-      viewLane === "saved" && itemWork ? savedWorkChapters(itemWork).catch(() => []) : chapterSource,
-    ]);
+    let response;
+    let chapters;
+    try {
+      [response, chapters] = await Promise.all([
+        fetch(`/api/v1/text/object/${hash}`, { credentials: "same-origin", redirect: "error", signal: bodyController.signal }),
+        viewLane === "saved" && itemWork ? savedWorkChapters(itemWork).catch(() => []) : chapterSource,
+      ]);
+    } catch (error) {
+      // A newer open (or leaving the screen) aborted this one: nothing to report.
+      if (bodyController.signal.aborted) return;
+      throw error;
+    }
     if (activeRequest !== requestId) return;
     if (!response.ok) throw new Error(`request_${response.status}`);
-    const text = await response.text();
-    if (activeRequest !== requestId) return;
+    const text = await response.text().catch((error) => {
+      if (bodyController.signal.aborted) return null;
+      throw error;
+    });
+    if (text === null || activeRequest !== requestId) return;
     const isNovel = currentLane === "novel";
     const entryIdentity = savedIdentity || identity(entry, currentLane, itemWork);
     const parsed = currentLane === "manual" ? { text, sourceUrl: "" } : isNovel ? novelBody(text) : arcaliveBody(text);

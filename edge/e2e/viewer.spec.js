@@ -1046,6 +1046,14 @@ test("keeps the DSOTM AA settings contract", async ({ page }, testInfo) => {
   await expect(page.locator("#archive-body")).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(page.locator(".comment-body.aa-comment")).toHaveCSS("color", "rgb(0, 0, 0)");
   await page.locator("#settings-dialog button[aria-label='닫기']").click();
+  // One tap is one step after re-renders and saves (the listener must not stack per apply).
+  await page.locator("#aa-bold").click();
+  await expect(page.locator("#aa-bold")).toHaveText("살짝 굵게");
+  await page.locator("#aa-bold").click();
+  await expect(page.locator("#aa-bold")).toHaveText("굵게");
+  await expect(page.locator("#aa-bold")).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#aa-bold").click();
+  await expect(page.locator("#aa-bold")).toHaveAttribute("aria-pressed", "false");
   await page.locator('[data-aa-zoom-delta="0.25"]').click();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
   await page.reload();

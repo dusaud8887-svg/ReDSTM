@@ -400,8 +400,11 @@ searchWorker.addEventListener("message", handleWorkerMessage);
 // A Worker that fails to load or cannot read a message never answers; settle what waits on it.
 for (const type of ["error", "messageerror"]) {
   searchWorker.addEventListener(type, () => {
-    for (const { reject } of workerRequests.values()) reject(Object.assign(new Error("검색 색인을 사용할 수 없습니다"), { code: "worker_failed" }));
+    const error = Object.assign(new Error("검색 색인을 사용할 수 없습니다"), { code: "worker_failed" });
+    for (const { reject } of workerRequests.values()) reject(error);
     workerRequests.clear();
+    // init/search are posted outside workerRequests: without this the boot stays on its loading state.
+    if (!archiveReady) renderArchiveError(error);
   });
 }
 searchWorker.postMessage({ type: "init", id: ++messageId });
@@ -749,11 +752,7 @@ function applySettings() {
       settings.aaCanvasWidth === (width === "auto" ? null : Number(width)) && aaZoom === 1);
   }
   let backgroundPresetSelected = false;
-  elements["aa-bold"].addEventListener("click", () => {
-  settings.aaBold = settings.aaBold === false ? "light" : settings.aaBold === "light";
-  saveSettings();
-});
-for (const button of document.querySelectorAll("[data-aa-background]")) {
+  for (const button of document.querySelectorAll("[data-aa-background]")) {
     const selected = button.dataset.aaBackground === settings.aaBackground;
     button.classList.toggle("active", selected);
     backgroundPresetSelected ||= selected;
@@ -1477,6 +1476,8 @@ function beginReaderDocument(documentKey, workId, rev) {
     pagingScroll = false;
     textLibrary.cancelPendingPosition();
     overlays.hideToast(elements["aa-zoom-indicator"]);
+    // Find ranges point into the previous body; keeping the bar open would hold that DOM.
+    find.close();
   });
   scrollAdapter = createScrollAdapter({
     body: elements["archive-body"], scroller: elements["reader-pane"], topInset: readerTopInset,
@@ -1502,7 +1503,8 @@ function beginReaderDocument(documentKey, workId, rev) {
 const kwic = createKwic({
   overlays,
   parse(entry, raw) {
-    const body = document.createElement("div");
+    // An inert document: a detached element of the live page would still load every image.
+    const body = document.implementation.createHTMLDocument("").createElement("div");
     if (entry.type === "typemoon") body.innerHTML = JSON.parse(raw).post.body_html;
     else body.textContent = (entry.type === "manual" ? raw : (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text);
     return createTextModel(body).text;
@@ -5548,6 +5550,10 @@ for (const button of document.querySelectorAll("[data-aa-zoom-delta]")) {
 }
 elements["aa-zoom-reset"].addEventListener("click", () => setAaZoom(1));
 elements["aa-fit"].addEventListener("click", fitAaZoom);
+elements["aa-bold"].addEventListener("click", () => {
+  settings.aaBold = settings.aaBold === false ? "light" : settings.aaBold === "light";
+  saveSettings();
+});
 // The AA tool row's 색 and the settings sheet's 원본색/단색 are one switch.
 for (const id of ["aa-source-styles", "aa-color"]) {
   elements[id].addEventListener("click", () => {
@@ -6434,6 +6440,8 @@ const OFFLINE_REQUIRES = [
   "/fonts/maruburi@1.000/400.core.woff2", "/fonts/saitamaar@1.0/Saitamaar-Regular.woff2",
   "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js", "/vendor/es-hangul@2.4.0/es-hangul.js", "/vendor/use-gesture-vanilla@10.3.1/use-gesture.js",
   "/vendor/floating-ui-dom@1.8.0/floating-ui.js", "/vendor/idb@8.0.3/idb.js",
+  // Static imports of the shell modules: a cold offline start fails the whole module graph without them.
+  "/vendor/uqr@0.1.3/uqr.js", "/vendor/photoswipe@5.4.4/photoswipe.esm.min.js",
 ];
 let offlineWork = null; // the snapshot shown in the open work header
 const offlineRuns = new Map(); // workKey → live progress while saving

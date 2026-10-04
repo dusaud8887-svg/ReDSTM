@@ -115,7 +115,8 @@ cleanupOutdatedCaches();
 const shellRequest = () => caches.match("/", { ignoreSearch: true });
 registerRoute(new NavigationRoute(async (context) => {
   try {
-    const response = await new NetworkFirst({ cacheName: "pages", networkTimeoutSeconds: 4, plugins: [guard] }).handle(context);
+    // Every SPA URL caches its own copy of the same shell: keep only the recent few.
+    const response = await new NetworkFirst({ cacheName: "pages", networkTimeoutSeconds: 4, plugins: [guard, expiring(30, 7 * DAY)] }).handle(context);
     if (response) return response;
   } catch { /* offline */ }
   return (await shellRequest()) ?? Response.error();
