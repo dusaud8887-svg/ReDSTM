@@ -107,6 +107,11 @@ def test_deployment_snapshot_selects_latest_full_traffic_version() -> None:
     }
 
 
+def _edge_wrangler_pin() -> str:
+    manifest = Path(__file__).resolve().parents[1] / "edge" / "package.json"
+    return str(json.loads(manifest.read_text(encoding="utf-8"))["devDependencies"]["wrangler"])
+
+
 def test_node_command_resolves_windows_command_shims_only_for_real_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -118,7 +123,7 @@ def test_node_command_resolves_windows_command_shims_only_for_real_execution(
     assert _node_command(subprocess.run, "npx", "wrangler", "--version") == [
         r"C:\Tools\npx.CMD",
         "--no-install",
-        "wrangler@4.136.3",
+        f"wrangler@{_edge_wrangler_pin()}",
         "--version",
     ]
     assert _node_command(fake_runner, "npx", "wrangler") == [

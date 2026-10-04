@@ -42,7 +42,6 @@ CommandRunner = Callable[..., subprocess.CompletedProcess[Any]]
 SmokeRunner = Callable[[str, str], dict[str, Any]]
 
 _D1_DATABASE = "redstm-control"
-_WRANGLER_VERSION = "4.136.3"
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
 _MIGRATION = re.compile(r"\b\d{4}_[a-zA-Z0-9_.-]+\.sql\b")
 _MIGRATION_NAME = re.compile(r"\d{4}_[a-zA-Z0-9_.-]+\.sql")
@@ -85,6 +84,16 @@ class ReleaseError(RuntimeError):
         self.code = code
 
 
+def _wrangler_version() -> str:
+    # The exact pin in edge/package.json is the one version: a copy here went stale on the
+    # 4.147 upgrade and `npx --no-install` then refused the old one (2026-10-04).
+    manifest = Path(__file__).resolve().parents[1] / "edge" / "package.json"
+    version = json.loads(manifest.read_text(encoding="utf-8"))["devDependencies"]["wrangler"]
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ReleaseError("preflight", "wrangler_version_not_pinned")
+    return str(version)
+
+
 def _node_command(runner: CommandRunner, name: str, *arguments: str) -> list[str]:
     if runner is not subprocess.run:
         return [name, *arguments]
@@ -92,7 +101,7 @@ def _node_command(runner: CommandRunner, name: str, *arguments: str) -> list[str
     if executable is None:
         raise ReleaseError("preflight", f"{name}_not_found")
     if name == "npx" and arguments[:1] == ("wrangler",):
-        arguments = ("--no-install", f"wrangler@{_WRANGLER_VERSION}", *arguments[1:])
+        arguments = ("--no-install", f"wrangler@{_wrangler_version()}", *arguments[1:])
     return [executable, *arguments]
 
 

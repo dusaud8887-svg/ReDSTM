@@ -65,7 +65,10 @@ jobs:
         run: npx playwright test --project visual --update-snapshots=missing
         env:
           VISUAL: "1"
-      - run: npm run test:e2e
+      # The four viewport projects run in parallel in edge-e2e; this job keeps the Linux visual
+      # comparison, whose artifact carries new baselines to commit.
+      - name: Compare Linux visual baselines
+        run: npx playwright test --project visual
         env:
           VISUAL: "1"
       - name: Upload Linux visual baselines and failures
@@ -79,6 +82,35 @@ jobs:
       - name: Validate empty and existing-schema D1 migrations
         run: npm run test:d1
       - run: npx wrangler deploy --dry-run --strict
+
+  # One job per viewport project instead of all four in a row: about 4-5 minutes each, side by side.
+  edge-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, medium, mobile, compact]
+    name: edge-e2e (${{ matrix.project }})
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chrome
+      - run: npx playwright test --project ${{ matrix.project }} --workers=2
+      - name: Upload failures
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: edge-e2e-${{ matrix.project }}
+          path: edge/test-results
 
   text-edge:
     runs-on: ubuntu-latest
