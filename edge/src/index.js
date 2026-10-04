@@ -64,7 +64,8 @@ async function authorized(request, env, role) {
       }
       const audience = role === "runner" ? env.RUNNER_POLICY_AUD : env.POLICY_AUD;
       if (!audience) return null;
-      const { payload } = await jwtVerify(token, jwks, { issuer, audience });
+      // Access signs with RS256; pinning it (as text-edge does) refuses any other key type in the set.
+      const { payload } = await jwtVerify(token, jwks, { issuer, audience, algorithms: ["RS256"] });
       // Defense in depth behind the per-route Access applications (docs/08 §4.2, §5.3): an
       // Access service-token JWT carries common_name (the Client ID) and no email, and a user
       // identity JWT carries email. Runner routes accept only the former, user routes only the

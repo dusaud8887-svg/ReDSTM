@@ -5798,7 +5798,8 @@ function ownerStore() {
   ownerDb ??= ownerIdentity()
     .then((hash) => {
       if (!hash) ownerStoreProblem = "identity";
-      return hash ? openStore(hash) : null;
+      // A newer tab upgraded the schema and closed this connection: the next use opens again.
+      return hash ? openStore(hash, { onClosed: () => { ownerDb = null; } }) : null;
     })
     .then(async (store) => {
       if (!store) return null;
