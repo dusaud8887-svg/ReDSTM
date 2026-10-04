@@ -151,6 +151,17 @@ class WarcCaptureMiddleware:
     def process_response(self, request: Request, response: Response) -> Response:
         if not _is_allowed_capture(request):
             return response
+        # A conditional hit (304) carries no representation: there is nothing to archive, no
+        # meaningful raw_sha256, and the stored capture keeps its validators authoritative.
+        # The spider turns this response into an 'unchanged' capture (docs/31 C5).
+        if response.status == 304:
+            return response
+        etag = response.headers.get("ETag")
+        if etag is not None:
+            request.meta["etag"] = etag.decode("latin-1")
+        last_modified = response.headers.get("Last-Modified")
+        if last_modified is not None:
+            request.meta["last_modified"] = last_modified.decode("latin-1")
         raw_sha256 = hashlib.sha256(response.body).hexdigest()
         request.meta["raw_sha256"] = raw_sha256
         reference = self._seen.get((request.url, raw_sha256))

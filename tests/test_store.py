@@ -634,6 +634,274 @@ def test_short_comment_capture_still_stores_a_changed_body(tmp_path: Path) -> No
         assert tuple(row) == ("retry", "incomplete_comments")
 
 
+def test_stale_replay_does_not_regress_view_counts(tmp_path: Path) -> None:
+    # A later capture replaying an older page (stale cache) carries a lower origin view
+    # counter. The projection keeps the higher value; a genuinely edited body still stores
+    # and counts as changed (the revert contract of
+    # test_return_to_a_prior_version_reactivates_that_projection is untouched).
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    store.store_post(
+        run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="first.warc.gz"
+    )
+    stale = store.store_post(
+        run_id,
+        replace(_post(body="stale replay"), views=3),
+        captured_at=_NOW + timedelta(hours=1),
+        raw_sha256="b" * 64,
+        warc_file="second.warc.gz",
+    )
+    assert stale.changed is True
+    fresh = store.store_post(
+        run_id,
+        replace(_post(body="fresh edit"), views=12),
+        captured_at=_NOW + timedelta(hours=2),
+        raw_sha256="c" * 64,
+        warc_file="third.warc.gz",
+    )
+    assert fresh.changed is True
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT views FROM posts").fetchone()[0] == 12
+
+
+def test_block_activity_summary_counts_recent_failures(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    store.store_post(
+        run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="one.warc.gz"
+    )
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert lease is not None
+    store.record_outcome(
+        run_id,
+        url="https://www.typemoon.net/ss_temp01/7",
+        outcome="fetch_failed",
+        fetched_at=_NOW + timedelta(hours=1),
+        http_status=429,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code="rate_limited",
+        raw_sha256="b" * 64,
+        warc_file="two.warc.gz",
+        lease=lease,
+        frontier_state="retry",
+    )
+    store.record_outcome(
+        run_id,
+        url="https://www.typemoon.net/ss_temp01/7",
+        outcome="missing",
+        fetched_at=_NOW + timedelta(hours=2),
+        http_status=404,
+        board_id="ss_temp01",
+        external_post_id=7,
+        error_code="not_found",
+    )
+
+    summary = store.block_activity_summary(days=28, now=_NOW + timedelta(days=1))
+
+    assert summary["days"] == 28
+    assert summary["by_day"] == {"2026-07-11": {"rate_limited": 1, "not_found": 1}}
+    assert summary["removal_outcomes"] == {"missing": 1}
+
+
+def test_conditional_hit_records_unchanged_without_touching_the_version(tmp_path: Path) -> None:
+    # A 304 says "as you were": the stored version, comments, and projection stay
+    # authoritative; the capture records outcome='unchanged' with http_status 304 and the
+    # lease completes without a retry (docs/31 C5, newtomi F13 regression shape).
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+        etag='"v1"',
+        last_modified="Fri, 10 Jul 2026 00:00:00 GMT",
+    )
+    assert store.latest_conditional_validator("https://www.typemoon.net/ss_temp01/7") == (
+        '"v1"',
+        "Fri, 10 Jul 2026 00:00:00 GMT",
+    )
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+    lease = frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(hours=1)
+    )
+    assert lease is not None
+    store.record_unmodified_post(
+        run_id,
+        url="https://www.typemoon.net/ss_temp01/7",
+        captured_at=_NOW + timedelta(hours=1),
+        http_status=304,
+        lease=lease,
+    )
+    with pytest.raises(ValueError):
+        store.record_unmodified_post(
+            run_id,
+            url="https://www.typemoon.net/ss_temp01/7",
+            captured_at=_NOW + timedelta(hours=2),
+            http_status=200,
+        )
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM comments").fetchone()[0] == 1
+        captures = [
+            tuple(row)
+            for row in db.execute("SELECT outcome, http_status FROM captures ORDER BY id")
+        ]
+        assert captures == [("stored", 200), ("unchanged", 304)]
+        assert tuple(db.execute("SELECT state, lease_token FROM crawl_frontier").fetchone()) == (
+            "done",
+            None,
+        )
+
+
+def test_validator_requires_a_stored_capture_with_validators(tmp_path: Path) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    store.store_post(
+        run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="one.warc.gz"
+    )
+    assert store.latest_conditional_validator(url) is None
+    store.record_outcome(
+        run_id,
+        url=url,
+        outcome="fetch_failed",
+        fetched_at=_NOW + timedelta(hours=1),
+        http_status=429,
+        error_code="rate_limited",
+    )
+    assert store.latest_conditional_validator(url) is None
+
+
+def test_validator_may_carry_only_one_half(tmp_path: Path) -> None:
+    # The origin is not required to send both validators; an ETag-only capture still
+    # yields If-None-Match (docs/31 C5 — no artificial all-or-nothing constraint).
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    url = "https://www.typemoon.net/ss_temp01/7"
+    store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW,
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+        etag='"v1"',
+    )
+    assert store.latest_conditional_validator(url) == ('"v1"', None)
+
+
+def test_crash_before_store_leaves_one_clean_capture(tmp_path: Path) -> None:
+    # Forced-termination experiment 2 (response before store, docs/31 C6): the worker died
+    # after the origin answered but before store_post. The lease expires, another claim
+    # reclaims the row, and the fresh capture stores exactly once — no phantom duplicates.
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+    frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    reclaimed = frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(seconds=61)
+    )
+    assert reclaimed is not None
+    store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW + timedelta(seconds=62),
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+        lease=reclaimed,
+    )
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 1
+        assert db.execute("SELECT outcome FROM captures").fetchone()[0] == "stored"
+        assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
+
+
+def test_crash_after_store_before_ack_replays_as_unchanged(tmp_path: Path) -> None:
+    # Forced-termination experiment 3 (store committed, lease-complete lost, docs/31 C6):
+    # the identical body re-stores idempotently — the version and comments are reused, the
+    # replays land as exactly two captures ('stored' then 'unchanged'), and the frontier
+    # settles as done.
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    store.store_post(
+        run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="one.warc.gz"
+    )
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+    frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    reclaimed = frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(seconds=61)
+    )
+    assert reclaimed is not None
+    replay = store.store_post(
+        run_id,
+        _post(),
+        captured_at=_NOW + timedelta(seconds=62),
+        raw_sha256="a" * 64,
+        warc_file="one.warc.gz",
+        lease=reclaimed,
+    )
+    assert replay.changed is False
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM comments").fetchone()[0] == 1
+        outcomes = [
+            row[0] for row in db.execute("SELECT outcome FROM captures ORDER BY id")
+        ]
+        assert outcomes == ["stored", "unchanged"]
+        assert db.execute("SELECT state FROM crawl_frontier").fetchone()[0] == "done"
+
+
+def test_stale_lease_write_is_fenced(tmp_path: Path) -> None:
+    # Forced-termination experiment 4 at the store boundary (docs/31 C6): after another
+    # worker reclaims an expired lease, the original worker's store_post rolls back
+    # entirely — no capture, no version, no post row.
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    run_id = store.start_run("sync", now=_NOW)
+    frontier = FrontierStore(path)
+    frontier.seed("ss_temp01", 7, "https://www.typemoon.net/ss_temp01/7")
+    stale = frontier.claim_identity("ss_temp01", 7, lease_seconds=60, now=_NOW)
+    assert stale is not None
+    assert frontier.claim_identity(
+        "ss_temp01", 7, lease_seconds=60, now=_NOW + timedelta(seconds=61)
+    ) is not None
+    with pytest.raises(RuntimeError, match="stale or missing frontier lease"):
+        store.store_post(
+            run_id,
+            _post(),
+            captured_at=_NOW + timedelta(seconds=62),
+            raw_sha256="a" * 64,
+            warc_file="one.warc.gz",
+            lease=stale,
+        )
+    with connect_archive(path, read_only=True) as db:
+        assert db.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 0
+
+
 def test_retry_backoff_keeps_network_failures_retryable(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)

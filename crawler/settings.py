@@ -218,3 +218,9 @@ REDSTM_STALE_DETAIL_RESERVED_POSTS = 1
 
 REQUEST_FINGERPRINTER_IMPLEMENTATION = "2.7"
 FEED_EXPORT_ENCODING = "utf-8"
+
+# Conditional detail requests (If-None-Match/If-Modified-Since, docs/31 C5). Off by default:
+# the origin is a session-cookie PHP app and a 304 handshake must be canary-validated on one
+# board before it becomes the default. A 304 never overwrites the stored representation; it
+# records an 'unchanged' capture and completes the lease (newtomi F13 regression shape).
+REDSTM_CONDITIONAL_DETAILS = bool(os.environ.get("REDSTM_CONDITIONAL_DETAILS", "").strip())

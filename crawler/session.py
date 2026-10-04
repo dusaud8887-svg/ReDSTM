@@ -342,7 +342,7 @@ def _impersonate_home_html(session: SessionExport, *, timeout: float, target: st
 
     # target is an operator-configured curl_cffi profile name (validated at runtime), not one
     # of curl_cffi's statically-known Literal values.
-    with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
+    with cffi_requests.Session(impersonate=target) as client:
         _seed_impersonate_cookies(client, session)
         response = client.get(
             _BASE_URL,
@@ -417,7 +417,7 @@ def _impersonate_login(
 ) -> tuple[CookieJar, str]:
     from curl_cffi import requests as cffi_requests
 
-    with cffi_requests.Session(impersonate=target) as client:  # type: ignore[arg-type]
+    with cffi_requests.Session(impersonate=target) as client:
         proxy = active_origin_proxy()
         login_html = _impersonate_text(
             client.get(

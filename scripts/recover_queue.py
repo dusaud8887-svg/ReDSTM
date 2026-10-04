@@ -16,6 +16,7 @@ from crawler.frontier import FrontierStore
 from crawler.session import SessionExport, SessionRefreshError, ensure_session_export
 from crawler.settings import (
     REDSTM_CAPPED_RETRY_ERROR_CODES,
+    REDSTM_CONDITIONAL_DETAILS,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_IMPERSONATE_BROWSER,
     REDSTM_RECOVERY_MAX_POSTS,
@@ -186,6 +187,7 @@ def run_recovery(args: argparse.Namespace) -> dict[str, Any]:
                 lease_seconds=args.lease_seconds,
                 pause_file=pause_file,
                 impersonate_browser=REDSTM_IMPERSONATE_BROWSER,
+                conditional_details=REDSTM_CONDITIONAL_DETAILS,
             )
             process.start(stop_after_crawl=True)
             spider = crawler.spider

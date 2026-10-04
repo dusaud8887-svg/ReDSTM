@@ -247,11 +247,22 @@ def _looks_absent(response: scrapy.http.HtmlResponse) -> bool:
 
 def _looks_blocked(response: scrapy.http.HtmlResponse) -> bool:
     # A Cloudflare/WAF layer in front of the origin's own Apache is a strong block signal.
-    server = (response.headers.get("Server") or b"").decode("latin-1", "ignore").casefold()
-    if "cloudflare" in server or response.headers.get("cf-ray") is not None:
+    if _waf_block_headers(response):
         return True
     visible_text = " ".join(response.css("body ::text").getall()).casefold()
     return any(phrase in visible_text for phrase in _BLOCK_PHRASES)
+
+
+def _waf_block_headers(response: Any) -> bool:
+    """A 4xx carrying WAF transport markers is a block, not a membership answer.
+
+    errback failures have no parseable page, so the body-level ``_looks_blocked`` cannot
+    run; the response headers are the remaining discriminator between a WAF 403 (back off
+    the site like a network failure) and the origin's own permission denial (re-login
+    territory). docs/31 C2.
+    """
+    server = (response.headers.get("Server") or b"").decode("latin-1", "ignore").casefold()
+    return "cloudflare" in server or response.headers.get("cf-ray") is not None
 
 
 def _is_aa(board_id: str, category: str | None, content: Selector) -> bool:
@@ -363,6 +374,7 @@ class TypeMoonSpider(scrapy.Spider):
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
         inventory: bool = False,
         listing_only: bool = False,
+        conditional_details: bool = False,
         anchor_post_id: int | None = None,
         overlap_pages: int = REDSTM_INCREMENTAL_OVERLAP_PAGES,
         pause_file: str | Path | None = None,
@@ -382,6 +394,7 @@ class TypeMoonSpider(scrapy.Spider):
         self.start_page = int(start_page)
         self.max_posts = int(max_posts)
         self.lease_seconds = int(lease_seconds)
+        self.conditional_details = bool(conditional_details)
         self.inventory = bool(inventory)
         self.listing_only = bool(listing_only)
         self.anchor_post_id = int(anchor_post_id) if anchor_post_id is not None else None
@@ -500,6 +513,7 @@ class TypeMoonSpider(scrapy.Spider):
         # listing TLS impersonation is enabled. Carry the full coherent HTTP footprint here
         # because impersonation mode stands down the global Scrapy defaults.
         cookies = session.as_scrapy_cookies()
+        url = self.detail_url(board_id, external_post_id)
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": REDSTM_ACCEPT,
@@ -510,6 +524,17 @@ class TypeMoonSpider(scrapy.Spider):
             "Connection": "close",
             "Referer": self.listing_url(board_id),
         }
+        # Conditional detail: validators of the latest stored capture say "as you were".
+        # A 304 then records an 'unchanged' capture without touching the version (docs/31 C5).
+        # Either validator may be absent; the request carries only what it has.
+        if self.conditional_details and self.store is not None:
+            validator = self.store.latest_conditional_validator(url)
+            if validator is not None:
+                etag, last_modified = validator
+                if etag is not None:
+                    headers["If-None-Match"] = etag
+                if last_modified is not None:
+                    headers["If-Modified-Since"] = last_modified
         return scrapy.Request(
             self.detail_url(board_id, external_post_id),
             callback=self.parse_detail,
@@ -542,18 +567,28 @@ class TypeMoonSpider(scrapy.Spider):
         status = getattr(response, "status", None)
         status_code = status if isinstance(status, int) else None
         fetched_at = datetime.now(UTC)
-        error_code = (
-            {401: "auth_required", 403: "auth_required", 404: "not_found", 429: "rate_limited"}.get(
-                status_code, "network_error"
+        if status_code is None:
+            error_code = (
+                # A page over DOWNLOAD_MAXSIZE is cancelled locally (on the wire, or as
+                # IgnoreRequest when HttpCompressionMiddleware decompresses past it); it is
+                # neither an outage (the network breaker) nor worth retrying forever, so it
+                # takes the capped storage code.
+                "storage_error"
+                if isinstance(failure.value, DownloadCancelledError | IgnoreRequest)
+                else "network_error"
             )
-            if status_code is not None
-            # A page over DOWNLOAD_MAXSIZE is cancelled locally (on the wire, or as IgnoreRequest
-            # when HttpCompressionMiddleware decompresses past it); it is neither an outage (the
-            # network breaker) nor worth retrying forever, so it takes the capped storage code.
-            else "storage_error"
-            if isinstance(failure.value, DownloadCancelledError | IgnoreRequest)
-            else "network_error"
-        )
+        elif response is not None and status_code in {401, 403} and _waf_block_headers(response):
+            # A WAF block page is an origin-side refusal: treat it like a network failure so
+            # the site-wide breaker fires and attempts are preserved, instead of spending the
+            # throttled re-login budget on a bot block (docs/31 C2).
+            error_code = "network_error"
+        else:
+            error_code = {
+                401: "auth_required",
+                403: "auth_required",
+                404: "not_found",
+                429: "rate_limited",
+            }.get(status_code, "network_error")
         self.store.record_outcome(
             self.run_id,
             url=request.url,
@@ -615,7 +650,10 @@ class TypeMoonSpider(scrapy.Spider):
     def listing_error(self, failure: Any) -> None:
         response = getattr(failure.value, "response", None)
         status = getattr(response, "status", None)
-        error_code = (
+        block_page = (
+            status in {401, 403} and response is not None and _waf_block_headers(response)
+        )
+        error_code = "network_error" if block_page else (
             {401: "auth_required", 403: "auth_required", 429: "rate_limited"}.get(
                 status, "listing_fetch_failed"
             )
@@ -902,7 +940,6 @@ class TypeMoonSpider(scrapy.Spider):
                 self.store.checkpoint_inventory_page(
                     self.start_board_id,
                     next_page=self.next_inventory_page,
-                    completed=self.inventory_completed,
                 )
         if not self.inventory and not self._listing_warning:
             self.listing_completed = not inventory_rows or (
@@ -1067,11 +1104,27 @@ class TypeMoonSpider(scrapy.Spider):
         canonical_url = f"{_BASE_URL}/{board_id}/{external_post_id}"
         capture_metadata = {
             "http_status": response.status,
+            "etag": response.meta.get("etag"),
+            "last_modified": response.meta.get("last_modified"),
             "raw_sha256": response.meta.get("raw_sha256"),
             "warc_file": response.meta.get("warc_file"),
             "warc_record_id": response.meta.get("warc_record_id"),
             "frontier_lease": response.meta.get("frontier_lease"),
         }
+        if response.status == 304:
+            # Conditional hit: the stored version is confirmed unchanged. There is no body
+            # to parse — yielding the normal parse path would misclassify the empty page
+            # as parse drift (newtomi F13). The pipeline records the capture and completes
+            # the lease without touching the version, comments, or projection (docs/31 C5).
+            yield CapturedPostItem(
+                board_id=board_id,
+                external_post_id=external_post_id,
+                canonical_url=canonical_url,
+                outcome="unchanged",
+                warnings=[],
+                **capture_metadata,
+            )
+            return
         if "dataloss" in response.flags:
             yield CapturedPostItem(
                 board_id=board_id,
@@ -1225,6 +1278,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
         session: SessionExport,
         lease_seconds: int = REDSTM_FRONTIER_LEASE_SECONDS,
         pause_file: str | Path | None = None,
+        conditional_details: bool = False,
         impersonate_browser: str = "",
     ) -> None:
         self._candidates = iter(candidates)
@@ -1234,6 +1288,7 @@ class TypeMoonRecoverySpider(TypeMoonSpider):
             session=session,
             lease_seconds=lease_seconds,
             pause_file=pause_file,
+            conditional_details=conditional_details,
             impersonate_browser=impersonate_browser,
         )
 

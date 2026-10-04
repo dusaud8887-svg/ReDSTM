@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from scrapy.http import HtmlResponse, Request, Response
@@ -591,6 +592,140 @@ def test_oversized_detail_takes_the_capped_storage_code_not_network_error(oversi
     spider.detail_error(failure)
 
     assert recorded["error_code"] == "storage_error"
+
+
+def _detail_failure_with_status(
+    status: int,
+    headers: dict[str, str],
+    *,
+    url: str = "https://www.typemoon.net/write_free21/62068",
+) -> Any:
+    from datetime import UTC, datetime
+
+    from scrapy.spidermiddlewares.httperror import HttpError
+    from twisted.python.failure import Failure
+
+    from crawler.frontier import FrontierLease
+
+    response = HtmlResponse(url=url, status=status, headers=headers, body=b"<html></body>")
+    failure = Failure(HttpError(response))
+    failure.request = Request(  # type: ignore[attr-defined]
+        url=url,
+        meta={
+            "frontier_lease": FrontierLease(
+                "write_free21", 62068, url, 1, "token", datetime(2026, 7, 11, tzinfo=UTC)
+            )
+        },
+    )
+    return failure
+
+
+def test_waf_403_is_a_network_failure_not_auth_required() -> None:
+    recorded: dict[str, object] = {}
+
+    class _Store:
+        def record_outcome(self, run_id: str, **kwargs: object) -> int:
+            recorded.update(kwargs)
+            return 1
+
+    spider = TypeMoonSpider()
+    spider.store = _Store()  # type: ignore[assignment]
+    spider.run_id = "run"
+
+    spider.detail_error(_detail_failure_with_status(403, {"cf-ray": "8f1a-test"}))
+
+    assert recorded["error_code"] == "network_error"
+
+
+def test_plain_403_stays_auth_required() -> None:
+    recorded: dict[str, object] = {}
+
+    class _Store:
+        def record_outcome(self, run_id: str, **kwargs: object) -> int:
+            recorded.update(kwargs)
+            return 1
+
+    spider = TypeMoonSpider()
+    spider.store = _Store()  # type: ignore[assignment]
+    spider.run_id = "run"
+
+    spider.detail_error(_detail_failure_with_status(403, {}))
+
+    assert recorded["error_code"] == "auth_required"
+
+
+def test_waf_listing_403_is_a_network_failure() -> None:
+    spider = TypeMoonSpider()
+
+    spider.listing_error(
+        _detail_failure_with_status(
+            403, {"Server": "cloudflare"}, url="https://www.typemoon.net/write_free21"
+        )
+    )
+
+    assert "network_error" in spider.failure_codes
+
+
+def test_conditional_hit_yields_unchanged_without_parse() -> None:
+    from crawler.frontier import FrontierLease
+
+    url = "https://www.typemoon.net/write_free21/62068"
+    request = Request(
+        url,
+        meta={
+            "frontier_lease": FrontierLease(
+                "write_free21", 62068, url, 1, "token", datetime(2026, 7, 11, tzinfo=UTC)
+            )
+        },
+    )
+    response = HtmlResponse(url, status=304, body=b"", request=request, encoding="utf-8")
+
+    items = list(TypeMoonSpider().parse_detail(response))
+
+    assert len(items) == 1
+    assert items[0]["outcome"] == "unchanged"
+    assert items[0]["http_status"] == 304
+    assert items[0]["warnings"] == []
+
+
+def test_conditional_detail_carries_stored_validators() -> None:
+    class _Store:
+        def __init__(self) -> None:
+            self.validators: tuple[str | None, str | None] | None = None
+
+        def latest_conditional_validator(
+            self, url: str
+        ) -> tuple[str | None, str | None] | None:
+            return self.validators
+
+    class _Session:
+        def as_scrapy_cookies(self) -> list[dict[str, str]]:
+            return []
+
+    spider = TypeMoonSpider(conditional_details=True)
+    store = _Store()
+    store.validators = ('"v1"', "Fri, 10 Jul 2026 00:00:00 GMT")
+    spider.store = store  # type: ignore[assignment]
+
+    request = spider.detail_request("write_free21", 62068, _Session())  # type: ignore[arg-type]
+
+    assert request.headers.get("If-None-Match", b"").decode("latin-1") == '"v1"'
+    assert (
+        request.headers.get("If-Modified-Since", b"").decode("latin-1")
+        == "Fri, 10 Jul 2026 00:00:00 GMT"
+    )
+
+    store.validators = None
+    plain = spider.detail_request("write_free21", 62068, _Session())  # type: ignore[arg-type]
+
+    assert plain.headers.get("If-None-Match") is None
+    assert plain.headers.get("If-Modified-Since") is None
+
+    store.validators = ('"v2"', None)
+    etag_only = spider.detail_request("write_free21", 62068, _Session())  # type: ignore[arg-type]
+
+    assert etag_only.headers.get("If-None-Match", b"").decode("latin-1") == '"v2"'
+    assert etag_only.headers.get("If-Modified-Since") is None
 
 
 def test_unknown_detail_shape_is_parse_failed() -> None:

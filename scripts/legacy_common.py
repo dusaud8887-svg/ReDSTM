@@ -172,7 +172,10 @@ def _parse_relative(rendered: str, base: datetime | None) -> datetime | None:
     }
     if base is not None:
         settings["RELATIVE_BASE"] = base.astimezone(_KST)
-    return dateparser.parse(rendered, languages=["ko", "en"], settings=settings)
+    parsed: datetime | None = dateparser.parse(
+        rendered, languages=["ko", "en"], settings=settings
+    )
+    return parsed
 
 
 def normalize_source_timestamp(value: object, *, base: datetime | None = None) -> str | None:

@@ -78,6 +78,20 @@ class ArchivePipeline:
                     warc_file=warc_file,
                     http_status=200 if http_status is None else http_status,
                     lease=lease,
+                    etag=_optional_text(item.get("etag")),
+                    last_modified=_optional_text(item.get("last_modified")),
+                )
+                return item
+
+            if outcome == "unchanged":
+                # A conditional hit (304): the stored representation stays authoritative —
+                # record the capture, complete the lease, touch nothing else (docs/31 C5).
+                self.store.record_unmodified_post(
+                    self.run_id,
+                    url=str(item["canonical_url"]),
+                    captured_at=captured_at,
+                    http_status=http_status if http_status is not None else 304,
+                    lease=lease,
                 )
                 return item
 

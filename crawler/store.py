@@ -4,8 +4,9 @@ import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from crawler.archive import archive_transaction, compress_body
 from crawler.frontier import (
@@ -166,6 +167,8 @@ class ArchiveStore:
         http_status: int = 200,
         parser_version: str = PARSER_VERSION,
         lease: FrontierLease | None = None,
+        etag: str | None = None,
+        last_modified: str | None = None,
     ) -> StoreResult:
         captured_at_text = _timestamp(captured_at)
         created_at_source = normalize_source_timestamp(post.created_at_raw, base=captured_at)
@@ -295,7 +298,14 @@ class ArchiveStore:
                     last_seen_at = excluded.last_seen_at,
                     last_collected_at = excluded.last_collected_at,
                     availability = 'available',
-                    views = excluded.views,
+                    -- Origin view counters only grow. A lower number here means a stale
+                    -- replay of an older page (judging-kit version reversal), so keep the
+                    -- higher stored value; a deliberate admin reset is not distinguishable
+                    -- and is accepted as a documented residual risk (docs/31 C1).
+                    views = CASE
+                        WHEN excluded.views >= posts.views THEN excluded.views
+                        ELSE posts.views
+                    END,
                     comment_count = excluded.comment_count,
                     is_aa = excluded.is_aa
                 """,
@@ -371,8 +381,8 @@ class ArchiveStore:
                 """
                 INSERT INTO captures (
                     run_id, url, entity_type, post_id, fetched_at, http_status, outcome,
-                    raw_sha256, warc_file, warc_record_id
-                ) VALUES (?, ?, 'post', ?, ?, ?, ?, ?, ?, ?)
+                    raw_sha256, warc_file, warc_record_id, etag, last_modified
+                ) VALUES (?, ?, 'post', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -384,6 +394,8 @@ class ArchiveStore:
                     raw_sha256,
                     warc_file,
                     post.warc_record_id,
+                    etag,
+                    last_modified,
                 ),
             )
             assert capture_cursor.lastrowid is not None
@@ -394,6 +406,76 @@ class ArchiveStore:
                 else:
                     complete_lease(connection, lease, stored_comment_count=len(post.comments))
             return StoreResult(post_id, version_id, capture_cursor.lastrowid, changed)
+
+    def latest_conditional_validator(self, url: str) -> tuple[str | None, str | None] | None:
+        """Validators of the latest stored capture for a URL (docs/31 C5).
+
+        Only 'stored' captures carry validators — a 4xx/challenge capture must never hand
+        its (meaningless or stale) headers to a conditional request. Either half may be
+        absent (the origin is not required to send both); a request then carries only the
+        field it has. Returns None when the newest stored capture predates validator
+        recording, so the next request stays a plain unconditional GET.
+        """
+        row = None
+        with archive_transaction(self.path, read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT etag, last_modified FROM captures
+                WHERE url = ? AND entity_type = 'post' AND outcome = 'stored'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (url,),
+            ).fetchone()
+        if row is None:
+            return None
+        etag = row["etag"]
+        last_modified = row["last_modified"]
+        if etag is None and last_modified is None:
+            return None
+        return (
+            str(etag) if etag is not None else None,
+            str(last_modified) if last_modified is not None else None,
+        )
+
+    def record_unmodified_post(
+        self,
+        run_id: str,
+        *,
+        url: str,
+        captured_at: datetime,
+        http_status: int,
+        lease: FrontierLease | None = None,
+    ) -> int:
+        """Record a conditional-hit capture (304) without touching the stored version.
+
+        The stored representation (version, comments, projection) stays authoritative; a 304
+        is an explicit statement that nothing changed. The lease completes so the frontier
+        does not retry a confirmed-unchanged post.
+        """
+        if http_status != 304:
+            raise ValueError("unmodified capture requires a 304 status")
+        captured_at_text = _timestamp(captured_at)
+        with archive_transaction(self.path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_running_run(connection, run_id)
+            post_row = connection.execute(
+                "SELECT id FROM posts WHERE canonical_url = ?",
+                (url,),
+            ).fetchone()
+            if post_row is None:
+                raise ValueError("a 304 conditional hit requires a stored post")
+            cursor = connection.execute(
+                """
+                INSERT INTO captures (
+                    run_id, url, entity_type, post_id, fetched_at, http_status, outcome
+                ) VALUES (?, ?, 'post', ?, ?, ?, 'unchanged')
+                """,
+                (run_id, url, post_row["id"], captured_at_text, http_status),
+            )
+            if lease is not None:
+                complete_lease(connection, lease)
+            capture_id = cursor.lastrowid
+        return int(capture_id) if capture_id is not None else 0
 
     def record_outcome(
         self,
@@ -481,9 +563,7 @@ class ArchiveStore:
                 )
             return cursor.lastrowid
 
-    def checkpoint_inventory_page(
-        self, board_id: str, *, next_page: int, completed: bool = False
-    ) -> None:
+    def checkpoint_inventory_page(self, board_id: str, *, next_page: int) -> None:
         """Persist inventory cursor mid-board so a later timeout/OOM keeps page progress.
 
         last_inventory_at advances on every successful page checkpoint (not only board
@@ -500,7 +580,46 @@ class ArchiveStore:
                 """,
                 (next_page, board_id),
             )
-        _ = completed  # board-complete flag kept for callers; timestamp always advances
+
+    def block_activity_summary(
+        self, *, days: int = 28, now: datetime | None = None
+    ) -> dict[str, Any]:
+        """Failure/block timeline small summary for the ops report (docs/31 C3).
+
+        Every post capture already records http_status, error_code, and fetched_at, so the
+        captures table is the timeline; this is a read-only projection, not a new table.
+        Returns per-day error-code counts over the window plus removal outcomes
+        (restricted/missing) — the signals a block or deletion wave would move.
+        """
+        if days < 1:
+            raise ValueError("days must be positive")
+        since = _timestamp((now or datetime.now(UTC)) - timedelta(days=days))
+        with archive_transaction(self.path, read_only=True) as connection:
+            by_day_rows = connection.execute(
+                """
+                SELECT substr(fetched_at, 1, 10) AS day, error_code, COUNT(*) AS count
+                FROM captures
+                WHERE entity_type = 'post' AND error_code IS NOT NULL AND fetched_at >= ?
+                GROUP BY day, error_code
+                ORDER BY day, error_code
+                """,
+                (since,),
+            ).fetchall()
+            removal_rows = connection.execute(
+                """
+                SELECT outcome, COUNT(*) AS count
+                FROM captures
+                WHERE entity_type = 'post'
+                  AND outcome IN ('restricted', 'missing') AND fetched_at >= ?
+                GROUP BY outcome
+                """,
+                (since,),
+            ).fetchall()
+        by_day: dict[str, dict[str, int]] = {}
+        for row in by_day_rows:
+            by_day.setdefault(str(row["day"]), {})[str(row["error_code"])] = int(row["count"])
+        removal_outcomes = {str(row["outcome"]): int(row["count"]) for row in removal_rows}
+        return {"days": days, "by_day": by_day, "removal_outcomes": removal_outcomes}
 
     def record_listing(
         self,

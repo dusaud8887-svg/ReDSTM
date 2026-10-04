@@ -15,6 +15,40 @@ from crawler.spiders.typemoon import TypeMoonSpider
 from crawler.store import ArchiveStore
 
 
+def test_warc_skips_conditional_hits_and_publishes_validators(tmp_path: Path) -> None:
+    # A 304 has no representation: nothing is archived, no raw_sha256 is minted. A 200
+    # response publishes its validators on the request meta so the capture row can store
+    # them for a later If-None-Match/If-Modified-Since probe (docs/31 C5).
+    path = tmp_path / "capture.warc.gz"
+    spider = TypeMoonSpider()
+    middleware = WarcCaptureMiddleware(path)
+    middleware.spider_opened(spider)
+
+    not_modified = Request(
+        "https://www.typemoon.net/write_free21/62068", meta={"redstm_capture": True}
+    )
+    response_304 = HtmlResponse(
+        not_modified.url, status=304, request=not_modified, encoding="utf-8"
+    )
+    assert middleware.process_response(not_modified, response_304) is response_304
+    assert not_modified.meta.get("raw_sha256") is None
+
+    request = Request(
+        "https://www.typemoon.net/write_free21/62068", meta={"redstm_capture": True}
+    )
+    response = HtmlResponse(
+        request.url,
+        body=b"<html>body</html>",
+        headers={"ETag": '"v1"', "Last-Modified": "Fri, 10 Jul 2026 00:00:00 GMT"},
+        request=request,
+        encoding="utf-8",
+    )
+    middleware.process_response(request, response)
+    assert request.meta["etag"] == '"v1"'
+    assert request.meta["last_modified"] == "Fri, 10 Jul 2026 00:00:00 GMT"
+    middleware.spider_closed(spider, "finished")
+
+
 def test_warc_capture_keeps_raw_response_without_secrets(tmp_path: Path) -> None:
     path = tmp_path / "capture.warc.gz"
     spider = TypeMoonSpider()

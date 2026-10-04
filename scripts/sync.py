@@ -16,6 +16,7 @@ from crawler import settings as crawler_settings
 from crawler.archive import archive_transaction, require_archive_schema
 from crawler.session import SessionRefreshError, ensure_session_export, load_session_export
 from crawler.settings import (
+    REDSTM_CONDITIONAL_DETAILS,
     REDSTM_FRONTIER_LEASE_SECONDS,
     REDSTM_IMPERSONATE_BROWSER,
     REDSTM_SYNC_MAX_PAGES,
@@ -165,6 +166,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             ),
             pause_file=pause_file,
             impersonate_browser=REDSTM_IMPERSONATE_BROWSER,
+            conditional_details=REDSTM_CONDITIONAL_DETAILS,
         )
         process.start(stop_after_crawl=True)
 
@@ -178,6 +180,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         if _memory_limited(crawler):
             failures = sorted({*failures, "memory_limit"})
         outcomes = _capture_summary(archive, run_id)
+        block_activity = store.block_activity_summary(days=28)
         paused = bool(getattr(spider, "paused", False))
         inventory_next_page = int(getattr(spider, "next_inventory_page", inventory_start_page))
         inventory_completed = bool(getattr(spider, "inventory_completed", False))
@@ -237,6 +240,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
                 "listing_completed": listing_completed,
                 "listing_row_skipped": listing_row_skipped,
                 "latest_post_id": latest_post_id,
+                "block_activity": block_activity,
             },
         )
         if not paused:
@@ -256,6 +260,7 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
             "listing_completed": listing_completed,
             "listing_row_skipped": listing_row_skipped,
             "latest_post_id": latest_post_id,
+            "block_activity": block_activity,
             "stop_reason": "schedule_paused" if paused else None,
             "warc_path": str(warc_path),
         }

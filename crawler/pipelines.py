@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-import nh3  # type: ignore[import-untyped]
+import nh3
 from lxml import html as lxml_html  # type: ignore[import-untyped]
 
 _BOARD_ID = re.compile(r"^[a-z0-9_]+$")

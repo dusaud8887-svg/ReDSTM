@@ -53,7 +53,7 @@ class SequentialDetailDownloadHandler:
 
     async def download_request(self, request: Request) -> Response:
         if request.meta.get("redstm_sequential_detail") is not True:
-            return await self._delegate.download_request(request)
+            return cast(Response, await self._delegate.download_request(request))
         return await maybe_deferred_to_future(deferToThread(self._download_detail, request))
 
     def _download_detail(self, request: Request) -> Response:

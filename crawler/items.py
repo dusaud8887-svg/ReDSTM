@@ -43,6 +43,8 @@ class CapturedPostItem(scrapy.Item):
     comments = scrapy.Field()
     warnings = scrapy.Field()
     http_status = scrapy.Field()
+    etag = scrapy.Field()
+    last_modified = scrapy.Field()
     raw_sha256 = scrapy.Field()
     warc_file = scrapy.Field()
     warc_record_id = scrapy.Field()
