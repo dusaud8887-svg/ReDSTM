@@ -7,6 +7,8 @@ dependencies = [
     "Scrapy>=2.17.0,<2.18",
     "dateparser>=1.4.1,<2",
     "filelock>=3.20,<4",
+    # crawler/pipelines.py imports lxml directly; Scrapy only brings it transitively.
+    "lxml>=6.1,<7",
     "nh3>=0.3.6,<0.4",
     "requests>=2.34,<3",
     "warcio>=1.8.1,<2",

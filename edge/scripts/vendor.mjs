@@ -49,7 +49,8 @@ const bundles = [
 const copies = [
   {
     name: "photoswipe",
-    files: ["dist/photoswipe-lightbox.esm.min.js", "dist/photoswipe.esm.min.js", "dist/photoswipe.css"],
+    // core only: gallery.js drives PhotoSwipe itself (the overlay manager owns Esc/focus/Back).
+    files: ["dist/photoswipe.esm.min.js", "dist/photoswipe.css"],
   },
 ];
 
