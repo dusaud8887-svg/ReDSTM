@@ -293,7 +293,7 @@ test("Text: list sort never changes 다음 화, and Back restores the chapter li
   await expect(page.locator("#reader")).toBeHidden();
   await expect(page.locator(row)).toBeVisible();
   await expect.poll(async () => Math.abs(await anchorOffset(page) - before)).toBeLessThanOrEqual(4);
-  await expect(page.locator("#result-list .continue-row")).toContainText("202화");
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("202화");
 });
 
 test("Text: the chapter end offers the next chapter and the chapter list", async ({ page }) => {
@@ -740,17 +740,19 @@ test("Text keeps reading when the TypeMoon archive fails, and the error waits fo
 test("A work not started yet offers its first chapter, and finishing one names the next", async ({ page }) => {
   const workId = await useLongNovel(page, 5);
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
-  const start = page.locator("#result-list .continue-row");
+  const start = page.locator("#text-work-summary .text-work-continue");
   await expect(start).toContainText("처음부터 읽기 · 1화");
   // Searching for a chapter shows only matches.
   await page.locator("#search-input").fill("3화");
-  await expect(start).toHaveCount(0);
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["3화"]);
+  // The main action is the work header's button, not a list row, so it stays while searching.
+  await expect(start).toBeVisible();
   await page.locator("#search-input").fill("");
   await start.click();
   await expect(page.locator("#reader-title")).toHaveText("1화");
   await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = pane.scrollHeight; });
   await page.goBack();
-  await expect(page.locator("#result-list .continue-row")).toContainText("이어 읽기 · 2화");
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("이어 읽기 · 2화");
 });
 
 test("Recent searches keep one entry per typed search and can be cleared", async ({ page }) => {
@@ -1168,7 +1170,7 @@ test("Text: 이전 회차 모두 읽음 marks the chapters before the open one a
   expect(saved.slice(0, 3)).toEqual([1, 1, 1]);
   expect(saved[3]).toBeLessThan(1);
   await page.goBack();
-  await expect(page.locator("#result-list .continue-row")).toContainText("이어 읽기 · 4화");
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("이어 읽기 · 4화");
   await expect(page.locator('#result-list [data-key="chapter:3"]')).toContainText("다 읽음");
   // Nothing is left to mark from the first chapter.
   await page.locator('#result-list [data-key="chapter:1"]').click();
@@ -1403,7 +1405,7 @@ test("Novel shelves: sort works into personal shelves, hide a shelf, and browse 
   await expect(folders.nth(3)).toContainText("전체 목록에서 숨김");
   await folders.filter({ hasText: "BL" }).click();
   await expect(titles).toHaveText(["나 소설"]);
-  await expect(page.locator("#text-work-back")).toHaveText("← 분류 목록");
+  await expect(page.locator("#text-work-back")).toHaveText("분류 목록");
 
   // The chapter view shows and changes the shelf too.
   await page.locator("#text-work-back").click();

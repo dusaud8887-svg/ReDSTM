@@ -68,24 +68,24 @@ test("A work is saved on this device, resumes after a failed file, and is remove
   await page.goto("/collections/1");
   const control = page.locator("#collection-offline");
   await expect(control).toBeVisible();
-  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect(page.locator("#offline-state")).toHaveText("글만 내려받음 · 이미지는 온라인에서");
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText("일부만 저장됨 · 2/3편 (1편 실패)");
-  await expect(page.locator("#offline-save")).toHaveText("이어서 저장");
+  await expect(page.locator("#offline-state")).toHaveText("일부만 내려받음 · 2/3편 (1편 실패)");
+  await expect(page.locator("#offline-save")).toHaveText("이어서 내려받기");
   failing = false;
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨 · \d/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음 · \d/);
   await expect(page.locator("#offline-save")).toBeHidden();
   const saved = await cachedPaths(page);
   expect((saved[`offline-v1-${owner}`] ?? []).filter((path) => path.startsWith("/archive/posts/board_a/")).length).toBe(3);
   // The snapshot survives a reload.
   await page.reload();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
   await page.goto("/settings");
-  await expect(page.locator("#offline-storage")).toContainText("이 기기에 저장한 작품 1개");
+  await expect(page.locator("#offline-storage")).toContainText("내려받은 작품 1개");
   await page.goto("/collections/1");
   await page.locator("#offline-delete").click();
-  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect(page.locator("#offline-state")).toHaveText("글만 내려받음 · 이미지는 온라인에서");
   await expect.poll(async () => ((await cachedPaths(page))[`offline-v1-${owner}`] ?? []).length).toBe(0);
 });
 
@@ -96,7 +96,7 @@ async function saveCollection(page, context, owner) {
   await controlled(page);
   await page.goto("/collections/1");
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
 }
 
 test("A first visit directly to a work enables saving when the worker becomes ready", async ({ page, context }) => {
@@ -106,7 +106,7 @@ test("A first visit directly to a work enables saving when the worker becomes re
   await expect(page.locator("#offline-save")).toBeVisible();
   await expect(page.locator("#offline-save")).toBeEnabled();
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
 });
 
 // P4-3 / T07: started with no network, the shell comes from the cache and the saved work opens
@@ -149,7 +149,7 @@ test("Another account's namespace stays closed and can be deleted from settings"
   await context.unroute("**/api/v1/me");
   await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "fedcba9876543210" }) }));
   await page.goto("/collections/1");
-  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect(page.locator("#offline-state")).toHaveText("글만 내려받음 · 이미지는 온라인에서");
   await page.goto("/settings");
   await expect(page.locator("#other-account")).toBeVisible();
   await page.locator("#other-account-delete").click();
@@ -170,9 +170,9 @@ test("앱 캐시 지우기 unregisters the worker and empties its caches", async
   expect(await page.evaluate(async () => (await indexedDB.databases()).map((database) => database.name))).toContain("redstm:0123456789abcdef");
   await page.goto("/collections/1");
   await expect(page.locator("#offline-save")).toBeVisible();
-  await expect(page.locator("#offline-state")).toContainText("저장이 중단됨");
+  await expect(page.locator("#offline-state")).toContainText("내려받기 중단됨");
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
 });
 
 test("Resetting caches also makes another account's saved works resumable", async ({ page, context }) => {
@@ -187,7 +187,7 @@ test("Resetting caches also makes another account's saved works resumable", asyn
   await page.goto("/collections/1");
   await expect(page.locator("#offline-save")).toBeVisible();
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
 });
 
 test("A failed snapshot write does not start an untracked offline download", async ({ page, context }) => {
@@ -207,8 +207,8 @@ test("A failed snapshot write does not start an untracked offline download", asy
     };
   });
   await page.locator("#offline-save").click();
-  await expect(page.locator("#aa-zoom-indicator")).toContainText("저장 상태를 기록하지 못했어요");
-  await expect(page.locator("#offline-save")).toHaveText("이 기기에 저장");
+  await expect(page.locator("#aa-zoom-indicator")).toContainText("내려받기 상태를 기록하지 못했어요");
+  await expect(page.locator("#offline-save")).toHaveText("기기에 내려받기");
   expect(downloads).toBe(0);
 });
 

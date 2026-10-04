@@ -98,3 +98,10 @@ test("기록 › 통계 without an account says to sign in and has no search fie
   await expect(page.locator("#result-status")).toContainText("로그인을 확인하지 못해");
   await expect(page.locator("#catalog-search-row")).toBeHidden();
 });
+
+test("a first visit shows onboarding alone, without the smart shelf's condition chips", async ({ page }) => {
+  await useLongCollection(page, 4);
+  await page.goto("/");
+  await expect(page.locator("#home-onboarding")).toBeVisible();
+  await expect(page.locator("#smart-library")).toBeHidden();
+});

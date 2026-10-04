@@ -63,6 +63,11 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .more-position-values small { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .reader-topbar-progress { color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 600; }
 .reader-topbar-progress:empty { display: none; }
+/* 더보기 groups (DESIGN §8.3): a small heading per group; a group with every tile hidden hides. */
+.more-group { display: grid; gap: 8px; }
+.more-group + .more-group { margin-top: 14px; }
+.more-group h3 { margin: 0; color: var(--ink-2); font-size: 12px; font-weight: 650; letter-spacing: .02em; }
+.more-group:not(:has(.more-actions > :not([hidden]))) { display: none; }
 .more-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .more-actions :is(button, a) { min-width: 0; min-height: 80px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; text-align: center; text-decoration: none; cursor: pointer; }
 @media (hover: hover) { .more-actions :is(button, a):hover { border-color: var(--accent); color: var(--accent); } }

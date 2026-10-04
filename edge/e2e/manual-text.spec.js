@@ -30,7 +30,7 @@ test("manual folders preserve full bodies, natural file order and saved reading 
   await expect(page.locator('[data-source="manual"]')).toHaveAttribute("aria-pressed", "true");
   await page.locator("#result-list .result-item").filter({ hasText: "작품/회차" }).click();
   await expect(page.locator("#result-list .result-title")).toHaveText(["2화", "10화"]);
-  await expect(page.locator("#text-work-back")).toHaveText("← 폴더 목록");
+  await expect(page.locator("#text-work-back")).toHaveText("폴더 목록");
   await page.locator("#result-list .result-item").filter({ hasText: "2화" }).click();
   await expect(page.locator("#archive-body")).toContainText("# 본문 첫 줄");
   await expect(page.locator("#archive-body")).toContainText("원본: 그대로 보관");

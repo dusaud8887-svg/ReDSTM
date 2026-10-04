@@ -1377,7 +1377,7 @@ function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없�
   void renderOfflineWorks(offline || expired);
 }
 
-// 이 기기에 저장한 작품: shown when the archive cannot be reached; each opens from its snapshot.
+// 내려받은 작품 (offline): shown when the archive cannot be reached; each opens from its snapshot.
 async function renderOfflineWorks(show = true) {
   const store = show ? await ownerStore() : null;
   const works = store ? (await store.getAll("offline")).filter((work) => work.descriptor && work.state !== "interrupted") : [];
@@ -6406,7 +6406,7 @@ async function showWorkReadingTime(key, element) {
   element.textContent += ` · 읽은 시간(추정) ${minutesLabel(spent)}`;
 }
 
-// ---- 이 기기에 저장 (docs/24 §12.6.2, T08) --------------------------------------------------------
+// ---- 기기에 내려받기 (docs/24 §12.6.2, T08) --------------------------------------------------------
 // A saved work is a snapshot in the owner's store (what to draw offline) plus its files in the
 // owner's offline cache (the worker downloads them). It needs both a verified owner and a worker.
 const OFFLINE_REQUIRES = [
@@ -6448,24 +6448,24 @@ function renderOfflineControl() {
     save.textContent = "멈추기";
     save.dataset.action = "cancel";
     remove.hidden = true;
-    state.textContent = `저장 중 ${run.done + run.failed}/${run.total}`;
+    state.textContent = `내려받는 중 ${run.done + run.failed}/${run.total}`;
     return;
   }
   const stored = snapshot?.stored;
   save.dataset.action = "save";
   remove.hidden = !stored;
   if (!stored) {
-    save.textContent = "이 기기에 저장";
-    state.textContent = "글만 저장 · 이미지는 온라인에서";
+    save.textContent = "기기에 내려받기";
+    state.textContent = "글만 내려받음 · 이미지는 온라인에서";
   } else if (stored.state === "complete") {
     save.hidden = true;
-    state.textContent = `이 기기에 저장됨 · ${sizeLabel(stored.bytes)}`;
+    state.textContent = `이 기기에 내려받음 · ${sizeLabel(stored.bytes)}`;
   } else {
     save.hidden = false;
-    save.textContent = "이어서 저장";
+    save.textContent = "이어서 내려받기";
     state.textContent = stored.failed
-      ? `일부만 저장됨 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
-      : `저장이 중단됨 · ${stored.done}/${stored.entries.length}편`;
+      ? `일부만 내려받음 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
+      : `내려받기 중단됨 · ${stored.done}/${stored.entries.length}편`;
   }
   if (stored?.state !== "complete") save.hidden = false;
 }
@@ -6492,7 +6492,7 @@ async function writeSnapshot(snapshot) {
     await store.commit([{ store: "offline", value }]);
     return true;
   } catch {
-    showReaderFeedback("저장 상태를 기록하지 못했어요", 2400);
+    showReaderFeedback("내려받기 상태를 기록하지 못했어요", 2400);
     return false;
   }
 }
@@ -6542,7 +6542,7 @@ async function offlineProgress(message) {
       if (!(await writeSnapshot(finished))) { renderOfflineControl(); return; }
       if (offlineWork?.workKey === message.id) offlineWork = { ...offlineWork, stored: finished };
     }
-    showReaderFeedback(message.failed ? `저장하지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "저장을 멈췄어요" : "이 기기에 저장했어요", 2400);
+    showReaderFeedback(message.failed ? `내려받지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "내려받기를 멈췄어요" : "이 기기에 내려받았어요", 2400);
     void renderOfflineStorage();
   }
   if (offlineWork?.workKey === message.id) renderOfflineControl();
@@ -6559,7 +6559,7 @@ async function renderOfflineStorage() {
   line.hidden = !works.length && !estimate;
   if (line.hidden) return;
   const used = estimate?.usage ? ` · 사용 ${sizeLabel(estimate.usage)}${estimate.quota ? ` / 가능 ${sizeLabel(estimate.quota)}` : ""}` : "";
-  line.textContent = `이 기기에 저장한 작품 ${works.length}개${used}. 저장한 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
+  line.textContent = `내려받은 작품 ${works.length}개${used}. 내려받은 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
 }
 
 // A new version never replaces the running one by itself (no automatic skipWaiting): it is
@@ -6577,7 +6577,7 @@ document.querySelector("#update-apply").addEventListener("click", () => {
   applyUpdateAtSafePoint();
 });
 document.querySelector("#reset-app-cache").addEventListener("click", async () => {
-  if (!confirm("앱 캐시와 이 기기에 저장한 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
+  if (!confirm("앱 캐시와 내려받은 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
   try {
     const store = await ownerStore();
     const cachedOwners = (await caches.keys()).map((name) => name.match(/-([a-f0-9]{16})$/)?.[1]);
@@ -6614,7 +6614,7 @@ document.querySelector("#other-account-delete").addEventListener("click", async 
 // 이 기기 기록 지우기: this owner's marks, notes, sessions, saved works and their caches. The reading
 // state in localStorage (설정·읽은 위치) stays; 기록 내보내기 first keeps a copy.
 document.querySelector("#clear-device").addEventListener("click", async () => {
-  if (!confirm("이 기기의 표시·메모·독서 기록·저장한 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
+  if (!confirm("이 기기의 표시·메모·독서 기록·내려받은 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
   const owner = await ownerIdentity();
   const store = await ownerStore();
   store?.close();

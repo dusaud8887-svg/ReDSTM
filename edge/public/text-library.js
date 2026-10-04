@@ -530,6 +530,19 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     // Shelf and 몇 화? share one row under the title.
     const actions = document.createElement("div");
     actions.className = "text-work-actions";
+    // The one main action, as on TypeMoon work pages: resume where the reader stopped, or start at
+    // the first chapter. It used to be a ribbon-coloured list row, but the ribbon means "my place".
+    const resume = lastReadChapter();
+    const target = resume ? resumeTarget() : canonicalChapters(chapterSource)[0];
+    if (target) {
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "collection-continue text-work-continue";
+      go.dataset.continue = "true";
+      go.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${target.label || "회차"}`;
+      go.addEventListener("click", () => activate(go));
+      actions.append(go);
+    }
     const findWork = document.createElement("button");
     findWork.type = "button";
     findWork.className = "text-work-find";
@@ -646,35 +659,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const query = search.value.trim();
     const resume = chaptersMode ? lastReadChapter() : null;
     const progress = kind === "works" ? progressForLane() : null;
-    // A work not started yet offers its first chapter the same way (not while searching).
-    const start = chaptersMode && !resume && !query ? canonicalChapters(chapterSource)[0] : null;
     // The work's header sits above the search box (#text-work-summary), not among the rows.
     const summaryHost = document.querySelector("#text-work-summary");
     if (chaptersMode) summaryHost.replaceChildren(workSummary(rows));
     else summaryHost.replaceChildren();
     summaryHost.hidden = !chaptersMode;
-    if (resume || start) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "result-item continue-row";
-      button.dataset.continue = "true";
-      const line = document.createElement("span");
-      line.className = "result-title-line";
-      const name = document.createElement("span");
-      name.className = "result-title";
-      const target = resume ? resumeTarget() : start;
-      name.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${target?.label || "회차"}`;
-      line.append(name);
-      const meta = document.createElement("span");
-      meta.className = "result-meta";
-      const percent = Math.round((resume?.record.progress ?? 0) * 100);
-      meta.textContent = !resume ? `전체 ${canonicalChapters(chapterSource).length.toLocaleString("ko-KR")}화`
-        : percent >= FINISHED * 100 ? `${resume.chapter.label || "이전 회차"} 다 읽음 · 다음 회차` : `${percent}% 읽음`;
-      button.append(line, meta);
-      const row = document.createElement("li");
-      row.append(button);
-      fragment.append(row);
-    }
     const buildRow = (entry, index) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -928,10 +917,20 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       summaryHost.replaceChildren();
     }
     button.hidden = !shown;
-    button.textContent = work ? "← 작품 목록"
-      : lane === "novel" ? "← 분류 목록"
-        : lane === "manual" ? "← 폴더 목록"
-          : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
+    const label = work ? "작품 목록"
+      : lane === "novel" ? "분류 목록"
+        : lane === "manual" ? "폴더 목록"
+          : folderCategory ? folderBoard : "아카라이브";
+    // The same chevron and label shape as the TypeMoon work page's back button.
+    const text = document.createElement("span");
+    text.textContent = label;
+    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.setAttribute("viewBox", "0 0 24 24");
+    chevron.innerHTML = '<path d="m15 18-6-6 6-6"/>';
+    button.replaceChildren(chevron, text);
+    // Inside a work the page is about that work: the source switch steps aside, as on TypeMoon.
+    document.body.classList.toggle("text-work-open", Boolean(active && work));
   }
 
   async function json(path) {
