@@ -1728,6 +1728,17 @@ def test_static_garbage_keeps_referenced_and_recent_objects(tmp_path: Path) -> N
         os.utime(tmp_path / key, (now - 20 * 86400, now - 20 * 86400))
     os.utime(stray, (now - 30 * 86400, now - 30 * 86400))
     os.utime(fresh, (now - 86400, now - 86400))
+    # Staging leftovers of a killed export are local only: dropped once past the grace.
+    stale_partials = [
+        tmp_path / ".payload.abc.partial",
+        tmp_path / "search" / "title-author-v2-x.json.zst.partial",
+    ]
+    for partial in stale_partials:
+        partial.write_bytes(b"staging")
+        os.utime(partial, (now - 30 * 86400, now - 30 * 86400))
+    live_partial = tmp_path / "boards.partial"
+    live_partial.write_bytes(b"export in progress")
+    os.utime(live_partial, (now - 60, now - 60))
     deleted: list[str] = []
 
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
@@ -1744,6 +1755,8 @@ def test_static_garbage_keeps_referenced_and_recent_objects(tmp_path: Path) -> N
     assert all(not (tmp_path / key).exists() for key in old_objects)
     assert all((tmp_path / key).exists() for key in new_objects)
     assert fresh.exists() and (tmp_path / new_key).exists()
+    assert not any(partial.exists() for partial in stale_partials)
+    assert live_partial.exists()
 
     again = collect_static_garbage(
         tmp_path, "r2:redstm-archive", runner=run, now=now, keep_releases=1

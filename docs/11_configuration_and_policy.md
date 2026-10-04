@@ -87,8 +87,9 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_ACCESS_CLIENT_ID` | `access.env` | production Operations 연결 | 예 | Oracle control client |
 | `REDSTM_ACCESS_CLIENT_SECRET` | `access.env` | production Operations 연결 | 예 | Oracle control client |
 | `REDSTM_ACCESS_TOKEN_EXPIRES_AT` | `access.env` | token expiry warning 사용 시 | 아니오 | Oracle heartbeat |
-| `REDSTM_DISK_LOW_BYTES` | `access.env` optional | 40GiB 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
-| `REDSTM_DISK_STOP_BYTES` | `access.env` optional | 20GiB 기본 수집 hard floor 변경 시 | 아니오 | Oracle control runner |
+| `REDSTM_DISK_LOW_BYTES` | `access.env` optional | 볼륨 20%(5–40GiB) 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
+| `REDSTM_DISK_STOP_BYTES` | `access.env` optional | 볼륨 10%(3–20GiB) 기본 수집 hard floor 변경 시 | 아니오 | Oracle control runner |
+| `REDSTM_CONDITIONAL_DETAILS` | `access.env` optional | 상세 재방문에 저장된 ETag/Last-Modified를 보내 304면 `unchanged`로 기록(docs/31 C5 canary, 기본 꺼짐). 목록이 댓글 수 변화로 다시 연 글은 항상 무조건 요청 | 아니오 | Oracle crawler |
 | `REDSTM_CONTROL_REJECTION_WARNING_SECONDS` | `access.env` optional | permanent control rejection 경고 기간 변경 시; 기본 24시간 | 아니오 | Oracle heartbeat |
 | `REDSTM_TOKEN_EXPIRING_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
 | `REDSTM_PUBLISH_STALE_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
@@ -193,7 +194,7 @@ oldest-first로 진전시키는 audit 시작값이다. 실제 quota와 oldest la
 warning threshold의 `0`은 해당 warning을 끈다. 동시에 여러 조건이 참이면
 `disk_low → control_rejected → token_expiring → publish_stale` 순서로 하나만 전송한다.
 disk hard floor의 `0`도 중단을 끄며, 활성화할 때는 warning보다 반드시 낮아야 한다. 기본값은
-40GiB에서 먼저 경고하고 20GiB 미만에서 새 crawl child를 시작하지 않는 두 단계다. 며칠 걸리는
+볼륨 20%(5–40GiB)에서 먼저 경고하고 10%(3–20GiB) 미만에서 새 crawl child를 시작하지 않는 두 단계다. 며칠 걸리는
 전체 목차·본문은 child 경계에서도 다시 확인해 현재 SQLite/WARC transaction을 자르지 않고 다음
 bounded chunk 전에 `disk_low` partial로 끝내며 pass marker와 cursor를 보존한다.
 401/403/429와 release mismatch 409는 복구 가능한 control 단절로 outbox에 남긴다. 그 외 permanent

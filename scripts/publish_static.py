@@ -1203,6 +1203,18 @@ def _collect_static_garbage_locked(
         except (OSError, ValueError) as error:
             # Never delete on a partial view of what is referenced.
             return {"status": "skipped", "reason": f"release_unreadable:{type(error).__name__}"}
+    # Staging files of an export killed past its finally (OOM, SIGKILL) are local only and
+    # never referenced; drop them once they are older than the grace period.
+    stale_partials = [*root.glob("*.partial"), *root.glob(".*.partial")]
+    for prefix in _GC_PREFIXES:
+        if (root / prefix).is_dir():
+            stale_partials.extend((root / prefix).rglob("*.partial"))
+    for path in stale_partials:
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            continue
     garbage: list[tuple[str, int]] = []
     for prefix in _GC_PREFIXES:
         base = root / prefix
