@@ -52,6 +52,8 @@ def _sec_ch_ua(user_agent: str) -> str:
     match = re.search(r"Chrome/(\d+)\.", user_agent)
     major = match.group(1) if match else "150"
     return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not_A Brand";v="24"'
+
+
 _HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d+\.com\Z", re.I),
     "marumaru": re.compile(r"marumaru\d+\.com\Z", re.I),
@@ -917,6 +919,30 @@ def _apply_episode(
     }
 
 
+def _cooldown_group(
+    db_path: Path, unit: RequestUnit, now: int, cooldown: int, status: int, label: str
+) -> None:
+    db = _connect(db_path)
+    try:
+        with db:
+            db.execute(
+                """INSERT INTO text_collector_groups(
+                   group_id,last_request_at,cooldown_until,last_status,last_error)
+                   VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
+                   cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
+                   last_error=excluded.last_error""",
+                (
+                    f"{_SHARED_GROUP}:{unit.source.name}",
+                    now,
+                    cooldown,
+                    status,
+                    label,
+                ),
+            )
+    finally:
+        db.close()
+
+
 def _note_failure(db_path: Path, unit: RequestUnit, error: str, retry_at: int) -> None:
     db = _connect(db_path)
     try:
@@ -1090,25 +1116,7 @@ def run_one(
             # the source down like a 403, but do NOT mark the other remembered hosts blocked
             # (a UA-based gate affects every host the same way).
             cooldown = _retry_after(retry_header, now, 6 * 3600)
-            db = _connect(db_path)
-            try:
-                with db:
-                    db.execute(
-                        """INSERT INTO text_collector_groups(
-                           group_id,last_request_at,cooldown_until,last_status,last_error)
-                           VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
-                           cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
-                           last_error=excluded.last_error""",
-                        (
-                            f"{_SHARED_GROUP}:{unit.source.name}",
-                            now,
-                            cooldown,
-                            status_code,
-                            f"http_{status_code}",
-                        ),
-                    )
-            finally:
-                db.close()
+            _cooldown_group(db_path, unit, now, cooldown, status_code, f"http_{status_code}")
             _note_failure(db_path, unit, f"http_{status_code}", cooldown)
             return {
                 "status": "cooldown",
@@ -1128,25 +1136,7 @@ def run_one(
                 db.close()
             default = 6 * 3600 if status_code in {403, 509} else 3600
             cooldown = _retry_after(retry_header, now, default)
-            db = _connect(db_path)
-            try:
-                with db:
-                    db.execute(
-                        """INSERT INTO text_collector_groups(
-                           group_id,last_request_at,cooldown_until,last_status,last_error)
-                           VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
-                           cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
-                           last_error=excluded.last_error""",
-                        (
-                            f"{_SHARED_GROUP}:{unit.source.name}",
-                            now,
-                            cooldown,
-                            status_code,
-                            f"http_{status_code}",
-                        ),
-                    )
-            finally:
-                db.close()
+            _cooldown_group(db_path, unit, now, cooldown, status_code, f"http_{status_code}")
             _note_failure(db_path, unit, f"http_{status_code}", cooldown)
             return {
                 "status": "cooldown",
@@ -1156,25 +1146,7 @@ def run_one(
             }
         if status_code < 200 or status_code >= 300:
             if status_code in {502, 504}:
-                db = _connect(db_path)
-                try:
-                    with db:
-                        db.execute(
-                            """INSERT INTO text_collector_groups(
-                               group_id,last_request_at,cooldown_until,last_status,last_error)
-                               VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
-                               cooldown_until=excluded.cooldown_until,
-                               last_status=excluded.last_status,last_error=excluded.last_error""",
-                            (
-                                f"{_SHARED_GROUP}:{unit.source.name}",
-                                now,
-                                now + 300,
-                                status_code,
-                                f"http_{status_code}",
-                            ),
-                        )
-                finally:
-                    db.close()
+                _cooldown_group(db_path, unit, now, now + 300, status_code, f"http_{status_code}")
             raise CollectorError(f"http_{status_code}")
         content_type = next(
             (value for key, value in headers.items() if key.lower() == "content-type"), ""
@@ -1184,25 +1156,7 @@ def run_one(
             # signal as a 406 — hold the source down instead of failing every unit on a
             # JSONDecodeError.
             cooldown = now + 6 * 3600
-            db = _connect(db_path)
-            try:
-                with db:
-                    db.execute(
-                        """INSERT INTO text_collector_groups(
-                           group_id,last_request_at,cooldown_until,last_status,last_error)
-                           VALUES(?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET
-                           cooldown_until=excluded.cooldown_until,last_status=excluded.last_status,
-                           last_error=excluded.last_error""",
-                        (
-                            f"{_SHARED_GROUP}:{unit.source.name}",
-                            now,
-                            cooldown,
-                            status_code,
-                            "html_gate",
-                        ),
-                    )
-            finally:
-                db.close()
+            _cooldown_group(db_path, unit, now, cooldown, status_code, "html_gate")
             _note_failure(db_path, unit, "html_gate", cooldown)
             return {
                 "status": "cooldown",

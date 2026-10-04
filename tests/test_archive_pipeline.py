@@ -234,3 +234,43 @@ def test_a_cut_off_page_that_cannot_be_stored_retries_as_the_origins_network_err
         ).fetchone()
     assert tuple(capture) == ("fetch_failed", "network_error")
     assert tuple(state) == ("retry", "network_error")
+
+
+def test_pipeline_conditional_hit_completes_lease_without_new_version(tmp_path: Path) -> None:
+    # A 304 item reaches the pipeline without capture bytes (the WARC middleware skips
+    # conditional hits): it records outcome='unchanged', completes the lease, and leaves
+    # the stored version as the only one (docs/31 C5).
+    path = tmp_path / "archive.sqlite"
+    pipeline, frontier, run_id = _setup(path)
+    lease = _claim(frontier, 5)
+    pipeline.process_item(_item(lease, "stored"))
+
+    # A later crawl reopens the post and the site answers the conditional detail 304.
+    frontier.seed("write_free21", 5, lease.url, reopen_done=True)
+    re_lease = frontier.claim_identity("write_free21", 5, lease_seconds=60)
+    assert re_lease is not None
+    item = _item(re_lease, "unchanged")
+    item["http_status"] = 304
+    item["raw_sha256"] = None
+    item["warc_file"] = None
+
+    assert pipeline.process_item(item) is item
+
+    with connect_archive(path, read_only=True) as connection:
+        captures = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT outcome, http_status FROM captures WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            )
+        ]
+        assert connection.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == 1
+        frontier_row = connection.execute(
+            """
+            SELECT state, lease_token FROM crawl_frontier
+            WHERE board_id = ? AND external_post_id = ?
+            """,
+            (re_lease.board_id, re_lease.external_post_id),
+        ).fetchone()
+    assert captures == [("stored", 200), ("unchanged", 304)]
+    assert tuple(frontier_row) == ("done", None)

@@ -77,9 +77,7 @@ def test_406_is_a_block_signal_with_cooldown_but_not_a_host_flag(
     _seed(db_path)
     monkeypatch.setattr(collector, "_get", lambda *_a, **_k: (406, b"", {}))
 
-    result = collector.run_one(
-        db_path, tmp_path / "out", _SOURCES, session=requests.Session()
-    )
+    result = collector.run_one(db_path, tmp_path / "out", _SOURCES, session=requests.Session())
 
     assert result["status"] == "cooldown"
     assert result["http_status"] == 406
@@ -109,9 +107,7 @@ def test_html_gate_on_200_holds_instead_of_failing_every_unit(
         ),
     )
 
-    result = collector.run_one(
-        db_path, tmp_path / "out", _SOURCES, session=requests.Session()
-    )
+    result = collector.run_one(db_path, tmp_path / "out", _SOURCES, session=requests.Session())
 
     assert result["status"] == "cooldown"
     assert result["http_status"] == 200
@@ -122,3 +118,76 @@ def test_html_gate_on_200_holds_instead_of_failing_every_unit(
             "SELECT attempts, last_error FROM text_collector_queue WHERE kind='work'"
         ).fetchone()
     assert queue == (1, "html_gate")
+
+
+class _FakeTime:
+    def __init__(self) -> None:
+        self.now = 1_000_000.0
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_rotation_then_406_cools_the_source_and_headers_follow_the_rotated_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two 5xx failures cycle the host suffix (+1); a 406 on the rotated host then holds the
+    # source (a UA-based gate), and the request headers stay coherent with the rotated host.
+    db_path = tmp_path / "state.sqlite"
+    _seed(db_path)
+    fake = _FakeTime()
+    monkeypatch.setattr(collector, "time", fake)
+    requested: list[str] = []
+    rotated: list[RequestUnit] = []
+
+    def fake_get(
+        session: requests.Session, unit: RequestUnit, path: Path
+    ) -> tuple[int, bytes, dict[str, str]]:
+        requested.append(unit.source.host)
+        if unit.source.host == "marumaru103.com":
+            return 502, b"", {}
+        rotated.append(unit)
+        return 406, b"", {}
+
+    monkeypatch.setattr(collector, "_get", fake_get)
+
+    first = collector.run_one(
+        db_path, tmp_path / "out", _SOURCES, session=requests.Session(), clock=fake.time
+    )
+    fake.now += 2_000  # past the 502 group cooldown and the queue retry delay
+    second = collector.run_one(
+        db_path, tmp_path / "out", _SOURCES, session=requests.Session(), clock=fake.time
+    )
+
+    assert first["status"] == "held"
+    assert second["status"] == "cooldown"
+    assert second["http_status"] == 406
+    assert requested == ["marumaru103.com", "marumaru103.com", "marumaru104.com"]
+    assert _api_headers(rotated[0])["Referer"] == "https://marumaru104.com/"
+    group = _group(db_path)
+    assert group is not None and group[1] == 406 and group[2] == "http_406"
+    with sqlite3.connect(db_path) as db:
+        queue = db.execute(
+            "SELECT attempts, last_error FROM text_collector_queue WHERE kind='work'"
+        ).fetchone()
+    assert queue == (2, "http_406")
+
+
+def test_collector_ua_override_replaces_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    monkeypatch.setenv("REDSTM_TEXT_COLLECTOR_UA", "TestAgent/1.0 Custom")
+    try:
+        module = importlib.reload(collector)
+        headers = module._api_headers(_unit())
+        assert headers["User-Agent"] == "TestAgent/1.0 Custom"
+        # No Chrome version to mirror: the client-hints brand falls back to a fixed major.
+        assert 'v="150"' in headers["sec-ch-ua"]
+    finally:
+        monkeypatch.delenv("REDSTM_TEXT_COLLECTOR_UA", raising=False)
+        importlib.reload(collector)
