@@ -1310,7 +1310,20 @@ def test_reimport_with_new_signatures_is_a_proven_duplicate_and_a_real_edit_is_h
     )
     assert item["text_sha256"] == text_sha
     assert item["equivalence_version"] == 1
-    assert item["equivalence_rule"] == importer.ARCALIVE_EQUIVALENCE_RULE
+    # Only the fields Newtomi's receipt parser accepts (storage.py's fixed list).
+    assert set(item) <= {
+        "identity",
+        "status",
+        "reason",
+        "content_sha256",
+        "submitted_raw_sha256",
+        "stored_object_sha256",
+        "text_sha256",
+        "equivalence_version",
+        "canonical_work_id",
+        "canonical_chapter_id",
+        "published_at",
+    }
     # The stored file keeps the first download's bytes.
     assert (objects / importer._object_key(item["content_sha256"])).read_bytes() == first
 

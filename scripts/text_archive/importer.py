@@ -765,8 +765,6 @@ def novel_text_sha256(raw: bytes) -> str:
 _ARCA_MEDIA_HOST = re.compile(r"(?:^|\.)(?:arca\.live|namu\.la)\Z", re.IGNORECASE)
 _ARCA_PATH_KEY = re.compile(r"[a-z0-9]{2,20}/[a-f0-9]{16,128}\.(?:png|jpe?g|webp|gif|avif)\Z")
 _ARCA_IMAGE_LINE = re.compile(r"^\[image\] (\S+)$", re.MULTILINE)
-ARCALIVE_EQUIVALENCE_RULE = "arcalive_body_v1"
-NOVEL_EQUIVALENCE_RULE = "novel_text_v1"
 
 
 def arcalive_path_key(url: str) -> str | None:
@@ -1390,12 +1388,9 @@ def import_batch(
                                     canonical_text_bytes(candidate["lane"], candidate["body"])
                                     or b""
                                 ).hexdigest(),
+                                # The rule follows from the item kind. Newtomi refuses any
+                                # receipt field outside its fixed list, so none is added here.
                                 "equivalence_version": 1,
-                                "equivalence_rule": (
-                                    NOVEL_EQUIVALENCE_RULE
-                                    if candidate["lane"] == "novel"
-                                    else ARCALIVE_EQUIVALENCE_RULE
-                                ),
                             }
                         )
                         continue

@@ -142,11 +142,12 @@ DB 연결 시 숫자 source ID로 보완한다.
    `pending{batches, items, oldest_batch_id, oldest_imported_at}`(revision 1 batch),
    단계별 마지막 양보 사유(`deferrals`), `novel_snapshot{snapshot_id, item_count, written_at}`.
    R2의 `published/status/text.json`은 성공한 실행에서만 갱신되므로 PC는 이 파일로 "게시 대기"와 "유실"을 구분한다.
-5-2. 본문 동등성(receipt `equivalence_version: 1` + `equivalence_rule`): 같은 identity의 새 원본 SHA가 달라도
+5-2. 본문 동등성(receipt `equivalence_version: 1`, 규칙은 item kind로 정해짐 — Newtomi는 정해진 receipt 필드 밖을 거부하므로
+   필드를 더하지 않는다): 같은 identity의 새 원본 SHA가 달라도
    규칙상 같은 본문이면 `held_conflict` 대신 증명 필드(`submitted_raw_sha256`·`stored_object_sha256`·
    `text_sha256`)를 단 `duplicate`. 저장 객체는 최초 원본 그대로다.
-   - `novel_text_v1`: Newtomi `novel_text.canonical_novel_bytes`와 같은 규칙.
-   - `arcalive_body_v1`(`importer.canonical_arcalive_bytes`): 헤더(`# 제목`, `- key: value`)는 제외하고 `---` 뒤 본문만,
+   - 소설(`novel_text_v1`): Newtomi `novel_text.canonical_novel_bytes`와 같은 규칙.
+   - 아카라이브(`arcalive_body_v1`, `importer.canonical_arcalive_bytes`): 헤더(`# 제목`, `- key: value`)는 제외하고 `---` 뒤 본문만,
      `[image] <url>` 줄의 알려진 아카라이브 CDN 이미지(호스트 `arca.live`/`namu.la`, 경로 키
      `[a-z0-9]{2,20}/[a-f0-9]{16,128}.(png|jpe?g|webp|gif|avif)`)는 `[image] arca-media:<경로 키>`로 바꾼다
      (서명 `expires`/`key`, `type=orig`, `ac-o`↔`ac` 차이 무시). 일반 링크의 쿼리, `[video]` 줄, 그 밖의 모든 글자는 그대로 비교.
