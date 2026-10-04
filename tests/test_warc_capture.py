@@ -237,3 +237,31 @@ def test_warc_rotates_and_only_publishes_closed_files(tmp_path: Path) -> None:
     assert path.exists()
     assert (tmp_path / "capture-0002.warc.gz").exists()
     assert not list(tmp_path.glob("*.partial"))
+
+
+def test_orphan_parts_of_a_killed_worker_get_their_final_names(tmp_path: Path) -> None:
+    import os
+
+    from crawler.middlewares import _ORPHAN_PART_SECONDS, _recover_orphan_parts
+
+    now = 1_800_000_000.0
+    old = tmp_path / "sync-a.warc.gz.partial"
+    old.write_bytes(b"records")
+    empty = tmp_path / "sync-b.warc.gz.partial"
+    empty.write_bytes(b"")
+    fresh = tmp_path / "sync-c.warc.gz.partial"
+    fresh.write_bytes(b"open part")
+    taken = tmp_path / "sync-d.warc.gz.partial"
+    taken.write_bytes(b"duplicate")
+    (tmp_path / "sync-d.warc.gz").write_bytes(b"final")
+    for path in (old, empty, taken):
+        os.utime(path, (now - _ORPHAN_PART_SECONDS - 1, now - _ORPHAN_PART_SECONDS - 1))
+    os.utime(fresh, (now, now))
+
+    recovered = _recover_orphan_parts(tmp_path, now=now)
+
+    assert recovered == [tmp_path / "sync-a.warc.gz"]
+    assert (tmp_path / "sync-a.warc.gz").read_bytes() == b"records"
+    assert not empty.exists()
+    assert fresh.exists()
+    assert taken.exists() and (tmp_path / "sync-d.warc.gz").read_bytes() == b"final"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from http import HTTPStatus
 from io import BytesIO
 from pathlib import Path
@@ -75,6 +76,32 @@ class OriginProxyMiddleware:
         request.meta.setdefault("proxy", proxy)
 
 
+# A worker killed by its timeout or the memory limit never reaches spider_closed, so its
+# last part keeps the .partial name while committed captures already name the final file.
+# Crawls hold the control lock one at a time and an open part is written continuously, so a
+# part untouched this long belongs to a dead worker. Its complete records stay readable.
+_ORPHAN_PART_SECONDS = 6 * 60 * 60
+
+
+def _recover_orphan_parts(directory: Path, *, now: float | None = None) -> list[Path]:
+    recovered: list[Path] = []
+    cutoff = (time.time() if now is None else now) - _ORPHAN_PART_SECONDS
+    for partial in sorted(directory.glob("*.warc*.partial")):
+        final = partial.with_name(partial.name.removesuffix(".partial"))
+        try:
+            stat = partial.stat()
+            if stat.st_mtime > cutoff or final.exists():
+                continue
+            if stat.st_size:
+                partial.replace(final)
+                recovered.append(final)
+            else:
+                partial.unlink()
+        except OSError:
+            continue
+    return recovered
+
+
 class WarcCaptureMiddleware:
     def __init__(
         self,
@@ -116,6 +143,7 @@ class WarcCaptureMiddleware:
 
     def spider_opened(self, spider: Spider) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        _recover_orphan_parts(self.path.parent)
 
     def spider_closed(self, spider: Spider, reason: str) -> None:
         self._close_part()
