@@ -1,6 +1,6 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
-import { fillWorkCover, showWorkBarcode } from "/work-header.js";
+import { fillWorkCover, savedMark, showWorkBarcode } from "/work-header.js";
 import { workKey } from "/type-cover.js";
 import {
   arcaliveBody, compactTextHistory, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId,
@@ -459,6 +459,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const badges = document.createElement("span");
     badges.className = "result-badges";
     for (const label of shown) {
+      if (label instanceof Node) {
+        badges.append(label);
+        continue;
+      }
       const badge = document.createElement("span");
       badge.textContent = label;
       badges.append(badge);
@@ -723,7 +727,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           lane === "manual" ? shortDate(entry.created_at) : "",
           value >= FINISHED ? "다 읽음" : value > 0 ? `${Math.round(value * 100)}%` : record ? "열어 봄" : "",
         ];
-        badges = [history.bookmarks[identity(entry, "arcalive", null)] ? "저장" : ""];
+        badges = [history.bookmarks[identity(entry, "arcalive", null)] ? savedMark() : ""];
         button.classList.toggle("read", value >= FINISHED);
       }
       const badgeNode = badgeElement(badges);

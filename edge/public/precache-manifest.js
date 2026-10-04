@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "86c03db6b25ebed9"
+    "revision": "7a518e1ac0b58a8e"
   },
   {
     "url": "/arca-media.js",
@@ -22,7 +22,7 @@ export default [
   },
   {
     "url": "/barcode.js",
-    "revision": "816f7cca8e749c3a"
+    "revision": "a64d86ec854de229"
   },
   {
     "url": "/board-navigator.js",
@@ -138,7 +138,7 @@ export default [
   },
   {
     "url": "/reading-model.js",
-    "revision": "11ae2472a5a129d1"
+    "revision": "ed98721e3a2e9a4a"
   },
   {
     "url": "/search-core.js",
@@ -182,15 +182,15 @@ export default [
   },
   {
     "url": "/styles/components.css",
-    "revision": "a6d4989c670f13ca"
+    "revision": "957d4d650b8217db"
   },
   {
     "url": "/styles/library.css",
-    "revision": "2524a30307831808"
+    "revision": "604a0f48a5fc365c"
   },
   {
     "url": "/styles/reader.css",
-    "revision": "57c7362ad29cbf0f"
+    "revision": "7e91684b1ac528ae"
   },
   {
     "url": "/styles/shell.css",
@@ -206,7 +206,7 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "2fb6eefa532cd4ab"
+    "revision": "61162fd9aa9a68f2"
   },
   {
     "url": "/text-model.js",
@@ -234,6 +234,6 @@ export default [
   },
   {
     "url": "/work-header.js",
-    "revision": "4da8f6eab330483c"
+    "revision": "1fe452f8d59b338b"
   }
 ];

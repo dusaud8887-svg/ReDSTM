@@ -24,14 +24,27 @@ export function episodeStates(entries) {
 
 // One barcode per host, reused across works so its resize observer is not duplicated.
 const barcodes = new WeakMap();
-export function showWorkBarcode(host, entries, onSelect) {
+// unit: 편 for TypeMoon series (their header counts 편), 화 for text-library chapters.
+export function showWorkBarcode(host, entries, onSelect, { unit = "화" } = {}) {
   let barcode = barcodes.get(host);
   if (!barcode) {
     barcode = { handler: onSelect };
-    barcode.view = createBarcode({ host, onSelect: (entry) => barcode.handler(entry) });
+    barcode.view = createBarcode({ host, unit, onSelect: (entry) => barcode.handler(entry) });
     barcodes.set(host, barcode);
   }
   barcode.handler = onSelect;
   host.hidden = entries.length < 2;
   barcode.view.update(episodeStates(entries));
+}
+
+// The saved (bookmarked) mark in a list row: an icon, not the word 저장, so it never reads together
+// with the reading-state word next to it ("저장 완료"). Named for screen readers.
+export function savedMark() {
+  const mark = document.createElement("span");
+  mark.className = "saved-mark";
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "저장한 글");
+  mark.title = "저장한 글";
+  mark.innerHTML = '<svg aria-hidden="true"><use href="#i-bookmark"/></svg>';
+  return mark;
 }

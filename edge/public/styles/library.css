@@ -132,7 +132,11 @@ body.text-library-open .catalog-controls { display: none; }
 .result-list:empty::after { content: "조건에 맞는 글이 없습니다."; display: block; padding: 28px 16px; color: var(--ink-2); font-size: 13px; }
 /* When the status line above already says why the list is empty, the fallback is not repeated. */
 .result-bar:has(.result-status:not(:empty)) ~ .result-list:empty::after { content: none; }
-.search-empty:not([hidden]) + .result-list:empty::after { content: none; height: 0; padding: 0; }
+/* Stats sits between the empty-search block and the list, so these are general siblings. Before a
+   query there is no result to count or sort; after 0 results the widen block follows the bar. */
+.search-empty:not([hidden]) ~ .result-list:empty::after { content: none; height: 0; padding: 0; }
+.result-bar:has(~ .search-empty:not([hidden])) { display: none; }
+.search-empty:not([hidden]) ~ .result-list:empty, .result-list:empty:has(~ .search-widen:not([hidden])) { flex: 0 0 auto; }
 body.collection-scope .result-list:empty::after { content: "조건에 맞는 작품이 없습니다."; }
 .result-list.loading:empty::after { content: ""; height: 288px; padding: 0; background: repeating-linear-gradient(to bottom, transparent 0 14px, var(--line) 14px 15px, transparent 15px 72px); animation: skeleton-pulse 1.2s ease-in-out infinite alternate; }
 @keyframes skeleton-pulse { to { opacity: .45; } }
@@ -147,8 +151,10 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .result-title-line { min-width: 0; display: flex; align-items: start; gap: 8px; }
 .result-title { min-width: 0; flex: 1; display: -webkit-box; overflow: hidden; word-break: keep-all; overflow-wrap: break-word; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 15px; font-weight: 630; line-height: 1.4; }
 .result-title mark { padding: 0; background: var(--hl-find); color: inherit; font: inherit; }
-.result-badges { flex: 0 0 auto; display: inline-flex; gap: 4px; }
-.result-badges span { max-width: 6rem; overflow: hidden; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); font-size: 11px; font-weight: 680; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.result-badges { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.saved-mark { display: inline-grid; place-items: center; color: var(--accent); }
+.saved-mark svg { width: 16px; height: 16px; fill: currentColor; stroke: currentColor; stroke-width: 1.75; }
+.result-badges span:not(.saved-mark) { max-width: 6rem; overflow: hidden; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); font-size: 11px; font-weight: 680; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 /* 기록 › 발췌 (DESIGN §7.8): the quote in the reading face with a ribbon edge, then the note
    and where it came from. */
 .excerpt-card { border-left: 3px solid var(--ribbon); }

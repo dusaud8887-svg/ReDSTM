@@ -1349,7 +1349,7 @@ test("supports progress, immersive mode, and reader shortcuts", async ({ page })
   await expect(page.locator("#search-input")).toBeFocused();
   await page.locator("#search-input").fill("비소속");
   await expect(page.locator(".result-item", { hasText: "비소속" })).toBeVisible();
-  await expect(page.locator(".result-item", { hasText: "비소속" }).locator(".result-badges")).toContainText("저장");
+  await expect(page.locator(".result-item", { hasText: "비소속" }).locator(".result-badges .saved-mark")).toHaveAttribute("aria-label", "저장한 글");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".result-item").first()).toBeFocused();
   await page.keyboard.press("Enter");
@@ -1666,7 +1666,7 @@ test("continues a finished chapter at the next available episode, not a skipped 
   await page.goto("/collections/1");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#collection-continue")).toHaveText("앞쪽 미독 1편 보기");
-  await expect(page.locator('#collection-entry-list [data-position="3"] .collection-entry-state')).toHaveText("완료");
+  await expect(page.locator('#collection-entry-list [data-position="3"] .collection-entry-state')).toHaveText("다 읽음");
   await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("");
   await page.locator("#collection-continue").click();
   await expect(page.locator("#reader")).toBeHidden();
@@ -1821,7 +1821,7 @@ test("marks the current episode finished when moving on from the article end", a
   await page.locator("#end-next").click();
   await expect(page.locator("#reader-title")).toHaveText("둘째");
   await page.locator("#collection-context").click();
-  await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("완료");
+  await expect(page.locator('#collection-entry-list [data-position="1"] .collection-entry-state')).toHaveText("다 읽음");
 });
 
 test("labels standalone next/previous as board order and list next as the current result", async ({ page }) => {

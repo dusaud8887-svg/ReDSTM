@@ -44,7 +44,7 @@ import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme
 import { createHeaderFold, createMiniBar } from "/shell.js";
 import { excerptOfTheDay, fillContinueCard, fillWeekBars, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
-import { fillWorkCover, showWorkBarcode } from "/work-header.js";
+import { fillWorkCover, savedMark, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { createPersonalLibrary, mergeLibrary, mergeWorkStyles, sanitizeLibrary, sanitizeWorkStyle } from "/library.js";
@@ -2123,9 +2123,7 @@ function setScope(scope) {
   }
   const collectionScope = currentScope === "collections";
   renderSortOptions();
-  document.querySelector(".search-target-field").hidden = collectionScope;
-  document.querySelector(".search-match-field").hidden = collectionScope;
-  document.querySelector(".collection-read-field").hidden = !collectionScope;
+  syncFilterSheetFields();
   elements["search-input"].placeholder = collectionScope ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
 }
 
@@ -2326,19 +2324,14 @@ function updateDestinationLayout() {
   elements["excerpts-export"].hidden = !saved || currentView !== "excerpts";
   elements["stats-panel"].hidden = !saved || currentView !== "stats";
   elements["result-list"].hidden = saved && currentView === "stats";
-  elements["catalog-search-row"].classList.toggle("stats-view", saved && currentView === "stats");
   // 검색 범위 내 기록: the same words in 기록 › 발췌 (B4).
   document.querySelector("[data-records-scope]").hidden = !searching;
-  elements["catalog-search-row"].hidden = !searching && !saved && !text;
+  // 통계 has nothing to search.
+  elements["catalog-search-row"].hidden = (!searching && !saved && !text) || (saved && currentView === "stats");
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
   elements["mode-chips"].hidden = saved || collections || searching || text;
   elements["kind-chips"].hidden = saved || !collections || searching;
   document.querySelector(".sort-field").hidden = saved;
-  elements["mode-filter"].closest("label").hidden = !searching || collections;
-  document.querySelector(".search-target-field").hidden = !searching || collections;
-  document.querySelector(".search-match-field").hidden = !searching || collections;
-  document.querySelector(".collection-kind-field").hidden = !searching || !collections;
-  document.querySelector(".collection-read-field").hidden = saved || !collections;
   // The board lives in its own picker (board dock); the select only carries the value.
   document.querySelector(".board-field").hidden = true;
   elements["board-dock"].hidden = !browsing && !searching;
@@ -2361,8 +2354,29 @@ function updateDestinationLayout() {
   void renderCategoryChips();
   renderActiveFilters();
   elements["search-clear"].hidden = !elements["search-input"].value;
-  elements["filter-toggle"].hidden = saved || text || (browsing && !isNarrowScreen());
+  syncFilterSheetFields();
   if (text) applyTextSortOptions();
+}
+
+// The filter sheet holds only what is not already a chip on screen, and 필터 shows only when the
+// sheet has something in it. 형식 moves into the sheet when a board's 분류 chips take its row.
+function syncFilterSheetFields() {
+  const searching = currentDestination === "search";
+  const browsing = currentDestination === "browse";
+  const saved = currentDestination === "bookmarks";
+  const text = currentDestination === "text";
+  const posts = (searching || browsing) && currentScope === "posts";
+  const collections = currentScope === "collections";
+  const fields = [
+    [elements["mode-filter"].closest("label"), posts && (searching || elements["mode-chips"].hidden)],
+    [document.querySelector(".search-target-field"), searching && posts],
+    [document.querySelector(".search-match-field"), searching && posts],
+    [document.querySelector(".collection-kind-field"), searching && collections],
+    [document.querySelector(".collection-read-field"), !saved && collections],
+  ];
+  for (const [field, shown] of fields) field.hidden = !shown;
+  const empty = !fields.some(([, shown]) => shown);
+  elements["filter-toggle"].hidden = saved || text || empty || (browsing && !isNarrowScreen());
 }
 
 // The board's 분류 row takes the format chips' place: one board is almost always one format, and
@@ -2393,6 +2407,7 @@ async function renderCategoryChips() {
   row.hidden = categories.length < 2;
   if (row.hidden) return;
   elements["mode-chips"].hidden = true;
+  syncFilterSheetFields();
   const chip = (label, value, count) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -3216,14 +3231,14 @@ function resultItemElement(post, index, lookup) {
   const bookmark = lookup.bookmarks.get(identity);
   const history = lookup.history.get(identity);
   const readLabel = postReadingLabel(history?.progress, { seen: Boolean(history) });
-  for (const [visible, label] of [
-    [post.is_aa === true, "AA"], [Boolean(bookmark), "저장"], [Boolean(readLabel), readLabel],
-  ]) {
+  for (const [visible, label] of [[post.is_aa === true, "AA"], [Boolean(readLabel), readLabel]]) {
     if (!visible) continue;
     const badge = document.createElement("span");
     badge.textContent = label;
     badges.append(badge);
   }
+  // Every row in 기록 › 저장 is saved; elsewhere the mark says which ones are.
+  if (bookmark && currentView !== "bookmarks") badges.append(savedMark());
   if (currentView === "bookmarks") {
     const tags = bookmark?.tags ?? [];
     for (const tag of tags.slice(0, 2)) {
@@ -3315,8 +3330,10 @@ function renderWidenActions(empty) {
   actions.push(["text:novel", "소설에서 찾기"], ["text:arcalive", "아카라이브 작품에서 찾기"]);
   host.hidden = false;
   const lead = document.createElement("p");
-  lead.textContent = widening ? "결과가 없습니다. 조건을 한 단계 넓혀 보거나 텍스트 장서에서 찾아보세요."
-    : "결과가 없습니다. 텍스트 장서에서 찾아볼 수 있습니다.";
+  // Where nothing was found, so 0건 reads as "not here" rather than "not anywhere" (DESIGN §7.10).
+  const target = elements["search-target"].value === "all" ? "제목·작성자·분류" : elements["search-target"].selectedOptions[0].textContent.replace(/만$/, "");
+  lead.textContent = `${elements["board-dock-name"].textContent || "전체 게시판"} · ${target}에서 찾은 글이 없습니다. `
+    + (widening ? "조건을 한 단계 넓혀 보거나 텍스트 장서에서 찾아보세요." : "텍스트 장서에서도 찾아볼 수 있습니다.");
   host.append(lead);
   for (const [key, label] of actions) {
     const button = document.createElement("button");
@@ -3650,7 +3667,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
       const state = document.createElement("span");
       state.className = "collection-entry-state";
       const entryState = postReadingState(historyByIdentity.get(postIdentity(entry))?.progress);
-      state.textContent = entryState === "finished" ? "완료"
+      state.textContent = entryState === "finished" ? "다 읽음"
         : entryState === "reading" ? postReadingLabel(historyByIdentity.get(postIdentity(entry))?.progress)
         : entry === continueEntry ? "다음" : "";
       button.classList.toggle("read", entryState === "finished");
@@ -3668,7 +3685,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     showWorkBarcode(document.querySelector("#collection-barcode"), collection.entries.map((entry) => ({
       position: entry.position, label: `${entry.position}편`, missing: !entry.object_key, current: entry === lastRead,
       finished: postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) === "finished",
-    })), (entry) => elements["collection-entry-list"].querySelector(`.collection-entry[data-key="${entry.position}"]`)?.click());
+    })), (entry) => elements["collection-entry-list"].querySelector(`.collection-entry[data-key="${entry.position}"]`)?.click(), { unit: "편" });
     document.title = `${collection.title} — ReDSTM`;
     const route = `/collections/${collection.id}`;
     if (navigation === "push") {
@@ -5768,9 +5785,21 @@ function restoreMirroredStates() {
   return statesRestored;
 }
 
+// Why the owner's store is not open, so 기록 can say what to do: "identity" (the account was not
+// confirmed — sign in again) or "storage" (this browser refused IndexedDB).
+let ownerStoreProblem = null;
+function recordsUnavailableText() {
+  return ownerStoreProblem === "identity"
+    ? "로그인을 확인하지 못해 기록을 열 수 없습니다. 새로 고침하거나 다시 로그인해 주세요."
+    : "이 브라우저가 기록 저장소를 막았습니다. 비공개 창이나 사이트 데이터 차단을 확인해 주세요.";
+}
+
 function ownerStore() {
   ownerDb ??= ownerIdentity()
-    .then((hash) => (hash ? openStore(hash) : null))
+    .then((hash) => {
+      if (!hash) ownerStoreProblem = "identity";
+      return hash ? openStore(hash) : null;
+    })
     .then(async (store) => {
       if (!store) return null;
       annotationRecords = await store.getAll("annotations");
@@ -5783,7 +5812,10 @@ function ownerStore() {
       });
       return store;
     })
-    .catch(() => null);
+    .catch(() => {
+      ownerStoreProblem = "storage";
+      return null;
+    });
   return ownerDb;
 }
 
@@ -6139,7 +6171,7 @@ async function renderExcerptsView() {
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren(...records.map(excerptElement));
   elements["excerpts-export"].disabled = !records.length;
-  elements["result-status"].textContent = !store ? "이 기기에서 기록 저장소를 열 수 없습니다"
+  elements["result-status"].textContent = !store ? recordsUnavailableText()
     : records.length ? `발췌 ${records.length}건 · 이 기기` : elements["search-input"].value ? "찾는 발췌가 없습니다" : "표시하거나 메모한 문장이 여기에 모입니다";
   updateLoadMore();
 }
@@ -6294,7 +6326,7 @@ async function renderStatsView() {
   elements["search-empty"].hidden = true;
   updateLoadMore();
   if (!sessions) {
-    elements["result-status"].textContent = "이 기기에서 기록 저장소를 열 수 없습니다";
+    elements["result-status"].textContent = recordsUnavailableText();
     elements["stats-panel"].hidden = true;
     return;
   }

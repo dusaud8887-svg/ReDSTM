@@ -75,10 +75,11 @@ body.continuous-mode #reader-pane { overflow-anchor: none; }
    toolbar and handles sit around the selection, the same four actions take the dock's place. */
 .selection-menu { position: fixed; inset: auto; margin: 0; padding: 4px; display: flex; gap: 2px; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); box-shadow: var(--e2); }
 .selection-menu:not(:popover-open) { display: none; }
-.selection-menu button { min-width: 48px; min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: 600 14px/1 var(--font-ui); cursor: pointer; }
+.selection-menu button { min-width: 48px; min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: 600 14px/1 var(--font-ui); white-space: nowrap; cursor: pointer; }
 .selection-menu button:hover, .selection-menu button:focus-visible { background: color-mix(in srgb, var(--bg) 16%, transparent); }
-.selection-menu.fixed { left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); justify-content: space-around; border-radius: 18px; }
-.selection-menu.fixed button { flex: 1; min-height: 48px; }
+/* The popover's own width is fit-content; the dock-seat bar spans the dock exactly (60 high) and covers it. */
+.selection-menu.fixed { left: 12px; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom)); width: auto; height: 60px; justify-content: space-around; border-radius: 18px; }
+.selection-menu.fixed button { flex: 1; min-width: 0; min-height: 52px; padding: 0 8px; white-space: nowrap; }
 .mark-menu { position: fixed; inset: auto; margin: 0; max-width: min(320px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: var(--e2); }
 .mark-menu-note { margin: 2px 4px 10px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mark-menu-actions { display: flex; gap: 6px; }

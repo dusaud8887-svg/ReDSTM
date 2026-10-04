@@ -79,9 +79,9 @@ test("classifies progress as unread, reading, or finished", () => {
   assert.equal(postReadingState(0.94), "reading");
   assert.equal(postReadingState(0.95), "finished");
   assert.equal(postReadingState(1), "finished");
-  assert.equal(postReadingLabel(0, { seen: true }), "처음만 봄");
+  assert.equal(postReadingLabel(0, { seen: true }), "열어 봄");
   assert.equal(postReadingLabel(0.63), "63%");
-  assert.equal(postReadingLabel(0.95), "완료");
+  assert.equal(postReadingLabel(0.95), "다 읽음");
 });
 
 test("formats source dates without inventing a time zone shift", () => {
@@ -164,22 +164,22 @@ test("describes collection occupancy for list rows", () => {
     entryCount: 48, finishedCount: 12, readingCount: 0,
     continueTarget: { kind: "next", entry: { position: 13 } },
   }), {
-    occupancy: "reading", progress: "12/48편", action: "다음 13편", gap: "",
+    occupancy: "reading", progress: "12/48편 읽음", action: "다음 13편", gap: "",
   });
   assert.deepEqual(collectionRowCopy({ entryCount: 48, finishedCount: 48 }), {
-    occupancy: "finished", progress: "48/48편", action: "다시 보기", gap: "",
+    occupancy: "finished", progress: "48/48편 읽음", action: "다시 보기", gap: "",
   });
   assert.equal(collectionAvailableCount({ entry_count: 3, unavailable_count: 1 }), 2);
   assert.deepEqual(collectionRowCopy({
     entryCount: 3, unavailableCount: 1, finishedCount: 2,
   }), {
-    occupancy: "finished", progress: "2/2편", action: "다시 보기", gap: "1편 보존 불가",
+    occupancy: "finished", progress: "2/2편 읽음", action: "다시 보기", gap: "1편 보존 불가",
   });
   assert.deepEqual(collectionRowCopy({
     entryCount: 3, unavailableCount: 1, readingCount: 1,
     continueTarget: { kind: "resume", entry: { position: 3 } },
   }), {
-    occupancy: "reading", progress: "0/2편", action: "3편 이어 읽기", gap: "1편 보존 불가",
+    occupancy: "reading", progress: "0/2편 읽음", action: "3편 이어 읽기", gap: "1편 보존 불가",
   });
   assert.equal(collectionOccupancy({ availableCount: 0, finishedCount: 0, readingCount: 0 }), "empty");
   assert.deepEqual(collectionRowCopy({ entryCount: 2, unavailableCount: 2 }), {
@@ -189,7 +189,7 @@ test("describes collection occupancy for list rows", () => {
     entryCount: 3, unavailableCount: 0, finishedCount: 1,
     continueTarget: { kind: "finished", entry: { position: 3 } },
   }), {
-    occupancy: "reading", progress: "1/3편", action: "앞쪽 미독 2편", gap: "",
+    occupancy: "reading", progress: "1/3편 읽음", action: "앞쪽 미독 2편", gap: "",
   });
   assert.deepEqual(collectionRowCopy({ entryCount: 48, unknown: true }), {
     occupancy: "unknown", progress: "48편", action: "읽기 상태 미확인", gap: "",

@@ -1592,11 +1592,11 @@ test("The work barcode summarises a long run and opens an episode picked on its 
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await page.goto("/collections/1");
   const barcode = page.locator("#collection-barcode");
-  await expect(barcode.locator(".barcode-summary")).toHaveText("3,000화 중 0화 읽음");
+  await expect(barcode.locator(".barcode-summary")).toHaveText("3,000편 중 0편 읽음");
   expect(Number(await barcode.getAttribute("data-render-ms"))).toBeLessThan(16);
   await expect(page.locator("#collection-cover .type-cover")).toBeVisible();
   const track = barcode.getByRole("slider");
-  await expect(track).toHaveAccessibleName(/회차 바코드: 3,000화 중 0화 읽음/);
+  await expect(track).toHaveAccessibleName(/회차 바코드: 3,000편 중 0편 읽음/);
   await track.focus();
   await track.press("ArrowRight");
   await expect(track).toHaveAttribute("aria-valuetext", /편–\d+편 · (읽는 중|안 읽음 포함)/);
