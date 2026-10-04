@@ -79,10 +79,11 @@ body.reader-controls-hidden .archive-body.aa.aa-can-scroll { box-shadow: none; }
    (the AA host in full screen) scrolls both ways, so a diagonal drag and its fling are the
    browser's own. Everything around the picture follows the sideways scroll on the compositor
    (scroll-driven translate), so titles, tools and comments stay on screen. Without scroll-driven
-   animations the old sideways box stays (app.js aaScroller). */
+   animations the old sideways box stays (app.js aaScroller). A sideways fling that reaches the
+   edge stops there instead of turning into the browser's back gesture or the page bounce. */
 @supports (animation-timeline: scroll()) {
-  .reader-pane:has(#archive-body.aa) { overflow-x: auto; background: var(--reader-bg); scroll-timeline: --aa-pan x; }
-  .aa-host:fullscreen:has(#archive-body.aa) { scroll-timeline: --aa-pan x; }
+  .reader-pane:has(#archive-body.aa) { overflow-x: auto; background: var(--reader-bg); scroll-timeline: --aa-pan x; overscroll-behavior: contain; }
+  .aa-host:fullscreen:has(#archive-body.aa) { scroll-timeline: --aa-pan x; overscroll-behavior: contain; }
   .archive-body.aa { width: max-content; min-width: 100%; overflow: visible; }
   .archive-body.aa.aa-can-scroll { box-shadow: none; }
   .reader:has(#archive-body.aa) > :not(.aa-host),

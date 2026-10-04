@@ -839,20 +839,41 @@ function aaScroller() {
   return document.fullscreenElement === elements["aa-host"] ? elements["aa-host"] : elements["reader-pane"];
 }
 
+// How far the AA scroller goes sideways. Measured when the size or zoom changes (here), never per
+// scroll event: a fling fires one per frame, and each measure, class toggle and custom-property
+// write there cost the main thread a style pass over a large AA body.
+let aaPanMax = 0;
+let aaScrollFrame = 0;
 function updateAaOverflowCue(showHint = false) {
-  const body = elements["archive-body"];
   const scroller = aaScroller();
   const overflow = currentMode === "aa" && scroller.scrollWidth > scroller.clientWidth + 1;
-  const canScrollRight = overflow && scroller.scrollLeft < scroller.scrollWidth - scroller.clientWidth - 2;
-  body.classList.toggle("aa-can-scroll", canScrollRight);
+  aaPanMax = overflow ? scroller.scrollWidth - scroller.clientWidth : 0;
   // The parts around the picture follow the sideways scroll by exactly this much at its end.
-  const panMax = `${overflow ? scroller.scrollWidth - scroller.clientWidth : 0}px`;
-  for (const host of [elements["reader-pane"], elements["aa-host"]]) host.style.setProperty("--aa-pan-max", panMax);
-  updateAaMinimap();
+  const panMax = `${aaPanMax}px`;
+  for (const host of [elements["reader-pane"], elements["aa-host"]]) {
+    if (host.style.getPropertyValue("--aa-pan-max") !== panMax) host.style.setProperty("--aa-pan-max", panMax);
+  }
+  updateAaScrollCue();
   if (showHint && overflow && !aaHintShown) {
     aaHintShown = true;
     showReaderFeedback("↔ 가로로 이동", 2200);
   }
+}
+
+// The per-scroll part: the right-edge cue and the minimap, from the size measured above.
+function updateAaScrollCue() {
+  const body = elements["archive-body"];
+  const canScrollRight = aaPanMax > 0 && aaScroller().scrollLeft < aaPanMax - 2;
+  if (body.classList.contains("aa-can-scroll") !== canScrollRight) body.classList.toggle("aa-can-scroll", canScrollRight);
+  updateAaMinimap();
+}
+
+function scheduleAaScrollCue() {
+  if (aaScrollFrame) return;
+  aaScrollFrame = requestAnimationFrame(() => {
+    aaScrollFrame = 0;
+    updateAaScrollCue();
+  });
 }
 
 // `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
@@ -6847,7 +6868,7 @@ for (const scroller of [elements["archive-body"], elements["reader-pane"], eleme
   scroller.addEventListener("scroll", () => {
     if (scroller !== aaScroller() || currentMode !== "aa" || scroller.scrollLeft === aaLastLeft) return;
     aaLastLeft = scroller.scrollLeft;
-    updateAaOverflowCue();
+    scheduleAaScrollCue();
     if (!currentAaKey()) return;
     clearTimeout(aaLeftTimer);
     aaLeftTimer = setTimeout(() => {

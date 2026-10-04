@@ -923,6 +923,18 @@ test("A wide AA scrolls both ways in one scroller while everything around it sta
   expect(sizes.down).toBeGreaterThan(200);
   // The picture is not a scroller of its own any more.
   expect(sizes.bodyScrolls).toBe(false);
+  // A fling that reaches an edge stays in the picture instead of becoming a back gesture or bounce.
+  expect(await pane.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.overscrollBehaviorX, style.overscrollBehaviorY];
+  })).toEqual(["contain", "contain"]);
+  // Scrolling sideways measures nothing and writes no style on the pane: the pan length is set on
+  // resize and zoom only, so a fling costs no style pass per frame.
+  await pane.evaluate((element) => {
+    window.__paneStyleWrites = 0;
+    new MutationObserver((records) => { window.__paneStyleWrites += records.length; })
+      .observe(element, { attributes: true, attributeFilter: ["style"] });
+  });
   const left = (selector) => page.locator(selector).evaluate((element) => Math.round(element.getBoundingClientRect().left));
   const titleLeft = await left("#reader-title");
   const toolsLeft = await left("#aa-controls");
@@ -934,6 +946,10 @@ test("A wide AA scrolls both ways in one scroller while everything around it sta
   await pane.evaluate((element) => { element.scrollTop = 400; });
   await expect.poll(() => left("#aa-controls")).toBe(toolsLeft);
   await expect.poll(() => page.locator("#aa-minimap").evaluate((map) => Number.parseFloat(map.style.getPropertyValue("--window-left")))).toBeGreaterThan(0);
+  await expect(page.locator("#archive-body")).toHaveClass(/aa-can-scroll/);
+  await pane.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  await expect(page.locator("#archive-body")).not.toHaveClass(/aa-can-scroll/);
+  expect(await page.evaluate(() => window.__paneStyleWrites)).toBe(0);
 });
 
 test("AA 맞춤 shrinks a wide picture to the stage width and never enlarges past 100%", async ({ page }) => {
