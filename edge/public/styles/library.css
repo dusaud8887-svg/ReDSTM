@@ -332,6 +332,9 @@ body.reading .home { display: none; }
 :is(#collection-find, #collection-classify, .text-work-find) { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
 :is(#collection-find, #collection-classify, .text-work-find):hover { border-color: var(--accent); color: var(--accent); }
 .toc-jump { display: flex; gap: 4px; margin-left: auto; }
+/* The number field gives way (an input's default min width pushed 찾기 past the edge and wrapped it). */
+.toc-jump input { min-width: 0; }
+.toc-jump button { flex: none; white-space: nowrap; }
 .toc-jump input { width: 6.5rem; height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
 .toc-jump button { min-width: 48px; height: 44px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 650; cursor: pointer; }
 .collection-entry.jumped { animation: jump-flash 1.4s ease-out; }

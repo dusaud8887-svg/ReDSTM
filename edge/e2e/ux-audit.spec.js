@@ -105,3 +105,14 @@ test("a first visit shows onboarding alone, without the smart shelf's condition 
   await expect(page.locator("#home-onboarding")).toBeVisible();
   await expect(page.locator("#smart-library")).toBeHidden();
 });
+
+test("몇 편? keeps its 찾기 button on one line inside the screen", async ({ page }) => {
+  await useLongCollection(page, 12);
+  await page.goto("/collections/1");
+  const button = page.locator("#collection-jump button");
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize().width - 12);
+  expect(await button.evaluate((el) => el.getClientRects().length === 1 && el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  expect(box.height).toBeLessThanOrEqual(48);
+});
