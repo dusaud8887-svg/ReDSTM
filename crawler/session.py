@@ -517,6 +517,16 @@ def refresh_session_export(
 
 
 def _read_html(response: object, *, complete: Callable[[str], bool]) -> str:
+    # The caller hands over the response; an early return must still release the socket.
+    try:
+        return _read_html_body(response, complete=complete)
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+
+def _read_html_body(response: object, *, complete: Callable[[str], bool]) -> str:
     charset = response.headers.get_content_charset() or "utf-8"  # type: ignore[attr-defined]
     body = bytearray()
     while len(body) < REDSTM_SESSION_HTML_MAX_BYTES:

@@ -44,6 +44,21 @@ def test_warc_skips_conditional_hits_and_publishes_validators(tmp_path: Path) ->
     middleware.process_response(request, response)
     assert request.meta["etag"] == '"v1"'
     assert request.meta["last_modified"] == "Fri, 10 Jul 2026 00:00:00 GMT"
+
+    # A blank validator header is no validator: the pipeline rejects empty text.
+    blank = Request("https://www.typemoon.net/write_free21/62069", meta={"redstm_capture": True})
+    middleware.process_response(
+        blank,
+        HtmlResponse(
+            blank.url,
+            body=b"<html>other</html>",
+            headers={"ETag": "", "Last-Modified": " "},
+            request=blank,
+            encoding="utf-8",
+        ),
+    )
+    assert "etag" not in blank.meta
+    assert "last_modified" not in blank.meta
     middleware.spider_closed(spider, "finished")
 
 

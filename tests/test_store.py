@@ -757,6 +757,10 @@ def test_conditional_hit_records_unchanged_without_touching_the_version(tmp_path
             for row in db.execute("SELECT outcome, http_status FROM captures ORDER BY id")
         ]
         assert captures == [("stored", 200), ("unchanged", 304)]
+        # The stale-revisit lane must move past a confirmed-unchanged post.
+        assert db.execute("SELECT last_collected_at FROM posts").fetchone()[0] == (
+            (_NOW + timedelta(hours=1)).isoformat()
+        )
         assert tuple(db.execute("SELECT state, lease_token FROM crawl_frontier").fetchone()) == (
             "done",
             None,

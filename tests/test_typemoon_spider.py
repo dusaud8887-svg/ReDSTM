@@ -724,6 +724,41 @@ def test_conditional_detail_carries_stored_validators() -> None:
 
     assert (etag_only.headers.get("If-None-Match") or b"").decode("latin-1") == '"v2"'
     assert etag_only.headers.get("If-Modified-Since") is None
+    # The 304 must survive HttpErrorMiddleware; a plain GET keeps the default filter.
+    assert etag_only.meta["handle_httpstatus_list"] == [304]
+    assert "handle_httpstatus_list" not in plain.meta
+
+    # A listing-driven reopen stays unconditional so a 304 cannot hide new comments.
+    reopen = spider.detail_request(
+        "write_free21",
+        62068,
+        _Session(),  # type: ignore[arg-type]
+        expected_comment_count=3,
+    )
+    assert reopen.headers.get("If-None-Match") is None
+    assert "handle_httpstatus_list" not in reopen.meta
+
+
+def test_conditional_hit_without_html_type_is_unchanged() -> None:
+    # The download handler builds an empty 304 body as a plain TextResponse.
+    from scrapy.http import TextResponse
+
+    from crawler.frontier import FrontierLease
+
+    url = "https://www.typemoon.net/write_free21/62068"
+    request = Request(
+        url,
+        meta={
+            "frontier_lease": FrontierLease(
+                "write_free21", 62068, url, 1, "token", datetime(2026, 7, 11, tzinfo=UTC)
+            )
+        },
+    )
+    response = TextResponse(url, status=304, body=b"", request=request, encoding="utf-8")
+
+    items = list(TypeMoonSpider().parse_detail(response))
+
+    assert [item["outcome"] for item in items] == ["unchanged"]
 
 
 def test_unknown_detail_shape_is_parse_failed() -> None:

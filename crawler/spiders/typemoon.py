@@ -527,7 +527,10 @@ class TypeMoonSpider(scrapy.Spider):
         # Conditional detail: validators of the latest stored capture say "as you were".
         # A 304 then records an 'unchanged' capture without touching the version (docs/31 C5).
         # Either validator may be absent; the request carries only what it has.
-        if self.conditional_details and self.store is not None:
+        # A listing-driven reopen (expected_comment_count) stays unconditional: an origin
+        # validator may cover only the post body, and a 304 would then hide new comments.
+        conditional = False
+        if self.conditional_details and self.store is not None and expected_comment_count is None:
             validator = self.store.latest_conditional_validator(url)
             if validator is not None:
                 etag, last_modified = validator
@@ -535,6 +538,7 @@ class TypeMoonSpider(scrapy.Spider):
                     headers["If-None-Match"] = etag
                 if last_modified is not None:
                     headers["If-Modified-Since"] = last_modified
+                conditional = True
         return scrapy.Request(
             self.detail_url(board_id, external_post_id),
             callback=self.parse_detail,
@@ -550,6 +554,9 @@ class TypeMoonSpider(scrapy.Spider):
                 # 30 seconds of silence becomes this request's error. Retry only this
                 # detail three total times before durable frontier backoff.
                 "max_retry_times": REDSTM_DETAIL_RETRY_TIMES,
+                # HttpErrorMiddleware drops non-2xx responses; a conditional request must
+                # let its 304 through to parse_detail.
+                **({"handle_httpstatus_list": [304]} if conditional else {}),
             },
         )
 
@@ -1089,7 +1096,8 @@ class TypeMoonSpider(scrapy.Spider):
     def parse_detail(
         self, response: scrapy.http.Response, **_: object
     ) -> Iterable[CapturedPostItem]:
-        if not isinstance(response, scrapy.http.HtmlResponse):
+        # An empty 304 body becomes a plain TextResponse; it is not a non-HTML page.
+        if response.status != 304 and not isinstance(response, scrapy.http.HtmlResponse):
             self.logger.error("TypeMoon detail response is not HTML: %s", response.url)
             item = self._leased_parse_failure(response, "non_html")
             if item is not None:
@@ -1140,19 +1148,6 @@ class TypeMoonSpider(scrapy.Spider):
             return
         title = _first_text(response, _TITLE_SELECTORS)
         content = _content_root(response)
-        if content is None and _looks_blocked(response):
-            # An anti-bot interstitial where a post body should be: back off the whole site
-            # (network breaker) rather than filing parse drift against the detail parser.
-            yield CapturedPostItem(
-                board_id=board_id,
-                external_post_id=external_post_id,
-                canonical_url=canonical_url,
-                outcome="fetch_failed",
-                error_code="network_error",
-                warnings=["source_blocked"],
-                **capture_metadata,
-            )
-            return
         if content is None and _has_login_form(response):
             yield CapturedPostItem(
                 board_id=board_id,
@@ -1186,6 +1181,21 @@ class TypeMoonSpider(scrapy.Spider):
                 canonical_url=canonical_url,
                 outcome="missing",
                 warnings=[],
+                **capture_metadata,
+            )
+            return
+        if content is None and _looks_blocked(response):
+            # Checked after the origin's own answers (login, restricted, deleted): a CDN header
+            # on a real membership page must not hide it. An anti-bot interstitial where a post
+            # body should be backs off the whole site
+            # (network breaker) rather than filing parse drift against the detail parser.
+            yield CapturedPostItem(
+                board_id=board_id,
+                external_post_id=external_post_id,
+                canonical_url=canonical_url,
+                outcome="fetch_failed",
+                error_code="network_error",
+                warnings=["source_blocked"],
                 **capture_metadata,
             )
             return

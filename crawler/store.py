@@ -464,6 +464,12 @@ class ArchiveStore:
             ).fetchone()
             if post_row is None:
                 raise ValueError("a 304 conditional hit requires a stored post")
+            # A confirmed-unchanged post is freshly collected: the stale-revisit lane orders
+            # by last_collected_at and must move on to the next oldest post.
+            connection.execute(
+                "UPDATE posts SET last_seen_at = ?, last_collected_at = ? WHERE id = ?",
+                (captured_at_text, captured_at_text, post_row["id"]),
+            )
             cursor = connection.execute(
                 """
                 INSERT INTO captures (
@@ -595,25 +601,36 @@ class ArchiveStore:
             raise ValueError("days must be positive")
         since = _timestamp((now or datetime.now(UTC)) - timedelta(days=days))
         with archive_transaction(self.path, read_only=True) as connection:
+            # Restrict by run (captures_run_idx) instead of scanning every capture: each
+            # board worker in a cycle calls this, and captures only grows.
+            recent_runs = """
+                WITH recent_runs AS (
+                    SELECT run_id FROM crawl_runs WHERE finished_at IS NULL OR finished_at >= ?
+                )
+            """
             by_day_rows = connection.execute(
-                """
+                recent_runs
+                + """
                 SELECT substr(fetched_at, 1, 10) AS day, error_code, COUNT(*) AS count
                 FROM captures
-                WHERE entity_type = 'post' AND error_code IS NOT NULL AND fetched_at >= ?
+                WHERE run_id IN (SELECT run_id FROM recent_runs)
+                  AND entity_type = 'post' AND error_code IS NOT NULL AND fetched_at >= ?
                 GROUP BY day, error_code
                 ORDER BY day, error_code
                 """,
-                (since,),
+                (since, since),
             ).fetchall()
             removal_rows = connection.execute(
-                """
+                recent_runs
+                + """
                 SELECT outcome, COUNT(*) AS count
                 FROM captures
-                WHERE entity_type = 'post'
+                WHERE run_id IN (SELECT run_id FROM recent_runs)
+                  AND entity_type = 'post'
                   AND outcome IN ('restricted', 'missing') AND fetched_at >= ?
                 GROUP BY outcome
                 """,
-                (since,),
+                (since, since),
             ).fetchall()
         by_day: dict[str, dict[str, int]] = {}
         for row in by_day_rows:

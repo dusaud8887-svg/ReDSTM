@@ -184,7 +184,11 @@ def run_sync(args: argparse.Namespace) -> dict[str, Any]:
         if _memory_limited(crawler):
             failures = sorted({*failures, "memory_limit"})
         outcomes = _capture_summary(archive, run_id)
-        block_activity = store.block_activity_summary(days=28)
+        # A diagnostic read must not turn a finished crawl into sync_failed.
+        try:
+            block_activity: dict[str, Any] | None = store.block_activity_summary(days=28)
+        except sqlite3.Error:
+            block_activity = None
         paused = bool(getattr(spider, "paused", False))
         inventory_next_page = int(getattr(spider, "next_inventory_page", inventory_start_page))
         inventory_completed = bool(getattr(spider, "inventory_completed", False))
