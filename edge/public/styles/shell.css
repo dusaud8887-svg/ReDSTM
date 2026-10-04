@@ -166,6 +166,7 @@ body.immersive .reader-pane { display: block; width: 100%; height: 100dvh; }
   body.reader-active .mini-bar, body.keyboard-open .mini-bar, body.immersive .mini-bar { display: none !important; }
   body.mini-bar-on:not(.reader-active) .bottom-nav { border-top-color: transparent; }
   body.mini-bar-on:not(.reader-active) :is(.catalog, body.reading-context .catalog) { padding-bottom: calc(102px + env(safe-area-inset-bottom)); }
+  body.mini-bar-on.mini-bar-folded:not(.reader-active) :is(.catalog, body.reading-context .catalog) { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
   body.mini-bar-on:not(.reader-active) .home { padding-bottom: calc(126px + env(safe-area-inset-bottom)); }
   body.mini-bar-on:not(.reader-active) .collection-view { padding-bottom: calc(126px + env(safe-area-inset-bottom)); }
 }

@@ -64,8 +64,8 @@ def _response_headers(response: Response) -> list[tuple[str, str]]:
 
 
 class OriginProxyMiddleware:
-    def process_request(self, request: Request, spider: Spider) -> None:
-        del spider
+    # No spider argument: Scrapy 2.13+ calls hooks without it and warns on the old signature.
+    def process_request(self, request: Request) -> None:
         proxy = active_origin_proxy()
         if proxy is None:
             return

@@ -1477,6 +1477,33 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
         )
 
 
+def test_oracle_keeps_cycling_candidates_after_one_full_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "CREATE TABLE text_collector_hosts(source TEXT PRIMARY KEY, host TEXT NOT NULL, "
+            "failures INTEGER NOT NULL DEFAULT 0, next_offset INTEGER NOT NULL DEFAULT 1, "
+            "blocked INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execute(
+            "INSERT INTO text_collector_hosts(source,host,failures,next_offset) "
+            "VALUES('blacktoon','blacktoon452.com',5000,6)"
+        )
+    session: Any = FakeSession(
+        FakeResponse({}, status=503),
+        FakeResponse({"content": [{"id": 24753, "title": "Novel"}], "total": 1, "size": 96}),
+    )
+    sources = collector.configured_sources({}, db_path)
+    result = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert result["status"] == "listed"
+    assert "blacktoon453.com" in session.calls[-1]
+    assert collector.configured_sources({}, db_path)[0].host == "blacktoon453.com"
+
+
 def test_oracle_does_not_promote_challenged_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1850,6 +1877,76 @@ def _republish(
             (f"2026-09-29T00:00:{run:02d}Z",),
         )
     return publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)
+
+
+@pytest.mark.parametrize("change", ["episode", "alias", "source", "label"])
+def test_novel_metadata_changes_republish_without_a_new_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    db_path, objects, receipts = _novel_archive(tmp_path)
+    build = tmp_path / "build"
+    remote: dict[str, bytes] = {}
+    rclone = _fake_r2(remote)
+    publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)
+    assert (
+        publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)["status"]
+        == "noop"
+    )
+    before = remote["published/novel/release.json"]
+    with sqlite3.connect(db_path) as db:
+        if change == "episode":
+            db.execute(
+                """UPDATE text_novel_chapters SET source_episode_number_raw='2',
+                   source_episode_number_normalized=2,source_toc_position=1,
+                   source_published_at='2026-10-03T00:00:00Z'"""
+            )
+        elif change == "alias":
+            db.execute(
+                """INSERT INTO text_novel_work_aliases
+                   SELECT 'novel:toki:former',canonical_work_id,'now'
+                FROM text_archive_items WHERE lane='novel' LIMIT 1"""
+            )
+        elif change == "source":
+            db.execute(
+                """INSERT INTO text_novel_work_group_sources
+                   SELECT 'blacktoon','123',canonical_work_id
+                   FROM text_archive_items WHERE lane='novel' LIMIT 1"""
+            )
+        else:
+            db.execute("UPDATE text_novel_chapters SET chapter_label='수정된 1화'")
+    result = publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)
+    assert result.get("status") != "noop"
+    assert remote["published/novel/release.json"] != before
+    payloads = [
+        json.loads(body)
+        for key, body in remote.items()
+        if key.startswith("published/indexes/novel/")
+    ]
+    if change == "episode":
+        assert any(
+            entry["source_episode_number"] == 2
+            and entry["source_published_at"] == "2026-10-03T00:00:00Z"
+            for payload in payloads
+            for entry in payload.get("chapters", [])
+        )
+    elif change in {"alias", "source"}:
+        alias = "novel:toki:former" if change == "alias" else "novel:blacktoon:123"
+        assert any(
+            alias in entry.get("legacy_work_ids", [])
+            for payload in payloads
+            for entry in payload.get("items", [])
+        )
+    else:
+        assert any(
+            entry["label"] == "수정된 1화"
+            for payload in payloads
+            for entry in payload.get("chapters", [])
+        )
+    assert (
+        publisher.publish_lane(db_path, objects, build, receipts, "novel", runner=rclone)["status"]
+        == "noop"
+    )
 
 
 def test_catalog_build_rechecks_typemoon_headroom(tmp_path: Path) -> None:

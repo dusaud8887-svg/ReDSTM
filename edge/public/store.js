@@ -22,15 +22,33 @@ export function planChanges(changes, createdAt = new Date().toISOString()) {
   });
 }
 
+// Nothing sends the outbox yet (sync is M5), so a record saved again would queue another full
+// copy each time. A new operation replaces the previous one for the same record while that one is
+// still unsent and untried, the rule bridgeLegacy already applies to whole states; an operation
+// that was attempted stays, so a send in flight is never lost. meta "pending:<op key>" names it.
+const pendingKey = (opKey) => `pending:${opKey}`;
+
+async function supersede(tx, op) {
+  const meta = tx.objectStore("meta");
+  const outbox = tx.objectStore("outbox");
+  const marker = await meta.get(pendingKey(op.key));
+  if (marker) {
+    const previous = await outbox.get(marker.opId);
+    if (previous?.state === "pending" && previous.attempts === 0) await outbox.delete(previous.opId);
+  }
+  await outbox.add(op);
+  await meta.put({ key: pendingKey(op.key), opId: op.opId });
+}
+
 export async function writeTransaction(db, changes) {
   const planned = planChanges(changes);
   if (!planned.length) return [];
-  const tx = db.transaction([...new Set(planned.map((change) => change.store)), "outbox"], "readwrite");
+  const tx = db.transaction([...new Set([...planned.map((change) => change.store), "meta", "outbox"])], "readwrite");
   try {
     for (const change of planned) {
       if (change.value === null) await tx.objectStore(change.store).delete(change.key);
       else await tx.objectStore(change.store).put(change.value);
-      await tx.objectStore("outbox").add(change.op);
+      await supersede(tx, change.op);
     }
     await tx.done;
     return planned.map((change) => change.op);
@@ -41,6 +59,31 @@ export async function writeTransaction(db, changes) {
   }
 }
 
+// The backlog written before supersede(): keep the newest unsent, untried operation per record
+// (and every attempted one), and leave a marker so later writes replace it. Returns how many went.
+export async function compactOutbox(db) {
+  const tx = db.transaction(["meta", "outbox"], "readwrite");
+  const outbox = tx.objectStore("outbox");
+  const meta = tx.objectStore("meta");
+  const newest = new Map();
+  const stale = [];
+  for (const op of await outbox.getAll()) {
+    if (op.key.startsWith("legacy:") || op.state !== "pending" || op.attempts !== 0) continue;
+    const kept = newest.get(op.key);
+    if (!kept) newest.set(op.key, op);
+    else if (op.createdAt > kept.createdAt) {
+      stale.push(kept);
+      newest.set(op.key, op);
+    } else stale.push(op);
+  }
+  for (const op of stale) await outbox.delete(op.opId);
+  for (const op of newest.values()) {
+    if (!await meta.get(pendingKey(op.key))) await meta.put({ key: pendingKey(op.key), opId: op.opId });
+  }
+  await tx.done;
+  return stale.length;
+}
+
 export function pendingLegacy(records, committed) {
   return records.filter((record) => {
     const previous = committed.get(record.key);
@@ -48,8 +91,9 @@ export function pendingLegacy(records, committed) {
   });
 }
 
-export async function openStore(ownerHash) {
+export async function openStore(ownerHash, { onClosed } = {}) {
   const name = storeName(ownerHash);
+  let closed = false;
   const { openDB } = await import("/vendor/idb@8.0.3/idb.js");
   const db = await openDB(name, 1, {
     upgrade(database) {
@@ -65,7 +109,13 @@ export async function openStore(ownerHash) {
       database.createObjectStore("outbox", { keyPath: "opId" });
       database.createObjectStore("meta", { keyPath: "key" });
     },
-    blocking() { db.close(); },
+    // Another tab needs a newer schema: let it upgrade. This connection is gone for good, so the
+    // store reports it (onClosed) and the app opens a fresh one on its next use.
+    blocking() {
+      db.close();
+      closed = true;
+      onClosed?.();
+    },
   });
   const tx = db.transaction("meta", "readwrite");
   let device = await tx.store.get("deviceId");
@@ -74,6 +124,7 @@ export async function openStore(ownerHash) {
     await tx.store.put(device);
   }
   await tx.done;
+  await compactOutbox(db).catch(() => {});
   const events = new EventTarget();
   const channelName = `${name}:changes`;
   const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(channelName) : null;
@@ -117,6 +168,7 @@ export async function openStore(ownerHash) {
   }
   return {
     name, deviceId: device.value,
+    get closed() { return closed; },
     get: (store, key) => db.get(store, key),
     getAll: (store) => db.getAll(store),
     async commit(changes) {

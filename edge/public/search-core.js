@@ -174,6 +174,30 @@ export function searchPosts(
 // One page of a result list plus the neighbours of a given post, so the Reader can show "the
 // list you came from" around the current post and step through it in the same order.
 // around: "board:id" to open the page containing that post; page: explicit 0-based page.
+// The board's own 분류 (TypeMoon's category tabs: 장편·단편·칼럼, or per-work tags on AA boards),
+// most used first. Spellings that normalise alike ("Ori", "ori") count as one, under the most
+// used spelling. Posts without a category are left out.
+export function boardCategories(index, { boardId, mode = "all" } = {}) {
+  if (!boardId) return [];
+  const found = new Map();
+  for (let position = 0; position < index.rows.length; position += 1) {
+    const row = index.rows[position];
+    const key = index.categories[position];
+    if (row[0] !== boardId || !key.trim()) continue;
+    const isAa = index.modes[position];
+    if ((mode === "aa" && !isAa) || (mode === "prose" && isAa)) continue;
+    const entry = found.get(key) ?? { key, count: 0, spellings: new Map() };
+    entry.count += 1;
+    entry.spellings.set(row[4], (entry.spellings.get(row[4]) ?? 0) + 1);
+    found.set(key, entry);
+  }
+  return [...found.values()]
+    .map(({ key, count, spellings }) => ({
+      label: [...spellings].sort((left, right) => right[1] - left[1])[0][0], key, count,
+    }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "ko"));
+}
+
 export function searchPage(index, { around = "", page = null, pageSize = 10, ...filters } = {}) {
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 50) {
     throw new Error("Search page size must be between 1 and 50");

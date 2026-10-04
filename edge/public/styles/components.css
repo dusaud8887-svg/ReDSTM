@@ -25,7 +25,7 @@ dialog header p { margin: 0 0 3px; color: var(--ink-2); font-size: 11px; }
 dialog h2 { margin: 0; font-size: 24px; font-weight: 700; }
 dialog label { display: grid; grid-template-columns: 1fr auto; gap: 8px; color: var(--ink-2); font-size: 13px; }
 dialog :is(input, select) { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
-dialog textarea { grid-column: 1 / -1; width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; line-height: 1.6; }
+dialog textarea, #bookmark-tags { grid-column: 1 / -1; width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; line-height: 1.6; }
 dialog select { min-height: 44px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
 dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 
@@ -63,6 +63,11 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .more-position-values small { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .reader-topbar-progress { color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 600; }
 .reader-topbar-progress:empty { display: none; }
+/* 더보기 groups (DESIGN §8.3): a small heading per group; a group with every tile hidden hides. */
+.more-group { display: grid; gap: 8px; }
+.more-group + .more-group { margin-top: 14px; }
+.more-group h3 { margin: 0; color: var(--ink-2); font-size: 12px; font-weight: 650; letter-spacing: .02em; }
+.more-group:not(:has(.more-actions > :not([hidden]))) { display: none; }
 .more-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .more-actions :is(button, a) { min-width: 0; min-height: 80px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; text-align: center; text-decoration: none; cursor: pointer; }
 @media (hover: hover) { .more-actions :is(button, a):hover { border-color: var(--accent); color: var(--accent); } }
@@ -128,8 +133,8 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 :is(.barcode-track, .barcode-mini) .bin-fresh { fill: var(--accent); }
 .barcode-cursor { position: absolute; top: 6px; bottom: 6px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink); pointer-events: none; }
 .barcode-bubble { position: absolute; bottom: calc(100% - 2px); width: max-content; max-width: 240px; padding: 4px 8px; border-radius: 6px; background: var(--ink); color: var(--surface); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
-.barcode-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: var(--ink-2); font-size: 12px; }
-.barcode-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 2px; vertical-align: -1px; }
+.barcode-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; color: var(--ink-2); font-size: 12px; }
+.barcode-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
 .barcode-legend i.read { background: var(--other-progress); }
 .barcode-legend i.reading { background: var(--ribbon); }
 .barcode-legend i.unread { background: var(--line-strong); }

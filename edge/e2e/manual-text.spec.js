@@ -30,13 +30,25 @@ test("manual folders preserve full bodies, natural file order and saved reading 
   await expect(page.locator('[data-source="manual"]')).toHaveAttribute("aria-pressed", "true");
   await page.locator("#result-list .result-item").filter({ hasText: "작품/회차" }).click();
   await expect(page.locator("#result-list .result-title")).toHaveText(["2화", "10화"]);
-  await expect(page.locator("#text-work-back")).toHaveText("← 폴더 목록");
+  await expect(page.locator("#text-work-back")).toHaveText("폴더 목록");
   await page.locator("#result-list .result-item").filter({ hasText: "2화" }).click();
   await expect(page.locator("#archive-body")).toContainText("# 본문 첫 줄");
   await expect(page.locator("#archive-body")).toContainText("원본: 그대로 보관");
   await expect(page.locator("#reader-title")).toHaveText("2화");
+  // A reload on the body goes straight to it: the list it is rebuilt from never shows on the way.
+  await page.addInitScript(() => {
+    window.listSeen = false;
+    const sample = () => {
+      if (document.body?.classList.contains("reading")) return;
+      if ([...document.querySelectorAll("#result-list .result-item")].some((row) => row.checkVisibility({ visibilityProperty: true }))) window.listSeen = true;
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
   await page.reload();
   await expect(page.locator("#archive-body")).toContainText("2화 본문");
+  expect(await page.evaluate(() => window.listSeen)).toBe(false);
+  await expect(page.locator("body")).not.toHaveClass(/restoring-text/);
   await page.locator("#next-post:visible, #reader-bottom-next:visible").first().click();
   await expect(page.locator("#reader-title")).toHaveText("10화");
   await page.goto("/text?lane=manual&category=작품%2F회차");
@@ -51,4 +63,25 @@ test("manual library is empty before its first publication", async ({ page }) =>
   await page.goto("/text?lane=manual");
   await expect(page.locator("#result-list")).toContainText("아직 게시된 자료가 없습니다.");
   expect(errors).toEqual([]);
+});
+
+test("a long manual document renders in skippable chunks without changing its text", async ({ page }) => {
+  const body = Array.from({ length: 6000 }, (_, index) => `${index + 1}번째 줄 — 긴 합본 본문입니다.`).join("\n");
+  const doc = { ...docs[0], title: "합본", category: "합본", sha256: "c".repeat(64) };
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/release/manual")) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ schema: 1, lane: "manual", sha256: release }) });
+    if (path.endsWith(`/release-manifest/manual/${release}.json`)) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ schema: 1, lane: "manual", catalog_pages: [{ key: `published/indexes/manual/${catalog}.json`, sha256: catalog }] }) });
+    if (path.endsWith(`/index/manual/${catalog}.json`)) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ schema: 1, lane: "manual", items: [doc] }) });
+    if (path.endsWith(`/object/${doc.sha256}`)) return route.fulfill({ contentType: "text/markdown", body: body.repeat(2) });
+    return route.fulfill({ status: 404, body: "" });
+  });
+  await page.goto("/text?lane=manual&category=%ED%95%A9%EB%B3%B8");
+  await page.locator("#result-list .result-item").filter({ hasText: "합본" }).click();
+  await expect(page.locator("#archive-body > .text-chunk").first()).toBeAttached();
+  expect(await page.locator("#archive-body > .text-chunk").count()).toBeGreaterThan(1);
+  // Chunks end after a line break: the reading model sees exactly the original text.
+  const modelText = await page.evaluate(async () =>
+    (await import("/text-model.js")).createTextModel(document.querySelector("#archive-body")).text);
+  expect(modelText).toBe(body.repeat(2));
 });

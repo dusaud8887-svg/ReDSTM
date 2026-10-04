@@ -93,10 +93,15 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
   const publicJwk = await exportJWK(publicKey);
   publicJwk.alg = "RS256";
   publicJwk.kid = "test-key";
+  // A second key of another type in the set: a token it signs must still be refused (RS256 only).
+  const ecKeys = await generateKeyPair("ES256", { extractable: true });
+  const ecJwk = await exportJWK(ecKeys.publicKey);
+  ecJwk.alg = "ES256";
+  ecJwk.kid = "ec-key";
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     assert.equal(String(input), `${issuer}/cdn-cgi/access/certs`);
-    return Response.json({ keys: [publicJwk] });
+    return Response.json({ keys: [publicJwk, ecJwk] });
   };
   const token = await new SignJWT({ email: "reader@example.test" })
     .setProtectedHeader({ alg: "RS256", kid: "test-key" })
@@ -140,6 +145,10 @@ test("validates Cloudflare Access JWTs and rejects the wrong audience", async ()
     assert.equal((await workerFetch(meRequest("POST"), accessEnvironment)).status, 405);
     assert.equal((await workerFetch(meRequest("GET", runnerToken), accessEnvironment)).status, 403);
     assert.equal((await workerFetch(new Request("https://archive.example/api/v1/me"), accessEnvironment)).status, 403);
+    const ecToken = await new SignJWT({ email: "reader@example.test" })
+      .setProtectedHeader({ alg: "ES256", kid: "ec-key" })
+      .setIssuer(issuer).setAudience(audience).setIssuedAt().setExpirationTime("5m").sign(ecKeys.privateKey);
+    assert.equal((await workerFetch(meRequest("GET", ecToken), accessEnvironment)).status, 403);
     const secondUser = await new SignJWT({ email: "other@example.test" })
       .setProtectedHeader({ alg: "RS256", kid: "test-key" })
       .setIssuer(issuer).setAudience(audience).setIssuedAt().setExpirationTime("5m").sign(privateKey);

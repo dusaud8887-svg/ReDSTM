@@ -28,6 +28,7 @@
 /* 굵게: a stroke painted around each glyph in its own colour. It changes no font, weight, advance or
    line, so the grid stays exactly as drawn (docs/24 §8.16 keeps font-weight 400). */
 :is(.archive-body.aa, .comment-body.aa-comment).aa-bold { -webkit-text-stroke: .04em currentColor; }
+:is(.archive-body.aa, .comment-body.aa-comment).aa-bold-light { -webkit-text-stroke: .03em currentColor; }
 .aa-control-group button[aria-pressed="true"]#aa-bold { border-color: var(--accent); color: var(--accent); }
 
 /* AA host (docs/24 §8.17): the toolbar, the picture, its minimap and the zoom message go full
@@ -72,3 +73,23 @@ body.reader-controls-hidden .aa-minimap { opacity: 0; visibility: hidden; pointe
   body:not(.reader-controls-hidden) .aa-minimap { bottom: calc(84px + env(safe-area-inset-bottom)); }
 }
 body.reader-controls-hidden .archive-body.aa.aa-can-scroll { box-shadow: none; }
+
+/* One scroller for both directions (2026-10-03): a wide AA no longer scrolls sideways inside its own
+   box while the page scrolls down, which kept a finger to one direction at a time. The reader pane
+   (the AA host in full screen) scrolls both ways, so a diagonal drag and its fling are the
+   browser's own. Everything around the picture follows the sideways scroll on the compositor
+   (scroll-driven translate), so titles, tools and comments stay on screen. Without scroll-driven
+   animations the old sideways box stays (app.js aaScroller). A sideways fling that reaches the
+   edge stops there instead of turning into the browser's back gesture or the page bounce. */
+@supports (animation-timeline: scroll()) {
+  .reader-pane:has(#archive-body.aa) { overflow-x: auto; background: var(--reader-bg); scroll-timeline: --aa-pan x; overscroll-behavior: contain; }
+  .aa-host:fullscreen:has(#archive-body.aa) { scroll-timeline: --aa-pan x; overscroll-behavior: contain; }
+  .archive-body.aa { width: max-content; min-width: 100%; overflow: visible; }
+  .archive-body.aa.aa-can-scroll { box-shadow: none; }
+  .reader:has(#archive-body.aa) > :not(.aa-host),
+  .aa-host:has(#archive-body.aa) > :not(.archive-body, .aa-zoom-indicator) {
+    animation: aa-pan-follow linear both;
+    animation-timeline: --aa-pan;
+  }
+}
+@keyframes aa-pan-follow { from { translate: 0 0; } to { translate: var(--aa-pan-max, 0px) 0; } }

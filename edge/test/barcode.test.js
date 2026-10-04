@@ -41,6 +41,8 @@ test("the summary names read, missing and new episodes", () => {
   entries[338].fresh = true;
   entries[337].fresh = true;
   assert.equal(barcodeSummary(entries), "340화 중 118화 읽음 · 5화 보존 안 됨 · 새 3화");
+  // TypeMoon series count posts (편); one screen uses one word.
+  assert.equal(barcodeSummary(entries, "편"), "340편 중 118편 읽음 · 5편 보존 안 됨 · 새 3편");
 });
 
 test("T27: a 10,000-episode model is built within a frame", () => {

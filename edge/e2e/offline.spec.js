@@ -68,24 +68,24 @@ test("A work is saved on this device, resumes after a failed file, and is remove
   await page.goto("/collections/1");
   const control = page.locator("#collection-offline");
   await expect(control).toBeVisible();
-  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect(page.locator("#offline-state")).toHaveText("글만 내려받음 · 이미지는 온라인에서");
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText("일부만 저장됨 · 2/3편 (1편 실패)");
-  await expect(page.locator("#offline-save")).toHaveText("이어서 저장");
+  await expect(page.locator("#offline-state")).toHaveText("일부만 내려받음 · 2/3편 (1편 실패)");
+  await expect(page.locator("#offline-save")).toHaveText("이어서 내려받기");
   failing = false;
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨 · \d/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음 · \d/);
   await expect(page.locator("#offline-save")).toBeHidden();
   const saved = await cachedPaths(page);
   expect((saved[`offline-v1-${owner}`] ?? []).filter((path) => path.startsWith("/archive/posts/board_a/")).length).toBe(3);
   // The snapshot survives a reload.
   await page.reload();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
   await page.goto("/settings");
-  await expect(page.locator("#offline-storage")).toContainText("이 기기에 저장한 작품 1개");
+  await expect(page.locator("#offline-storage")).toContainText("내려받은 작품 1개");
   await page.goto("/collections/1");
   await page.locator("#offline-delete").click();
-  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect(page.locator("#offline-state")).toHaveText("글만 내려받음 · 이미지는 온라인에서");
   await expect.poll(async () => ((await cachedPaths(page))[`offline-v1-${owner}`] ?? []).length).toBe(0);
 });
 
@@ -96,8 +96,18 @@ async function saveCollection(page, context, owner) {
   await controlled(page);
   await page.goto("/collections/1");
   await page.locator("#offline-save").click();
-  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 저장됨/);
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
 }
+
+test("A first visit directly to a work enables saving when the worker becomes ready", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await page.goto("/collections/1");
+  await expect(page.locator("#offline-save")).toBeVisible();
+  await expect(page.locator("#offline-save")).toBeEnabled();
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
+});
 
 // P4-3 / T07: started with no network, the shell comes from the cache and the saved work opens
 // from its snapshot, down to an episode's text.
@@ -120,12 +130,17 @@ test("An expired sign-in opens a sheet that offers signing in again or the saved
   await saveCollection(page, context, "0123456789abcdef");
   // The archive pointer is never a saved file, so it goes to the network and meets the sign-in page.
   await context.route("**/archive/release.json", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Sign in</title>" }));
+  await context.route("**/api/v1/me", (route) => route.fulfill({ status: 403, body: "Authentication required" }));
   await page.goto("/");
   const sheet = page.locator("#auth-dialog");
   await expect(sheet).toBeVisible();
   await page.locator("#auth-saved").click();
   await expect(sheet).toBeHidden();
   await expect(page.locator("#offline-works")).toBeVisible();
+  await page.locator("#offline-works-list button").first().click();
+  await expect(page.locator("#collection-title")).toHaveText("긴 연재");
+  await page.locator('.collection-entry[data-key="2"]').click();
+  await expect(page.locator("#archive-body")).toContainText("2편 본문 1");
 });
 
 // §12.6.3: another account's records on this device are never opened and can be deleted.
@@ -134,7 +149,7 @@ test("Another account's namespace stays closed and can be deleted from settings"
   await context.unroute("**/api/v1/me");
   await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "fedcba9876543210" }) }));
   await page.goto("/collections/1");
-  await expect(page.locator("#offline-state")).toHaveText("글만 저장 · 이미지는 온라인에서");
+  await expect(page.locator("#offline-state")).toHaveText("글만 내려받음 · 이미지는 온라인에서");
   await page.goto("/settings");
   await expect(page.locator("#other-account")).toBeVisible();
   await page.locator("#other-account-delete").click();
@@ -153,4 +168,68 @@ test("앱 캐시 지우기 unregisters the worker and empties its caches", async
   await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter((name) => name.includes("offline-v1")).length)).toBe(0);
   // The owner's database (marks, notes, the saved-work records) is not part of the cache.
   expect(await page.evaluate(async () => (await indexedDB.databases()).map((database) => database.name))).toContain("redstm:0123456789abcdef");
+  await page.goto("/collections/1");
+  await expect(page.locator("#offline-save")).toBeVisible();
+  await expect(page.locator("#offline-state")).toContainText("내려받기 중단됨");
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
+});
+
+test("Resetting caches also makes another account's saved works resumable", async ({ page, context }) => {
+  const firstOwner = "0123456789abcdef";
+  await saveCollection(page, context, firstOwner);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "fedcba9876543210" }) }));
+  await page.goto("/settings");
+  await expect(page.locator("#other-account")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await Promise.all([page.waitForEvent("load"), page.locator("#reset-app-cache").click()]);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: firstOwner }) }));
+  await page.goto("/collections/1");
+  await expect(page.locator("#offline-save")).toBeVisible();
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
+});
+
+test("A failed snapshot write does not start an untracked offline download", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  let downloads = 0;
+  await context.route("**/archive/posts/**", (route) => { downloads += 1; return route.fallback(); });
+  await page.goto("/");
+  await controlled(page);
+  await page.goto("/collections/1");
+  await expect(page.locator("#offline-save")).toBeEnabled();
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (this.name === "offline") throw new DOMException("Disk full", "QuotaExceededError");
+      return put.apply(this, args);
+    };
+  });
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#aa-zoom-indicator")).toContainText("내려받기 상태를 기록하지 못했어요");
+  await expect(page.locator("#offline-save")).toHaveText("기기에 내려받기");
+  expect(downloads).toBe(0);
+});
+
+test("Each tab reads only the offline cache of its own owner", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  const firstOwner = "0123456789abcdef";
+  const secondOwner = "fedcba9876543210";
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: firstOwner }) }));
+  await page.goto("/");
+  await controlled(page);
+  await page.evaluate(async ({ firstOwner, secondOwner }) => {
+    for (const owner of [firstOwner, secondOwner]) {
+      const cache = await caches.open(`offline-v1-${owner}`);
+      await cache.put("/archive/owner-check.json", new Response(JSON.stringify({ owner }), { headers: { "Content-Type": "application/json" } }));
+    }
+  }, { firstOwner, secondOwner });
+  await expect.poll(() => page.evaluate(async () => (await fetch("/archive/owner-check.json")).json())).toEqual({ owner: firstOwner });
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: secondOwner }) }));
+  const other = await context.newPage();
+  await other.goto("/");
+  await controlled(other);
+  await expect.poll(() => other.evaluate(async () => (await fetch("/archive/owner-check.json")).json())).toEqual({ owner: secondOwner });
+  expect(await page.evaluate(async () => (await fetch("/archive/owner-check.json")).json())).toEqual({ owner: firstOwner });
 });

@@ -49,7 +49,8 @@ export function barcodeModel(entries, width, { mode = "order", target = BIN_TARG
   return { bins, width };
 }
 
-export function barcodeSummary(entries) {
+// unit: what one entry is called — 화 for chapters, 편 for TypeMoon series posts (one word per screen).
+export function barcodeSummary(entries, unit = "화") {
   let read = 0;
   let missing = 0;
   let fresh = 0;
@@ -59,19 +60,19 @@ export function barcodeSummary(entries) {
     if (entry.fresh) fresh += 1;
   }
   return [
-    `${entries.length.toLocaleString("ko-KR")}화 중 ${read.toLocaleString("ko-KR")}화 읽음`,
-    missing ? `${missing.toLocaleString("ko-KR")}화 보존 안 됨` : "",
-    fresh ? `새 ${fresh.toLocaleString("ko-KR")}화` : "",
+    `${entries.length.toLocaleString("ko-KR")}${unit} 중 ${read.toLocaleString("ko-KR")}${unit} 읽음`,
+    missing ? `${missing.toLocaleString("ko-KR")}${unit} 보존 안 됨` : "",
+    fresh ? `새 ${fresh.toLocaleString("ko-KR")}${unit}` : "",
   ].filter(Boolean).join(" · ");
 }
 
 const STATE_LABEL = { read: "모두 읽음", reading: "읽는 중", unread: "안 읽음 포함", missing: "보존 누락 포함" };
-export function binLabel(entries, bin) {
+export function binLabel(entries, bin, unit = "화") {
   const first = entries[bin.from];
   const last = entries[bin.to - 1];
-  const name = (entry) => entry.label ?? `${entry.position}화`;
+  const name = (entry) => entry.label ?? `${entry.position}${unit}`;
   const range = bin.to - bin.from > 1 ? `${name(first)}–${name(last)}` : name(first);
-  return `${range} · ${STATE_LABEL[bin.state]}${bin.fresh ? " · 새 화" : ""}`;
+  return `${range} · ${STATE_LABEL[bin.state]}${bin.fresh ? ` · 새 ${unit}` : ""}`;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -110,7 +111,7 @@ export function miniBarcode(entries, width = 160, height = 8) {
 }
 
 // The full barcode with scrubbing, a bubble, the magnified strip and a keyboard path.
-export function createBarcode({ host, onSelect, mode = "order" }) {
+export function createBarcode({ host, onSelect, mode = "order", unit = "화" }) {
   host.classList.add("barcode");
   host.innerHTML = "";
   const track = document.createElement("div");
@@ -132,7 +133,9 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
   summary.className = "barcode-summary";
   const legend = document.createElement("p");
   legend.className = "barcode-legend";
-  legend.innerHTML = '<i class="read"></i>읽음 <i class="reading"></i>읽는 중 <i class="unread"></i>안 읽음 <i class="missing"></i>보존 안 됨 <i class="fresh"></i>새 화';
+  // Each swatch and its word are one item, so the row's gap falls between items, never inside one.
+  legend.innerHTML = [["read", "읽음"], ["reading", "읽는 중"], ["unread", "안 읽음"], ["missing", "보존 안 됨"], ["fresh", `새 ${unit}`]]
+    .map(([kind, label]) => `<span><i class="${kind}"></i>${label}</span>`).join("");
   const strip = document.createElement("div");
   strip.className = "barcode-strip";
   strip.hidden = true;
@@ -174,7 +177,7 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
     active = Math.max(0, Math.min(model.bins.length - 1, bin));
     const current = model.bins[active];
     if (!current) return;
-    const text = binLabel(entries, current);
+    const text = binLabel(entries, current, unit);
     bubble.textContent = text;
     bubble.hidden = false;
     cursor.hidden = false;
@@ -205,7 +208,7 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
     const list = document.createElement("div");
     list.className = "barcode-strip-list";
     list.setAttribute("role", "radiogroup");
-    list.setAttribute("aria-label", binLabel(entries, bin));
+    list.setAttribute("aria-label", binLabel(entries, bin, unit));
     chosen = null;
     const go = document.createElement("button");
     go.type = "button";
@@ -219,7 +222,7 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
       option.className = `barcode-option ${entry.state}`;
       option.setAttribute("role", "radio");
       option.setAttribute("aria-checked", "false");
-      option.textContent = entry.label ?? `${entry.position}화`;
+      option.textContent = entry.label ?? `${entry.position}${unit}`;
       option.disabled = entry.state === "missing";
       option.addEventListener("click", () => {
         for (const other of list.children) other.setAttribute("aria-checked", String(other === option));
@@ -267,7 +270,7 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
   return {
     update(next) {
       entries = next;
-      const text = barcodeSummary(entries);
+      const text = barcodeSummary(entries, unit);
       summary.textContent = text;
       track.setAttribute("aria-label", `회차 바코드: ${text}`);
       strip.hidden = true;
@@ -277,7 +280,7 @@ export function createBarcode({ host, onSelect, mode = "order" }) {
       layout();
       // A slider always names a value; before any scrub it is the first bin.
       track.setAttribute("aria-valuenow", "1");
-      track.setAttribute("aria-valuetext", model.bins[0] ? binLabel(entries, model.bins[0]) : text);
+      track.setAttribute("aria-valuetext", model.bins[0] ? binLabel(entries, model.bins[0], unit) : text);
     },
     destroy() { resize?.disconnect(); },
   };

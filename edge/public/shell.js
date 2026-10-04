@@ -4,6 +4,15 @@
 // keyboard open, and on wide screens.
 
 const FOLD_DISTANCE = 10;
+// Scroll positions set by code (the list header folding below) rather than by a finger; the
+// direction trackers skip them so a fold does not read as a scroll the other way.
+const quietTops = new WeakMap();
+
+function quietScroll(scroller) {
+  if (quietTops.get(scroller) !== scroller.scrollTop) return false;
+  quietTops.delete(scroller);
+  return true;
+}
 
 export function createMiniBar({ element, homeCard }) {
   const title = element.querySelector("[data-mini-title]");
@@ -16,6 +25,8 @@ export function createMiniBar({ element, homeCard }) {
   function fold(folded) {
     element.classList.toggle("folded", folded);
     element.inert = folded;
+    // The list gives the folded bar's row back (shell.css) instead of ending in an empty band.
+    document.body.classList.toggle("mini-bar-folded", folded);
   }
 
   function update() {
@@ -37,7 +48,18 @@ export function createMiniBar({ element, homeCard }) {
     const scroller = event.target;
     if (!(scroller instanceof Element) || element.hidden || document.body.classList.contains("reader-active")) return;
     const top = scroller.scrollTop;
+    if (quietScroll(scroller)) {
+      lastTops.set(scroller, top);
+      return;
+    }
     const last = lastTops.get(scroller) ?? 0;
+    // Folding hands the bar's row back to the list (shell.css), so at the list's end the browser
+    // pulls the position back by that much. That is not a scroll up: unfolding then would take the
+    // row again and the two would chase each other at the bottom.
+    if (top < last && top >= scroller.scrollHeight - scroller.clientHeight - 1) {
+      lastTops.set(scroller, top);
+      return;
+    }
     if (Math.abs(top - last) < FOLD_DISTANCE) return;
     lastTops.set(scroller, top);
     fold(top > last);
@@ -60,4 +82,53 @@ export function createMiniBar({ element, homeCard }) {
       update();
     },
   };
+}
+
+// Phone list header (2026-10-03): the source switch, tabs, board picker and chips fold away while
+// the list scrolls down and come back on any scroll up ("quick return", as Chrome's address bar).
+// The list keeps what is under the finger in place: its scroll position moves by exactly the
+// height the header gave up or took back. Only a person's scrolling folds it: lists restored to
+// a saved position (Back, reload) keep their header.
+const GESTURE_WINDOW = 1000;
+
+export function createHeaderFold({ catalog, list, active }) {
+  let lastTop = 0;
+  let gestureAt = -Infinity;
+  for (const type of ["touchstart", "touchmove", "wheel", "keydown"]) {
+    list.addEventListener(type, () => { gestureAt = performance.now(); }, { passive: true });
+  }
+
+  function set(folded) {
+    if (catalog.classList.contains("head-folded") === folded) return;
+    const before = list.getBoundingClientRect().top;
+    catalog.classList.toggle("head-folded", folded);
+    const shift = before - list.getBoundingClientRect().top;
+    if (!shift) return;
+    list.scrollTop = Math.max(0, list.scrollTop - shift);
+    lastTop = list.scrollTop;
+    quietTops.set(list, list.scrollTop);
+  }
+
+  list.addEventListener("scroll", () => {
+    const top = list.scrollTop;
+    if (quietScroll(list)) {
+      lastTop = top;
+      return;
+    }
+    if (!active()) {
+      set(false);
+      lastTop = top;
+      return;
+    }
+    // Momentum keeps scrolling after the finger lifts; a fling stays within the window.
+    if (performance.now() - gestureAt > GESTURE_WINDOW) {
+      lastTop = top;
+      return;
+    }
+    if (Math.abs(top - lastTop) < FOLD_DISTANCE) return;
+    set(top > lastTop && top > 48);
+    lastTop = list.scrollTop;
+  }, { passive: true });
+
+  return { reset: () => set(false) };
 }

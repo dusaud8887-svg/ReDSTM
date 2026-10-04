@@ -148,18 +148,48 @@ function watchFailure(image, href) {
 }
 
 // Plain text: a line that is only an image URL becomes an image; other URLs become links.
+// A long plain text (a whole personal novel in one .txt, up to 32 MiB) is laid out in chunks the
+// browser can skip while off screen (content-visibility, reader.css). Chunks end right after a
+// line break, so the text model sees exactly the original text and saved positions still hold.
+const PLAIN_CHUNK_CHARACTERS = 64 * 1024;
+const PLAIN_CHUNK_FROM = 256 * 1024;
+
+function appendPlainChunks(target, text) {
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(text.length, start + PLAIN_CHUNK_CHARACTERS);
+    if (end < text.length) {
+      const lineEnd = text.lastIndexOf("\n", end - 1);
+      end = lineEnd >= start ? lineEnd + 1 : (text.indexOf("\n", end) + 1 || text.length);
+    }
+    // The last piece stays bare text: a block there would add a trailing line to the model.
+    if (end >= text.length) {
+      appendLinkedText(target, text.slice(start));
+      return;
+    }
+    const chunk = document.createElement("div");
+    chunk.className = "text-chunk";
+    appendLinkedText(chunk, text.slice(start, end));
+    target.append(chunk);
+    start = end;
+  }
+}
+
 export function renderPlainTextWithMedia(container, text, { sourceUrl = "" } = {}) {
   const fragment = document.createDocumentFragment();
+  const chunked = String(text).length > PLAIN_CHUNK_FROM;
   let buffer = "";
   const flush = () => {
     if (!buffer) return;
-    appendLinkedText(fragment, buffer);
+    if (chunked) appendPlainChunks(fragment, buffer);
+    else appendLinkedText(fragment, buffer);
     buffer = "";
   };
   const lines = String(text).split("\n");
   lines.forEach((line, index) => {
     const tagged = taggedMedia(line);
-    const href = tagged ? null : imageUrl(line);
+    // URL parsing is the costly part; a line without "://" cannot be an image address.
+    const href = tagged || !line.includes("://") ? null : imageUrl(line);
     if (tagged || href) {
       flush();
       const url = tagged?.href ?? href;

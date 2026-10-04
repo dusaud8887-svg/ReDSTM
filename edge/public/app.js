@@ -41,10 +41,10 @@ import { createTextLibrary } from "/text-library.js";
 import { createDocumentSession, createScrollAdapter } from "/reader-session.js";
 import { createOverlayManager } from "/overlay-manager.js";
 import { applyAppearance, syncThemeColor as syncBrowserThemeColor } from "/theme.js";
-import { createMiniBar } from "/shell.js";
+import { createHeaderFold, createMiniBar } from "/shell.js";
 import { excerptOfTheDay, fillContinueCard, fillWeekBars, shelfCard } from "/home.js";
 import { workHue, workKey } from "/type-cover.js";
-import { fillWorkCover, showWorkBarcode } from "/work-header.js";
+import { fillWorkCover, savedMark, showWorkBarcode } from "/work-header.js";
 import { createSuggester, createSuggestIndex } from "/search-suggest.js";
 import { createFind } from "/find.js";
 import { createPersonalLibrary, mergeLibrary, mergeWorkStyles, sanitizeLibrary, sanitizeWorkStyle } from "/library.js";
@@ -105,7 +105,7 @@ const elements = Object.fromEntries(
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls", "aa-scenes", "aa-scene-previous", "aa-scene-output", "aa-scene-next",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
-    "mode-chips", "kind-chips",
+    "mode-chips", "kind-chips", "category-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
@@ -121,7 +121,7 @@ const elements = Object.fromEntries(
     "aa-source-styles", "aa-color", "aa-bold", "aa-background", "aa-zoom-output", "aa-zoom-reset", "aa-zoom-indicator", "aa-fit", "aa-host", "aa-fullscreen", "aa-minimap",
     "reading-progress", "reader-status", "immersive-toggle", "end-previous", "end-next",
     "end-previous-title", "end-next-title", "mode-toggle", "mode-reset", "theme-choices",
-    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all", "home-boards", "home-board-list",
+    "home-title", "home-freshness", "latest-list", "recent-list", "browse-all",
     "discover", "discover-shuffle", "discover-picks-group", "discover-picks", "discover-hot-group", "discover-hot",
     "discover-day-group", "discover-day-title", "discover-day",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
@@ -381,6 +381,10 @@ document.querySelector("#find-return-button").addEventListener("click", () => {
 });
 
 const miniBar = createMiniBar({ element: document.querySelector("#mini-bar"), homeCard: elements["continue-block"] });
+const headerFold = createHeaderFold({
+  catalog: document.querySelector(".catalog"), list: elements["result-list"],
+  active: () => isNarrowScreen() && ["browse", "search", "text"].includes(currentDestination) && !document.body.classList.contains("reading"),
+});
 
 const boardNavigator = createBoardNavigator({
   dialog: elements["board-dialog"],
@@ -729,10 +733,13 @@ function applySettings() {
   elements["aa-color"].ariaLabel = settings.aaPreserveStyles ? "AA 색: 원본색 (누르면 단색)" : "AA 색: 단색 (누르면 원본색)";
   // 색 only does something when the picture has its own colours; without them the button is left out.
   elements["aa-color"].hidden = !elements["archive-body"].querySelector('font[color], span[style*="color"]');
-  elements["aa-bold"].setAttribute("aria-pressed", String(settings.aaBold));
+  // 굵게 has two strengths: 살짝 (light) and 굵게 (true); the button steps 끔 → 살짝 → 굵게.
+  elements["aa-bold"].setAttribute("aria-pressed", String(Boolean(settings.aaBold)));
+  elements["aa-bold"].textContent = settings.aaBold === "light" ? "살짝 굵게" : "굵게";
   for (const surface of document.querySelectorAll("#archive-body, .aa-comment")) {
     surface.classList.toggle("normalize-source-styles", !settings.aaPreserveStyles);
-    surface.classList.toggle("aa-bold", settings.aaBold);
+    surface.classList.toggle("aa-bold", settings.aaBold === true);
+    surface.classList.toggle("aa-bold-light", settings.aaBold === "light");
   }
   const canvas = elements["archive-body"].querySelector(".aa-canvas");
   if (canvas) canvas.dataset.width = settings.aaCanvasWidth ?? "auto";
@@ -743,7 +750,7 @@ function applySettings() {
   }
   let backgroundPresetSelected = false;
   elements["aa-bold"].addEventListener("click", () => {
-  settings.aaBold = !settings.aaBold;
+  settings.aaBold = settings.aaBold === false ? "light" : settings.aaBold === "light";
   saveSettings();
 });
 for (const button of document.querySelectorAll("[data-aa-background]")) {
@@ -819,21 +826,54 @@ function restoreAaView() {
   requestAnimationFrame(() => {
     if (currentAaKey() !== key) return;
     if (!saved?.zoom && settings.aaAutoFit === "on") fitAaZoom({ remember: false });
-    elements["archive-body"].scrollLeft = saved?.left ?? 0;
+    aaScroller().scrollLeft = saved?.left ?? 0;
     updateAaOverflowCue(true);
   });
 }
 
+// What scrolls an AA picture sideways (aa.css): the reader pane, or the AA host in full screen,
+// scrolling both directions at once; the body itself where scroll-driven animations are missing.
+const aaPanSupported = CSS.supports("animation-timeline: scroll()");
+function aaScroller() {
+  if (!aaPanSupported) return elements["archive-body"];
+  return document.fullscreenElement === elements["aa-host"] ? elements["aa-host"] : elements["reader-pane"];
+}
+
+// How far the AA scroller goes sideways. Measured when the size or zoom changes (here), never per
+// scroll event: a fling fires one per frame, and each measure, class toggle and custom-property
+// write there cost the main thread a style pass over a large AA body.
+let aaPanMax = 0;
+let aaScrollFrame = 0;
 function updateAaOverflowCue(showHint = false) {
-  const body = elements["archive-body"];
-  const overflow = currentMode === "aa" && body.scrollWidth > body.clientWidth + 1;
-  const canScrollRight = overflow && body.scrollLeft < body.scrollWidth - body.clientWidth - 2;
-  body.classList.toggle("aa-can-scroll", canScrollRight);
-  updateAaMinimap();
+  const scroller = aaScroller();
+  const overflow = currentMode === "aa" && scroller.scrollWidth > scroller.clientWidth + 1;
+  aaPanMax = overflow ? scroller.scrollWidth - scroller.clientWidth : 0;
+  // The parts around the picture follow the sideways scroll by exactly this much at its end.
+  const panMax = `${aaPanMax}px`;
+  for (const host of [elements["reader-pane"], elements["aa-host"]]) {
+    if (host.style.getPropertyValue("--aa-pan-max") !== panMax) host.style.setProperty("--aa-pan-max", panMax);
+  }
+  updateAaScrollCue();
   if (showHint && overflow && !aaHintShown) {
     aaHintShown = true;
     showReaderFeedback("↔ 가로로 이동", 2200);
   }
+}
+
+// The per-scroll part: the right-edge cue and the minimap, from the size measured above.
+function updateAaScrollCue() {
+  const body = elements["archive-body"];
+  const canScrollRight = aaPanMax > 0 && aaScroller().scrollLeft < aaPanMax - 2;
+  if (body.classList.contains("aa-can-scroll") !== canScrollRight) body.classList.toggle("aa-can-scroll", canScrollRight);
+  updateAaMinimap();
+}
+
+function scheduleAaScrollCue() {
+  if (aaScrollFrame) return;
+  aaScrollFrame = requestAnimationFrame(() => {
+    aaScrollFrame = 0;
+    updateAaScrollCue();
+  });
 }
 
 // `fit` marks a 맞춤 result, so a double tap knows to go back to 100% (fit and manual are kept apart).
@@ -898,9 +938,8 @@ function moveAaScene(direction) {
 
 function updateAaMinimap() {
   scheduleAaScene();
-  const body = elements["archive-body"];
   const map = elements["aa-minimap"];
-  const view = currentMode === "aa" ? minimapWindow(body) : null;
+  const view = currentMode === "aa" ? minimapWindow(aaScroller()) : null;
   map.hidden = !view;
   if (!view) return;
   map.style.setProperty("--window-left", `${view.left * 100}%`);
@@ -938,10 +977,12 @@ function fitAaZoom({ remember = true } = {}) {
   const content = canvas.getBoundingClientRect().width;
   canvas.style.removeProperty("min-width");
   const style = getComputedStyle(body);
-  const available = body.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+  // The stage is what is on screen: the scroller's width, not the body grown around a wide picture.
+  const stage = aaPanSupported ? aaScroller().clientWidth : body.clientWidth;
+  const available = stage - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
   if (!(content > 0) || !(available > 0)) return;
   setAaZoom(fitAaZoomValue(effectiveAaZoom(), available, content), false, { remember, fit: true });
-  body.scrollLeft = 0;
+  aaScroller().scrollLeft = 0;
 }
 
 function renderHomeList(element, posts, emptyText, limit = 6, listHint = "") {
@@ -1016,7 +1057,6 @@ function renderCover(
   const firstVisit = !historyEntries.length && !bookmarks.length && !textLibrary.latestReading();
   elements["home-onboarding"].hidden = !showContinue || !firstVisit;
   elements["empty-reader"].classList.toggle("home-alert", Boolean(actionLabel) || title !== "내 장서");
-  renderHomeBoards();
   void renderReadingWorks();
   void personalLibrary?.renderHome().catch(() => {});
   void renderDiscovery();
@@ -1085,21 +1125,6 @@ async function discoveryPicks(dayKey) {
     // Popular works are likelier, but every unread series can come up.
     weight: (collection) => index.hasStats ? 1 + Math.log10(1 + collection.views + 5 * collection.comments) : 1,
   });
-}
-
-// Starred and recently opened boards (board picker preferences) as one-tap entries on Home.
-function renderHomeBoards() {
-  const ids = boardNavigator.shortcuts().filter((id) => boardById.has(id)).slice(0, 8);
-  elements["home-boards"].hidden = !ids.length;
-  elements["home-board-list"].replaceChildren(...ids.map((id) => {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.board = id;
-    button.textContent = boardLabel(id);
-    item.append(button);
-    return item;
-  }));
 }
 
 function renderTextContinue(text) {
@@ -1373,7 +1398,7 @@ function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없�
   void renderOfflineWorks(offline || expired);
 }
 
-// 이 기기에 저장한 작품: shown when the archive cannot be reached; each opens from its snapshot.
+// 내려받은 작품 (offline): shown when the archive cannot be reached; each opens from its snapshot.
 async function renderOfflineWorks(show = true) {
   const store = show ? await ownerStore() : null;
   const works = store ? (await store.getAll("offline")).filter((work) => work.descriptor && work.state !== "interrupted") : [];
@@ -2097,6 +2122,7 @@ function openBrowseSource(source) {
   if (source === "typemoon") {
     if (currentDestination === "browse") return;
     setScope("posts");
+    restoreCatalogConditions("browse");
     showDestination("browse");
     return;
   }
@@ -2118,9 +2144,7 @@ function setScope(scope) {
   }
   const collectionScope = currentScope === "collections";
   renderSortOptions();
-  document.querySelector(".search-target-field").hidden = collectionScope;
-  document.querySelector(".search-match-field").hidden = collectionScope;
-  document.querySelector(".collection-read-field").hidden = !collectionScope;
+  syncFilterSheetFields();
   elements["search-input"].placeholder = collectionScope ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
 }
 
@@ -2161,10 +2185,22 @@ function refreshSortChoices() {
   return true;
 }
 
+// A board's 분류 (TypeMoon's 장편·단편·칼럼 tabs, or per-work tags) narrows that board only: it
+// belongs to the board it was picked on and stops applying as soon as the board changes.
+let categoryFilter = { boardId: "", category: "" };
+function activeCategory() {
+  const boardId = elements["board-filter"].value;
+  return boardId && currentScope === "posts" && categoryFilter.boardId === boardId ? categoryFilter.category : "";
+}
+function setCategory(category, boardId = elements["board-filter"].value) {
+  categoryFilter = { boardId, category: boardId ? category ?? "" : "" };
+}
+
 function currentSearchState() {
   return {
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    category: activeCategory(),
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
     target: elements["search-target"].value,
@@ -2174,11 +2210,40 @@ function currentSearchState() {
   };
 }
 
+// 둘러보기 and 검색 keep their own conditions (DESIGN §4.3): words typed in Search never filter
+// Browse (which has no search field), and Browse finds its own board, format and sort again when
+// you come back to it. Search opened from Browse searches the board on screen (removable in the
+// dock) and keeps its last words. Links and Back still restore exactly what their URL says.
+const catalogConditions = new Map();
+let catalogConditionsRemembered = false;
+function rememberCatalogConditions() {
+  if (["browse", "search"].includes(currentDestination)) catalogConditions.set(currentDestination, currentSearchState());
+}
+// Called just before showDestination(destination); the tab being left is remembered first.
+function restoreCatalogConditions(destination) {
+  rememberCatalogConditions();
+  catalogConditionsRemembered = true;
+  const saved = catalogConditions.get(destination);
+  const scope = destination === "search" && currentDestination === "browse" ? catalogConditions.get("browse") : saved;
+  elements["search-input"].value = destination === "search" ? saved?.query ?? "" : "";
+  elements["mode-filter"].value = scope?.mode ?? "all";
+  // The board options follow the format filter; rebuild them before picking the board.
+  populateBoardFilter();
+  elements["board-filter"].value = scope?.boardId ?? "";
+  setCategory(scope?.category, scope?.boardId ?? "");
+  elements["sort-filter"].value = allowedSort(currentScope, saved?.sort);
+  elements["search-target"].value = saved?.target ?? "all";
+  elements["search-match"].value = saved?.match ?? "and";
+  elements["collection-kind-filter"].value = saved?.collectionKind ?? "all";
+  elements["collection-read-filter"].value = saved?.collectionRead ?? "all";
+}
+
 function searchUrl(state = currentSearchState(), destination = currentDestination) {
   const params = new URLSearchParams();
   if (currentScope === "collections") params.set("scope", "collections");
   if (state.query) params.set("q", state.query);
   if (state.boardId) params.set("board", state.boardId);
+  if (currentScope === "posts" && state.category) params.set("category", state.category);
   if (currentScope === "posts" && state.mode !== "all") params.set("mode", state.mode);
   if (currentScope === "posts" && state.target !== "all") params.set("target", state.target);
   if (currentScope === "posts" && state.match !== "and") params.set("match", state.match);
@@ -2208,6 +2273,7 @@ function applyCatalogRoute(destination) {
     ? "collections" : "posts");
   elements["search-input"].value = params.get("q") ?? "";
   elements["board-filter"].value = params.get("board") ?? "";
+  setCategory(params.get("category"), params.get("board") ?? "");
   const mode = params.get("mode");
   elements["mode-filter"].value = searchSupportsAa && (mode === "aa" || mode === "prose") ? mode : "all";
   elements["search-target"].value = ["title", "author"].includes(params.get("target")) ? params.get("target") : "all";
@@ -2279,19 +2345,14 @@ function updateDestinationLayout() {
   elements["excerpts-export"].hidden = !saved || currentView !== "excerpts";
   elements["stats-panel"].hidden = !saved || currentView !== "stats";
   elements["result-list"].hidden = saved && currentView === "stats";
-  elements["catalog-search-row"].classList.toggle("stats-view", saved && currentView === "stats");
   // 검색 범위 내 기록: the same words in 기록 › 발췌 (B4).
   document.querySelector("[data-records-scope]").hidden = !searching;
-  elements["catalog-search-row"].hidden = !searching && !saved && !text;
+  // 통계 has nothing to search.
+  elements["catalog-search-row"].hidden = (!searching && !saved && !text) || (saved && currentView === "stats");
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
   elements["mode-chips"].hidden = saved || collections || searching || text;
   elements["kind-chips"].hidden = saved || !collections || searching;
   document.querySelector(".sort-field").hidden = saved;
-  elements["mode-filter"].closest("label").hidden = !searching || collections;
-  document.querySelector(".search-target-field").hidden = !searching || collections;
-  document.querySelector(".search-match-field").hidden = !searching || collections;
-  document.querySelector(".collection-kind-field").hidden = !searching || !collections;
-  document.querySelector(".collection-read-field").hidden = saved || !collections;
   // The board lives in its own picker (board dock); the select only carries the value.
   document.querySelector(".board-field").hidden = true;
   elements["board-dock"].hidden = !browsing && !searching;
@@ -2309,11 +2370,78 @@ function updateDestinationLayout() {
     : browsing ? "게시판별 보존 글" : "제목·작성자·분류로 찾기";
   applyBoardFilterOptions();
   renderBoardDock();
+  headerFold.reset();
   syncFilterChips();
+  void renderCategoryChips();
   renderActiveFilters();
   elements["search-clear"].hidden = !elements["search-input"].value;
-  elements["filter-toggle"].hidden = saved || text || (browsing && !isNarrowScreen());
+  syncFilterSheetFields();
   if (text) applyTextSortOptions();
+}
+
+// The filter sheet holds only what is not already a chip on screen, and 필터 shows only when the
+// sheet has something in it. 형식 moves into the sheet when a board's 분류 chips take its row.
+function syncFilterSheetFields() {
+  const searching = currentDestination === "search";
+  const browsing = currentDestination === "browse";
+  const saved = currentDestination === "bookmarks";
+  const text = currentDestination === "text";
+  const posts = (searching || browsing) && currentScope === "posts";
+  const collections = currentScope === "collections";
+  const fields = [
+    [elements["mode-filter"].closest("label"), posts && (searching || elements["mode-chips"].hidden)],
+    [document.querySelector(".search-target-field"), searching && posts],
+    [document.querySelector(".search-match-field"), searching && posts],
+    [document.querySelector(".collection-kind-field"), searching && collections],
+    [document.querySelector(".collection-read-field"), !saved && collections],
+  ];
+  for (const [field, shown] of fields) field.hidden = !shown;
+  const empty = !fields.some(([, shown]) => shown);
+  elements["filter-toggle"].hidden = saved || text || empty || (browsing && !isNarrowScreen());
+}
+
+// The board's 분류 row takes the format chips' place: one board is almost always one format, and
+// the format stays in the filter sheet. Counts come from the search index (worker), per board.
+const categoryCache = new Map();
+let categoryRender = 0;
+async function renderCategoryChips() {
+  const row = elements["category-chips"];
+  const boardId = elements["board-filter"].value;
+  const shown = ["browse", "search"].includes(currentDestination) && currentScope === "posts" && Boolean(boardId);
+  const render = ++categoryRender;
+  if (!shown) {
+    row.hidden = true;
+    return;
+  }
+  const mode = elements["mode-filter"].value;
+  const key = `${boardId}|${mode}`;
+  if (!categoryCache.has(key)) {
+    categoryCache.set(key, workerRequest({ type: "categories", boardId, mode }).catch(() => {
+      categoryCache.delete(key);
+      return [];
+    }));
+  }
+  const categories = await categoryCache.get(key);
+  if (render !== categoryRender) return;
+  const total = categories.reduce((sum, item) => sum + item.count, 0);
+  const selected = activeCategory();
+  row.hidden = categories.length < 2;
+  if (row.hidden) return;
+  elements["mode-chips"].hidden = true;
+  syncFilterSheetFields();
+  const chip = (label, value, count) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.category = value;
+    button.setAttribute("aria-pressed", String(value === selected));
+    const number = document.createElement("small");
+    number.textContent = count.toLocaleString("ko-KR");
+    button.append(label, " ", number);
+    return button;
+  };
+  row.replaceChildren(chip("전체", "", total), ...categories.slice(0, 40).map((item) => chip(item.label, item.label, item.count)));
+  // A link or Back can land on a category further along the row.
+  row.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function syncFilterChips() {
@@ -2538,7 +2666,7 @@ function restoreCatalogPosition() {
   if (currentSummary || !state || state.destination !== currentDestination || state.view !== currentView ||
       (state.scope ?? "posts") !== currentScope) return;
   const current = currentSearchState();
-  if (state.query !== current.query || state.boardId !== current.boardId ||
+  if (state.query !== current.query || state.boardId !== current.boardId || (state.category ?? "") !== current.category ||
       (state.mode ?? "all") !== current.mode ||
       (state.target ?? "all") !== current.target ||
       (state.match ?? "and") !== current.match ||
@@ -2598,6 +2726,10 @@ function showDestination(destination, navigate = true, view = destination === "b
   cancelReaderSelection(preserveOverlays);
   setImmersive(false, false);
   const leavingCatalog = ["browse", "search"].includes(currentDestination);
+  if (destination !== currentDestination && !catalogConditionsRemembered) rememberCatalogConditions();
+  catalogConditionsRemembered = false;
+  // Browse has no search field, so no words may filter it unseen (a /browse?q= link included).
+  if (destination === "browse") elements["search-input"].value = "";
   if (!["browse", "search"].includes(destination)) setScope("posts");
   if (destination === "bookmarks" && leavingCatalog) {
     elements["board-filter"].value = "";
@@ -2821,7 +2953,7 @@ function handleWorkerMessage({ data }) {
       error.code = data.code;
       pending.reject(error);
     }
-    else pending.resolve(data.type === "page" || data.type === "discover" ? data : data.summaries);
+    else pending.resolve(data.type === "page" || data.type === "discover" ? data : data.type === "categories" ? data.categories : data.summaries);
     return;
   }
   if (data.type === "error") {
@@ -2941,6 +3073,7 @@ function requestSearch(offset = 0) {
     id,
     query: elements["search-input"].value,
     boardId: elements["board-filter"].value,
+    category: activeCategory(),
     mode: elements["mode-filter"].value,
     sort: elements["sort-filter"].value,
     target: elements["search-target"].value,
@@ -3119,14 +3252,14 @@ function resultItemElement(post, index, lookup) {
   const bookmark = lookup.bookmarks.get(identity);
   const history = lookup.history.get(identity);
   const readLabel = postReadingLabel(history?.progress, { seen: Boolean(history) });
-  for (const [visible, label] of [
-    [post.is_aa === true, "AA"], [Boolean(bookmark), "저장"], [Boolean(readLabel), readLabel],
-  ]) {
+  for (const [visible, label] of [[post.is_aa === true, "AA"], [Boolean(readLabel), readLabel]]) {
     if (!visible) continue;
     const badge = document.createElement("span");
     badge.textContent = label;
     badges.append(badge);
   }
+  // Every row in 기록 › 저장 is saved; elsewhere the mark says which ones are.
+  if (bookmark && currentView !== "bookmarks") badges.append(savedMark());
   if (currentView === "bookmarks") {
     const tags = bookmark?.tags ?? [];
     for (const tag of tags.slice(0, 2)) {
@@ -3218,8 +3351,10 @@ function renderWidenActions(empty) {
   actions.push(["text:novel", "소설에서 찾기"], ["text:arcalive", "아카라이브 작품에서 찾기"]);
   host.hidden = false;
   const lead = document.createElement("p");
-  lead.textContent = widening ? "결과가 없습니다. 조건을 한 단계 넓혀 보거나 텍스트 장서에서 찾아보세요."
-    : "결과가 없습니다. 텍스트 장서에서 찾아볼 수 있습니다.";
+  // Where nothing was found, so 0건 reads as "not here" rather than "not anywhere" (DESIGN §7.10).
+  const target = elements["search-target"].value === "all" ? "제목·작성자·분류" : elements["search-target"].selectedOptions[0].textContent.replace(/만$/, "");
+  lead.textContent = `${elements["board-dock-name"].textContent || "전체 게시판"} · ${target}에서 찾은 글이 없습니다. `
+    + (widening ? "조건을 한 단계 넓혀 보거나 텍스트 장서에서 찾아보세요." : "텍스트 장서에서도 찾아볼 수 있습니다.");
   host.append(lead);
   for (const [key, label] of actions) {
     const button = document.createElement("button");
@@ -3553,7 +3688,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
       const state = document.createElement("span");
       state.className = "collection-entry-state";
       const entryState = postReadingState(historyByIdentity.get(postIdentity(entry))?.progress);
-      state.textContent = entryState === "finished" ? "완료"
+      state.textContent = entryState === "finished" ? "다 읽음"
         : entryState === "reading" ? postReadingLabel(historyByIdentity.get(postIdentity(entry))?.progress)
         : entry === continueEntry ? "다음" : "";
       button.classList.toggle("read", entryState === "finished");
@@ -3571,7 +3706,7 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     showWorkBarcode(document.querySelector("#collection-barcode"), collection.entries.map((entry) => ({
       position: entry.position, label: `${entry.position}편`, missing: !entry.object_key, current: entry === lastRead,
       finished: postReadingState(historyByIdentity.get(postIdentity(entry))?.progress) === "finished",
-    })), (entry) => elements["collection-entry-list"].querySelector(`.collection-entry[data-key="${entry.position}"]`)?.click());
+    })), (entry) => elements["collection-entry-list"].querySelector(`.collection-entry[data-key="${entry.position}"]`)?.click(), { unit: "편" });
     document.title = `${collection.title} — ReDSTM`;
     const route = `/collections/${collection.id}`;
     if (navigation === "push") {
@@ -4348,6 +4483,7 @@ function listDescriptor() {
     const params = {
       query: query.get("q") ?? "",
       boardId: query.get("board") ?? "",
+      category: query.get("board") ? query.get("category") ?? "" : "",
       mode: searchSupportsAa && ["aa", "prose"].includes(query.get("mode")) ? query.get("mode") : "all",
       sort: allowedSort("posts", query.get("sort")),
       target: ["title", "author"].includes(query.get("target")) ? query.get("target") : "all",
@@ -4357,6 +4493,7 @@ function listDescriptor() {
       : sortChoices("posts").find(([, value]) => value === params.sort)?.[0] ?? "";
     const conditions = [
       params.query && params.boardId ? boardLabel(params.boardId) : "",
+      params.category,
       params.mode === "aa" ? "AA" : params.mode === "prose" ? "소설·일반" : "",
       sortLabel,
     ].filter(Boolean);
@@ -4625,20 +4762,6 @@ elements["discover-shuffle"].addEventListener("click", () => {
   discoverShuffle += 1;
   void renderDiscovery();
 });
-// A board shortcut opens that whole board with default filters, like picking it in the sheet.
-elements["home-board-list"].addEventListener("click", (event) => {
-  const boardId = event.target.closest("[data-board]")?.dataset.board;
-  if (!boardId) return;
-  boardNavigator.remember(boardId);
-  setScope("posts");
-  elements["search-input"].value = "";
-  resetSheetFilterValues();
-  elements["sort-filter"].value = "latest";
-  // The board options were narrowed by the previous format filter; rebuild them first.
-  populateBoardFilter();
-  elements["board-filter"].value = boardId;
-  showDestination("browse");
-});
 elements["reading-works-all"].addEventListener("click", () => showDestination("bookmarks", true, "reading"));
 elements["recent-all"].addEventListener("click", () => showDestination("bookmarks", true, "history"));
 elements["home-action"].addEventListener("click", () => location.reload());
@@ -4871,8 +4994,19 @@ elements["search-suggest"].addEventListener("click", (event) => {
     selectBoard(row.dataset.suggestId);
   }
 });
+// Suggestions are for typing. Submitting (the keyboard's 검색) or scrolling the results puts
+// them away with the keyboard so the results get the screen; tapping the field brings them back.
+function dismissSuggestions() {
+  if (elements["search-suggest"].hidden) return;
+  suggester.cancel();
+  elements["search-suggest"].hidden = true;
+  elements["search-input"].blur();
+}
+// Gestures, not "scroll": new results reset the list's position while the person is still typing.
+for (const type of ["touchmove", "wheel"]) elements["result-list"].addEventListener(type, dismissSuggestions, { passive: true });
 elements["search-input"].addEventListener("search", () => {
   clearTimeout(searchTimer);
+  dismissSuggestions();
   if (currentDestination === "text") {
     textLibrary.searchChanged(elements["search-input"].value);
     return;
@@ -4928,6 +5062,17 @@ for (const button of elements["mode-chips"].querySelectorAll("[data-mode]")) {
     renderCurrentView();
   });
 }
+elements["category-chips"].addEventListener("click", (event) => {
+  const button = event.target.closest("[data-category]");
+  if (!button) return;
+  setCategory(button.dataset.category);
+  for (const chip of elements["category-chips"].querySelectorAll("[data-category]")) {
+    chip.setAttribute("aria-pressed", String(chip === button));
+  }
+  syncSearchRoute();
+  renderCurrentView();
+  elements["result-list"].scrollTop = 0;
+});
 for (const button of elements["kind-chips"].querySelectorAll("[data-kind]")) {
   button.addEventListener("click", () => {
     elements["collection-kind-filter"].value = button.dataset.kind;
@@ -4938,6 +5083,7 @@ for (const button of elements["kind-chips"].querySelectorAll("[data-kind]")) {
 }
 elements["search-input"].addEventListener("focus", () => {
   if (currentDestination === "library") showDestination("search");
+  else updateSuggestions();
 });
 for (const filter of [
   elements["board-filter"], elements["mode-filter"], elements["sort-filter"],
@@ -4994,7 +5140,10 @@ for (const button of document.querySelectorAll("[data-destination]")) {
       openBrowseSource(rememberedBrowseSource());
       return;
     }
-    if (["browse", "search"].includes(button.dataset.destination)) setScope("posts");
+    if (["browse", "search"].includes(button.dataset.destination)) {
+      setScope("posts");
+      if (button.dataset.destination !== tab) restoreCatalogConditions(button.dataset.destination);
+    }
     showDestination(button.dataset.destination === "browse" && currentDestination === "text" ? "text" : button.dataset.destination);
   });
 }
@@ -5463,9 +5612,12 @@ new PinchGesture(elements["archive-body"], ({ first, last, movement: [scale], or
   canvas.style.removeProperty("transform");
   canvas.style.removeProperty("transform-origin");
   const before = body.getBoundingClientRect();
+  const scroller = aaScroller();
+  // The point's place across the visible stage (the scroller's box), where the scroll is counted from.
+  const stageLeft = scroller === body ? before.left : scroller.getBoundingClientRect().left;
   const offsetY = pointY - before.top;
   setAaZoom(zoom);
-  body.scrollLeft = scrollKeepingPoint({ scrollLeft: body.scrollLeft, scrollTop: 0, x: pointX - before.left, y: 0, from, to: zoom }).left;
+  scroller.scrollLeft = scrollKeepingPoint({ scrollLeft: scroller.scrollLeft, scrollTop: 0, x: pointX - stageLeft, y: 0, from, to: zoom }).left;
   const pane = elements["reader-pane"];
   pane.scrollTop += body.getBoundingClientRect().top + offsetY * (zoom / from) - pointY;
 }, { pointer: { touch: true }, pinchOnWheel: false, eventOptions: { passive: true } });
@@ -5484,10 +5636,10 @@ const aaTap = createTapJudge({
 // Minimap: drag or tap a point to bring that part of the picture to the middle; arrows step.
 new DragGesture(elements["aa-minimap"], ({ xy: [x] }) => {
   const box = elements["aa-minimap"].getBoundingClientRect();
-  elements["archive-body"].scrollLeft = minimapScroll((x - box.left) / box.width, elements["archive-body"]);
+  aaScroller().scrollLeft = minimapScroll((x - box.left) / box.width, aaScroller());
 }, { pointer: { capture: true } });
 elements["aa-minimap"].addEventListener("keydown", (event) => {
-  const body = elements["archive-body"];
+  const body = aaScroller();
   const step = { ArrowLeft: -0.25, ArrowRight: 0.25 }[event.key];
   if (step) body.scrollLeft += step * body.clientWidth;
   else if (event.key === "Home") body.scrollLeft = 0;
@@ -5511,7 +5663,7 @@ elements["aa-fullscreen"].addEventListener("click", async () => {
   const key = currentAaKey();
   aaFullscreenReturn = {
     key, view: key && aaViews[key] ? { ...aaViews[key] } : null, auto: aaAutoZoom, zoom: settings.aaZoom,
-    left: elements["archive-body"].scrollLeft,
+    left: aaScroller().scrollLeft,
   };
   try {
     await elements["aa-host"].requestFullscreen({ navigationUI: "hide" });
@@ -5545,7 +5697,7 @@ document.addEventListener("fullscreenchange", () => {
   applySettings();
   persistUserState();
   requestAnimationFrame(() => {
-    elements["archive-body"].scrollLeft = back.left;
+    aaScroller().scrollLeft = back.left;
     updateAaOverflowCue();
   });
 });
@@ -5592,6 +5744,8 @@ function ownerIdentity() {
       const me = response.ok ? await response.json().catch(() => null) : null;
       const hash = /^[a-f0-9]{16}$/.test(me?.ownerHash ?? "") ? me.ownerHash : null;
       const previous = rememberedOwner();
+      if (!hash && (response.redirected || [401, 403].includes(response.status) ||
+          (response.headers.get("Content-Type") ?? "").toLowerCase().includes("text/html"))) return previous;
       if (hash && previous && previous !== hash) setOtherOwners([...otherOwners(), previous]);
       if (hash) setOtherOwners(otherOwners().filter((value) => value !== hash));
       if (hash) {
@@ -5652,9 +5806,22 @@ function restoreMirroredStates() {
   return statesRestored;
 }
 
+// Why the owner's store is not open, so 기록 can say what to do: "identity" (the account was not
+// confirmed — sign in again) or "storage" (this browser refused IndexedDB).
+let ownerStoreProblem = null;
+function recordsUnavailableText() {
+  return ownerStoreProblem === "identity"
+    ? "로그인을 확인하지 못해 기록을 열 수 없습니다. 새로 고침하거나 다시 로그인해 주세요."
+    : "이 브라우저가 기록 저장소를 막았습니다. 비공개 창이나 사이트 데이터 차단을 확인해 주세요.";
+}
+
 function ownerStore() {
   ownerDb ??= ownerIdentity()
-    .then((hash) => (hash ? openStore(hash) : null))
+    .then((hash) => {
+      if (!hash) ownerStoreProblem = "identity";
+      // A newer tab upgraded the schema and closed this connection: the next use opens again.
+      return hash ? openStore(hash, { onClosed: () => { ownerDb = null; } }) : null;
+    })
     .then(async (store) => {
       if (!store) return null;
       annotationRecords = await store.getAll("annotations");
@@ -5667,7 +5834,10 @@ function ownerStore() {
       });
       return store;
     })
-    .catch(() => null);
+    .catch(() => {
+      ownerStoreProblem = "storage";
+      return null;
+    });
   return ownerDb;
 }
 
@@ -6023,7 +6193,7 @@ async function renderExcerptsView() {
   elements["result-list"].classList.remove("loading");
   elements["result-list"].replaceChildren(...records.map(excerptElement));
   elements["excerpts-export"].disabled = !records.length;
-  elements["result-status"].textContent = !store ? "이 기기에서 기록 저장소를 열 수 없습니다"
+  elements["result-status"].textContent = !store ? recordsUnavailableText()
     : records.length ? `발췌 ${records.length}건 · 이 기기` : elements["search-input"].value ? "찾는 발췌가 없습니다" : "표시하거나 메모한 문장이 여기에 모입니다";
   updateLoadMore();
 }
@@ -6178,7 +6348,7 @@ async function renderStatsView() {
   elements["search-empty"].hidden = true;
   updateLoadMore();
   if (!sessions) {
-    elements["result-status"].textContent = "이 기기에서 기록 저장소를 열 수 없습니다";
+    elements["result-status"].textContent = recordsUnavailableText();
     elements["stats-panel"].hidden = true;
     return;
   }
@@ -6257,7 +6427,7 @@ async function showWorkReadingTime(key, element) {
   element.textContent += ` · 읽은 시간(추정) ${minutesLabel(spent)}`;
 }
 
-// ---- 이 기기에 저장 (docs/24 §12.6.2, T08) --------------------------------------------------------
+// ---- 기기에 내려받기 (docs/24 §12.6.2, T08) --------------------------------------------------------
 // A saved work is a snapshot in the owner's store (what to draw offline) plus its files in the
 // owner's offline cache (the worker downloads them). It needs both a verified owner and a worker.
 const OFFLINE_REQUIRES = [
@@ -6299,24 +6469,24 @@ function renderOfflineControl() {
     save.textContent = "멈추기";
     save.dataset.action = "cancel";
     remove.hidden = true;
-    state.textContent = `저장 중 ${run.done + run.failed}/${run.total}`;
+    state.textContent = `내려받는 중 ${run.done + run.failed}/${run.total}`;
     return;
   }
   const stored = snapshot?.stored;
   save.dataset.action = "save";
   remove.hidden = !stored;
   if (!stored) {
-    save.textContent = "이 기기에 저장";
-    state.textContent = "글만 저장 · 이미지는 온라인에서";
+    save.textContent = "기기에 내려받기";
+    state.textContent = "글만 내려받음 · 이미지는 온라인에서";
   } else if (stored.state === "complete") {
     save.hidden = true;
-    state.textContent = `이 기기에 저장됨 · ${sizeLabel(stored.bytes)}`;
+    state.textContent = `이 기기에 내려받음 · ${sizeLabel(stored.bytes)}`;
   } else {
     save.hidden = false;
-    save.textContent = "이어서 저장";
+    save.textContent = "이어서 내려받기";
     state.textContent = stored.failed
-      ? `일부만 저장됨 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
-      : `저장이 중단됨 · ${stored.done}/${stored.entries.length}편`;
+      ? `일부만 내려받음 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
+      : `내려받기 중단됨 · ${stored.done}/${stored.entries.length}편`;
   }
   if (stored?.state !== "complete") save.hidden = false;
 }
@@ -6337,12 +6507,14 @@ async function showOfflineControl(collection) {
 
 async function writeSnapshot(snapshot) {
   const store = await ownerStore();
-  if (!store) return;
+  if (!store) return false;
   const { stored: _stored, ...value } = snapshot;
   try {
     await store.commit([{ store: "offline", value }]);
+    return true;
   } catch {
-    showReaderFeedback("저장 상태를 기록하지 못했어요", 2400);
+    showReaderFeedback("내려받기 상태를 기록하지 못했어요", 2400);
+    return false;
   }
 }
 
@@ -6353,7 +6525,10 @@ elements["offline-save"].addEventListener("click", async () => {
   // Ask once to keep saved works through storage pressure (granted silently or not at all).
   void navigator.storage?.persist?.().catch(() => {});
   const value = { ...snapshot, state: "interrupted", savedAt: new Date().toISOString() };
-  await writeSnapshot(value);
+  elements["offline-save"].disabled = true;
+  const recorded = await writeSnapshot(value);
+  elements["offline-save"].disabled = false;
+  if (!recorded) return;
   offlineRuns.set(snapshot.workKey, { done: 0, failed: 0, total: snapshot.entries.length });
   renderOfflineControl();
   offline.save(snapshot.workKey, snapshot.entries.map((entry) => entry.url), snapshot.requires);
@@ -6385,10 +6560,10 @@ async function offlineProgress(message) {
     if (stored) {
       const finished = { ...stored, done: message.done, failed: message.failed, bytes: message.bytes,
         state: message.type === "offline-done" && !message.failed && message.done === stored.entries.length ? "complete" : message.failed ? "partial" : "interrupted" };
-      await writeSnapshot(finished);
+      if (!(await writeSnapshot(finished))) { renderOfflineControl(); return; }
       if (offlineWork?.workKey === message.id) offlineWork = { ...offlineWork, stored: finished };
     }
-    showReaderFeedback(message.failed ? `저장하지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "저장을 멈췄어요" : "이 기기에 저장했어요", 2400);
+    showReaderFeedback(message.failed ? `내려받지 못한 편이 ${message.failed}개 있어요` : message.type === "offline-cancelled" ? "내려받기를 멈췄어요" : "이 기기에 내려받았어요", 2400);
     void renderOfflineStorage();
   }
   if (offlineWork?.workKey === message.id) renderOfflineControl();
@@ -6405,7 +6580,7 @@ async function renderOfflineStorage() {
   line.hidden = !works.length && !estimate;
   if (line.hidden) return;
   const used = estimate?.usage ? ` · 사용 ${sizeLabel(estimate.usage)}${estimate.quota ? ` / 가능 ${sizeLabel(estimate.quota)}` : ""}` : "";
-  line.textContent = `이 기기에 저장한 작품 ${works.length}개${used}. 저장한 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
+  line.textContent = `내려받은 작품 ${works.length}개${used}. 내려받은 글은 이 기기에 평문으로 남고, 권한이 철회돼도 이미 받은 글은 원격에서 지울 수 없습니다.`;
 }
 
 // A new version never replaces the running one by itself (no automatic skipWaiting): it is
@@ -6423,9 +6598,24 @@ document.querySelector("#update-apply").addEventListener("click", () => {
   applyUpdateAtSafePoint();
 });
 document.querySelector("#reset-app-cache").addEventListener("click", async () => {
-  if (!confirm("앱 캐시와 이 기기에 저장한 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
-  await offline.reset();
-  location.reload();
+  if (!confirm("앱 캐시와 내려받은 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
+  try {
+    const store = await ownerStore();
+    const cachedOwners = (await caches.keys()).map((name) => name.match(/-([a-f0-9]{16})$/)?.[1]);
+    for (const owner of new Set([await ownerIdentity(), ...otherOwners(), ...cachedOwners].filter(Boolean))) {
+      const target = store?.name === `redstm:${owner}` ? store : await openStore(owner);
+      try {
+        const works = await target.getAll("offline");
+        await target.commit(works.map((work) => ({ store: "offline", value: { ...work, state: "interrupted", done: 0, failed: 0, bytes: 0 } })));
+      } finally {
+        if (target !== store) target.close();
+      }
+    }
+    await offline.reset();
+    location.reload();
+  } catch {
+    showReaderFeedback("앱 캐시를 지우지 못했어요 · 다시 시도해 주세요", 2400);
+  }
 });
 let authSheetClosed = false;
 elements["auth-dialog"].addEventListener("close", () => { authSheetClosed = true; });
@@ -6445,7 +6635,7 @@ document.querySelector("#other-account-delete").addEventListener("click", async 
 // 이 기기 기록 지우기: this owner's marks, notes, sessions, saved works and their caches. The reading
 // state in localStorage (설정·읽은 위치) stays; 기록 내보내기 first keeps a copy.
 document.querySelector("#clear-device").addEventListener("click", async () => {
-  if (!confirm("이 기기의 표시·메모·독서 기록·저장한 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
+  if (!confirm("이 기기의 표시·메모·독서 기록·내려받은 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
   const owner = await ownerIdentity();
   const store = await ownerStore();
   store?.close();
@@ -6671,16 +6861,22 @@ elements["archive-body"].addEventListener("dblclick", () => {
   const zoom = effectiveAaZoom();
   setAaZoom(zoom < 1.25 ? 1.5 : zoom < 1.75 ? 2 : 1);
 });
-elements["archive-body"].addEventListener("scroll", () => {
-  updateAaOverflowCue();
-  // The sideways position of a wide AA is kept with its zoom.
-  if (!currentAaKey()) return;
-  clearTimeout(aaLeftTimer);
-  aaLeftTimer = setTimeout(() => {
-    rememberAaView({ left: elements["archive-body"].scrollLeft });
-    persistUserState();
-  }, 300);
-}, { passive: true });
+// The sideways position of a wide AA is kept with its zoom. The pane also scrolls down, so only a
+// change of the sideways place counts.
+let aaLastLeft = 0;
+for (const scroller of [elements["archive-body"], elements["reader-pane"], elements["aa-host"]]) {
+  scroller.addEventListener("scroll", () => {
+    if (scroller !== aaScroller() || currentMode !== "aa" || scroller.scrollLeft === aaLastLeft) return;
+    aaLastLeft = scroller.scrollLeft;
+    scheduleAaScrollCue();
+    if (!currentAaKey()) return;
+    clearTimeout(aaLeftTimer);
+    aaLeftTimer = setTimeout(() => {
+      rememberAaView({ left: aaScroller().scrollLeft });
+      persistUserState();
+    }, 300);
+  }, { passive: true });
+}
 function touchDistance(event) {
   return Math.hypot(
     event.touches[0].clientX - event.touches[1].clientX,
@@ -7019,7 +7215,13 @@ personalLibrary = createPersonalLibrary({
 
 applySettings();
 // Text archive routes do not depend on the TypeMoon search index; start them immediately.
-if (location.pathname === "/text") void handleRoute();
+if (location.pathname === "/text") {
+  // A reload on a body (or a tab Chrome restored) rebuilds the list and the work's chapters before
+  // the body; those steps stay hidden so the reader is the first screen that shows (styles/base.css).
+  const params = new URLSearchParams(location.search);
+  if (params.has("item") || params.has("chapter")) document.body.classList.add("restoring-text");
+  void handleRoute().finally(() => document.body.classList.remove("restoring-text"));
+}
 
 // Service worker (docs/24 §12.6): registered once the page has settled; its caches are the owner's.
 const offline = createOffline({
@@ -7035,6 +7237,13 @@ const offline = createOffline({
   },
 });
 void restoreMirroredStates();
-const startOffline = () => void offline.register().then(() => ownerIdentity()).then((hash) => offline.setOwner(hash));
+const startOffline = () => void ownerIdentity().then((hash) => {
+  offline.setOwner(hash);
+  return offline.register();
+}).then(async () => {
+  if (activeCollectionId === null) return;
+  const collection = await loadCollectionDetail(activeCollectionId);
+  if (collection) await showOfflineControl(collection);
+}).catch(() => {});
 if (document.readyState === "complete") startOffline();
 else addEventListener("load", startOffline, { once: true });

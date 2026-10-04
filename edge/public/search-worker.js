@@ -1,4 +1,4 @@
-import { discoverPosts, findPost, prepareSearch, searchPage, searchPosts } from "./search-core.js";
+import { boardCategories, discoverPosts, findPost, prepareSearch, searchPage, searchPosts } from "./search-core.js";
 
 const INDEX_LOAD_RETRY_DELAY_MS = 2_000;
 const RECENT_POST_LIMIT = 6;
@@ -105,6 +105,10 @@ async function handleMessage({ data }) {
     }
     if (data?.type === "page") {
       self.postMessage({ type: "page", id, ...searchPage(index, data) });
+      return;
+    }
+    if (data?.type === "categories") {
+      self.postMessage({ type: "categories", id, categories: boardCategories(index, data) });
       return;
     }
     if (data?.type === "discover") {

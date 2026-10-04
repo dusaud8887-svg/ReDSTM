@@ -70,15 +70,18 @@ DB 연결 시 숫자 source ID로 보완한다.
 ## 3. 수집·요청 예산
 
 - 대상 host는 명시 설정된 `blacktoonNNN.com`, `marumaruNNN.com` 형식만 허용한다. 현재 기본값은
-  `blacktoon452.com`, `marumaru102.com`이다. 같은 출처의 5xx가 두 번 쌓이면 그 출처만 숫자
-  suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 성공한 호스트를 저장한다(5칸 소진 후 +1부터
-  다시 순환한다). proxy, browser, anti-bot/captcha 우회는 없다.
+  `blacktoon452.com`, `marumaru102.com`이고, 운영 값은 `text_collector_hosts`에 저장된 호스트가
+  우선한다(2026-10-04 `blacktoon454.com`, `marumaru103.com`). 같은 출처의 연결 실패나 5xx가 두 번
+  쌓이면 그 출처만 실패마다 숫자 suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 다 돌면 +1부터 다시
+  돈다(다음 번호가 아직 열리지 않았을 때 영구히 멈추지 않게). 유효한 응답을 받은 호스트를 저장한다.
+  proxy, browser, anti-bot/captcha 우회는 없다.
 - API 요청은 브라우저 일관 지문(UA·sec-ch-ua·Accept-Language·Sec-Fetch·동출처 Referer)으로 보낸다.
   `REDSTM_TEXT_COLLECTOR_UA`로 UA를 격상할 수 있다. 이는 올바른 프로토콜 지문이지 우회가 아니다 —
   우회 금지 계약은 그대로 유지된다. 2026-10-05 기준 양 사이트가 `/seo-gate` 406 필터로 자동화
   API 접근을 막아 수집은 held 상태다(마루마루 목록 200/작품·회차 406, 블랙툰은 수집기 UA 406).
   406과 200 HTML 게이트는 블록 신호로 분류되어 6시간 cooldown을 건다(host blocked 플래그는
-  406에서는 건드리지 않는다 — UA 기반 게이트는 모든 host에 동일하므로).
+  406에서는 건드리지 않는다 — UA 기반 게이트는 모든 host에 동일하므로). seo-gate가 유지되는 동안
+  수집은 멈추고 held로 남는다.
 - 양쪽 도메인은 한 `blacktoon-marumaru-novel` 요청 그룹으로 persisted 5초 최소 간격을 공유한다.
   403/429/509 cooldown은 출처별 행이라 한 도메인이 막혀도 다른 도메인은 진행한다. 요청은 source별
   round-robin이다. collector timer는 5분마다
@@ -126,7 +129,10 @@ DB 연결 시 숫자 source ID로 보완한다.
    마지막에 교체하고 다시 readback한다. 이전 pointer는 그전까지 유지된다. failure는 pointer를 건드리지
    않는다. batch 안의 accepted/duplicate 모든 항목이 pointer 게시까지 검증된 뒤 receipt를 revision 2로
    원자 갱신하고 item-level `published_at`을 준다. revision 2는 importer 재실행으로 revision 1에
-   되돌아가지 않는다. receipt는 게시 뒤에도 보존한다. 수신 batch(drop)는 2026-10-03부터 뉴토미가 revision 2 receipt나
+   되돌아가지 않는다. 게시할 항목(accepted/duplicate)이 하나도 없는 batch(모두 rejected·held_conflict)는
+   게시를 기다리지 않고 다음 publisher 실행에서 바로 revision 2로 확정한다(항목 상태는 그대로, `published_at` 없음;
+   2026-10-04 전에는 revision 1로 영원히 남아 PC가 대기로 보았다 — 9/26 `source_identity_invalid` 65개).
+   receipt는 게시 뒤에도 보존한다. 수신 batch(drop)는 2026-10-03부터 뉴토미가 revision 2 receipt나
    거부 status를 읽은 뒤 SFTP로 지운다(media batch와 같은 규칙). 수입 결과는 DB와 objects에 있어 drop 원본이 필요 없고,
    지우지 않으면 2GiB drop이 찬다(10-03에 받은 지 오래된 텍스트 batch 711개·1.1GB가 남아 있어 655개를 서버에서 정리).
 5. novel lane의 R2 pointer/readback과 revision-2 receipt 뒤에
@@ -139,6 +145,24 @@ DB 연결 시 숫자 source ID로 보완한다.
    snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 500건씩 파일로
    내보낸다. 게시 트리는 같은 SQLite 읽기 시점에서 500건 페이지와 JSONL 게시 계획을 파일로
    내보내며, 원문 객체 확인 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
+5-1. PC 상태 전달(2026-10-04, 뉴토미 피드백): publisher는 **매 실행마다**(게시·양보·실패 모두)
+   `receipts/publish-status.json`(0640, inbox read group)을 원자 교체한다. 내용은 ID·건수·시각만:
+   `last_run{at, outcome: published|deferred|failed, reason}`, `last_success_at`,
+   `pending{batches, items, oldest_batch_id, oldest_imported_at}`(revision 1 batch),
+   단계별 마지막 양보 사유(`deferrals`), `novel_snapshot{snapshot_id, item_count, written_at}`.
+   R2의 `published/status/text.json`은 성공한 실행에서만 갱신되므로 PC는 이 파일로 "게시 대기"와 "유실"을 구분한다.
+5-2. 본문 동등성(receipt `equivalence_version: 1`, 규칙은 item kind로 정해짐 — Newtomi는 정해진 receipt 필드 밖을 거부하므로
+   필드를 더하지 않는다): 같은 identity의 새 원본 SHA가 달라도
+   규칙상 같은 본문이면 `held_conflict` 대신 증명 필드(`submitted_raw_sha256`·`stored_object_sha256`·
+   `text_sha256`)를 단 `duplicate`. 저장 객체는 최초 원본 그대로다.
+   - 소설(`novel_text_v1`): Newtomi `novel_text.canonical_novel_bytes`와 같은 규칙.
+   - 아카라이브(`arcalive_body_v1`, `importer.canonical_arcalive_bytes`): 헤더(`# 제목`, `- key: value`)는 제외하고 `---` 뒤 본문만,
+     `[image] <url>` 줄의 알려진 아카라이브 CDN 이미지(호스트 `arca.live`/`namu.la`, 경로 키
+     `[a-z0-9]{2,20}/[a-f0-9]{16,128}.(png|jpe?g|webp|gif|avif)`)는 `[image] arca-media:<경로 키>`로 바꾼다
+     (서명 `expires`/`key`, `type=orig`, `ac-o`↔`ac` 차이 무시). 일반 링크의 쿼리, `[video]` 줄, 그 밖의 모든 글자는 그대로 비교.
+     Newtomi `receipt_contract.validate_content_receipt`가 `arcalive_post`의 이 규칙을 알기 전에는 증명을 받으면
+     receipt 전체를 거부하므로, Oracle에서 `REDSTM_TEXT_ARCALIVE_EQUIVALENCE=1`을 켜기 전까지는 꺼져 있다
+     (꺼진 동안 동작은 이전과 같음: `held_conflict`). 들어오는 `text_sha256`은 lane 규칙으로 검사한다.
 6. 게시 보존: 새 pointer readback이 끝난 뒤에만 lane별로 가장 최근에 검증된 release 5개
    (`publisher._RELEASE_RETENTION`)와 활성 pointer의 release, 그리고 이들이 참조하는 catalog·work
    catalog·작품 상세 index를 남긴다. 나머지 `published/releases/{lane}/`·`published/indexes/{lane}/`
@@ -225,6 +249,8 @@ import는 5분, publisher는 15분 timer다. TypeMoon 게시 락 중 collector�
 `REDSTM_TEXT_BODY_SOURCE`는 계속 비워 둔다.
 
 Oracle 운영 갱신은 `deploy/text-archive/update_oracle.sh`로 별도 versioned release를 설치한다.
+갱신은 직전 release를 복사하되 `.venv`는 `install_oracle.sh`와 같은 CPython(현재 3.14.6)과 고정 패키지로
+다시 만든다. 그래서 interpreter 보안 갱신도 같은 갱신 한 번으로 반영된다.
 계정·마운트·SSH의 최초 설치 계약은 같은 디렉터리의 `install_oracle.sh`, 자격 설치 계약은
 `configure_r2.sh`다. 운영 비밀값은 문서·저장소에 두지 않는다. 전용 자격은 text bucket으로만
 제한하고 R2 `no_check_bucket`을 사용한다. TypeMoon 배포와 D1/Worker/release status는 변경하지 않는다.
@@ -451,6 +477,8 @@ TypeMoon 수치와 합산하거나 `/ops` 기존 API에 필드를 추가하지 �
   크롤·export·게시 자식을 띄운 동안만 `/srv/redstm/static/.typemoon-lane.json`(`{"phase","updated_at"}`, 0644,
   30초마다 갱신, 자식이 끝나면 삭제)을 쓰고, 텍스트는 이 파일이 있을 때만 620 MiB − 현재 cgroup 사용량을 예약한다.
   180초 넘게 갱신되지 않은 파일(runner가 죽음)은 무시하고, 읽을 수 없는 파일은 피크 전체를 예약한다.
+  파일에 `peak_mib`가 있으면 620 MiB 대신 그 값을 쓴다(10-03: 본문 채우기·recovery는 360 — 실측 최대 283 MiB, 크롤·export·게시는
+  620). 몇 시간짜리 본문 채우기 동안 텍스트 게시가 통째로 막히던 문제.
   텍스트 사용자는 `/srv/redstm/static`에 `--x`만 있어 이름을 아는 이 파일만 읽는다(unit 변경 없음).
 - **게시 잠금은 확인만**: 텍스트는 `.publish.lock`을 잡았다가 바로 놓아(TypeMoon 게시 중이면
   `typemoon_publish_busy`로 미룸) 작업 내내 쥐지 않는다. TypeMoon 게시 확인(smoke confirmation)이 0초 대기로

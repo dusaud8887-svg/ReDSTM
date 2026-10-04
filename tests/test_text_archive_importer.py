@@ -996,6 +996,13 @@ def test_operation_window_leaves_typemoon_its_measured_headroom(
     # and a lane file the runner left behind when it died goes stale.
     assert runtime.typemoon_reserve(early, tmp_path / "no-lane.json") == 0
     assert runtime.typemoon_reserve(early, lane, now=time.time() + 600) == 0
+    # A step that names a smaller peak (a body fill) keeps only that much back.
+    fill = tmp_path / "fill-lane.json"
+    fill.write_text(
+        json.dumps({"phase": "recovery", "updated_at": time.time(), "peak_mib": 360}),
+        encoding="utf-8",
+    )
+    assert runtime.typemoon_reserve(early, fill) == 260 * 1024**2
     with pytest.raises(runtime.RuntimeWindowError, match="typemoon_memory_reserved"):
         with window(early):
             pytest.fail("text must wait while TypeMoon can still grow into the free memory")
@@ -1219,3 +1226,207 @@ def test_a_deferred_step_leaves_its_reason_for_the_status_document(
 
     recorded = status._deferrals(deferrals)
     assert [entry["reason"] for entry in recorded.values()] == ["memory_below_floor"]
+
+
+# Arcalive body equivalence (Newtomi feedback 2026-10-04): a re-downloaded post whose only
+# differences are known image URL signatures and header metadata is the same text; a changed
+# link query or a changed sentence is not.
+_ARCA_ITEM = json.loads(_FIXTURE.read_text(encoding="utf-8"))["item"]
+_ARCA_KEY = "20230607sac/" + "a" * 64 + ".webp"
+
+
+def _post(
+    *,
+    title: str = "제목",
+    category: str = "소설",
+    image: str = f"https://ac-o.arca.live/{_ARCA_KEY}?expires=1&key=OLD&type=orig",
+    link: str = "https://example.com/page?ref=1",
+    sentence: str = "본문 한 줄",
+) -> bytes:
+    return (
+        f"# {title}\n\n- channel: novel\n- category: {category}\n- author: 작가\n"
+        f"- created: 2026-09-23\n- id: 108\n- url: https://arca.live/b/novel/108\n\n---\n\n"
+        f"{sentence}\n\n[image] {image}\n\n[링크]({link})\n"
+    ).encode()
+
+
+def test_new_image_signature_and_header_metadata_are_the_same_body() -> None:
+    old = _post()
+    renewed = _post(
+        title="제목 (수정)",
+        category="잡담",
+        image=f"https://ac.arca.live/{_ARCA_KEY}?expires=999&key=NEW",
+    )
+    assert old != renewed
+    assert importer.canonical_arcalive_bytes(old) == importer.canonical_arcalive_bytes(renewed)
+    assert b"arca-media:" + _ARCA_KEY.encode() in (importer.canonical_arcalive_bytes(old) or b"")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"link": "https://example.com/page?ref=2"},
+        {"sentence": "본문 두 줄"},
+        {"image": "https://ac-o.arca.live/20230607sac/" + "b" * 64 + ".webp?expires=1"},
+        {"image": f"https://example.com/{_ARCA_KEY}?expires=2"},
+    ],
+)
+def test_links_other_images_and_text_still_differ(change: dict[str, str]) -> None:
+    assert importer.canonical_arcalive_bytes(_post()) != importer.canonical_arcalive_bytes(
+        _post(**change)
+    )
+
+
+def test_not_an_arcalive_post_has_no_rule() -> None:
+    assert importer.canonical_arcalive_bytes(b"plain text\n") is None
+    assert importer.canonical_arcalive_bytes(b"# t\nnot a header line\n---\nbody\n") is None
+
+
+def test_reimport_with_new_signatures_is_a_proven_duplicate_and_a_real_edit_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REDSTM_TEXT_ARCALIVE_EQUIVALENCE", "1")
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    first = _post()
+    _batch(inbox, _BATCHES[0], body=first, item=dict(_ARCA_ITEM))
+    receipt = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+    assert receipt is not None and receipt["items"][0]["status"] == "accepted"
+
+    renewed = _post(image=f"https://ac.arca.live/{_ARCA_KEY}?expires=999&key=NEW")
+    text_sha = hashlib.sha256(importer.canonical_arcalive_bytes(renewed) or b"").hexdigest()
+    _batch(inbox, _BATCHES[1], body=renewed, item={**_ARCA_ITEM, "text_sha256": text_sha})
+    receipt = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
+    assert receipt is not None
+    item = receipt["items"][0]
+    assert item["status"] == "duplicate"
+    assert item["submitted_raw_sha256"] == hashlib.sha256(renewed).hexdigest()
+    assert (
+        item["stored_object_sha256"] == item["content_sha256"] == hashlib.sha256(first).hexdigest()
+    )
+    assert item["text_sha256"] == text_sha
+    assert item["equivalence_version"] == 1
+    # Only the fields Newtomi's receipt parser accepts (storage.py's fixed list).
+    assert set(item) <= {
+        "identity",
+        "status",
+        "reason",
+        "content_sha256",
+        "submitted_raw_sha256",
+        "stored_object_sha256",
+        "text_sha256",
+        "equivalence_version",
+        "canonical_work_id",
+        "canonical_chapter_id",
+        "published_at",
+    }
+    # The stored file keeps the first download's bytes.
+    assert (objects / importer._object_key(item["content_sha256"])).read_bytes() == first
+
+    edited = _post(sentence="본문 두 줄")
+    _batch(inbox, _BATCHES[2], body=edited, item=dict(_ARCA_ITEM))
+    receipt = importer.import_batch(inbox, _BATCHES[2], db_path, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "held_conflict"
+
+
+def test_an_arcalive_text_hash_is_checked_by_the_arcalive_rule(tmp_path: Path) -> None:
+    body = _post()
+    wrong = hashlib.sha256(b"something else").hexdigest()
+    _batch(tmp_path / "inbox", _BATCHES[0], body=body, item={**_ARCA_ITEM, "text_sha256": wrong})
+    receipt = importer.import_batch(
+        tmp_path / "inbox", _BATCHES[0], tmp_path / "db", tmp_path / "objects", tmp_path / "r"
+    )
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "rejected"
+    assert receipt["items"][0]["reason"] == "text_sha256_mismatch"
+
+
+def test_pc_state_reports_waiting_batches_and_why_publish_waited(tmp_path: Path) -> None:
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    for index, batch_id in enumerate(_BATCHES[:2]):
+        _batch(inbox, batch_id, body=f"body {index}".encode(), item=dict(_ARCA_ITEM))
+        importer.import_batch(inbox, batch_id, db_path, objects, receipts)
+    deferrals = tmp_path / "deferrals.json"
+    deferrals.write_text(
+        json.dumps(
+            {"publisher": {"reason": "typemoon_memory_reserved", "at": "2026-10-04T06:30Z"}}
+        ),
+        encoding="utf-8",
+    )
+    path = status.write_pc_state(
+        db_path, receipts, outcome="published", now=1_000.0, deferrals_path=deferrals
+    )
+    path = status.write_pc_state(
+        db_path,
+        receipts,
+        outcome="deferred",
+        reason="typemoon_memory_reserved",
+        now=2_000.0,
+        deferrals_path=deferrals,
+    )
+    state = json.loads(path.read_text(encoding="utf-8"))
+    assert path.name == "publish-status.json"
+    assert state["last_run"] == {
+        "at": "1970-01-01T00:33:20Z",
+        "outcome": "deferred",
+        "reason": "typemoon_memory_reserved",
+    }
+    # A deferred run keeps the last success it did not have itself.
+    assert state["last_success_at"] == "1970-01-01T00:16:40Z"
+    assert state["pending"]["batches"] == 2
+    assert state["pending"]["items"] == 2
+    assert state["pending"]["oldest_batch_id"] == _BATCHES[0]
+    assert state["deferrals"]["publisher"]["reason"] == "typemoon_memory_reserved"
+    assert state["novel_snapshot"] is None
+
+
+def test_a_batch_with_nothing_to_publish_gets_its_final_receipt(tmp_path: Path) -> None:
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    _batch(inbox, _BATCHES[0], body=b"first", item=dict(_ARCA_ITEM))
+    importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+    _batch(inbox, _BATCHES[1], body=b"changed", item=dict(_ARCA_ITEM))
+    held = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
+    assert held is not None and held["items"][0]["status"] == "held_conflict"
+    publisher._finalize_receipts(db_path, receipts)
+    with sqlite3.connect(db_path) as db:
+        revisions = dict(db.execute("SELECT batch_id,revision FROM text_archive_batches"))
+    # The held batch is final now; the accepted one still waits for its publication.
+    assert revisions == {_BATCHES[0]: 1, _BATCHES[1]: 2}
+    receipt = json.loads((receipts / f"{_BATCHES[1]}.json").read_text(encoding="utf-8"))
+    assert receipt["revision"] == 2
+    assert receipt["items"][0]["status"] == "held_conflict"
+    assert "published_at" not in receipt["items"][0]
+
+
+def test_arcalive_equivalence_stays_off_until_newtomi_knows_the_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REDSTM_TEXT_ARCALIVE_EQUIVALENCE", raising=False)
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    _batch(inbox, _BATCHES[0], body=_post(), item=dict(_ARCA_ITEM))
+    importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+    renewed = _post(image=f"https://ac.arca.live/{_ARCA_KEY}?expires=999&key=NEW")
+    _batch(inbox, _BATCHES[1], body=renewed, item=dict(_ARCA_ITEM))
+    receipt = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "held_conflict"

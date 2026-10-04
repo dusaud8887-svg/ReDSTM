@@ -367,7 +367,7 @@ install_release() {
   install_uv
   install_rclone
   sudo -u redstm env HOME=/srv/redstm/home UV_CACHE_DIR=/srv/redstm/cache UV_NO_CONFIG=1 \
-    /usr/local/bin/uv python install 3.14
+    /usr/local/bin/uv python install 3.14.6
 
   if [[ ! -d "$target" ]]; then
     if [[ -e "$staging" ]]; then

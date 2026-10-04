@@ -12,8 +12,9 @@ export function postReadingState(progress) {
 export function postReadingLabel(progress, { seen = false } = {}) {
   const state = postReadingState(progress);
   if (state === "reading") return `${Math.round(Number(progress) * 100)}%`;
-  if (state === "finished") return "완료";
-  return seen ? "처음만 봄" : "";
+  // The same words as the text library rows (다 읽음 · 열어 봄), so one state reads one way everywhere.
+  if (state === "finished") return "다 읽음";
+  return seen ? "열어 봄" : "";
 }
 
 // Silent reading of Korean prose runs at roughly 500 characters a minute; whitespace is not read.
@@ -174,7 +175,7 @@ export function collectionRowCopy({
   if (occupancy === "finished") {
     return {
       occupancy,
-      progress: `${available.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편`,
+      progress: `${available.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편 읽음`,
       action: "다시 보기",
       gap,
     };
@@ -183,7 +184,7 @@ export function collectionRowCopy({
   if (continueTarget?.kind === "finished") {
     return {
       occupancy,
-      progress: `${finishedCount.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편`,
+      progress: `${finishedCount.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편 읽음`,
       action: skipped ? `앞쪽 미독 ${skipped.toLocaleString("ko-KR")}편` : "다음 편 없음",
       gap,
     };
@@ -192,7 +193,7 @@ export function collectionRowCopy({
   const nextPosition = continueTarget?.kind === "next" ? continueTarget.entry.position : null;
   return {
     occupancy,
-    progress: `${finishedCount.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편`,
+    progress: `${finishedCount.toLocaleString("ko-KR")}/${available.toLocaleString("ko-KR")}편 읽음`,
     action: resumePosition ? `${resumePosition}편 이어 읽기` : nextPosition ? `다음 ${nextPosition}편` : "이어 읽기",
     gap,
   };

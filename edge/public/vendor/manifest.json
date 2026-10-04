@@ -60,14 +60,6 @@
     {
       "name": "photoswipe",
       "version": "5.4.4",
-      "path": "/vendor/photoswipe@5.4.4/photoswipe-lightbox.esm.min.js",
-      "bytes": 14338,
-      "gzip": 4467,
-      "sha256": "b82c385604f90cc77082d8e1bd4f5ef7c9d3da62d95dcc3ff1691a4eb0dddd12"
-    },
-    {
-      "name": "photoswipe",
-      "version": "5.4.4",
       "path": "/vendor/photoswipe@5.4.4/photoswipe.esm.min.js",
       "bytes": 54270,
       "gzip": 16447,

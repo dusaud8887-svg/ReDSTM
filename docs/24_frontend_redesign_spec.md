@@ -156,7 +156,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 4. **작품에서 찾기**: 작품 상세 🔍 → KWIC 줄 → 그 회차 적중 → Back = KWIC 결과(§9.5 표).
 5. **표시·발췌**: 선택 → `표시` → 기록 › 발췌 → 카드 → 원문 위치.
 6. **AA 크게 보기**: AA 글 → `⟲` → 핀치·두 번 탭 → Back = 전체화면 해제.
-7. **오프라인 준비**: 작품 상세 `이 기기에 저장` → 범위 → 진행 → 완료 표시(부분 실패는 완료로 표시하지 않음).
+7. **오프라인 준비**: 작품 상세 `기기에 내려받기` → 범위 → 진행 → 완료 표시(부분 실패는 완료로 표시하지 않음).
 
 ---
 
@@ -277,7 +277,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | C3 | 회차 목록 필터(전체·안 읽음·표시 있음), 역순, `몇 화?` | 개편 | M1 |
 | C4 | 범위 읽음 처리 | 개편 | M6 |
 | C5 | 작품 통계(분량·예상 시간·남은 시간) | 신규 | M3 |
-| C6 | 이 기기에 저장(범위) | 신규 | M4 |
+| C6 | 기기에 내려받기(범위) | 신규 | M4 |
 
 ### 7.4 Reader — 산문 (D)
 
@@ -357,7 +357,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 - 첫 두 화면(384×~740)에 이어읽기 + 서가 + 스마트 칩까지가 들어오도록 간격을 유지한다.
 - 이어읽기 카드의 `마지막 문장`은 저장 locator의 `exact`+주변 문장(Intl.Segmenter 문장 경계로 자름). 원문에 없는 말은 붙이지 않는다.
   quote가 없는 옛 기록은 줄을 숨긴다. 설정 `서재에 마지막 문장 보이기`(기본 켬).
-- 서가 카드 길게 누르기 → 컨텍스트 시트(이어 읽기·목차·분류·고정·이 기기에 저장·표지 색).
+- 서가 카드 길게 누르기 → 컨텍스트 시트(이어 읽기·목차·분류·고정·기기에 내려받기·표지 색).
 - 기록 없음: 온보딩(검색 + 출처 3 + 기록 가져오기).
 
 ### 8.3 둘러보기 (M3)
@@ -383,7 +383,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 
 ### 8.6 작품 상세 (M7)
 
-작품 머리(표지 L/모바일 M, 명조 제목, 작가·출처·원작 상태·보존 N화·분량), `이어 읽기 N화`(primary), `처음부터`·`분류`·`이 기기에 저장`,
+작품 머리(표지 L/모바일 M, 명조 제목, 작가·출처·원작 상태·보존 N화·분량), `이어 읽기 N화`(primary), `처음부터`·`분류`·`기기에 내려받기`,
 **바코드**(DESIGN §7.4: 구간 bin, 스크럽 → 확대 띠 → 회차 선택), 필터 칩·`몇 화?`, 회차 목록.
 - 바코드 모델: `barcodeModel(entries, readState, width) → bins[]`(순수 함수). bin 폭 목표 3px, `분량 보기`일 때만 `char_count` 비례.
 - 🔍 = 작품 안 찾기(§8.12). ⋯ = 표지 색·범위 읽음 처리·원문 목록.
@@ -1013,7 +1013,7 @@ aaGestures, aaFullscreen, stats, offline, sync, kwic, glass, haptics`. off = UI�
 | 9 | 이미지 보기 | 본문 이미지 탭 → 핀치 → 아래로 끌어 닫기 → Back | 원래 스크롤 위치로 돌아옴 |
 | 10 | 선택 메뉴(T26) | 문장 길게 눌러 선택 → 핸들 이동 | OS 툴바·핸들과 메뉴가 겹치지 않음, 표시·메모 저장 |
 | 11 | 공유(T13/T33) | 발췌 공유·AA 장면 이미지 공유 → 카카오톡 | PNG 1080×1350, 글꼴·색 정상, 실패 시 텍스트 복사 |
-| 12 | 오프라인(T07/T09) | 작품 `이 기기에 저장` → 비행기 모드 → 앱 재시작 | 저장한 작품만 열림, 로그인 만료 시 시트 안내 |
+| 12 | 오프라인(T07/T09) | 작품 `기기에 내려받기` → 비행기 모드 → 앱 재시작 | 저장한 작품만 열림, 로그인 만료 시 시트 안내 |
 | 13 | QR 이어 읽기 | PC 더보기 `다른 기기에서` QR → 폰으로 스캔, 반대 방향도 | 같은 문장에서 열림 |
 | 14 | 백업 병합 | 폰에서 기록 내보내기 → PC에서 가져오기(합치기) | 충돌 사본 표시, 기존 기록 유지 |
 | 15 | 자동 스크롤 | 속도 3·8로 1분, 찾기 열기, Back | 120Hz에서 끊김 없음, 찾기·Back이 바를 닫고 멈춤 |
@@ -1147,7 +1147,7 @@ P7-3 docs/19·09·07·README 본문 갱신.
 | A2 | 시각 방향 Ribbon Library(청록 행동 + 주홍 가름끈) | **채택** | M1 |
 | A3 | IA: 하단 탭 4 + 미니바, 텍스트 → 둘러보기 출처, 보관함 → 기록 | **채택**(기존 URL 전부 유지) | M1 |
 | A4 | 백업 v4(.json.gz, 주석·기록·작품 스타일 선택 필드) | **채택**(v1–v3 가져오기 유지) | M3 |
-| A5 | Service Worker + 오프라인 | **채택, 최소 범위**: 사용자가 `이 기기에 저장`한 작품만 평문 보관, 설정에 `이 기기 기록 지우기`, 권한 철회 시 회수 불가를 명시 | M4 |
+| A5 | Service Worker + 오프라인 | **채택, 최소 범위**: 사용자가 `기기에 내려받기`한 작품만 평문 보관, 설정에 `이 기기 기록 지우기`, 권한 철회 시 회수 불가를 명시 | M4 |
 | A6 | 서버 동기화(D1 확장) | **보류(pass)** — QR 이어 읽기 + 백업 병합으로 대체. `docs/00` 계약 변경 없음 | M5는 QR·병합만 |
 | A7 | RUM 수집 | **보류(pass)** — web-vitals 제거, 실기기 확인으로 대체 | — |
 | A8 | `/ops` 토큰 매핑 | **보류(pass)** | — |
@@ -1348,9 +1348,9 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - M3 main CI 36867485178 실패 후 수정: ① 기록 탭 5개·검색 범위 3개가 고정 열 그리드에서 두 줄로 접혔다(시각 기준선 차이로 드러남) — `.view-tabs`를 보이는 탭 수만큼 한 줄(auto-flow column, 좁으면 가로 스크롤). ② 통계 E2E가 느린 실행기에서 가짜 시계로 세션 시작 프레임보다 첫 입력이 먼저 와 4분이 됨 — 입력 전에 프레임을 돌리고 3–6분 허용. ③ 검색·기록 화면 기준선 12개를 지우고 CI의 기준선 단계를 `--update-snapshots=missing`(없는 화면만 생성)으로 바꿔, 그 artifact로 새 기준선을 커밋한다.
 - P4-1: `sw.js`(module SW, 동적 import 없음) — §12.6.1 경로표를 표 순서대로 등록: 운영·`/cdn-cgi/` NetworkOnly, sync/rum/`/api/v1/me` NetworkOnly(POST는 라우팅하지 않아 항상 네트워크), 텍스트 status NetworkOnly, release 포인터 NetworkFirst 3초, manifest·index CacheFirst(`text-meta`, index 200개), text object·`/archive/*`는 `offline-v1` 먼저 → CacheFirst(1,000개·30일·quota 초과 시 정리), media CacheFirst+200만+Range, `/archive/release.json` NetworkFirst 3초, 버전 디렉터리 `static-v`, 앱 셸 precache + `cleanupOutdatedCaches`, 그 밖의 탐색은 NetworkFirst → 실패 시 캐시된 셸. 모든 전략 공통 응답 검사: opaqueredirect·redirected·3xx·401·403·API 경로의 HTML 응답은 캐시하지 않고 페이지에 `auth-expired`(토스트 `로그인이 만료됐어요`). 읽기 데이터 캐시 이름에 owner 접미사(`/api/v1/me` ownerHash를 페이지가 `SET_OWNER`로 보내고 SW가 기억, 없으면 `anon`). precache 목록은 `scripts/vendor.mjs`가 `public/precache-manifest.js`(SW가 JSON을 정적 import할 수 없어 JS 모듈, 설계의 `.json` 이름과 차이)로 만들고 `npm run check`가 일치를 검사 — 셸(페이지·모듈·스타일·글꼴 CSS·아이콘·manifest) + Pretendard core + MaruBuri 700 core, revision은 줄바꿈 정규화 SHA-256 앞 16자(Windows·Linux 일치). 앱 파일을 바꾸면 `npm run precache`. `offline.js`: module SW 등록(미지원·차단이면 온라인 전용), owner 전달, 메시지. E2E는 SW가 보내는 요청이 `page.route` mock을 우회하므로 전역 `serviceWorkers: "block"`, `offline.spec.js`만 허용하고 context route로 mock하며 Basic 헤더를 직접 붙인다(httpCredentials가 SW 요청에는 적용되지 않음; 운영은 Access 쿠키). 검증 중 사고: `npm run vendor`가 vendor 폴더를 지운 뒤 이름 바꾸기에서 EPERM(로컬 서버가 파일을 잡음) → git으로 즉시 복구, 셸 목록만 쓰는 `--precache` 추가. 편집: P4-1a(`vendor.mjs`·생성 목록·`package.json`), P4-1b(`sw.js`·`offline.js`·`app.js`·`playwright.config.js`·`offline.spec.js`).
 - P4-1 검증: unit 181, check·lint 0 error(기존 warning 8), 전체 E2E 637 pass/0 fail/23 skip(탭 수정 전 코드), 이후 offline spec 재확인.
-- P4-2: 작품 머리 `이 기기에 저장`(TypeMoon 작품) — snapshot(§12.6.2: owner·workKey·source·textModelVersion·entries{documentId, order, title, url}·descriptor(작품 상세를 그릴 최소 필드)·requires(본문 글꼴 core·Saitamaar·Reader가 정적 import하는 vendor)·`media: text-only`·state·savedAt·bytes)를 owner idb `offline`에 쓰고, SW가 동시 4개로 받아 `offline-v1-<owner>`에 넣으며 진행률을 알린다. 이미 있는 파일은 건너뛰어 `이어서 저장`이 재개다. 하나라도 실패하면 `partial`(`일부만 저장됨 · 2/3편 (1편 실패)`), 멈추면 `interrupted`, 모두면 `complete`(`이 기기에 저장됨 · 크기`). `삭제`는 캐시 파일과 snapshot을 함께 지운다. 첫 저장 때 `navigator.storage.persist()` 요청. 설정 `앱과 기록`에 저장한 작품 수와 저장 공간 추정, 평문 보관·권한 철회 시 회수 불가 문구(§12.6.3). 검증된 owner와 SW가 모두 있어야 저장을 보이고, `offline` 플래그를 끄면 새 저장 버튼은 비활성(기존 저장본 삭제는 가능). 이미지·텍스트 장서 작품은 아직 저장하지 않는다(글만, TypeMoon 작품). 편집: P4-2a(`sw.js`·`offline.js`), P4-2b(`app.js`·`index.html`·`library.css`·`offline.spec.js`).
+- P4-2: 작품 머리 `기기에 내려받기`(TypeMoon 작품) — snapshot(§12.6.2: owner·workKey·source·textModelVersion·entries{documentId, order, title, url}·descriptor(작품 상세를 그릴 최소 필드)·requires(본문 글꼴 core·Saitamaar·Reader가 정적 import하는 vendor)·`media: text-only`·state·savedAt·bytes)를 owner idb `offline`에 쓰고, SW가 동시 4개로 받아 `offline-v1-<owner>`에 넣으며 진행률을 알린다. 이미 있는 파일은 건너뛰어 `이어서 저장`이 재개다. 하나라도 실패하면 `partial`(`일부만 저장됨 · 2/3편 (1편 실패)`), 멈추면 `interrupted`, 모두면 `complete`(`이 기기에 내려받음 · 크기`). `삭제`는 캐시 파일과 snapshot을 함께 지운다. 첫 저장 때 `navigator.storage.persist()` 요청. 설정 `앱과 기록`에 저장한 작품 수와 저장 공간 추정, 평문 보관·권한 철회 시 회수 불가 문구(§12.6.3). 검증된 owner와 SW가 모두 있어야 저장을 보이고, `offline` 플래그를 끄면 새 저장 버튼은 비활성(기존 저장본 삭제는 가능). 이미지·텍스트 장서 작품은 아직 저장하지 않는다(글만, TypeMoon 작품). 편집: P4-2a(`sw.js`·`offline.js`), P4-2b(`app.js`·`index.html`·`library.css`·`offline.spec.js`).
 - P4-2 검증: unit 181, check·lint 0 error(기존 warning 8, 새 경고 1건 수정), 전체 E2E 641 pass/0 fail/23 skip. P4-1(SW)은 M3 기준선 수정과 함께 main에 먼저 병합됨(`b3da23d`). 그 main CI 36871199788 성공(Linux E2E 685 pass, 새 기준선 포함).
-- P4-3: 오프라인 시작(T07) — 마지막으로 검증된 owner를 이 기기에 기억해(`redstm.owner.v1`) 네트워크가 없을 때 그 namespace를 연다. 오프라인이거나(`navigator.onLine`·`offline` 이벤트) 아카이브를 열 수 없으면 서재에 `이 기기에 저장한 작품`(완료·일부 snapshot), 작품 상세는 색인을 못 받으면 snapshot descriptor로 그린다(`loadCollectionDetail` 대체 경로), 회차 본문은 SW `offline-v1`에서. 인증(T09): SW가 알린 만료는 `로그인이 만료됐어요` 시트(다시 로그인·저장한 작품 보기), 한 번 닫으면 그 페이지에서는 다시 띄우지 않는다(이후 실패 요청마다 다시 열리던 것을 검증 중 발견). 계정 namespace(§12.6.3): 온라인에서 다른 owner가 확인되면 이전 owner를 `redstm.otherOwners.v1`에 남겨 열지 않고, 설정에 `이 기기에 다른 계정 기록이 있어요 · 그 기록 삭제`(idb DB + 그 owner 접미사 캐시) — 감지한 다음 로드에서 안내가 사라지던 결함을 함께 고침. 설정 `이 기기 기록 지우기`: 확인 후 지금 owner의 idb namespace와 캐시 삭제(localStorage 읽기 상태·설정은 유지, SW 등록 해제는 하지 않음). 편집: P4-3a(`offline.js`·`index.html`·`library.css`), P4-3b(`app.js`·`offline.spec.js`).
+- P4-3: 오프라인 시작(T07) — 마지막으로 검증된 owner를 이 기기에 기억해(`redstm.owner.v1`) 네트워크가 없을 때 그 namespace를 연다. 오프라인이거나(`navigator.onLine`·`offline` 이벤트) 아카이브를 열 수 없으면 서재에 `내려받은 작품`(완료·일부 snapshot), 작품 상세는 색인을 못 받으면 snapshot descriptor로 그린다(`loadCollectionDetail` 대체 경로), 회차 본문은 SW `offline-v1`에서. 인증(T09): SW가 알린 만료는 `로그인이 만료됐어요` 시트(다시 로그인·저장한 작품 보기), 한 번 닫으면 그 페이지에서는 다시 띄우지 않는다(이후 실패 요청마다 다시 열리던 것을 검증 중 발견). 계정 namespace(§12.6.3): 온라인에서 다른 owner가 확인되면 이전 owner를 `redstm.otherOwners.v1`에 남겨 열지 않고, 설정에 `이 기기에 다른 계정 기록이 있어요 · 그 기록 삭제`(idb DB + 그 owner 접미사 캐시) — 감지한 다음 로드에서 안내가 사라지던 결함을 함께 고침. 설정 `이 기기 기록 지우기`: 확인 후 지금 owner의 idb namespace와 캐시 삭제(localStorage 읽기 상태·설정은 유지, SW 등록 해제는 하지 않음). 편집: P4-3a(`offline.js`·`index.html`·`library.css`), P4-3b(`app.js`·`offline.spec.js`).
 - P4-3 검증: unit 181, check·lint 0 error(기존 warning 8), 전체 E2E 653 pass/0 fail/23 skip(오프라인 12).
 - P4-4: SW 업데이트(T23) — 자동 `skipWaiting` 없음. 새 버전이 waiting이면 토스트 `새 버전이 있어요 · 지금 적용`, 그 외에는 안전한 지점(서재로 이동, 새 글 열기 push)에서 읽던 위치·상태를 저장한 뒤 `SKIP_WAITING` → `controllerchange`에서 한 번 다시 불러와 구·신 모듈이 섞이지 않는다. 플래그(T24): `offline` 끄면 새 저장 비활성·기존 저장본 열람/삭제 유지(P4-2), 설정 `앱 캐시 지우기` = SW 등록 해제 + 모든 캐시 삭제 후 다시 불러오기(표시·메모·기록 idb는 유지). 설치 바로가기: `보관함` → `기록`, `발췌`(`/saved?view=excerpts`) 추가, `theme_color`를 Ribbon Library accent `#1e6b5f`로. 기존 `publishes install metadata without registering offline behavior` E2E는 M4에서 계약이 바뀌어(SW 등록은 offline spec이 검증) 이름·단축키·색 기대를 갱신. 실제 배포 간 SW 교체(T23)는 E2E로 waiting worker를 만들 수 없어 배포 후 확인 항목. 편집: P4-4a(`offline.js`·`index.html`·`manifest.webmanifest`), P4-4b(`app.js`·`offline.spec.js`·`viewer.spec.js`).
 - P4-4 검증: unit 181, check·lint 0 error(기존 warning 8), 전체 E2E 657 pass/0 fail/23 skip.

@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "94734852498f0958"
+    "revision": "6ec99f914795c1df"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "cd77aed784bfe331"
+    "revision": "aa9fc1343f16ec0f"
   },
   {
     "url": "/arca-media.js",
@@ -22,11 +22,11 @@ export default [
   },
   {
     "url": "/barcode.js",
-    "revision": "816f7cca8e749c3a"
+    "revision": "a64d86ec854de229"
   },
   {
     "url": "/board-navigator.js",
-    "revision": "374cb09e429f6a65"
+    "revision": "4493ad6b41571b23"
   },
   {
     "url": "/capabilities.js",
@@ -114,11 +114,11 @@ export default [
   },
   {
     "url": "/media.js",
-    "revision": "38b903c157b1e2fd"
+    "revision": "d6b996791383b391"
   },
   {
     "url": "/offline.js",
-    "revision": "8d7b6978e505ad6d"
+    "revision": "b55e221951acba31"
   },
   {
     "url": "/overlay-manager.js",
@@ -138,11 +138,11 @@ export default [
   },
   {
     "url": "/reading-model.js",
-    "revision": "11ae2472a5a129d1"
+    "revision": "ed98721e3a2e9a4a"
   },
   {
     "url": "/search-core.js",
-    "revision": "dd7e1d3757eac475"
+    "revision": "73326929310a3871"
   },
   {
     "url": "/search-suggest.js",
@@ -150,7 +150,7 @@ export default [
   },
   {
     "url": "/search-worker.js",
-    "revision": "44c36e6680b7c838"
+    "revision": "85086cd626000601"
   },
   {
     "url": "/sequence.js",
@@ -162,7 +162,7 @@ export default [
   },
   {
     "url": "/shell.js",
-    "revision": "21c71986ae46dd39"
+    "revision": "0457b3f84b658dc8"
   },
   {
     "url": "/stats.js",
@@ -170,31 +170,31 @@ export default [
   },
   {
     "url": "/store.js",
-    "revision": "45a774e3ad6e8f2d"
+    "revision": "bf5a3a95f508baf1"
   },
   {
     "url": "/styles/aa.css",
-    "revision": "2a905227f2dcf619"
+    "revision": "f5ff09ba5934838c"
   },
   {
     "url": "/styles/base.css",
-    "revision": "c43673425dadbbe1"
+    "revision": "c3998cdffbfadc2c"
   },
   {
     "url": "/styles/components.css",
-    "revision": "474e02915bfeddcf"
+    "revision": "aa135c5a1ed791dc"
   },
   {
     "url": "/styles/library.css",
-    "revision": "35c492f4ca36a3a1"
+    "revision": "6a0511629f4cde45"
   },
   {
     "url": "/styles/reader.css",
-    "revision": "fbc79b15dc0ede0a"
+    "revision": "7e91684b1ac528ae"
   },
   {
     "url": "/styles/shell.css",
-    "revision": "3f81ca911dbf1cde"
+    "revision": "49360070d3d7dee3"
   },
   {
     "url": "/styles/tokens.css",
@@ -206,11 +206,11 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "4943836f6bb5f1db"
+    "revision": "8a197848cd89fffa"
   },
   {
     "url": "/text-model.js",
-    "revision": "fa21d3ed59ac7e20"
+    "revision": "1da05f0471645dd8"
   },
   {
     "url": "/text-shelves.js",
@@ -230,10 +230,10 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "8c43e2ab74884d30"
+    "revision": "9b36fc71dd316737"
   },
   {
     "url": "/work-header.js",
-    "revision": "4da8f6eab330483c"
+    "revision": "1fe452f8d59b338b"
   }
 ];

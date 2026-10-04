@@ -1,6 +1,6 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
 import { adjacentInSequence, labelGap } from "/sequence.js";
-import { fillWorkCover, showWorkBarcode } from "/work-header.js";
+import { fillWorkCover, savedMark, showWorkBarcode } from "/work-header.js";
 import { workKey } from "/type-cover.js";
 import {
   arcaliveBody, compactTextHistory, migrateNovelChapterState, migrateNovelState, novelBody, novelRecordWorkId,
@@ -87,6 +87,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let novelView = "all";
   let shelfFilter = "";
   let sourceFilter = "";
+  // Arcalive 작품별 within one board (2026-10-03), like TypeMoon's works within a board.
+  let workBoard = "";
   let listKind = "works";
   let hiddenWorks = 0;
   let renderedQuery = null;
@@ -185,6 +187,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (sortMode !== defaultSort()) params.set("sort", sortMode);
     if (worksView() && readFilter !== "all") params.set("read", readFilter);
     if (worksView() && lane === "novel" && sourceFilter) params.set("source", sourceFilter);
+    // Kept inside a work too, so going back up returns to the same board's works.
+    if (lane === "arcalive" && arcaliveView === "works" && workBoard) params.set("board", workBoard);
     return params;
   }
 
@@ -211,6 +215,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     sortMode = SORT_LABELS[requested] ? requested : defaultSort();
     readFilter = READ_FILTER_VALUES.has(params.get("read")) ? params.get("read") : "all";
     sourceFilter = /^[a-z0-9_-]{1,32}$/.test(params.get("source") || "") ? params.get("source") : "";
+    workBoard = lane === "arcalive" && arcaliveView === "works" && /^[A-Za-z0-9_-]{1,64}$/.test(params.get("board") || "")
+      ? params.get("board") : "";
   }
 
   function listRoute() {
@@ -333,6 +339,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return state.state === readFilter;
   }
 
+  function inWorkBoard(item) {
+    return !workBoard || lane !== "arcalive" || item.board === workBoard;
+  }
+
   function sourcesOf(works) {
     return [...new Set(works.map((item) => item.source_site).filter(Boolean))].sort();
   }
@@ -342,7 +352,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (!chips) return;
     chips.hidden = !active || !progress;
     if (chips.hidden) return;
-    const works = currentWorks();
+    const works = currentWorks().filter(inWorkBoard);
     const counts = { all: works.length, reading: 0, new: 0, unread: 0, finished: 0 };
     for (const item of works) {
       const state = workState(item, progress.get(item.work_id));
@@ -358,7 +368,25 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       chip.disabled = value !== "all" && value !== readFilter && counts[value] === 0;
       return chip;
     });
-    // 출처: the novel counterpart of TypeMoon's board filter, when more than one site is present.
+    // 출처 (novels) or 게시판 (Arcalive works): the counterpart of TypeMoon's board filter, when
+    // the list spans more than one.
+    const boardCounts = new Map();
+    if (lane === "arcalive") for (const item of currentWorks()) boardCounts.set(item.board, (boardCounts.get(item.board) ?? 0) + 1);
+    const boards = [...boardCounts].filter(([board]) => board).sort((left, right) => right[1] - left[1]);
+    if (boards.length > 1) {
+      const label = document.createElement("label");
+      label.className = "text-source-field";
+      const caption = document.createElement("span");
+      caption.className = "sr-only";
+      caption.textContent = "게시판";
+      const select = document.createElement("select");
+      select.id = "text-source-filter";
+      select.append(new Option(`모든 게시판 ${currentWorks().length.toLocaleString("ko-KR")}`, ""),
+        ...boards.map(([board, count]) => new Option(`${board} ${count.toLocaleString("ko-KR")}`, board)));
+      select.value = boardCounts.has(workBoard) ? workBoard : "";
+      label.append(caption, select);
+      nodes.unshift(label);
+    }
     const sources = lane === "novel" ? sourcesOf(works) : [];
     if (sources.length > 1) {
       const label = document.createElement("label");
@@ -431,6 +459,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const badges = document.createElement("span");
     badges.className = "result-badges";
     for (const label of shown) {
+      if (label instanceof Node) {
+        badges.append(label);
+        continue;
+      }
       const badge = document.createElement("span");
       badge.textContent = label;
       badges.append(badge);
@@ -498,6 +530,19 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     // Shelf and 몇 화? share one row under the title.
     const actions = document.createElement("div");
     actions.className = "text-work-actions";
+    // The one main action, as on TypeMoon work pages: resume where the reader stopped, or start at
+    // the first chapter. It used to be a ribbon-coloured list row, but the ribbon means "my place".
+    const resume = lastReadChapter();
+    const target = resume ? resumeTarget() : canonicalChapters(chapterSource)[0];
+    if (target) {
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "collection-continue text-work-continue";
+      go.dataset.continue = "true";
+      go.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${target.label || "회차"}`;
+      go.addEventListener("click", () => activate(go));
+      actions.append(go);
+    }
     const findWork = document.createElement("button");
     findWork.type = "button";
     findWork.className = "text-work-find";
@@ -614,35 +659,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const query = search.value.trim();
     const resume = chaptersMode ? lastReadChapter() : null;
     const progress = kind === "works" ? progressForLane() : null;
-    // A work not started yet offers its first chapter the same way (not while searching).
-    const start = chaptersMode && !resume && !query ? canonicalChapters(chapterSource)[0] : null;
     // The work's header sits above the search box (#text-work-summary), not among the rows.
     const summaryHost = document.querySelector("#text-work-summary");
     if (chaptersMode) summaryHost.replaceChildren(workSummary(rows));
     else summaryHost.replaceChildren();
     summaryHost.hidden = !chaptersMode;
-    if (resume || start) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "result-item continue-row";
-      button.dataset.continue = "true";
-      const line = document.createElement("span");
-      line.className = "result-title-line";
-      const name = document.createElement("span");
-      name.className = "result-title";
-      const target = resume ? resumeTarget() : start;
-      name.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${target?.label || "회차"}`;
-      line.append(name);
-      const meta = document.createElement("span");
-      meta.className = "result-meta";
-      const percent = Math.round((resume?.record.progress ?? 0) * 100);
-      meta.textContent = !resume ? `전체 ${canonicalChapters(chapterSource).length.toLocaleString("ko-KR")}화`
-        : percent >= FINISHED * 100 ? `${resume.chapter.label || "이전 회차"} 다 읽음 · 다음 회차` : `${percent}% 읽음`;
-      button.append(line, meta);
-      const row = document.createElement("li");
-      row.append(button);
-      fragment.append(row);
-    }
     const buildRow = (entry, index) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -695,7 +716,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           lane === "manual" ? shortDate(entry.created_at) : "",
           value >= FINISHED ? "다 읽음" : value > 0 ? `${Math.round(value * 100)}%` : record ? "열어 봄" : "",
         ];
-        badges = [history.bookmarks[identity(entry, "arcalive", null)] ? "저장" : ""];
+        badges = [history.bookmarks[identity(entry, "arcalive", null)] ? savedMark() : ""];
         button.classList.toggle("read", value >= FINISHED);
       }
       const badgeNode = badgeElement(badges);
@@ -740,7 +761,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const empty = document.createElement("li");
       empty.className = "empty-row";
       empty.textContent = !(kind === "works" ? currentWorks() : catalog).length ? "아직 게시된 자료가 없습니다."
-        : kind === "works" && (readFilter !== "all" || sourceFilter) && !query ? "이 조건의 작품이 없습니다."
+        : kind === "works" && (readFilter !== "all" || sourceFilter || workBoard) && !query ? "이 조건의 작품이 없습니다."
           : "검색 결과가 없습니다.";
       list.append(empty);
     }
@@ -820,6 +841,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         }
         return normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query)
           && (!sourceFilter || lane !== "novel" || item.source_site === sourceFilter)
+          && inWorkBoard(item)
           && matchesReadFilter(workState(item, progress.get(item.work_id)));
       };
       renderRows(orderedWorks(currentWorks().filter(matchesWork), progress), { kind: "works" });
@@ -895,10 +917,20 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       summaryHost.replaceChildren();
     }
     button.hidden = !shown;
-    button.textContent = work ? "← 작품 목록"
-      : lane === "novel" ? "← 분류 목록"
-        : lane === "manual" ? "← 폴더 목록"
-          : folderCategory ? `← ${folderBoard}` : "← 아카라이브";
+    const label = work ? "작품 목록"
+      : lane === "novel" ? "분류 목록"
+        : lane === "manual" ? "폴더 목록"
+          : folderCategory ? folderBoard : "아카라이브";
+    // The same chevron and label shape as the TypeMoon work page's back button.
+    const text = document.createElement("span");
+    text.textContent = label;
+    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.setAttribute("viewBox", "0 0 24 24");
+    chevron.innerHTML = '<path d="m15 18-6-6 6-6"/>';
+    button.replaceChildren(chevron, text);
+    // Inside a work the page is about that work: the source switch steps aside, as on TypeMoon.
+    document.body.classList.toggle("text-work-open", Boolean(active && work));
   }
 
   async function json(path) {
@@ -1671,7 +1703,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   });
   document.querySelector("#text-read-chips")?.addEventListener("change", (event) => {
     if (event.target.id !== "text-source-filter" || !worksView()) return;
-    sourceFilter = event.target.value;
+    if (lane === "arcalive") workBoard = event.target.value;
+    else sourceFilter = event.target.value;
     renderCatalog();
     list.scrollTop = 0;
     if (!current) window.history.replaceState(window.history.state, "", listRoute());

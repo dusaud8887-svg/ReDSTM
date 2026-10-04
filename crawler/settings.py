@@ -69,10 +69,10 @@ REDSTM_CONCURRENT_REQUESTS = _env_int("REDSTM_CONCURRENT_REQUESTS", 2, minimum=1
 CONCURRENT_REQUESTS = REDSTM_CONCURRENT_REQUESTS
 CONCURRENT_REQUESTS_PER_DOMAIN = REDSTM_CONCURRENT_REQUESTS
 DOWNLOAD_DELAY = 10.0
-# Slight human-like spread above the 10s floor: Scrapy multiplies the delay by a
-# random factor in [0.5, 1.5], which would go *below* Crawl-delay. Keep False and
-# let AutoThrottle stretch the gap when the origin is already slow.
-RANDOMIZE_DOWNLOAD_DELAY = False
+# No random spread: Scrapy's default jitter (0.5) multiplies the delay by [0.5, 1.5],
+# which would go *below* Crawl-delay. AutoThrottle stretches the gap when the origin is
+# already slow. (Scrapy 2.19 replaced RANDOMIZE_DOWNLOAD_DELAY with this setting.)
+DOWNLOAD_DELAY_JITTER = 0.0
 AUTOTHROTTLE_ENABLED = True
 AUTOTHROTTLE_START_DELAY = 10.0
 # Origin degradation regularly needs multi-minute gaps between starts; keep the floor at

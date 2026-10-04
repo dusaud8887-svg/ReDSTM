@@ -293,7 +293,7 @@ test("Text: list sort never changes 다음 화, and Back restores the chapter li
   await expect(page.locator("#reader")).toBeHidden();
   await expect(page.locator(row)).toBeVisible();
   await expect.poll(async () => Math.abs(await anchorOffset(page) - before)).toBeLessThanOrEqual(4);
-  await expect(page.locator("#result-list .continue-row")).toContainText("202화");
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("202화");
 });
 
 test("Text: the chapter end offers the next chapter and the chapter list", async ({ page }) => {
@@ -438,10 +438,7 @@ test("Home resumes the most recent text chapter; Back walks chapter → list →
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
   await page.locator('#result-list [data-key="chapter:5"]').click();
   await expect(page.locator("#reader-title")).toHaveText("5화");
-  await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("5화");
-  await expect(page.locator("#continue-work")).toHaveText("긴 소설");
-  await page.locator("#continue-reading").click();
+  await page.goto("/?continue=1");
   await expect(page.locator("#reader-title")).toHaveText("5화");
   await page.goBack();
   await expect(page.locator('#result-list [data-key="chapter:5"]')).toBeVisible();
@@ -586,10 +583,7 @@ test("Home continues a finished text chapter at the next chapter", async ({ page
   await expect(page.locator("#reader-title")).toHaveText("5화");
   await page.locator("#end-previous").click();
   await expect(page.locator("#reader-title")).toHaveText("4화");
-  await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("4화");
-  await expect(page.locator("#continue-meta")).toContainText("다음 화로 이어서");
-  await page.locator("#continue-reading").click();
+  await page.goto("/?continue=1");
   await expect(page.locator("#reader-title")).toHaveText("5화");
   await page.goBack();
   await expect(page.locator('#result-list [data-key="chapter:5"]')).toBeVisible();
@@ -746,17 +740,19 @@ test("Text keeps reading when the TypeMoon archive fails, and the error waits fo
 test("A work not started yet offers its first chapter, and finishing one names the next", async ({ page }) => {
   const workId = await useLongNovel(page, 5);
   await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
-  const start = page.locator("#result-list .continue-row");
+  const start = page.locator("#text-work-summary .text-work-continue");
   await expect(start).toContainText("처음부터 읽기 · 1화");
   // Searching for a chapter shows only matches.
   await page.locator("#search-input").fill("3화");
-  await expect(start).toHaveCount(0);
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["3화"]);
+  // The main action is the work header's button, not a list row, so it stays while searching.
+  await expect(start).toBeVisible();
   await page.locator("#search-input").fill("");
   await start.click();
   await expect(page.locator("#reader-title")).toHaveText("1화");
   await page.locator("#reader-pane").evaluate((pane) => { pane.scrollTop = pane.scrollHeight; });
   await page.goBack();
-  await expect(page.locator("#result-list .continue-row")).toContainText("이어 읽기 · 2화");
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("이어 읽기 · 2화");
 });
 
 test("Recent searches keep one entry per typed search and can be cleared", async ({ page }) => {
@@ -900,6 +896,62 @@ test("더보기 copies a link that reopens the same chapter", async ({ page, con
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(page.url());
 });
 
+// 2026-10-03: a wide AA scrolls both ways in one scroller (the reader pane), so one diagonal drag
+// moves it both ways; the tools, title and comments stay on screen while the picture moves sideways.
+test("A wide AA scrolls both ways in one scroller while everything around it stays on screen", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      schema_version: 1,
+      post: {
+        board_id: "board_a", external_post_id: 2, canonical_url: "https://example.test/2", title: "2편 제목",
+        author: "작성자", category: null, created_at_raw: "2026-07-11", views: 1, is_aa: true,
+        body_html: `<div class="AA_Text">${Array.from({ length: 120 }, () => `<p>${"＿".repeat(200)}</p>`).join("")}</div>`,
+      },
+      comments: [],
+    }),
+  }));
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#aa-controls")).toBeVisible();
+  const pane = page.locator("#reader-pane");
+  const sizes = await pane.evaluate((element) => ({
+    across: element.scrollWidth - element.clientWidth, down: element.scrollHeight - element.clientHeight,
+    bodyScrolls: document.querySelector("#archive-body").scrollWidth > document.querySelector("#archive-body").clientWidth + 1,
+  }));
+  expect(sizes.across).toBeGreaterThan(200);
+  expect(sizes.down).toBeGreaterThan(200);
+  // The picture is not a scroller of its own any more.
+  expect(sizes.bodyScrolls).toBe(false);
+  // A fling that reaches an edge stays in the picture instead of becoming a back gesture or bounce.
+  expect(await pane.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.overscrollBehaviorX, style.overscrollBehaviorY];
+  })).toEqual(["contain", "contain"]);
+  // Scrolling sideways measures nothing and writes no style on the pane: the pan length is set on
+  // resize and zoom only, so a fling costs no style pass per frame.
+  await pane.evaluate((element) => {
+    window.__paneStyleWrites = 0;
+    new MutationObserver((records) => { window.__paneStyleWrites += records.length; })
+      .observe(element, { attributes: true, attributeFilter: ["style"] });
+  });
+  const left = (selector) => page.locator(selector).evaluate((element) => Math.round(element.getBoundingClientRect().left));
+  const titleLeft = await left("#reader-title");
+  const toolsLeft = await left("#aa-controls");
+  const pictureLeft = await left("#archive-body");
+  await pane.evaluate((element) => { element.scrollLeft = 200; });
+  await expect.poll(() => left("#archive-body")).toBe(pictureLeft - 200);
+  await expect.poll(() => left("#reader-title")).toBe(titleLeft);
+  await expect.poll(() => left("#aa-controls")).toBe(toolsLeft);
+  await pane.evaluate((element) => { element.scrollTop = 400; });
+  await expect.poll(() => left("#aa-controls")).toBe(toolsLeft);
+  await expect.poll(() => page.locator("#aa-minimap").evaluate((map) => Number.parseFloat(map.style.getPropertyValue("--window-left")))).toBeGreaterThan(0);
+  await expect(page.locator("#archive-body")).toHaveClass(/aa-can-scroll/);
+  await pane.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  await expect(page.locator("#archive-body")).not.toHaveClass(/aa-can-scroll/);
+  expect(await page.evaluate(() => window.__paneStyleWrites)).toBe(0);
+});
+
 test("AA 맞춤 shrinks a wide picture to the stage width and never enlarges past 100%", async ({ page }) => {
   await useLongCollection(page, 3);
   await page.route("**/archive/posts/board_a/2-*", (route) => route.fulfill({
@@ -917,7 +969,8 @@ test("AA 맞춤 shrinks a wide picture to the stage width and never enlarges pas
   await page.goto("/read/board_a/2");
   await expect(page.locator("#archive-body")).toHaveClass(/(^|\s)aa(\s|$)/);
   await expect(page.locator("#reader-length")).toBeHidden();
-  const overflow = () => page.locator("#archive-body").evaluate((body) => body.scrollWidth - body.clientWidth);
+  // A wide picture scrolls with the reader pane, both directions in one scroller (aa.css).
+  const overflow = () => page.locator("#reader-pane").evaluate((pane) => pane.scrollWidth - pane.clientWidth);
   expect(await overflow()).toBeGreaterThan(100);
   await page.locator("#aa-fit").click();
   await expect(page.locator("#aa-zoom-output")).not.toHaveText("100%");
@@ -1133,7 +1186,7 @@ test("Text: 이전 회차 모두 읽음 marks the chapters before the open one a
   expect(saved.slice(0, 3)).toEqual([1, 1, 1]);
   expect(saved[3]).toBeLessThan(1);
   await page.goBack();
-  await expect(page.locator("#result-list .continue-row")).toContainText("이어 읽기 · 4화");
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("이어 읽기 · 4화");
   await expect(page.locator('#result-list [data-key="chapter:3"]')).toContainText("다 읽음");
   // Nothing is left to mark from the first chapter.
   await page.locator('#result-list [data-key="chapter:1"]').click();
@@ -1306,7 +1359,7 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
   await expect(page.locator("#aa-controls [data-aa-size-delta]")).toHaveCount(0);
   await page.locator('[data-aa-zoom-delta="0.25"]').click();
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
-  await page.locator("#archive-body").evaluate((body) => { body.scrollLeft = 300; body.dispatchEvent(new Event("scroll")); });
+  await page.locator("#reader-pane").evaluate((pane) => { pane.scrollLeft = 300; });
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).aaViews?.["board_a:1"]?.left)).toBe(300);
 
   // Another picture keeps its own default zoom.
@@ -1316,7 +1369,7 @@ test("AA keeps each picture's zoom and sideways position, and can fit wide pictu
 
   await page.goto("/read/board_a/1");
   await expect(page.locator("#aa-zoom-output")).toHaveText("125%");
-  await expect.poll(() => page.locator("#archive-body").evaluate((body) => body.scrollLeft)).toBe(300);
+  await expect.poll(() => page.locator("#reader-pane").evaluate((pane) => pane.scrollLeft)).toBe(300);
 
   // 넓은 AA 화면에 맞추기 fits a picture with no zoom of its own, without remembering it.
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
@@ -1368,7 +1421,7 @@ test("Novel shelves: sort works into personal shelves, hide a shelf, and browse 
   await expect(folders.nth(3)).toContainText("전체 목록에서 숨김");
   await folders.filter({ hasText: "BL" }).click();
   await expect(titles).toHaveText(["나 소설"]);
-  await expect(page.locator("#text-work-back")).toHaveText("← 분류 목록");
+  await expect(page.locator("#text-work-back")).toHaveText("분류 목록");
 
   // The chapter view shows and changes the shelf too.
   await page.locator("#text-work-back").click();
@@ -1445,7 +1498,7 @@ test("Backup v3 carries TypeMoon and text records, and 합쳐서 가져오기 me
 });
 
 // T28: the continue-reading mini bar rides on the phone tab bar outside the Reader.
-test("The mini bar continues reading from any list, folds on scroll and steps aside for Home's card", async ({ page }) => {
+test("The mini bar continues reading from any list, Home included, and folds on scroll", async ({ page }) => {
   test.skip(!mobileWidth(page), "phone tab bar only");
   await useLongCollection(page, 40);
   await page.goto("/read/board_a/2");
@@ -1454,8 +1507,9 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   await expect(bar).toBeHidden();
   await page.locator("#reader-bottom-list").click();
   await page.locator('.bottom-nav [data-destination="library"]').click();
-  await expect(page.locator("#continue-reading")).toBeVisible();
-  await expect(bar).toBeHidden();
+  // Home has no big continue card any more (읽던 작품 starts with the same work): the bar continues.
+  await expect(page.locator("#continue-reading")).toBeHidden();
+  await expect(bar).toBeVisible();
 
   await page.locator('.bottom-nav [data-destination="browse"]').click();
   await expect(bar).toBeVisible();
@@ -1463,11 +1517,27 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   const list = page.locator("#result-list");
   await list.evaluate((element) => { element.scrollTop = 600; });
   await expect(bar).toHaveClass(/folded/);
+  // The folded bar's row goes back to the list: no empty band under the last row.
+  await expect.poll(() => page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom))).toBeLessThan(70);
   // Out of sight is out of the tab order too.
   await expect(bar).toHaveJSProperty("inert", true);
   await list.evaluate((element) => { element.scrollTop = 200; });
   await expect(bar).not.toHaveClass(/folded/);
   await expect(bar).toHaveJSProperty("inert", false);
+  // At the very end the fold's give-back must not start a fold/unfold chase (the list holds still).
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(bar).toHaveClass(/folded/);
+  const settled = await list.evaluate(async (element) => {
+    const samples = [];
+    for (let frame = 0; frame < 20; frame += 1) {
+      await new Promise(requestAnimationFrame);
+      samples.push(element.scrollTop);
+    }
+    return new Set(samples.slice(5)).size;
+  });
+  expect(settled).toBe(1);
+  await list.evaluate((element) => { element.scrollTop -= 200; });
+  await expect(bar).not.toHaveClass(/folded/);
   // The list keeps room for the bar and the tabs together.
   const listBottom = await page.locator(".catalog").evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingBottom));
   expect(listBottom).toBeGreaterThanOrEqual(102);
@@ -1477,9 +1547,40 @@ test("The mini bar continues reading from any list, folds on scroll and steps as
   await expect(bar).toBeHidden();
 });
 
-// docs/24 §8.2: a first visit gets one block of ways in; once there is a record, the continue card
-// shows the sentence the reader last saw, taken only from the original text.
-test("Home greets a first visit with sources and later quotes the last sentence read", async ({ page }) => {
+// 2026-10-03: on a phone the list header folds while the list scrolls down and returns on the way
+// up, without moving the rows under the finger.
+test("The phone list header folds away on scroll down and returns on scroll up", async ({ page }) => {
+  test.skip(!mobileWidth(page), "phone layout only");
+  await useLongCollection(page, 40);
+  await page.goto("/browse");
+  const list = page.locator("#result-list");
+  const catalog = page.locator(".catalog");
+  await expect(page.locator(".result-item")).toHaveCount(40);
+  await expect(page.locator("#catalog-title")).toBeHidden();
+  const row = page.locator(".result-item").nth(15);
+  const start = await row.evaluate((element) => element.getBoundingClientRect().top);
+  // A person's scroll (a code-set position such as Back's restore keeps the header).
+  const scrollBy = (delta) => list.evaluate((element, by) => {
+    element.dispatchEvent(new WheelEvent("wheel", { deltaY: by }));
+    element.scrollTop += by;
+  }, delta);
+  await list.evaluate((element) => { element.scrollTop = 30; });
+  await expect(catalog).not.toHaveClass(/head-folded/);
+  await scrollBy(370);
+  await expect(catalog).toHaveClass(/head-folded/);
+  await expect(page.locator("#board-dock")).toBeHidden();
+  await expect(page.locator("#source-switch")).toBeHidden();
+  // The row is where the scroll alone would have put it.
+  expect(Math.abs(await row.evaluate((element) => element.getBoundingClientRect().top) - (start - 400))).toBeLessThan(2);
+  await scrollBy(-60);
+  await expect(catalog).not.toHaveClass(/head-folded/);
+  await expect(page.locator("#board-dock")).toBeVisible();
+  expect(Math.abs(await row.evaluate((element) => element.getBoundingClientRect().top) - (start - 340))).toBeLessThan(2);
+});
+
+// docs/24 §8.2: a first visit gets one block of ways in; once there is a record, Home leads with
+// 읽던 작품 instead.
+test("Home greets a first visit with sources and later leads with the works being read", async ({ page }) => {
   await useLongCollection(page, 3);
   await page.goto("/");
   const onboarding = page.locator("#home-onboarding");
@@ -1496,9 +1597,8 @@ test("Home greets a first visit with sources and later quotes the last sentence 
       loc: { v: 2, tm: 1, rev: "", start: 30, end: 30 + text.length, exact: text, prefix: "본문 4. 그리고 ", suffix: "의 끝. 다음 문장" } } },
   })), exact);
   await page.goto("/");
-  await expect(page.locator("#continue-title")).toHaveText("2편 제목");
-  await expect(page.locator("#continue-quote")).toHaveText("그리고 2편 본문 5의 끝. 다음 문장");
-  await expect(page.locator("#continue-cover .type-cover")).toBeVisible();
+  await expect(page.locator("#reading-works")).toBeVisible();
+  await expect(page.locator("#continue-reading")).toBeHidden();
   await expect(onboarding).toBeHidden();
 });
 
@@ -1510,11 +1610,11 @@ test("The work barcode summarises a long run and opens an episode picked on its 
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await page.goto("/collections/1");
   const barcode = page.locator("#collection-barcode");
-  await expect(barcode.locator(".barcode-summary")).toHaveText("3,000화 중 0화 읽음");
+  await expect(barcode.locator(".barcode-summary")).toHaveText("3,000편 중 0편 읽음");
   expect(Number(await barcode.getAttribute("data-render-ms"))).toBeLessThan(16);
   await expect(page.locator("#collection-cover .type-cover")).toBeVisible();
   const track = barcode.getByRole("slider");
-  await expect(track).toHaveAccessibleName(/회차 바코드: 3,000화 중 0화 읽음/);
+  await expect(track).toHaveAccessibleName(/회차 바코드: 3,000편 중 0편 읽음/);
   await track.focus();
   await track.press("ArrowRight");
   await expect(track).toHaveAttribute("aria-valuetext", /편–\d+편 · (읽는 중|안 읽음 포함)/);
@@ -2312,6 +2412,25 @@ test("T16/T17 novel work search uses original text and returns to its work", asy
   await expect(page.locator("#kwic-status")).toContainText("3화에 걸쳐");
 });
 
+
+test("Arcalive works narrow to one board and come back to it from a work", async ({ page }) => {
+  const novelPosts = [1, 2].map((id) => arcalivePost({ id, title: `${id}편` }));
+  const freePosts = [3, 4].map((id) => arcalivePost({ id, board: "free", category: "잡담", title: `${id}편` }));
+  const novel = arcaliveWork({ key: "n", title: "소설판 연재", posts: novelPosts });
+  const free = arcaliveWork({ key: "f", title: "자유판 연재", board: "free", category: "잡담", posts: freePosts });
+  await useTextArchive(page, { posts: [...novelPosts, ...freePosts], works: [novel, free] });
+  await page.goto("/text?lane=arcalive&view=works");
+  const titles = page.locator("#result-list .result-item[data-key] .result-title");
+  await expect(titles).toHaveCount(2);
+  await page.locator("#text-source-filter").selectOption("free");
+  await expect(titles).toHaveText(["자유판 연재"]);
+  await expect(page).toHaveURL(/view=works&board=free/);
+  await page.locator("#result-list .result-item[data-key]").first().click();
+  await expect(page.locator("#text-work-summary")).toContainText("자유판 연재");
+  await page.locator("#text-work-back").click();
+  await expect(titles).toHaveText(["자유판 연재"]);
+  await expect(page.locator("#text-source-filter")).toHaveValue("free");
+});
 
 test("T16/T17 Arcalive work search returns to its filtered chapter list", async ({ page }) => {
   const posts = [1, 2, 3].map((id) => arcalivePost({ id, title: `${id}편` }));

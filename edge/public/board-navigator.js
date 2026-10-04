@@ -189,10 +189,5 @@ export function createBoardNavigator({ dialog, panel, search, boards, selected, 
   });
   search.addEventListener("input", render);
 
-  // Favourites first, then recently opened boards, for one-tap entry points outside the sheet.
-  function shortcuts() {
-    return [...new Set([...prefs.favorites, ...prefs.recents])];
-  }
-
-  return { open, render, remember, shortcuts };
+  return { open, render, remember };
 }
