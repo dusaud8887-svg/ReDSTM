@@ -157,14 +157,15 @@ def test_edge_preflight_runs_e2e_local_migrations_and_strict_dry_run(
 
     edge_preflight(tmp_path, runner=run)
 
-    assert commands[:4] == [
+    assert commands[:5] == [
         ["npm", "ci"],
         ["npm", "test"],
         ["npm", "run", "check"],
+        ["npm", "run", "lint"],
         ["npm", "run", "test:e2e:local"],
     ]
-    assert commands[4] == ["npm", "run", "test:d1"]
-    assert commands[5] == ["npx", "wrangler", "deploy", "--dry-run", "--strict"]
+    assert commands[5] == ["npm", "run", "test:d1"]
+    assert commands[6] == ["npx", "wrangler", "deploy", "--dry-run", "--strict"]
     assert all("TYPEMOON_PASSWORD" not in environment for environment in environments)
     assert all("REDSTM_ACCESS_CLIENT_SECRET" not in environment for environment in environments)
     assert all("CLOUDFLARE_API_TOKEN" not in environment for environment in environments)

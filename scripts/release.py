@@ -313,6 +313,7 @@ def edge_preflight(
         _node_command(runner, "npm", "ci"),
         _node_command(runner, "npm", "test"),
         _node_command(runner, "npm", "run", "check"),
+        _node_command(runner, "npm", "run", "lint"),
         # Releases run on the 16 GB workstation (docs/12 §4): one Playwright run per project keeps
         # the local server and browsers within memory. CI keeps the single `test:e2e` run.
         _node_command(runner, "npm", "run", "test:e2e:local"),
@@ -364,7 +365,11 @@ def release_preflight(
         ) from error
     except (OSError, subprocess.SubprocessError) as error:
         raise ReleaseError("preflight", "release_identity_command_failed") from error
-    with TemporaryDirectory(prefix="redstm-release-worktree-") as temporary:
+    # E2E runs leave locked browser/node binaries under the snapshot on Windows; a cleanup
+    # failure after a successful deployment must not turn the release report into a failure.
+    with TemporaryDirectory(
+        prefix="redstm-release-worktree-", ignore_cleanup_errors=True
+    ) as temporary:
         snapshot = Path(temporary) / "source"
         safe_runner(
             ["git", "worktree", "add", "--detach", str(snapshot), release],
@@ -594,7 +599,9 @@ def _oracle_status_for_release(
     try:
         return status(target, runner=runner)
     except OSError, subprocess.SubprocessError, RuntimeError:
-        with TemporaryDirectory(prefix="redstm-oracle-status-") as temporary:
+        with TemporaryDirectory(
+            prefix="redstm-oracle-status-", ignore_cleanup_errors=True
+        ) as temporary:
             archive = Path(temporary) / f"redstm-release-{release}.tar.gz"
             build_archive(root, release, archive, runner=runner)
             return status_from_archive(target, archive, runner=runner)
@@ -1135,7 +1142,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         if deploy_target is None:
                             raise ReleaseError("preflight", "oracle_target_missing")
                         try:
-                            schema = canonical_schema_status(deploy_target)
+                            schema = canonical_schema_status(
+                                deploy_target, runner=_without_application_secrets(subprocess.run)
+                            )
                         except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                             raise ReleaseError(
                                 "preflight", "canonical_schema_status_failed"

@@ -133,7 +133,7 @@ readback은 통과했지만 rollback rehearsal·crawl canary가 남아 있어 sc
 `.github/workflows/ci.yml`은 pull request와 `main` push에서 다음 검증만 수행한다.
 
 - `uv sync --frozen`, pytest, Ruff lint/format, mypy
-- `npm ci`, Node tests/syntax, local authenticated Playwright E2E
+- `npm ci`, Node tests/syntax, Biome lint, local authenticated Playwright E2E
 - 빈 local D1에 모든 migration 적용
 - destructive/non-additive D1 migration 정적 gate와 기존-schema upgrade fixture
 - `wrangler deploy --dry-run --strict`
