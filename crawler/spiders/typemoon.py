@@ -12,7 +12,7 @@ import scrapy
 from parsel import Selector
 from scrapy.exceptions import DownloadCancelledError, IgnoreRequest
 
-from crawler.frontier import FrontierLease, FrontierStore
+from crawler.frontier import FrontierLease, FrontierStore, listing_fingerprint
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.session import SessionExport
 from crawler.settings import (
@@ -893,6 +893,9 @@ class TypeMoonSpider(scrapy.Spider):
                     reopen_done=not unchanged,
                     expected_comment_count=int(item["comment_count"]),
                     captured=unchanged,
+                    listing_sha256=listing_fingerprint(
+                        str(item["title"]), item.get("category"), int(item["comment_count"])
+                    ),
                 )
             if (
                 not self.listing_only

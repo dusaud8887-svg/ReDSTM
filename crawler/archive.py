@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 APPLICATION_ID = 0x52445354  # RDST
 BODY_COMPRESSION_LEVEL = 3
 RUNTIME_SCHEMA_POLICY = "explicit-v1"
@@ -252,6 +252,14 @@ WHERE EXISTS (
 """
 
 
+_SCHEMA_V5 = """
+ALTER TABLE crawl_frontier ADD COLUMN listing_sha256 TEXT
+    CHECK (listing_sha256 IS NULL OR length(listing_sha256) = 64);
+CREATE INDEX post_versions_projection_idx
+    ON post_versions(id, content_sha256, comments_sha256, capture_origin, warc_record_id);
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -268,6 +276,7 @@ MIGRATIONS = (
     Migration(2, _SCHEMA_V2, False),
     Migration(3, _SCHEMA_V3, False),
     Migration(4, _SCHEMA_V4, True),
+    Migration(5, _SCHEMA_V5, True),
 )
 
 
@@ -469,6 +478,24 @@ def validate_archive_for_release(
         check_clause = "INCREMENTAL_ANCHOR_POST_ID INTEGER CHECK (INCREMENTAL_ANCHOR_POST_ID > 0)"
         if board_columns != expected_board_columns or check_clause not in table_sql:
             raise RuntimeError("canonical schema v4 physical shape is invalid")
+
+    if user_version >= 5:
+        v5_columns = {
+            str(row[1]): str(row[2])
+            for row in connection.execute("PRAGMA table_xinfo(crawl_frontier)")
+        }
+        index_columns = [
+            str(row[2])
+            for row in connection.execute("PRAGMA index_info(post_versions_projection_idx)")
+        ]
+        if v5_columns.get("listing_sha256") != "TEXT" or index_columns != [
+            "id",
+            "content_sha256",
+            "comments_sha256",
+            "capture_origin",
+            "warc_record_id",
+        ]:
+            raise RuntimeError("canonical schema v5 physical shape is invalid")
 
 
 def require_archive_schema(path: str | Path) -> None:

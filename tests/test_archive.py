@@ -80,7 +80,10 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
     with connect_archive(path) as connection:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+        assert (
+            connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+            == SCHEMA_VERSION
+        )
         assert (
             connection.execute("SELECT inventory_next_page FROM boards LIMIT 1").fetchone() is None
         )
@@ -90,7 +93,7 @@ def test_initialize_archive_is_idempotent_and_healthy(tmp_path: Path) -> None:
             "WHERE name = 'expected_comment_count'"
         ).fetchone()
         assert tuple(column) == ("expected_comment_count", "INTEGER", 0, None, 0)
-        assert MIGRATIONS[-1].version == 4
+        assert MIGRATIONS[-1].version == SCHEMA_VERSION
         assert MIGRATIONS[-1].static_projection_compatible is True
         with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
             connection.execute(
@@ -180,10 +183,10 @@ def test_schema_v4_backfills_frontier_comment_expectation(
         assert (
             connection.execute("SELECT incremental_anchor_post_id FROM boards").fetchone()[0] == 2
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
-def test_release_schema_guard_accepts_exact_v4_and_rejects_v3_target(
+def test_release_schema_guard_accepts_current_and_rejects_v3_target(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "archive.sqlite"
@@ -193,10 +196,12 @@ def test_release_schema_guard_accepts_exact_v4_and_rejects_v3_target(
     with connect_archive(path, read_only=True) as connection:
         validate_archive_for_release(
             connection,
-            target_schema_version=4,
+            target_schema_version=SCHEMA_VERSION,
             target_migration_hashes=hashes,
         )
-        with pytest.raises(RuntimeError, match="does not support canonical schema v4"):
+        with pytest.raises(
+            RuntimeError, match=f"does not support canonical schema v{SCHEMA_VERSION}"
+        ):
             validate_archive_for_release(
                 connection,
                 target_schema_version=3,
@@ -261,7 +266,7 @@ def test_release_schema_guard_checks_v4_board_anchor_shape(
         with pytest.raises(RuntimeError, match="physical shape"):
             validate_archive_for_release(
                 connection,
-                target_schema_version=4,
+                target_schema_version=SCHEMA_VERSION,
                 target_migration_hashes={
                     migration.version: migration.sha256 for migration in MIGRATIONS
                 },
@@ -316,13 +321,13 @@ def test_release_schema_guard_rejects_inconsistent_ledger_and_target_metadata(
         with pytest.raises(RuntimeError, match="ledger is inconsistent"):
             validate_archive_for_release(
                 connection,
-                target_schema_version=4,
+                target_schema_version=SCHEMA_VERSION,
                 target_migration_hashes=hashes,
             )
         with pytest.raises(RuntimeError, match="target migration metadata"):
             validate_archive_for_release(
                 connection,
-                target_schema_version=4,
+                target_schema_version=SCHEMA_VERSION,
                 target_migration_hashes={version: hashes[version] for version in range(1, 4)},
             )
 

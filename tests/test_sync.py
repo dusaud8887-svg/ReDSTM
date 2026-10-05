@@ -1656,3 +1656,13 @@ def test_dead_man_ping_skips_partial_and_failed_runs(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr("scripts.healthcheck.urlopen", unavailable)
     notify_dead_man(True, url)
+
+
+@pytest.mark.parametrize("code", ["password_protected", "permission_denied"])
+def test_locked_post_is_a_completed_sync_not_an_operational_failure(code: str) -> None:
+    assert _run_status({"stored": 2, "restricted": 1}, 3, [code]) == "succeeded"
+    assert _run_status({"stored": 2, "restricted": 1}, 4, [code]) == "partial"
+    assert (
+        _run_status({"restricted": 1, "fetch_failed": 1}, 2, [code, "network_error"]) == "partial"
+    )
+    assert _run_status({"restricted": 1}, 1, [code, "auth_required"]) == "partial"
