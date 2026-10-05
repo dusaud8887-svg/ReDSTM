@@ -58,18 +58,10 @@ jobs:
       - run: npm run check
       - run: npm run lint
       - run: npx playwright install --with-deps chrome
-      # Only screens without a committed baseline get one (a new or intentionally changed screen,
-      # whose old PNG was removed); the run's artifact carries them to commit.
-      - name: Generate missing Linux visual baselines
-        # Writing a missing baseline marks that test failed; the comparison run below decides.
-        continue-on-error: true
-        run: npx playwright test --project visual --update-snapshots=missing
-        env:
-          VISUAL: "1"
-      # The four viewport projects run in parallel in edge-e2e; this job keeps the Linux visual
-      # comparison, whose artifact carries new baselines to commit.
+      # Compare only the reviewed, committed Linux baselines. Missing PNGs fail this job;
+      # intentional updates are generated separately and reviewed before being committed.
       - name: Compare Linux visual baselines
-        run: npx playwright test --project visual
+        run: npx playwright test --project visual --update-snapshots=none
         env:
           VISUAL: "1"
       - name: Upload Linux visual baselines and failures
