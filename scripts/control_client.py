@@ -169,6 +169,9 @@ class ControlClient:
         }
         data = self._request(path, body, headers, request_id)
         self._delivered_at = time.monotonic()
+        # An answer proves the Worker is reachable: a cooldown set by one queued report the
+        # Worker keeps failing must not keep the next heartbeat from going out.
+        self._unavailable_until = 0.0
         return data
 
     def send_latest(self, path: str, payload: dict[str, Any], idempotency_key: str) -> bool:
@@ -373,11 +376,18 @@ class ControlClient:
         self._unavailable_until = 0.0
         return DeliveryResult.DELIVERED
 
-    def flush(self, store: ControlStore, *, limit: int = 50) -> int:
+    def flush(self, store: ControlStore, *, limit: int = 50, retry_deferred: bool = False) -> int:
+        """Send queued reports in order.
+
+        ``retry_deferred`` retries the head item now even inside its retry delay; the runner uses
+        it right after a successful heartbeat, so a report the Worker keeps failing while it
+        answers everything else is recognized (and set aside) instead of waiting forever.
+        """
         if time.monotonic() < self._unavailable_until:
             return 0
         sent = 0
-        for item in store.pending(limit=limit):
+        due = datetime(9999, 1, 1, tzinfo=UTC) if retry_deferred else None
+        for item in store.pending(limit=limit, now=due):
             payload = json.loads(item["payload_json"])
             if not isinstance(payload, dict):
                 raise ControlProtocolError("invalid_outbox_payload")

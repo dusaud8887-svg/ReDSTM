@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http.client import HTTPException
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -12,7 +13,8 @@ def ping_success(url: str) -> None:
         raise ValueError("healthcheck URL must be credential-free HTTPS")
     try:
         urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=15).close()
-    except OSError as error:
+    # A malformed reply (BadStatusLine and other HTTPException) is not an OSError.
+    except (OSError, HTTPException) as error:
         raise RuntimeError("healthcheck success ping failed") from error
 
 

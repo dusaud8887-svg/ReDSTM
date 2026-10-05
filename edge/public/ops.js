@@ -60,6 +60,7 @@ export const safeCodeLabels = {
   incremental_publish_predecessor_unavailable: "이전 Reader 보존본 검증 실패 · 다음 주기 재시도",
   publish_report_invalid: "Reader 게시 결과 검증 실패",
   publish_smoke_failed: "현재 Reader 보존본 검증 실패",
+  publish_smoke_unavailable: "Reader 게시 검증 연결 실패 · 다음 주기에 다시 확인",
   publish_smoke_confirmation_failed: "Reader 게시 검증 완료 상태 저장 실패",
   publish_reconciliation_limit: "Reader 게시 복구 후 새 변경 반영 재시도 필요",
   publish_rollback_unavailable: "복구할 이전 Reader 보존본 없음",

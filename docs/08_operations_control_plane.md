@@ -420,7 +420,7 @@ Remote command와 무관하게 systemd가 실행한다.
 | timer | 기본 |
 |---|---|
 | incremental cycle | 종료 후 30시간 휴식(+최대 15분 jitter) |
-| 최신 글 증분 수집 | 정기 cycle마다; 이전 작업 실행 중이면 새 실행은 busy로 통과 |
+| 최신 글 증분 수집 | 정기 cycle마다; 매분 poll이 잠깐 잡은 lock은 최대 15분 기다리고, 그보다 긴 작업이 실행 중이면 새 실행은 busy로 통과 |
 | 본문 미확보 채우기 | 증분 뒤에 `fill-missing-content` 최대 4시간·120건; 남은 분량은 다음 slot로 이어감 |
 | 원본 장애 마감 | 수동 명령은 원본 장애로 진척 없이 12시간(`REDSTM_OUTAGE_DEADLINE_SECONDS`) 대기하면 `site_unreachable`/`outage_deadline`으로 끝난다. pass marker·게시판 cursor·frontier는 남아 다음 명령이나 예약 slot이 이어 가고, 그동안 `control.lock`은 예약 실행·배포·텍스트 레인에 풀린다 |
 | delta publish | marker 유무와 무관하게 증분 reconcile |
@@ -441,7 +441,8 @@ pause-after-current는 진행 중 collection에 협력적 stop marker를 전달�
 두 작업 모두 전체 pass 총량·총시간 상한은 없지만 각 child invocation은 설정된 page/post/time 상한을
 지키며 단일 writer lock을 잡는다. runner/VM이 중단되면 local command ledger의 누적치와 inventory/full-content
 checkpoint로 같은 run을 자동 재개하며 새 run을 중복 생성하지 않는다. 각 child report는 실행 전에 제거해
-이전 회차 성공 JSON을 새 결과로 오인하지 않는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않고 `busy`로 끝난다.
+이전 회차 성공 JSON을 새 결과로 오인하지 않는다. 따라서 다음 자동 slot은 겹쳐 실행되지 않는다. 정기 실행은 30시간 휴식 timer라 한 번 놓치면 30시간을 더 기다리므로,
+`control.lock`을 최대 15분 기다린 뒤에도 잡혀 있을 때만(긴 수동 작업) `busy`로 끝난다.
 
 legacy 기준 장서 이후 새로 생긴 source board는 explicit addition registry로 idempotent 등록한다.
 2026-07-13 공개 내비게이션에서 확인한 `write_drawing`(창작그림)을 기존 46개 장서에 추가해 현재 목표는

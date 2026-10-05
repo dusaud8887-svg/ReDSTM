@@ -40,6 +40,7 @@ from scripts.control_client import (
 )
 from scripts.control_store import ControlStore, OutboxFullError
 from scripts.publish_static import collect_static_garbage
+from scripts.release_smoke import EXIT_UNAVAILABLE as SMOKE_EXIT_UNAVAILABLE
 from scripts.retention import prune_reports, prune_warc
 from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, warc_budget_bytes
 
@@ -125,6 +126,10 @@ _KILLED_BATCH_RETRIES = 2
 _DEFAULT_WARC_KEEP_DAYS = 60
 _DEFAULT_REPORT_KEEP_DAYS = 90
 _MAINTENANCE_INTERVAL_SECONDS = 24 * 60 * 60
+# The minute poll holds control.lock for a few seconds (up to ~2 minutes while the control API is
+# retrying). With a 30-hour rest timer a scheduled run that lost that race would wait another
+# 30 hours, so it waits for the lock this long and only a real long-running command skips it.
+_SCHEDULED_LOCK_WAIT_SECONDS = 15 * 60
 _MAINTENANCE_MARKER = "maintenance.last"
 _KILLED_BATCH_BACKOFF_SECONDS = 60
 # The legacy import is the baseline catalog. Source boards added after that snapshot are
@@ -484,8 +489,10 @@ class ControlRunner:
                 return {"ok": True, "status": "maintenance"}
             return {"ok": True, "status": "busy"}
 
-    def run_scheduled(self) -> dict[str, Any]:
-        lock = FileLock(self.profile.state_dir / "control.lock", timeout=0)
+    def run_scheduled(
+        self, lock_wait_seconds: float = _SCHEDULED_LOCK_WAIT_SECONDS
+    ) -> dict[str, Any]:
+        lock = FileLock(self.profile.state_dir / "control.lock", timeout=lock_wait_seconds)
         try:
             with lock:
                 return self._run_scheduled_locked()
@@ -641,6 +648,14 @@ class ControlRunner:
             return {"ok": True, "status": "control_unavailable"}
         if command is None:
             self._heartbeat("idle")
+            # The claim (and heartbeat) just reached the Worker. A queued report that still
+            # failed above is retried once more now, when the client can tell that only this
+            # report fails, so it is set aside after its attempts instead of blocking the queue.
+            if self.store.stats()["rows"]:
+                try:
+                    self.client.flush(self.store, retry_deferred=True)
+                except ControlProtocolError, OSError, ValueError, sqlite3.Error:
+                    pass
             return {"ok": True, "status": "idle"}
         record = self.store.record_claim(
             command["command_id"], command["action"], args=command.get("args", {})
@@ -707,7 +722,14 @@ class ControlRunner:
             action = str(record["action"])
             if action in {"fill-missing-content", "retry-batch"}:
                 return self._run_process_action(record, action, resuming=True)
+            # Ledger rows carry the arguments as args_json; a board-scoped full-content run
+            # resumes from its own checkpoint, not the global one.
             raw_args = record.get("args")
+            if not isinstance(raw_args, dict):
+                try:
+                    raw_args = json.loads(str(record.get("args_json") or "{}"))
+                except ValueError:
+                    raw_args = None
             board_id = raw_args.get("board_id") if isinstance(raw_args, dict) else None
             checkpoint = {
                 "full-catalog": self.profile.state_dir / _INVENTORY_STARTED,
@@ -1477,16 +1499,23 @@ class ControlRunner:
                 "--expected-release-sha256",
                 release_sha256,
             ]
-            if (
-                self._wait(
-                    smoke,
-                    run_id,
-                    "smoking",
-                    stdout=report_path,
-                    command_id=command_id,
-                )
-                == 0
-            ):
+            smoke_return_code = self._wait(
+                smoke,
+                run_id,
+                "smoking",
+                stdout=report_path,
+                command_id=command_id,
+            )
+            if smoke_return_code == SMOKE_EXIT_UNAVAILABLE:
+                # Not a failed release: the check itself could not run. The pending smoke and
+                # publish markers stay, so the next cycle verifies this release again.
+                result = {
+                    "ok": False,
+                    "status": "failed",
+                    "safe_code": "publish_smoke_unavailable",
+                    "attempted_release_key": smoke_marker_release_key or release_key,
+                }
+            elif smoke_return_code == 0:
                 if report.get("activation_pending_smoke") is True:
                     try:
                         self._confirm_publish_smoke(str(smoke_marker_release_key))

@@ -3108,3 +3108,144 @@ def test_storage_maintenance_removes_partial_files_left_by_a_killed_export(tmp_p
 
     assert result["partial_files"] == 1 and result["partial_bytes"] == 10
     assert not stale.exists() and fresh.exists() and kept.exists()
+
+
+def test_scheduled_run_waits_out_a_short_poll_instead_of_skipping_30_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    runner, _store = _runner(tmp_path, Api([]))
+    runner.profile.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(runner, "_run_scheduled_locked", lambda: {"ok": True, "status": "ran"})
+    poll = FileLock(runner.profile.state_dir / "control.lock", thread_local=False)
+    poll.acquire()
+    releaser = threading.Timer(0.3, poll.release)
+    releaser.start()
+    try:
+        assert runner.run_scheduled(lock_wait_seconds=10)["status"] == "ran"
+    finally:
+        releaser.join()
+
+    # A command that keeps the lock past the wait still skips this slot as busy.
+    poll.acquire()
+    try:
+        assert runner.run_scheduled(lock_wait_seconds=0.2)["status"] == "busy"
+    finally:
+        poll.release()
+
+
+def test_board_scoped_full_content_resumes_from_its_own_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _command("full-content")
+    runner, store = _runner(tmp_path, Api([]))
+    store.record_claim(command["command_id"], command["action"], args={"board_id": "aa"})
+    store.begin_command(command["command_id"], run_id=f"command-{command['command_id']}")
+    marker = runner._full_content_marker("aa")
+    runner._write_inventory_marker(
+        marker, {"started_at": "2026-10-01T00:00:00Z", "max_rowid": 5, "board_id": "aa"}
+    )
+    calls: list[dict[str, object]] = []
+
+    def execute(*_args: object, **kwargs: object) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"ok": True, "status": "succeeded", "boards": []}
+
+    monkeypatch.setattr(runner, "_execute_action", execute)
+    runner.run_once()
+
+    assert calls, "a board-scoped full-content run with its checkpoint must resume"
+
+
+def test_a_report_the_worker_keeps_failing_neither_silences_idle_heartbeats_nor_stays_forever(
+    tmp_path: Path,
+) -> None:
+    class PoisonedRuns(Api):
+        def __call__(self, path: str, body: bytes, headers: dict[str, str]) -> Any:
+            if path.endswith("/runs"):
+                self.calls.append((path, json.loads(body)))
+                return 503, {}, b""
+            return super().__call__(path, body, headers)
+
+    api = PoisonedRuns([])
+    runner, store = _runner(tmp_path, api)
+    store.enqueue(
+        "run_start",
+        "/api/v1/runner/runs",
+        {"run_id": "r1", "kind": "retry", "source": "command"},
+        "start-run-0001",
+    )
+    for _tick in range(8):
+        # Each systemd tick is a fresh process with a fresh client.
+        client = ControlClient(
+            "https://archive.example", "id", "secret", sender=api, sleep=lambda _: None
+        )
+        with sqlite3.connect(runner.profile.state_db) as connection:
+            connection.execute("UPDATE outbox SET next_attempt_at = NULL")
+        ControlRunner(runner.profile, client, store).run_once()
+
+    assert sum(1 for path, _ in api.calls if path.endswith("/heartbeat")) == 8
+    assert store.stats()["rows"] == 0
+
+
+def test_an_unreachable_smoke_check_keeps_the_new_release_for_the_next_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner, _store = _runner(tmp_path, Api([]))
+    marker = runner.profile.state_dir / "publish.pending"
+    marker.touch()
+    current = _static_release(runner.profile.static_root, "current")
+    previous = _static_release(runner.profile.static_root, "previous")
+    smoke_marker = _write_smoke_marker(runner.profile, current, previous)
+    commands: list[list[str]] = []
+
+    def wait(command: list[str], *_args: object, **kwargs: object) -> int:
+        commands.append(command)
+        module = command[command.index("-m") + 1]
+        if module == "scripts.publish_static" and "--activate" not in command:
+            output = kwargs["stdout"]
+            assert isinstance(output, Path)
+            output.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "mode": "noop",
+                        "release_key": current,
+                        "activation_pending_smoke": True,
+                        "ledger_recovered": False,
+                        "previous_release_key": previous,
+                        "previous_release_verified": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 75 if module == "scripts.release_smoke" else 0
+
+    monkeypatch.setattr(runner, "_wait", wait)
+
+    report = runner._execute_action(
+        "publish-if-changed", "publish", "publish", command_id="command-publish"
+    )
+
+    assert report["safe_code"] == "publish_smoke_unavailable"
+    assert not any("--activate" in command for command in commands)
+    assert marker.is_file()
+    assert smoke_marker.exists()
+
+
+def test_release_smoke_reports_an_unreachable_worker_as_temporary(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import release_smoke
+    from scripts.control_client import ControlUnavailableError
+
+    class Unreachable:
+        def release_smoke(self, _expected: str | None) -> dict[str, Any]:
+            raise ControlUnavailableError()
+
+    monkeypatch.setattr(
+        release_smoke.ControlClient, "from_environment", classmethod(lambda _cls: Unreachable())
+    )
+    assert release_smoke.main([]) == release_smoke.EXIT_UNAVAILABLE
+    assert json.loads(capsys.readouterr().out)["safe_code"] == "release_smoke_unavailable"

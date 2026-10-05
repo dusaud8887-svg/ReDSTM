@@ -10,6 +10,10 @@ from scripts.control_client import (
     ControlUnavailableError,
 )
 
+# EX_TEMPFAIL: the Worker could not be asked (5xx, Access outage). The release was not judged,
+# so the caller keeps it and asks again later instead of rolling it back.
+EXIT_UNAVAILABLE = 75
+
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify the active Worker/R2 release.")
@@ -30,7 +34,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         result = {"ok": True, "status": "succeeded", **report}
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["ok"] else 1
+    if result["ok"]:
+        return 0
+    return EXIT_UNAVAILABLE if result["safe_code"] == "release_smoke_unavailable" else 1
 
 
 if __name__ == "__main__":
