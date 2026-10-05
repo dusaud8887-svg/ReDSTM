@@ -6,8 +6,10 @@ export const STATE_KEY = "redstm.userState.v2";
 
 export function stateStorageKey(key, owner) {
   if (!owner) return key;
-  const legacyOwner = localStorage.getItem("redstm.legacyOwner.v1");
-  return !legacyOwner || legacyOwner === owner ? key : `${key}:${owner}`;
+  try {
+    const legacyOwner = localStorage.getItem("redstm.legacyOwner.v1");
+    return !legacyOwner || legacyOwner === owner ? key : `${key}:${owner}`;
+  } catch { return `${key}:${owner}`; }
 }
 
 export async function claimLegacyOwner(owner) {
@@ -17,8 +19,10 @@ export async function claimLegacyOwner(owner) {
       localStorage.setItem("redstm.legacyOwner.v1", /^[a-f0-9]{16}$/.test(previous ?? "") ? previous : owner);
     }
   };
-  if (navigator.locks?.request) await navigator.locks.request("redstm-legacy-owner", claim);
-  else claim();
+  try {
+    if (navigator.locks?.request) await navigator.locks.request("redstm-legacy-owner", claim);
+    else claim();
+  } catch { /* A blocked localStorage does not invalidate the verified identity or its IDB. */ }
 }
 
 // Count decoded bytes while reading, before retaining an oversized gzip expansion in memory.

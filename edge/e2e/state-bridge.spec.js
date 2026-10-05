@@ -54,6 +54,27 @@ test("P6-6 state migration preserves source bytes and rollback, bounds pending s
 
 const OWNER = "0123456789abcdef";
 
+test("Blocked localStorage keeps the reader and verified owner's IndexedDB usable", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: OWNER }) }));
+  await page.addInitScript((owner) => {
+    localStorage.setItem("redstm.owner.v1", owner);
+    const get = Storage.prototype.getItem;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key) {
+      if (this === localStorage && key === "redstm.legacyOwner.v1") throw new DOMException("blocked", "SecurityError");
+      return get.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (this === localStorage) throw new DOMException("blocked", "SecurityError");
+      return set.call(this, key, value);
+    };
+  }, OWNER);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: [] });
+});
+
 test("Switching accounts isolates legacy reading state and subsequent saves", async ({ page, context }) => {
   await useLongCollection(context, 3);
   const first = "0123456789abcdef";

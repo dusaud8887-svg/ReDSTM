@@ -230,7 +230,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "2d2e87f714df95a4"
+    "revision": "0a0acbe7dfce5eb9"
   },
   {
     "url": "/work-header.js",
