@@ -67,11 +67,11 @@ def test_doctor_reports_failures_without_sensitive_capture_data(tmp_path: Path) 
     rendered = json.dumps(report)
 
     assert report["ok"] is False
-    assert report["issues"] == [
-        "sqlite_health_failed",
+    assert report["issues"] == ["sqlite_health_failed", "invalid_warc_files"]
+    # Retention-pruned WARCs, a reclaimable lease and an orphaned part are reported, not fatal.
+    assert report["warnings"] == [
         "expired_running_leases",
         "missing_warc_files",
-        "invalid_warc_files",
         "orphan_partial_warcs",
     ]
     assert report["checks"]["expired_running_leases"]["count"] == 1
@@ -90,7 +90,9 @@ def test_doctor_cli_writes_atomic_failure_report(
     output = tmp_path / "reports" / "doctor.json"
     warc_dir.mkdir()
     initialize_archive(archive)
-    (warc_dir / "orphan.partial").write_bytes(b"partial")
+    # A damaged schema marker is a real failure (an orphaned .partial alone is only a warning).
+    with sqlite3.connect(archive) as connection:
+        connection.execute("PRAGMA application_id = 1")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -101,3 +103,31 @@ def test_doctor_cli_writes_atomic_failure_report(
     assert json.loads(output.read_text(encoding="utf-8"))["ok"] is False
     assert not output.with_name(f"{output.name}.partial").exists()
     assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_doctor_passes_when_only_retention_and_reclaim_leftovers_remain(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.sqlite"
+    warc_dir = tmp_path / "warc"
+    warc_dir.mkdir()
+    initialize_archive(archive)
+    with sqlite3.connect(archive) as connection:
+        connection.execute(
+            """
+            INSERT INTO crawl_runs (run_id, kind, status, started_at, finished_at)
+            VALUES ('old-run', 'sync', 'succeeded', ?, ?)
+            """,
+            (_NOW.isoformat(timespec="seconds"), _NOW.isoformat(timespec="seconds")),
+        )
+        connection.execute(
+            """
+            INSERT INTO captures (run_id, url, entity_type, fetched_at, outcome, warc_file)
+            VALUES ('old-run', 'https://source.invalid/1', 'listing', ?, 'stored', 'pruned.warc.gz')
+            """,
+            (_NOW.isoformat(timespec="seconds"),),
+        )
+    (warc_dir / "killed.warc.gz.partial").write_bytes(b"partial")
+
+    report = inspect_archive(archive, warc_dir, now=_NOW)
+
+    assert report["ok"] is True
+    assert report["warnings"] == ["missing_warc_files", "orphan_partial_warcs"]

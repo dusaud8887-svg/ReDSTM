@@ -97,20 +97,26 @@ def inspect_archive(
     orphan_partials = [
         str(path.relative_to(warc_dir)) for path in sorted(warc_dir.rglob("*.partial"))
     ]
+    # Operational leftovers, not damage: retention deletes WARCs after their keep window (or
+    # over budget) while captures keep naming them, a killed worker leaves an expired lease the
+    # next batch reclaims, and the next crawl renames an orphaned .partial. Reported, but they
+    # must not fail the migration/activation gate that this report guards.
+    warnings: list[str] = []
     if expired_leases:
-        issues.append("expired_running_leases")
+        warnings.append("expired_running_leases")
     if missing_warcs:
-        issues.append("missing_warc_files")
+        warnings.append("missing_warc_files")
     if invalid_warcs:
         issues.append("invalid_warc_files")
     if orphan_partials:
-        issues.append("orphan_partial_warcs")
+        warnings.append("orphan_partial_warcs")
 
     return {
         "format_version": 1,
         "checked_at": checked_at.isoformat(timespec="seconds"),
         "ok": not issues,
         "issues": issues,
+        "warnings": warnings,
         "checks": {
             "sqlite_health": {"ok": health_ok, "details": health},
             "expired_running_leases": {

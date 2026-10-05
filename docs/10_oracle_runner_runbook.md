@@ -420,7 +420,9 @@ same-filesystem hardlink snapshot과 single-replace/durability/idempotent retry 
 installer target이며 이 변경 자체를 live에 재실행했다고 기록하지 않는다.
 full doctor는 약 95분, 별도 원격 hash는 약 8분이 걸렸고 현재 live doctor 결과는 `ok=true`, schema v4,
 `quick_check=ok`, foreign key 0, expired lease 0,
-missing/invalid/orphan WARC 0이다. root free는 약 82GB다. R2/TypeMoon credential은 주입·권한과
+missing/invalid/orphan WARC 0이다. (2026-10-05부터 doctor의 실패 조건은 SQLite 건강과 손상된 WARC뿐이다.
+보존기간 정리로 사라진 WARC, 만료 lease, 고아 `.partial`은 `warnings`로만 보고해 migration/activation gate를
+막지 않는다 — 60일 보존 정리가 7월 WARC를 지우기 시작한 뒤 doctor가 항상 실패하던 문제.) root free는 약 82GB다. R2/TypeMoon credential은 주입·권한과
 bucket 접근을 검증했다. 1건과 20건 bounded partial canary도 통과했다. journald 정책 적용과 과거
 민감 가능 journal 폐기도 완료했다. static root는 verified baseline과 같은 282,289 objects,
 5,148,165,450 bytes와 pointer SHA로 seed했고 report를 `/srv/redstm/reports`에 보존했다.
