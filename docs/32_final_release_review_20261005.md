@@ -43,7 +43,7 @@ TypeMoon 크롤러·리스·저장·재시도·304, 텍스트 수집·수입·�
 
 배포 전 운영 Worker와 Oracle 앱 SHA가 달랐다. Canonical DB는 migration hash까지 정확한
 schema v4여서 이번 앱 배포에 DB 재마이그레이션은 필요하지 않다. 실행 중인 수집·export는
-종료시키지 않고 공식 pause marker로 다음 스케줄 진입을 미룬 뒤 guarded installer로 교체한다.
+사용자 요청대로 정상 중단했다. pause marker와 타이머 중단으로 신규 진입을 막고, 완료된 export·미게시 marker·queue를 보존한 상태로 guarded installer를 사용해 교체하고 게시를 복구한다.
 텍스트 수집·게시 앱은 별도 `/opt/redstm-text/current`이므로 별도로 코드 일치를 확인해야 한다.
 
 - 조건부 detail GET은 기존 결정대로 기본 OFF. `docs/31`의 단일 보드 canary 없이 기본값을 바꾸지 않는다.
