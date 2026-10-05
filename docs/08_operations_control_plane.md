@@ -185,9 +185,9 @@ authorization test는 URL prefix 전체와 unknown method를 포함한다.
 ### 5.4 통신 효율과 장애 복구
 
 - idle heartbeat/claim은 60초, active heartbeat는 30초가 기본이다.
-- heartbeat의 `next_scheduled_at`은 설치된 `redstm-schedule.timer`의 엄격히 지원되는 UTC
+- heartbeat의 `next_scheduled_at`은 설치된 `redstm-schedule.timer`의 실제 monotonic deadline 또는 호환 UTC
   `OnCalendar` slot에서 계산한다. timer가 enabled/active인데 선언을 해석할 수 없으면 임의 시각을
-  만들지 않고 runner를 degraded로 보고한다. `RandomizedDelaySec`는 UI의 20분 grace가 흡수한다.
+  만들지 않고 runner를 degraded로 보고한다. monotonic deadline은 jitter를 포함하고, 호환 calendar의 `RandomizedDelaySec`는 UI의 20분 grace가 흡수한다.
   실제 시작은 `RandomizedDelaySec=15m` 범위 안에서 늦어질 수 있다.
 - browser는 active run일 때 15초, idle일 때 60초 poll하고 hidden tab에서는 중단한다.
 - event는 step 전환과 bounded archive snapshot 단위로 보낸다. API는 한 요청 최대 50개를 받지만
@@ -419,8 +419,8 @@ Remote command와 무관하게 systemd가 실행한다.
 
 | timer | 기본 |
 |---|---|
-| incremental cycle | 6시간 |
-| 최신 글 증분 수집 | 6시간마다; 이전 cycle 실행 중이면 이번 slot은 pass |
+| incremental cycle | 종료 후 30시간 휴식(+최대 15분 jitter) |
+| 최신 글 증분 수집 | 정기 cycle마다; 이전 작업 실행 중이면 새 실행은 busy로 통과 |
 | 본문 미확보 채우기 | 증분 뒤에 `fill-missing-content` 최대 4시간·120건; 남은 분량은 다음 slot로 이어감 |
 | 원본 장애 마감 | 수동 명령은 원본 장애로 진척 없이 12시간(`REDSTM_OUTAGE_DEADLINE_SECONDS`) 대기하면 `site_unreachable`/`outage_deadline`으로 끝난다. pass marker·게시판 cursor·frontier는 남아 다음 명령이나 예약 slot이 이어 가고, 그동안 `control.lock`은 예약 실행·배포·텍스트 레인에 풀린다 |
 | delta publish | marker 유무와 무관하게 증분 reconcile |
@@ -432,7 +432,7 @@ pause-after-current는 진행 중 collection에 협력적 stop marker를 전달�
 보류한다. resume-schedule은 두 marker를 해제한다.
 운영 목표 상태는 자동 enabled지만, 웹의 `일시정지 해제`는 비활성 systemd timer를 켜지 않는다.
 
-각 6시간 cycle은 최신 page incremental, 본문 미확보 글 채우기(최대 4시간·120건), 변경분 게시를 이 순서로
+각 정기 cycle은 최신 page incremental, 본문 미확보 글 채우기(최대 4시간·120건), 변경분 게시를 이 순서로
 수행한다(`scripts/control_runner.py` scheduled run).
 직전 기준 게시글이 발견된 page 뒤 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와
 전체 본문 pass는 자동 cycle에 섞지 않는다.
@@ -559,7 +559,7 @@ Runs/Releases ledger에서 별도로 확인한다.
 - `retry-batch`: 현재 due인 pending/retry frontier를 상한 없이 순차 처리한다. due 0이면 disable한다.
 - `publish-if-changed`: pending marker가 없어도 bounded incremental export, verified publish,
   authenticated release smoke를 실행한다. 실제 delta가 없으면 exporter/publisher가 검증된 no-op으로
-  끝나며, 실패 시 기존 marker가 있으면 지우지 않고 다음 6시간 cycle에서 다시 reconcile한다.
+  끝나며, 실패 시 기존 marker가 있으면 지우지 않고 다음 정기 cycle에서 다시 reconcile한다.
 - `pause-after-current`: UI에서는 `수집 일시정지`다. 진행 중 collection은 안전한 지점에서 끝내고
   이후 schedule도 막는다. 전체 목차·본문은 다시 실행하면 기존 checkpoint에서 이어지며, 새 수동
   작업 자체는 막지 않는다.

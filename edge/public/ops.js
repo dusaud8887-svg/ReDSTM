@@ -80,7 +80,7 @@ const warningLabels = {
   maintenance: "Oracle 보관소를 점검하고 있습니다. 수동 수집은 점검 완료 후 다시 사용할 수 있습니다.",
   memory_limit: "메모리 한도에 닿아 이 배치를 먼저 끝냈습니다. 남은 글은 다음 배치로 이어집니다.",
   recovery_time_budget: "실행 시간 상한에 닿았습니다. 진행분과 재시도 큐는 보존됩니다.",
-  schedule_overdue: "자동 실행 예정 시각이 지났거나 마지막 자동 실행이 7시간보다 오래됐습니다.",
+  schedule_overdue: "자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다.",
   schedule_unverified: "예약은 켜져 있지만 자동 실행 완료 이력이 아직 없습니다.",
 };
 const sourceLabels = { systemd: "자동 예약", command: "운영 페이지 요청", worker: "현재 Worker" };
@@ -97,7 +97,6 @@ const commandCopy = {
 
 const byId = (id) => document.getElementById(id);
 const terminal = new Set(["succeeded", "partial", "failed", "expired", "cancelled"]);
-const AUTOMATIC_RUN_STALE_MS = 7 * 60 * 60 * 1000;
 const RECENT_ISSUE_MS = 7 * 24 * 60 * 60 * 1000;
 const SCHEDULE_GRACE_MS = 20 * 60 * 1000;
 const RUNNER_STALE_MS = 3 * 60 * 1000;
@@ -451,12 +450,10 @@ function renderOverview(data) {
   const nextAt = Date.parse(runner?.next_scheduled_at);
   const nextOverdue = scheduleEnabled && Number.isFinite(nextAt) &&
     nextAt < Date.now() - SCHEDULE_GRACE_MS && !automaticRunning;
-  const automaticOverdue = scheduleEnabled && !automaticRunning && Number.isFinite(automaticAt) &&
-    Date.now() - automaticAt > AUTOMATIC_RUN_STALE_MS;
   const automaticUnverified = scheduleEnabled && !automaticRunning && !Number.isFinite(automaticAt);
   const automation = baseAutomation === "on" && automaticUnverified
     ? "unverified"
-    : baseAutomation === "on" && (nextOverdue || automaticOverdue)
+    : baseAutomation === "on" && nextOverdue
     ? "delayed"
     : baseAutomation;
   const verdicts = {
@@ -468,10 +465,8 @@ function renderOverview(data) {
   const reasons = {
     on: runner?.state === "running"
       ? "예약된 보존 작업을 수행하고 있습니다. Reader는 현재 활성 보존본으로 계속 사용할 수 있습니다."
-      : "6시간마다 본문 미확보 글을 최대 4시간·120건 우선 처리한 뒤 최신 페이지를 확인하고 Reader에 반영합니다.",
-    delayed: nextOverdue
-      ? "다음 자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다. 수집기와 Oracle timer를 확인하세요."
-      : "마지막 자동 실행이 7시간보다 오래됐습니다. 다음 실행 시각과 수집기 기록을 확인하세요.",
+      : "작업 종료 후 30시간 쉬고 최신 페이지와 재시도 대상 글을 수집해 Reader에 반영합니다.",
+    delayed: "다음 자동 실행 예정 시각이 지났지만 새 실행이 보고되지 않았습니다. 수집기와 Oracle timer를 확인하세요.",
     unverified: "Oracle timer는 켜져 있지만 완료된 자동 실행 증거가 없습니다. 첫 실행 결과를 확인하기 전에는 정상 운전으로 판정하지 않습니다.",
     off: "Oracle 자동 예약이 꺼져 있습니다. redstm-schedule.timer를 활성화하기 전까지 정기 수집은 시작되지 않습니다.",
     paused: "현재 요청과 저장은 마친 뒤 다음 예약 실행을 건너뜁니다.",

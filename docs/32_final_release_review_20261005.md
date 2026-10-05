@@ -65,3 +65,6 @@ schema v4여서 이번 앱 배포에 DB 재마이그레이션은 필요하지 �
 
 리더 수정 커밋 `640f1f9`의 GitHub CI [37252038844](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/37252038844)는
 Python, Edge, Linux 시각 비교, 4폭 E2E, text-edge, dependency audit 모두 성공했다.
+운영 화면의 6시간 안내와 7시간 경과 지연 판정도 함께 수정했다. 실제 다음 실행 예정 시각을 기준으로
+지연을 판정하여 정상 30시간 휴식 중 오경고하지 않는다. 4폭에서 정상 휴식·예정 시각 초과 8개 검사를
+통과했다. 다음 실행 시각의 공통 API 상한은 jitter·accuracy·clock skew를 포함하도록 31시간으로 맞췄다.

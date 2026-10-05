@@ -498,6 +498,21 @@ test("warns when the automatic schedule is overdue", async ({ page }) => {
   await expect(page.locator("#warning-line")).toBeVisible();
 });
 
+test("keeps a 30-hour rest healthy when the previous automatic run is older than seven hours", async ({ page }) => {
+  const previous = new Date(Date.now() - 8 * 60 * 60_000).toISOString();
+  const next = new Date(Date.now() + 22 * 60 * 60_000).toISOString();
+  await useOperationsFixture(page, [], { overview: {
+    runner: { state: "idle", heartbeat_at: now, next_scheduled_at: next },
+    schedule_enabled: true,
+    active_run: null,
+    latest_automatic_run: { kind: "scheduled", state: "succeeded", finished_at: previous },
+  } });
+  await page.goto("/ops");
+  await expect(page.locator("#overview-title")).toHaveText("자동 수집 켜짐");
+  await expect(page.locator("#warning-line")).toBeHidden();
+  await expect(page.locator("#overview-reason")).toContainText("30시간");
+});
+
 test("does not call an enabled schedule healthy before its first automatic run", async ({ page }) => {
   await useOperationsFixture(page, [], {
     overview: {
