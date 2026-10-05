@@ -434,7 +434,8 @@ pause-after-current는 진행 중 collection에 협력적 stop marker를 전달�
 
 각 정기 cycle은 최신 page incremental, 본문 미확보 글 채우기(최대 4시간·120건), 변경분 게시를 이 순서로
 수행한다(`scripts/control_runner.py` scheduled run).
-직전 기준 게시글이 발견된 page 뒤 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 전체 목차와
+직전 기준 게시글이 발견된 page 뒤 2 page를 더 확인해 제목·분류·댓글 수 변경도 잡는다. 30시간 휴식 동안 새 글이
+page 상한을 넘어 쌓이면 기준 게시글을 찾을 때까지 최대 50 page를 이어 읽는다. 전체 목차와
 전체 본문 pass는 자동 cycle에 섞지 않는다.
 수동 전체 목차는 `inventory_next_page`와 scope marker로 모든 row를 다시 읽으며, 수동 전체 본문은
 시작 시각과 frontier 최대 rowid를 checkpoint로 고정해 이미 성공한 글도 양수 chunk로 다시 받는다.

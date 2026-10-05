@@ -23,6 +23,7 @@ from crawler.settings import (
     REDSTM_DETAIL_CONCURRENCY,
     REDSTM_DETAIL_RETRY_TIMES,
     REDSTM_FRONTIER_LEASE_SECONDS,
+    REDSTM_INCREMENTAL_CATCHUP_MAX_PAGES,
     REDSTM_INCREMENTAL_OVERLAP_PAGES,
     REDSTM_LISTING_OVERLAP_UNCHANGED,
     REDSTM_LISTING_PAGE_WARNING_RETRIES,
@@ -955,6 +956,18 @@ class TypeMoonSpider(scrapy.Spider):
                 self._boundary_page is not None and page >= self._boundary_page
             )
         page_budget_open = self.max_pages < 1 or page < self.start_page + self.max_pages - 1
+        # Catch-up: an incremental pass that knows where the previous one ended (its anchor, or
+        # an overlap boundary already found) keeps reading until it gets there. Listing pages
+        # only seed the frontier; detail fetches stay within max_posts.
+        if (
+            not page_budget_open
+            and not self.inventory
+            and (self.anchor_post_id is not None or self._boundary_page is not None)
+        ):
+            page_budget_open = (
+                page
+                < self.start_page + max(self.max_pages, REDSTM_INCREMENTAL_CATCHUP_MAX_PAGES) - 1
+            )
         if (
             self.frontier is not None
             and self.session is not None

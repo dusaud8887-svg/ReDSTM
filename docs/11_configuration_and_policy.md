@@ -140,6 +140,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | frontier | attempts/backoff | network는 120초부터 최대 6시간 간격으로 무기한; parse/storage는 5회 | `crawler/settings.py` |
 | source protection | `Retry-After`/breaker | 최대 24시간 / parse·429 연속 3회, network 연속 5회 | `crawler/settings.py` |
 | incremental | persisted boundary | exact board anchor(삭제 시 그보다 오래된 첫 글) 뒤 2 page | schema v4 + `crawler/settings.py` |
+| incremental | catch-up | anchor가 page 상한(3) 너머면 anchor+2 page까지 최대 50 page를 계속 읽음(목록은 frontier seed만, 본문은 max_posts 유지) | `crawler/settings.py` |
 | incremental | bootstrap fallback | anchor가 없을 때만 공지 제외 unchanged 20건 | `crawler/settings.py` |
 | session | local lifetime/login throttle/revalidate | 4시간 / 30분 / 30분 | `crawler/settings.py` |
 | archive | SQLite journal/synchronous | WAL / NORMAL (reader가 crawl writer를 막지 않음; legacy DELETE 아카이브는 첫 write connect에서 자가 전환) | `crawler/archive.py` |

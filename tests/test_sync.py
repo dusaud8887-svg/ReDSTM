@@ -473,6 +473,53 @@ def test_incremental_anchor_requires_configured_overlap_page(tmp_path: Path) -> 
     assert spider.listing_completed is True
 
 
+def test_incremental_pass_reads_past_its_page_budget_to_reach_the_anchor(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    spider = TypeMoonSpider(
+        board_id="write_free21",
+        archive_path=path,
+        run_id=ArchiveStore(path).start_run("sync"),
+        session=_session(),
+        max_pages=1,
+        max_posts=1,
+        anchor_post_id=100,
+        overlap_pages=1,
+    )
+
+    def page(number: int, post_ids: list[int]) -> HtmlResponse:
+        url = "https://www.typemoon.net/write_free21" + (f"?page={number}" if number > 1 else "")
+        rows = b"".join(
+            b"<tr><td class='td-subj-wrap'><a href='/write_free21/%d'>"
+            b"<span class='subject'>post</span></a></td></tr>" % post_id
+            for post_id in post_ids
+        )
+        return HtmlResponse(
+            url,
+            request=Request(url),
+            body=b"<table><tbody>" + rows + b"</tbody></table>",
+            encoding="utf-8",
+        )
+
+    def next_page(outputs: list[object]) -> str | None:
+        return next(
+            (item.url for item in outputs if isinstance(item, Request) and "page=" in item.url),
+            None,
+        )
+
+    # Two pages of new posts since the last pass: the anchor sits on page 3, past max_pages=1.
+    assert next_page(list(spider.parse_listing(page(1, [104, 103])))) is not None
+    assert next_page(list(spider.parse_listing(page(2, [102, 101])))) is not None
+    # Found on page 3; one overlap page follows, then the pass completes.
+    assert next_page(list(spider.parse_listing(page(3, [100, 99])))) is not None
+    assert spider.listing_completed is False
+    assert next_page(list(spider.parse_listing(page(4, [98, 97])))) is None
+    assert spider.listing_completed is True
+    assert spider.latest_post_id == 104
+
+
 def test_deleted_incremental_anchor_uses_the_first_older_row(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)

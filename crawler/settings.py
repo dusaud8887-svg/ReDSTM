@@ -163,6 +163,11 @@ REDSTM_FRONTIER_BACKOFF_BASE_SECONDS = 120
 REDSTM_FRONTIER_BACKOFF_CAP_SECONDS = 6 * 60 * 60
 REDSTM_LISTING_OVERLAP_UNCHANGED = 20
 REDSTM_INCREMENTAL_OVERLAP_PAGES = 2
+# An incremental pass reads past its page budget until it reaches the previous anchor plus the
+# overlap pages, up to this many pages (~1,000 posts). With 30 hours of rest a busy board (aa_19
+# gains ~50 posts a day) pushes the anchor past page 3; without catch-up the pass never completes,
+# the anchor never advances and new posts past the budget are never seeded.
+REDSTM_INCREMENTAL_CATCHUP_MAX_PAGES = 50
 # The proven local collector was sequential; sharing one PHP session across parallel detail
 # requests is the production stall trigger. Listing concurrency remains independently bounded.
 REDSTM_DETAIL_CONCURRENCY = 1
