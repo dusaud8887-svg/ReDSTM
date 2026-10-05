@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from crawler.archive import connect_archive, initialize_archive
+from scripts import backup_archive
 from scripts.backup_archive import create_backup, main
 
 
@@ -58,6 +61,49 @@ def test_resume_partial_verifies_without_recopying(tmp_path: Path) -> None:
     assert report["ok"] is True
     assert snapshot.exists()
     assert not partial.exists()
+
+
+@pytest.mark.parametrize("advance_before_copy", [False, True])
+def test_online_backup_verifies_the_copied_snapshot_when_source_advances(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, advance_before_copy: bool
+) -> None:
+    source = tmp_path / "source.sqlite"
+    snapshot = tmp_path / "snapshot.sqlite"
+    manifest = tmp_path / "snapshot.manifest.json"
+    initialize_archive(source)
+    original_evidence = backup_archive._evidence
+    original_counts = backup_archive._connection_table_counts
+
+    def advance() -> None:
+        with connect_archive(source) as connection:
+            connection.execute(
+                "INSERT INTO boards "
+                "(board_id, name, canonical_url, first_seen_at, last_seen_at) "
+                "VALUES ('later', 'Later', 'https://example.test/later', 'now', 'now')"
+            )
+
+    def counts(connection: sqlite3.Connection) -> dict[str, int]:
+        result = original_counts(connection)
+        if (
+            advance_before_copy
+            and Path(connection.execute("PRAGMA database_list").fetchone()[2]) == source
+        ):
+            advance()
+        return result
+
+    def evidence(path: Path, **kwargs: Any) -> dict[str, Any]:
+        if path == source and not advance_before_copy:
+            advance()
+        return original_evidence(path, **kwargs)
+
+    monkeypatch.setattr(backup_archive, "_connection_table_counts", counts)
+    monkeypatch.setattr(backup_archive, "_evidence", evidence)
+    report = create_backup(source, snapshot, manifest)
+    assert report["ok"] is True
+    assert report["source"]["counts"]["boards"] == 0
+    assert report["snapshot"]["counts"]["boards"] == 0
+    with connect_archive(source, read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM boards").fetchone()[0] == 1
 
 
 def test_backup_cli_pings_dead_man_check_on_success(

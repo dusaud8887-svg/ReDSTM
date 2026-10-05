@@ -39,26 +39,32 @@ def _sync_directory(path: Path) -> None:
 
 def _table_counts(path: Path) -> dict[str, int]:
     with closing(connect_archive(path, read_only=True)) as connection:
-        tables = [
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_schema "
-                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            )
-        ]
-        return {
-            table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
-            for table in tables
-        }
+        return _connection_table_counts(connection)
 
 
-def _evidence(path: Path, *, check_health: bool) -> dict[str, Any]:
+def _connection_table_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    tables = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+    ]
+    return {
+        table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+        for table in tables
+    }
+
+
+def _evidence(
+    path: Path, *, check_health: bool, counts: dict[str, int] | None = None
+) -> dict[str, Any]:
     return {
         "path": str(path),
         "bytes": path.stat().st_size,
         "sha256": _sha256(path),
         "health": archive_health(path) if check_health else None,
-        "counts": _table_counts(path),
+        "counts": _table_counts(path) if counts is None else counts,
     }
 
 
@@ -85,14 +91,20 @@ def create_backup(
         raise FileExistsError("partial backup output already exists")
 
     try:
+        source_counts = None
         if not resume_partial:
             with (
                 closing(connect_archive(source, read_only=True)) as source_connection,
                 closing(sqlite3.connect(snapshot_partial)) as snapshot_connection,
             ):
+                # Pin the counts and backup to one WAL read snapshot; writers may advance
+                # the live source before verification finishes.
+                source_connection.execute("BEGIN")
+                source_counts = _connection_table_counts(source_connection)
                 source_connection.backup(snapshot_connection, pages=4096, sleep=0.05)
+                source_connection.commit()
 
-        source_evidence = _evidence(source, check_health=False)
+        source_evidence = _evidence(source, check_health=False, counts=source_counts)
         snapshot_evidence = _evidence(snapshot_partial, check_health=True)
         issues: list[str] = []
         if source_evidence["counts"] != snapshot_evidence["counts"]:

@@ -21,12 +21,16 @@ TypeMoon 크롤러·리스·저장·재시도·304, 텍스트 수집·수입·�
    긴 본문에서 비용이 급증했다. 공백 상태를 별도로 추적하며 원문 offset 매핑을 유지한다.
    합성 한국어 본문 238,320자에서 같은 로컬 측정이 약 6.8초 → 114ms로 줄었다.
    실제 검색 경로와 원문 범위를 검증하는 기존 스타일의 성능 회귀 테스트를 추가했다.
+4. `scripts/backup_archive.py`: online backup 뒤 원본 행 수를 다시 읽어, 그 사이 정상 writer가
+   추가한 행 때문에 유효한 스냅샷을 실패로 판정하고 삭제했다. 복사 시작 전 read transaction에서
+   원본 행 수를 읽고 같은 SQLite snapshot을 backup한다. 원본이 복사 직전/직후 전진하는 두 경우와
+   실제 backup·restore·migration 경로 13개 검사를 통과했다. 기존 partial 재개 검증은 유지한다.
 
 앱 셸 precache와 SW 버전은 재생성했다. 설계 문서의 오래된 ‘구현 전’ 상태도 실제 M7 기록에 맞췄다.
 
 ## 검증 기록
 
-- Python 기존 전체 테스트 713개 통과, Ruff 검사·포맷·Mypy·lock 검사 통과.
+- Python 최초 전체 테스트 713개 통과, Ruff 검사·포맷·Mypy·lock 검사 통과.
 - Edge 단위 테스트·타입·자산·vendor/precache 일치·lint 통과.
 - D1 빈 DB와 기존 0003 스키마 upgrade fixture의 8개 migration 통과.
 - text-edge 5개 테스트와 strict Wrangler dry-run 통과. npm production dependency audit 0건.
@@ -54,3 +58,6 @@ schema v4여서 이번 앱 배포에 DB 재마이그레이션은 필요하지 �
 ## 완료 기록
 
 고정 커밋의 전체 검증 및 배포 후 실제 결과를 기록할 예정.
+
+리더 수정 커밋 `640f1f9`의 GitHub CI [37252038844](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/37252038844)는
+Python, Edge, Linux 시각 비교, 4폭 E2E, text-edge, dependency audit 모두 성공했다.
