@@ -108,14 +108,16 @@ registerRoute(path((p) => p === "/api/v1/text/status"), new NetworkOnly());
 // 5. Text release pointers.
 registerRoute(path((p) => /^\/api\/v1\/text\/release\/(?:novel|arcalive|manual)$/.test(p)), ownedStrategy(NetworkFirst, "text-pointer", { networkTimeoutSeconds: 3 }));
 // 6–7. Immutable release manifests and indexes.
-registerRoute(path((p) => p.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(CacheFirst, "text-meta"));
-registerRoute(path((p) => p.startsWith("/api/v1/text/index/")), ownedStrategy(CacheFirst, "text-meta", { plugins: [expiring(200)] }));
+// One expiry for the shared cache, so manifests count toward (and leave by) the same limit.
+const textMetaExpiry = expiring(200);
+registerRoute(path((p) => p.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(CacheFirst, "text-meta", { plugins: [textMetaExpiry] }));
+registerRoute(path((p) => p.startsWith("/api/v1/text/index/")), ownedStrategy(CacheFirst, "text-meta", { plugins: [textMetaExpiry] }));
 // 8. Immutable text objects.
 registerRoute(path((p) => p.startsWith("/api/v1/text/object/")),
   savedFirst(ownedStrategy(CacheFirst, "text-objects", { plugins: [expiring(1000, 30 * DAY)] })));
 // 9. Media (GET), with ranges for video.
 registerRoute(path((p) => p.startsWith("/api/v1/text/media/")), ownedStrategy(CacheFirst, "media", {
-  plugins: [new CacheableResponsePlugin({ statuses: [200] }), new RangeRequestsPlugin()],
+  plugins: [new CacheableResponsePlugin({ statuses: [200] }), new RangeRequestsPlugin(), expiring(1000, 30 * DAY)],
 }));
 // 10. The archive pointer.
 registerRoute(path((p) => p === "/archive/release.json"), ownedStrategy(NetworkFirst, "archive-pointer", { networkTimeoutSeconds: 3 }));

@@ -796,10 +796,10 @@ DB "redstm" v1   (owner namespace: 로그인 사용자별 DB 이름 "redstm:<own
 | 3 | `/api/v1/text/media/resolve`(POST) | 미디어 확인 | NetworkOnly |
 | 4 | `/api/v1/text/status` | 운영 신선도 | NetworkOnly(오프라인에서 과거 값을 현재처럼 표시 금지) |
 | 5 | `/api/v1/text/release/{novel,arcalive}` | 변경 가능 포인터 | NetworkFirst 3초 → 캐시(오프라인이면 snapshot의 releaseHash 사용) |
-| 6 | `/api/v1/text/release-manifest/<lane>/<hash>.json` | 불변 | CacheFirst `text-meta` |
+| 6 | `/api/v1/text/release-manifest/<lane>/<hash>.json` | 불변 | CacheFirst `text-meta` (7번과 같은 Expiration 200 공유) |
 | 7 | `/api/v1/text/index/<lane>/<hash>.json` | 불변 목차·색인 | CacheFirst `text-meta` (Expiration 200) |
 | 8 | `/api/v1/text/object/<hash>` | 불변 본문 | `offline-v1` 먼저 → CacheFirst `text-objects`(Expiration 1,000개·30일·purgeOnQuotaError) |
-| 9 | `/api/v1/text/media/…`(GET) | 미디어 | CacheFirst `media` + CacheableResponse(200) + RangeRequests |
+| 9 | `/api/v1/text/media/…`(GET) | 미디어 | CacheFirst `media` + CacheableResponse(200) + RangeRequests + Expiration(1,000개·30일·quota 초과 시 정리) |
 | 10 | `/archive/release.json` | 변경 가능 포인터 | NetworkFirst 3초 |
 | 11 | `/archive/<key>`(나머지, `.json.zst` 포함) | 불변(content-addressed) | `offline-v1` 먼저 → CacheFirst `archive`(Expiration 1,000·30일). zstd 인코딩 응답이 캐시 후 재생되는지 스파이크 S3에서 확인 |
 | 12 | `/fonts/*@*/…`, `/vendor/*@*/…` | 버전 디렉터리 불변 | CacheFirst `static-v` |

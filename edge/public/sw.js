@@ -1223,14 +1223,15 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   q(path((p2) => p2.startsWith("/api/v1/sync") || p2 === "/api/v1/rum" || p2 === "/api/v1/me"), new B());
   q(path((p2) => p2 === "/api/v1/text/status"), new B());
   q(path((p2) => /^\/api\/v1\/text\/release\/(?:novel|arcalive|manual)$/.test(p2)), ownedStrategy(K, "text-pointer", { networkTimeoutSeconds: 3 }));
-  q(path((p2) => p2.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(M, "text-meta"));
-  q(path((p2) => p2.startsWith("/api/v1/text/index/")), ownedStrategy(M, "text-meta", { plugins: [expiring(200)] }));
+  var textMetaExpiry = expiring(200);
+  q(path((p2) => p2.startsWith("/api/v1/text/release-manifest/")), ownedStrategy(M, "text-meta", { plugins: [textMetaExpiry] }));
+  q(path((p2) => p2.startsWith("/api/v1/text/index/")), ownedStrategy(M, "text-meta", { plugins: [textMetaExpiry] }));
   q(
     path((p2) => p2.startsWith("/api/v1/text/object/")),
     savedFirst(ownedStrategy(M, "text-objects", { plugins: [expiring(1e3, 30 * DAY)] }))
   );
   q(path((p2) => p2.startsWith("/api/v1/text/media/")), ownedStrategy(M, "media", {
-    plugins: [new Q({ statuses: [200] }), new Y()]
+    plugins: [new Q({ statuses: [200] }), new Y(), expiring(1e3, 30 * DAY)]
   }));
   q(path((p2) => p2 === "/archive/release.json"), ownedStrategy(K, "archive-pointer", { networkTimeoutSeconds: 3 }));
   q(
