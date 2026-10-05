@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "9a47207794634e84"
+    "revision": "fcdc50af12427980"
   },
   {
     "url": "/arca-media.js",
@@ -38,7 +38,7 @@ export default [
   },
   {
     "url": "/find.js",
-    "revision": "c6367336caa93a8d"
+    "revision": "7050acae9039496d"
   },
   {
     "url": "/fonts/gowun-batang@5.3.0/gowun-batang.css",
@@ -210,7 +210,7 @@ export default [
   },
   {
     "url": "/text-model.js",
-    "revision": "fb6a0bcba7338e3b"
+    "revision": "120081bb1c88a820"
   },
   {
     "url": "/text-shelves.js",

@@ -349,8 +349,15 @@ const find = createFind({
   overlays,
   session: {
     get generation() { return readerSession.generation; },
+    get mode() { return readerSession.adapter?.mode; },
     markUserScroll: () => readerSession.markUserScroll(),
     capturePosition: () => readerSession.adapter?.captureVisiblePosition() ?? null,
+    revealRange: (range) => {
+      if (!paged.active) return false;
+      turnPage(pageAt(range.getBoundingClientRect().left - elements["archive-body"].getBoundingClientRect().left,
+        paged.geometry, paged.pages));
+      return true;
+    },
   },
 });
 let findReturnTimer = null;

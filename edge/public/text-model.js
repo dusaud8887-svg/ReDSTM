@@ -37,17 +37,21 @@ export function searchCopy(text) {
   const starts = [];
   const ends = [];
   let normalized = "";
+  // Track whitespace without repeatedly flattening the growing normalized string.
+  let space = false;
   const graphemes = new Intl.Segmenter("und", { granularity: "grapheme" }).segment(text);
   for (const { segment, index } of graphemes) {
     const value = segment.normalize("NFKC");
     for (const character of value) {
       if (/\s/u.test(character)) {
-        if (normalized.endsWith(" ")) { ends[ends.length - 1] = index + segment.length; continue; }
+        if (space) { ends[ends.length - 1] = index + segment.length; continue; }
         normalized += " ";
+        space = true;
         starts.push(index);
         ends.push(index + segment.length);
       } else {
         normalized += character;
+        space = false;
         for (let unit = 0; unit < character.toLowerCase().length; unit += 1) {
           starts.push(index);
           ends.push(index + segment.length);

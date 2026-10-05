@@ -51,3 +51,15 @@ test("a locator travels in a link and comes back the same sentence", async () =>
   assert.equal(decodeLocator("not-json"), null);
   assert.equal(encodeLocator({ v: 1 }), "");
 });
+
+test("a long prose search copy keeps its final coordinates without repeatedly flattening the text", () => {
+  const raw = "가나다 라마바 사아자 차카타 파하.\n".repeat(12_000);
+  const started = performance.now();
+  const copy = searchCopy(raw);
+  const elapsed = performance.now() - started;
+  assert.equal(copy.text, raw.replaceAll("\n", " "));
+  assert.deepEqual(sourceRange(copy, copy.text.length - 2, copy.text.length - 1), {
+    start: raw.length - 2, end: raw.length - 1,
+  });
+  assert.ok(elapsed < 3000, `search copy took ${elapsed.toFixed(0)}ms`);
+});

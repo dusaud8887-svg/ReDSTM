@@ -1689,6 +1689,51 @@ test("Find in the chapter counts hits, moves to them, and offers the place it st
   }
 });
 
+test("Find uses the edited query immediately when Enter or next is pressed", async ({ page }) => {
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader-title")).toHaveText("2편 제목");
+  await page.locator(mobileWidth(page) ? "#reader-find" : "#reader-toolbar-find").click();
+  const input = page.locator("#find-input");
+  await input.fill("본문 3");
+  await expect(page.locator("#find-count")).toHaveText("1/11");
+  // Dispatch in one task, before the input debounce can run.
+  const entered = await input.evaluate((element) => {
+    element.value = "본문 40";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return document.querySelector("#find-count").textContent;
+  });
+  expect(entered).toBe("1/1");
+  const next = await input.evaluate((element) => {
+    element.value = "없는 검색어";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector("#find-next").click();
+    return document.querySelector("#find-count").textContent;
+  });
+  expect(next).toBe("0/0");
+  expect(await page.evaluate(() => CSS.highlights.get("redstm-find")?.size)).toBe(0);
+});
+
+test("Find in page mode turns to the matching page and returns to the original page", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, history: {},
+  })));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  await expect(page.locator("#reader-status")).toHaveText(/^1 \/ \d+쪽$/);
+  await page.locator(mobileWidth(page) ? "#reader-find" : "#reader-toolbar-find").click();
+  await page.locator("#find-input").fill("본문 40");
+  await expect(page.locator("#find-count")).toHaveText("1/1");
+  await page.locator("#find-next").click();
+  await expect(page.locator("#reader-status")).not.toHaveText(/^1 \/ /);
+  await expect(page.locator("#archive-body p").last()).toBeInViewport();
+  await page.locator("#find-close").click();
+  await page.locator("#find-return-button").click();
+  await expect(page.locator("#reader-status")).toHaveText(/^1 \/ \d+쪽$/);
+});
+
 test("The mini bar appears on a list opened directly once saved records resolve", async ({ page }) => {
   test.skip(!mobileWidth(page), "phone tab bar only");
   await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({

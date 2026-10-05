@@ -29,6 +29,7 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
   let returnAnchor = null;
   let moved = false;
   let timer = null;
+  let searchedQuery = null;
 
   function ensureModel() {
     if (model && generation === session.generation && model.root === root()) return;
@@ -50,11 +51,13 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
   }
 
   function drawBand() {
-    const height = scroller.scrollHeight || 1;
-    const offset = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    const paged = session.mode === "paged";
+    const height = (paged ? root().scrollWidth : scroller.scrollHeight) || 1;
+    const offset = paged ? root().getBoundingClientRect().left : scroller.getBoundingClientRect().top - scroller.scrollTop;
     const ticks = ranges.slice(0, 200).map((range, index) => {
       const tick = document.createElement("i");
-      tick.style.left = `${Math.min(100, Math.max(0, ((range.getBoundingClientRect().top - offset) / height) * 100))}%`;
+      const rect = range.getBoundingClientRect();
+      tick.style.left = `${Math.min(100, Math.max(0, (((paged ? rect.left : rect.top) - offset) / height) * 100))}%`;
       if (index === current) tick.className = "current";
       return tick;
     });
@@ -70,6 +73,14 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
 
   // The first hit at or below the top of the screen, found by bisection over document order.
   function firstVisible() {
+    if (session.mode === "paged") {
+      const box = scroller.getBoundingClientRect();
+      const index = ranges.findIndex((range) => {
+        const rect = range.getBoundingClientRect();
+        return rect.right > box.left && rect.left < box.right;
+      });
+      return ranges.length ? Math.max(0, index) : -1;
+    }
     const top = scroller.getBoundingClientRect().top + topInset();
     let low = 0;
     let high = ranges.length;
@@ -90,6 +101,7 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
       moved = true;
     }
     session.markUserScroll();
+    if (session.revealRange?.(range)) return;
     const box = scroller.getBoundingClientRect();
     const rect = range.getBoundingClientRect();
     scroller.scrollTop += rect.top - box.top - scroller.clientHeight / 3;
@@ -98,6 +110,7 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
 
   function search() {
     ensureModel();
+    searchedQuery = input.value;
     ranges = findMatches(model.text, input.value, copy).map((match) => modelRange(model, match.start, match.end)).filter(Boolean);
     current = firstVisible();
     paint();
@@ -107,6 +120,8 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
 
   // The first move shows the hit already selected (the first one on screen); later moves step.
   function step(delta) {
+    clearTimeout(timer);
+    if (searchedQuery !== input.value || generation !== session.generation) search();
     if (!ranges.length) return;
     if (moved || delta < 0) current = (current + delta + ranges.length) % ranges.length;
     reveal();
@@ -137,7 +152,6 @@ export function createFind({ bar, input, count, band, root, scroller, topInset =
     if (event.key === "Enter" && !event.isComposing) {
       event.preventDefault();
       clearTimeout(timer);
-      if (!ranges.length || generation !== session.generation) search();
       step(event.shiftKey ? -1 : 1);
     }
   });
