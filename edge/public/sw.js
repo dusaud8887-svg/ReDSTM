@@ -1177,13 +1177,20 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     if (response.type === "opaqueredirect" || response.redirected || [401, 403].includes(response.status) || response.status >= 300 && response.status < 400) return true;
     return api(new URL(request.url)) && (response.headers.get("Content-Type") ?? "").toLowerCase().includes("text/html");
   }
+  function cacheable(request, response) {
+    if (response?.status !== 200 || authFailure(request, response)) return false;
+    return !new URL(request.url).pathname.endsWith(".js") || /^(?:text|application)\/(?:javascript|ecmascript)(?:;|$)/i.test(response.headers.get("Content-Type") ?? "");
+  }
   var guard = {
     async fetchDidSucceed({ request, response, event }) {
       if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url }, event?.clientId);
       return response;
     },
     async cacheWillUpdate({ request, response }) {
-      return response && response.status === 200 && !authFailure(request, response) ? response : null;
+      return cacheable(request, response) ? response : null;
+    },
+    async cachedResponseWillBeUsed({ request, cachedResponse }) {
+      return cacheable(request, cachedResponse) ? cachedResponse : null;
     }
   };
   function ownedStrategy(Strategy, base, options = {}) {
@@ -1287,9 +1294,12 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
       if (task.cancelled) break;
       try {
         const request = new Request(new URL(url, self.location.origin));
-        const response = await statics.match(request) ?? await fetch(request, { signal: task.controller.signal });
-        const javascript = new URL(request.url).pathname.endsWith(".js");
-        if (response.status !== 200 || authFailure(request, response) || javascript && !/^(?:text|application)\/(?:javascript|ecmascript)(?:;|$)/i.test(response.headers.get("Content-Type") ?? "")) {
+        let response = await statics.match(request);
+        if (!cacheable(request, response)) {
+          if (response) await statics.delete(request);
+          response = await fetch(request, { signal: task.controller.signal });
+        }
+        if (!cacheable(request, response)) {
           throw new Error("Required asset unavailable");
         }
         if (!task.cancelled) await statics.put(request, response);

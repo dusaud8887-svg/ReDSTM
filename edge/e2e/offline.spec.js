@@ -152,6 +152,30 @@ test("Namespace deletion rejects errors and waits for blocked connections", asyn
   expect(result).toEqual(["error", "waiting", "success", "success"]);
 });
 
+test("A legacy cached HTML module is replaced so offline saving and reload can recover", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await page.goto("/");
+  await controlled(page);
+  await page.goto("/collections/1");
+  const module = "/vendor/uqr@0.1.3/uqr.js";
+  await page.evaluate(async (url) => {
+    await (await caches.open("static-v")).put(url, new Response("<!doctype html><title>Sign in</title>", { headers: { "Content-Type": "text/html" } }));
+  }, module);
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
+  // Runtime CacheFirst must also disregard a poisoned old response on a cold online reload.
+  await page.evaluate(async (url) => {
+    await (await caches.open("static-v")).put(url, new Response("<!doctype html><title>Sign in</title>", { headers: { "Content-Type": "text/html" } }));
+  }, module);
+  await page.reload();
+  await expect(page.locator("#collection-title")).toHaveText("긴 연재");
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator("#collection-title")).toHaveText("긴 연재");
+  await context.setOffline(false);
+});
+
 test("Deleting a work waits for an in-flight cache write and leaves no restored files", async ({ page, context }) => {
   await useLongCollection(context, 3);
   await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
