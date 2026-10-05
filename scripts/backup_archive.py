@@ -74,15 +74,18 @@ def create_backup(
     source = source.expanduser().resolve(strict=True)
     snapshot = snapshot.expanduser().resolve()
     manifest = manifest.expanduser().resolve()
-    if source == snapshot:
-        raise ValueError("source and snapshot must differ")
+    snapshot_partial = snapshot.with_name(f"{snapshot.name}.partial")
+    manifest_partial = manifest.with_name(f"{manifest.name}.partial")
+    paths = [source, snapshot, manifest, snapshot_partial, manifest_partial]
+    for index, path in enumerate(paths):
+        for other in paths[:index]:
+            if path == other or (path.exists() and other.exists() and path.samefile(other)):
+                raise ValueError("source, snapshot, manifest and partial paths must differ")
     if snapshot.exists() or manifest.exists():
         raise FileExistsError("snapshot and manifest must not already exist")
 
     snapshot.parent.mkdir(parents=True, exist_ok=True)
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_partial = snapshot.with_name(f"{snapshot.name}.partial")
-    manifest_partial = manifest.with_name(f"{manifest.name}.partial")
     if manifest_partial.exists():
         raise FileExistsError("partial backup output already exists")
     if resume_partial and not snapshot_partial.exists():

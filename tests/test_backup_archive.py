@@ -14,6 +14,30 @@ from scripts import backup_archive
 from scripts.backup_archive import create_backup, main
 
 
+@pytest.mark.parametrize(
+    "snapshot_name,manifest_name",
+    [
+        ("same", "same"),
+        ("source.sqlite", "manifest"),
+        ("snapshot", "source.sqlite"),
+        ("snapshot", "snapshot.partial"),
+        ("manifest.partial", "manifest"),
+        ("source.sqlite", "source.sqlite.partial"),
+    ],
+)
+def test_backup_rejects_colliding_paths_before_creating_outputs(
+    tmp_path: Path, snapshot_name: str, manifest_name: str
+) -> None:
+    source = tmp_path / "source.sqlite"
+    initialize_archive(source)
+    before = source.read_bytes()
+    existing = set(tmp_path.iterdir())
+    with pytest.raises(ValueError, match="paths must differ"):
+        create_backup(source, tmp_path / snapshot_name, tmp_path / manifest_name)
+    assert source.read_bytes() == before
+    assert set(tmp_path.iterdir()) == existing
+
+
 def test_create_backup_verifies_snapshot_and_refuses_overwrite(tmp_path: Path) -> None:
     source = tmp_path / "source.sqlite"
     snapshot = tmp_path / "backups" / "snapshot.sqlite"
