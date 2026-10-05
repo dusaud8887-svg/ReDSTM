@@ -1734,6 +1734,28 @@ test("Find in page mode turns to the matching page and returns to the original p
   await expect(page.locator("#reader-status")).toHaveText(/^1 \/ \d+쪽$/);
 });
 
+test("The page-mode scrubber seeks, saves and restores the page rather than vertical scroll", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
+    schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, history: {},
+  })));
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  const status = page.locator("#reader-status");
+  await expect(status).toHaveText(/^1 \/ \d+쪽$/);
+  const total = Number((await status.textContent()).match(/\/ (\d+)/)[1]);
+  expect(total).toBeGreaterThan(2);
+  await page.locator(mobileWidth(page) ? "#reader-topbar-position" : "#reader-status").evaluate((element) => element.click());
+  const slider = page.locator("#scrubber-position");
+  for (const value of [500, 1000, 0, 500]) {
+    await slider.evaluate((element, value) => { element.value = String(value); element.dispatchEvent(new Event("input", { bubbles: true })); }, value);
+    await expect(status).toHaveText(`${Math.round(value / 1000 * (total - 1)) + 1} / ${total}쪽`);
+  }
+  await page.locator("#scrubber").getByRole("button", { name: "닫기" }).click();
+  await page.waitForTimeout(800);
+  await page.reload();
+  await expect(status).not.toHaveText(/^1 \/ /);
+});
+
 test("The mini bar appears on a list opened directly once saved records resolve", async ({ page }) => {
   test.skip(!mobileWidth(page), "phone tab bar only");
   await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({

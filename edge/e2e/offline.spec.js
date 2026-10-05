@@ -99,6 +99,125 @@ async function saveCollection(page, context, owner) {
   await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
 }
 
+for (const failure of ["500", "html"]) test(`A failed required module (${failure}) leaves saving partial and can resume`, async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await page.goto("/");
+  await controlled(page);
+  await page.goto("/collections/1");
+  const module = "/vendor/uqr@0.1.3/uqr.js";
+  await page.evaluate(async (url) => { await (await caches.open("static-v")).delete(url); }, module);
+  let failing = true;
+  await context.route(`**${module}`, (route) => failing ? route.fulfill({ status: failure === "500" ? 500 : 200,
+    contentType: "text/html", body: "<!doctype html><title>Sign in</title>" }) : route.fallback());
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText("앱 파일 일부를 내려받지 못함 · 이어서 내려받아 주세요");
+  await expect(page.locator("#offline-save")).toHaveText("이어서 내려받기");
+  expect((await cachedPaths(page))["static-v"] ?? []).not.toContain(module);
+  failing = false;
+  await page.locator("#offline-save").click();
+  await expect(page.locator("#offline-state")).toHaveText(/^이 기기에 내려받음/);
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator("#collection-title")).toHaveText("긴 연재");
+  await context.setOffline(false);
+});
+
+test("Namespace deletion rejects errors and waits for blocked connections", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { deleteNamespace } = await import("/offline.js");
+    const original = IDBFactory.prototype.deleteDatabase;
+    const outcomes = [];
+    try {
+      for (const type of ["error", "blocked", "success"]) {
+        IDBFactory.prototype.deleteDatabase = () => {
+          const request = { error: new DOMException("fixture", "UnknownError") };
+          queueMicrotask(() => {
+            if (type === "blocked") { request.onblocked(); setTimeout(() => request.onsuccess(), 50); }
+            else if (type === "error") request.onerror();
+            else request.onsuccess();
+          });
+          return request;
+        };
+        let settled = false;
+        const pending = deleteNamespace("a".repeat(16)).then(() => { settled = true; return "success"; }, () => { settled = true; return "error"; });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (type === "blocked") outcomes.push(settled ? "premature" : "waiting");
+        outcomes.push(await pending);
+      }
+    } finally { IDBFactory.prototype.deleteDatabase = original; }
+    return outcomes;
+  });
+  expect(result).toEqual(["error", "waiting", "success", "success"]);
+});
+
+test("Deleting a work waits for an in-flight cache write and leaves no restored files", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));
+  await page.goto("/");
+  await controlled(page);
+  await page.goto("/collections/1");
+  const worker = context.serviceWorkers()[0];
+  await worker.evaluate(() => {
+    const put = Cache.prototype.put;
+    let delayed = false;
+    Cache.prototype.put = async function (request, response) {
+      const url = new URL(typeof request === "string" ? request : request.url, self.location.origin);
+      if (!delayed && url.pathname.startsWith("/archive/posts/")) {
+        delayed = true;
+        self.pendingOfflinePut = true;
+        await new Promise((resolve) => { self.releaseOfflinePut = resolve; });
+      }
+      return put.call(this, request, response);
+    };
+  });
+  await page.locator("#offline-save").click();
+  await expect.poll(() => worker.evaluate(() => Boolean(self.pendingOfflinePut))).toBe(true);
+  await page.evaluate(async () => {
+    const { openStore } = await import("/store.js");
+    const store = await openStore("0123456789abcdef");
+    const [saved] = await store.getAll("offline");
+    store.close();
+    const channel = new MessageChannel();
+    window.deleteAcknowledged = false;
+    channel.port1.onmessage = ({ data }) => { window.deleteAcknowledged = data.ok; channel.port1.close(); };
+    navigator.serviceWorker.controller.postMessage({ type: "DELETE_OFFLINE", id: saved.workKey,
+      urls: saved.entries.map((entry) => entry.url) }, [channel.port2]);
+  });
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.deleteAcknowledged)).toBe(false);
+  await worker.evaluate(() => self.releaseOfflinePut());
+  await expect.poll(() => page.evaluate(() => window.deleteAcknowledged)).toBe(true);
+  await page.waitForTimeout(250);
+  expect((await cachedPaths(page))["offline-v1-0123456789abcdef"] ?? []).toEqual([]);
+});
+
+test("Clearing device records closes other tabs and discards their pending reading sessions", async ({ page, context }) => {
+  const owner = "0123456789abcdef";
+  await useLongCollection(context, 3);
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: owner }) }));
+  await page.goto("/");
+  await controlled(page);
+  const other = await context.newPage();
+  await other.goto("/read/board_a/2");
+  await expect(other.locator("#reader-title")).toHaveText("2편 제목");
+  await other.locator("#reader-pane").evaluate((element) => { element.scrollTop = 250; element.dispatchEvent(new Event("scroll")); });
+  await page.goto("/settings");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#clear-device").click();
+  await expect(page.locator("#aa-zoom-indicator")).toContainText("이 기기 기록을 지웠어요");
+  await other.goto("/");
+  const sessions = await page.evaluate(async (owner) => {
+    const { openStore } = await import("/store.js");
+    const store = await openStore(owner);
+    const records = await store.getAll("sessions");
+    store.close();
+    return records;
+  }, owner);
+  expect(sessions).toEqual([]);
+});
+
 test("A first visit directly to a work enables saving when the worker becomes ready", async ({ page, context }) => {
   await useLongCollection(context, 3);
   await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: "0123456789abcdef" }) }));

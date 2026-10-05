@@ -904,7 +904,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/aa-viewer.js",
-      "revision": "5582079c5862c0a6"
+      "revision": "4b642d7e9c4b23c5"
     },
     {
       "url": "/annotations.js",
@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "fcdc50af12427980"
+      "revision": "6c42f776126edd83"
     },
     {
       "url": "/arca-media.js",
@@ -1016,7 +1016,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/offline.js",
-      "revision": "b55e221951acba31"
+      "revision": "45ac8d3a12df58f5"
     },
     {
       "url": "/overlay-manager.js",
@@ -1068,11 +1068,11 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/store.js",
-      "revision": "bf5a3a95f508baf1"
+      "revision": "772216fb68643b85"
     },
     {
       "url": "/styles/aa.css",
-      "revision": "f5ff09ba5934838c"
+      "revision": "f674f20007dc5be0"
     },
     {
       "url": "/styles/base.css",
@@ -1104,7 +1104,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "65714d66148c4b44"
+      "revision": "d8f1a469b6a2c3c6"
     },
     {
       "url": "/text-model.js",
@@ -1128,7 +1128,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/user-state.js",
-      "revision": "9b36fc71dd316737"
+      "revision": "2d2e87f714df95a4"
     },
     {
       "url": "/work-header.js",
@@ -1188,9 +1188,19 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   };
   function ownedStrategy(Strategy, base, options = {}) {
     return async (context) => {
+      const started = cacheEpoch;
       const account = await ownerFor(context.event?.clientId);
-      if (account === "anon") return new B({ plugins: [guard] }).handle(context);
-      return new Strategy({ ...options, cacheName: named(base, account), plugins: [guard, ...options.plugins ?? []] }).handle(context);
+      if (account === "anon" || deletingOwners.has(account) || (deletedAt.get(account) ?? 0) > started) return new B({ plugins: [guard] }).handle(context);
+      const [response, done] = new Strategy({ ...options, cacheName: named(base, account), plugins: [guard, ...options.plugins ?? []] }).handleAll(context);
+      const tasks = ownedTasks.get(account) ?? /* @__PURE__ */ new Set();
+      ownedTasks.set(account, tasks);
+      const finished = done.catch(() => {
+      }).finally(() => {
+        tasks.delete(finished);
+        if (!tasks.size) ownedTasks.delete(account);
+      });
+      tasks.add(finished);
+      return response;
     };
   }
   function savedFirst(fallback) {
@@ -1235,70 +1245,133 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     }
     return await shellRequest() ?? Response.error();
   }, { denylist: [/^\/ops/, /^\/cdn-cgi\//] }));
-  var cancelled = /* @__PURE__ */ new Set();
-  async function saveOffline({ id, urls, requires = [] }, clientId) {
-    const account = await ownerFor(clientId);
-    const runKey = `${account}:${id}`;
-    cancelled.delete(runKey);
+  var saves = /* @__PURE__ */ new Map();
+  var ownedTasks = /* @__PURE__ */ new Map();
+  var deletingOwners = /* @__PURE__ */ new Set();
+  var cacheEpoch = 0;
+  var deletedAt = /* @__PURE__ */ new Map();
+  async function saveOffline({ id, urls, requires = [] }, clientId, account, task) {
     const cache = await caches.open(offlineCacheName(account));
     const statics = await caches.open("static-v");
     let done = 0;
     let failed = 0;
+    let requiredFailed = 0;
     let bytes = 0;
     const queue = [...urls];
-    const report = (type) => tell({ type, id, done, failed, total: urls.length, bytes }, clientId);
+    const report = (type) => tell({ type, id, done, failed, requiredFailed, total: urls.length, bytes }, clientId);
     async function take() {
-      while (queue.length && !cancelled.has(runKey)) {
+      while (queue.length && !task.cancelled) {
         const url = queue.shift();
         try {
           const cached = await cache.match(url);
           if (cached) {
             bytes += (await cached.clone().arrayBuffer()).byteLength;
           } else {
-            const response = await fetch(url, { credentials: "same-origin" });
+            const response = await fetch(url, { credentials: "same-origin", signal: task.controller.signal });
             if (response.status !== 200 || authFailure(new Request(url), response)) {
               if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url }, clientId);
               throw new Error(String(response.status));
             }
             bytes += (await response.clone().arrayBuffer()).byteLength;
-            if (cancelled.has(runKey)) break;
+            if (task.cancelled) break;
             await cache.put(url, response);
           }
           done += 1;
         } catch {
           failed += 1;
         }
-        report("offline-progress");
+        if (!task.cancelled) report("offline-progress");
       }
     }
     for (const url of requires) {
+      if (task.cancelled) break;
       try {
-        if (!await statics.match(url)) await statics.add(url);
+        const request = new Request(new URL(url, self.location.origin));
+        const response = await statics.match(request) ?? await fetch(request, { signal: task.controller.signal });
+        const javascript = new URL(request.url).pathname.endsWith(".js");
+        if (response.status !== 200 || authFailure(request, response) || javascript && !/^(?:text|application)\/(?:javascript|ecmascript)(?:;|$)/i.test(response.headers.get("Content-Type") ?? "")) {
+          throw new Error("Required asset unavailable");
+        }
+        if (!task.cancelled) await statics.put(request, response);
       } catch {
+        if (url.endsWith(".js") && !task.cancelled) requiredFailed += 1;
       }
     }
     await Promise.all(Array.from({ length: Math.min(4, urls.length) }, take));
-    report(cancelled.has(runKey) ? "offline-cancelled" : "offline-done");
+    report(task.cancelled ? "offline-cancelled" : "offline-done");
+  }
+  async function startSave(data, clientId) {
+    const started = cacheEpoch;
+    const account = await ownerFor(clientId);
+    if (deletingOwners.has(account) || (deletedAt.get(account) ?? 0) > started) {
+      tell({ type: "offline-cancelled", id: data.id, done: 0, failed: 0, total: data.urls.length, bytes: 0 }, clientId);
+      return;
+    }
+    const key = `${account}:${data.id}`;
+    const previous = saves.get(key);
+    if (previous) {
+      previous.cancelled = true;
+      previous.controller.abort();
+    }
+    const task = { cancelled: false, controller: new AbortController() };
+    saves.set(key, task);
+    task.promise = (async () => {
+      await previous?.promise.catch(() => {
+      });
+      if (task.cancelled || deletingOwners.has(account)) return;
+      await saveOffline(data, clientId, account, task);
+    })().finally(() => {
+      if (saves.get(key) === task) saves.delete(key);
+    });
+    return task.promise;
+  }
+  async function cancelSave(key) {
+    const task = saves.get(key);
+    if (!task) return;
+    task.cancelled = true;
+    task.controller.abort();
+    await task.promise.catch(() => {
+    });
   }
   async function deleteOffline({ id, urls }, clientId) {
     const account = await ownerFor(clientId);
-    cancelled.add(`${account}:${id}`);
+    await cancelSave(`${account}:${id}`);
     const cache = await caches.open(offlineCacheName(account));
     await Promise.all(urls.map((url) => cache.delete(url)));
     tell({ type: "offline-deleted", id }, clientId);
   }
   self.addEventListener("message", (event) => {
     const data = event.data ?? {};
+    const complete = (work) => event.waitUntil(Promise.resolve(work).then(
+      () => event.ports[0]?.postMessage({ ok: true }),
+      (error) => event.ports[0]?.postMessage({ ok: false, error: String(error) })
+    ));
     if (data.type === "SAVE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
-      event.waitUntil(saveOffline(data, event.source?.id));
+      event.waitUntil(startSave(data, event.source?.id));
       return;
     }
     if (data.type === "DELETE_OFFLINE" && typeof data.id === "string" && Array.isArray(data.urls)) {
-      event.waitUntil(deleteOffline(data, event.source?.id));
+      complete(deleteOffline(data, event.source?.id));
       return;
     }
     if (data.type === "CANCEL_OFFLINE" && typeof data.id === "string") {
-      event.waitUntil(ownerFor(event.source?.id).then((account) => cancelled.add(`${account}:${data.id}`)));
+      complete(ownerFor(event.source?.id).then((account) => cancelSave(`${account}:${data.id}`)));
+      return;
+    }
+    if (data.type === "RESET_OWNER" && /^[a-f0-9]{16}$/.test(data.owner ?? "")) {
+      complete((async () => {
+        const account = data.owner;
+        deletingOwners.add(account);
+        deletedAt.set(account, ++cacheEpoch);
+        tell({ type: "offline-owner-reset", owner: account, records: data.records === true });
+        try {
+          await Promise.all([...saves.keys()].filter((key) => key.startsWith(`${account}:`)).map(cancelSave));
+          await Promise.all(ownedTasks.get(account) ?? []);
+          for (const name of await caches.keys()) if (name.endsWith(`-${account}`)) await caches.delete(name);
+        } finally {
+          deletingOwners.delete(account);
+        }
+      })());
       return;
     }
     if (data.type === "SET_OWNER" && /^(?:[a-f0-9]{16}|anon)$/.test(data.owner ?? "")) {

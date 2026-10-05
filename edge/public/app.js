@@ -1,5 +1,7 @@
 import {
   STATE_KEY,
+  claimLegacyOwner,
+  stateStorageKey,
   defaultUserState,
   exportUserState,
   mergeAnnotationRecords,
@@ -11,6 +13,7 @@ import {
   planImport,
   postIdentity,
   readingLocationFields,
+  readBackupText,
   sanitizeBookmarkMetadata,
   samePost,
   serializeUserState,
@@ -61,7 +64,7 @@ import { charactersRead, closeSpans, dailyReading, extendSpans, finishedWorks, l
 import { createLocator, createTextModel, decodeLocator, encodeLocator, modelOffset, modelPosition } from "/text-model.js";
 import { renderSVG } from "/vendor/uqr@0.1.3/uqr.js";
 import { autoUpdate, computePosition, flip, hide, inline, offset, shift } from "/vendor/floating-ui-dom@1.8.0/floating-ui.js";
-import { clampAaZoom, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "/aa-viewer.js";
+import { clampAaZoom, createAaPan, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "/aa-viewer.js";
 import { anchorLeft, capturePagedAnchor, pageAt, pageCount, pageGeometry, swipeTarget } from "/reader-modes.js";
 import { createContinuousReader } from "/continuous-reader.js";
 import UFuzzy from "/vendor/leeoniya-ufuzzy@1.0.19/ufuzzy.js";
@@ -139,6 +142,9 @@ overlays.watchFullscreen(document);
 
 const RESULT_PAGE_SIZE = 100;
 
+let stateOwner = null;
+try { stateOwner = localStorage.getItem("redstm.owner.v1"); } catch { /* storage blocked */ }
+const stateKey = (key) => stateStorageKey(key, stateOwner);
 let userState = loadUserState();
 // What this tab last wrote to localStorage, to tell another tab's save from our own echo.
 let lastStoredState = null;
@@ -261,6 +267,7 @@ const textLibrary = createTextLibrary({
     keepContinuousPosition: () => continuous.transitioning,
     cancelPendingWork: () => readerSession.cancelPendingWork(),
     mirrorState: (raw) => mirrorState(TEXT_STATE_KEY, raw),
+    stateKey: () => stateKey(TEXT_STATE_KEY),
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
@@ -427,9 +434,10 @@ function readJson(key, fallback) {
 }
 
 function loadUserState() {
-  const stored = readJson(STATE_KEY, null);
+  const stored = readJson(stateKey(STATE_KEY), null);
   try {
     if (stored) return planImport(JSON.stringify(stored), defaultSettings).state;
+    if (stateKey(STATE_KEY) !== STATE_KEY) return defaultUserState(defaultSettings);
     return migrateLegacyState({
       settings: readJson(storageKeys.settings, defaultSettings),
       history: readJson(storageKeys.history, []),
@@ -509,9 +517,9 @@ function persistUserState() {
   let serialized;
   try {
     serialized = serializeUserState(userState);
-    localStorage.setItem(STATE_KEY, serialized);
+    localStorage.setItem(stateKey(STATE_KEY), serialized);
     lastStoredState = serialized;
-    for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
+    if (stateKey(STATE_KEY) === STATE_KEY) for (const key of Object.values(storageKeys)) localStorage.removeItem(key);
     // A save that works again clears an earlier failure notice.
     delete elements["archive-state"].dataset.storageFailed;
     if (elements["archive-state"].textContent === "로컬 저장 실패" && archiveReady) {
@@ -552,7 +560,7 @@ function adoptStoredState(serialized) {
 }
 
 window.addEventListener("storage", (event) => {
-  if (event.key === STATE_KEY) adoptStoredState(event.newValue);
+  if (event.key === stateKey(STATE_KEY)) adoptStoredState(event.newValue);
 });
 
 function saveSettings() {
@@ -850,6 +858,11 @@ function aaScroller() {
 // How far the AA scroller goes sideways. Measured when the size or zoom changes (here), never per
 // scroll event: a fling fires one per frame, and each measure, class toggle and custom-property
 // write there cost the main thread a style pass over a large AA body.
+const aaPan = createAaPan(elements["archive-body"], {
+  enabled: () => currentMode === "aa" && document.body.classList.contains("reader-open"),
+  scrollers: () => ({ horizontal: aaScroller(), vertical: document.fullscreenElement === elements["aa-host"] ? elements["aa-host"] : elements["reader-pane"] }),
+  onMove: () => readerSession.markUserScroll(),
+});
 let aaPanMax = 0;
 let aaScrollFrame = 0;
 function updateAaOverflowCue(showHint = false) {
@@ -956,6 +969,7 @@ function updateAaMinimap() {
 }
 
 function setAaZoom(value, debounce = false, { remember = true, fit = false } = {}) {
+  aaPan.cancel();
   const zoom = clampAaZoom(value);
   if (!currentAaKey()) settings.aaZoom = zoom;
   else if (remember) rememberAaView({ zoom, fit: fit || undefined });
@@ -1890,6 +1904,11 @@ function renderRemainingTime(progress) {
 // last line behind the tools.
 function scrubTo(ratio) {
   readerSession.markUserScroll();
+  if (paged.active) {
+    turnPage(Math.round(Math.max(0, Math.min(1, ratio)) * (paged.pages - 1)));
+    renderRemainingTime(bodyProgress());
+    return;
+  }
   const pane = elements["reader-pane"];
   const body = elements["archive-body"];
   const span = body.offsetTop + body.offsetHeight - pane.clientHeight;
@@ -4130,6 +4149,7 @@ function searchAuthor(author) {
 }
 
 function renderPostBody() {
+  aaPan.cancel();
   const post = currentPayload.post;
   const identity = `${post.board_id}:${post.external_post_id}`;
   const override = settings.viewModes[identity];
@@ -5699,6 +5719,7 @@ elements["aa-fullscreen"].addEventListener("click", async () => {
   } catch { /* the full screen stays without turning */ }
 });
 document.addEventListener("fullscreenchange", () => {
+  aaPan.cancel();
   const active = document.fullscreenElement === elements["aa-host"];
   elements["aa-fullscreen"].setAttribute("aria-pressed", String(active));
   // A phone shows only the ⟲ icon (aa.css hides the word); the name stays for screen readers.
@@ -5771,6 +5792,16 @@ function ownerIdentity() {
       if (hash && previous && previous !== hash) setOtherOwners([...otherOwners(), previous]);
       if (hash) setOtherOwners(otherOwners().filter((value) => value !== hash));
       if (hash) {
+        await claimLegacyOwner(hash);
+        const switched = stateOwner && stateOwner !== hash;
+        stateOwner = hash;
+        if (switched) {
+          mirrorQueue.clear();
+          lastStoredState = null;
+          applyUserState(loadUserState());
+          textLibrary.adoptState(readJson(stateKey(TEXT_STATE_KEY), { schema_version: 1, history: {}, bookmarks: {} }));
+          applySettings();
+        }
         try {
           localStorage.setItem(OWNER_KEY, hash);
         } catch { /* offline starts will not find the owner */ }
@@ -5787,7 +5818,7 @@ function ownerIdentity() {
 
 function localRaw(key) {
   try {
-    return localStorage.getItem(key);
+    return localStorage.getItem(stateKey(key));
   } catch {
     return null;
   }
@@ -5818,7 +5849,7 @@ function restoreMirroredStates() {
       const local = localRaw(key);
       if (!copy || copy.raw === local || (local !== null && local !== copy.sourceRaw)) continue;
       try {
-        localStorage.setItem(key, copy.raw);
+        localStorage.setItem(stateKey(key), copy.raw);
       } catch { /* the copy still applies to this page */ }
       if (key === STATE_KEY) adoptStoredState(copy.raw);
       else textLibrary.adoptState(JSON.parse(copy.raw));
@@ -5831,6 +5862,16 @@ function restoreMirroredStates() {
 // Why the owner's store is not open, so 기록 can say what to do: "identity" (the account was not
 // confirmed — sign in again) or "storage" (this browser refused IndexedDB).
 let ownerStoreProblem = null;
+let deviceResetting = false;
+let deviceGeneration = 0;
+function discardDeviceSession() {
+  deviceResetting = true;
+  deviceGeneration += 1;
+  readingSession = null;
+  clearTimeout(sessionTimer);
+  offlineRuns.clear();
+  mirrorQueue.clear();
+}
 function recordsUnavailableText() {
   return ownerStoreProblem === "identity"
     ? "로그인을 확인하지 못해 기록을 열 수 없습니다. 새로 고침하거나 다시 로그인해 주세요."
@@ -5838,15 +5879,23 @@ function recordsUnavailableText() {
 }
 
 function ownerStore() {
+  if (deviceResetting) return Promise.resolve(null);
+  const generation = deviceGeneration;
   ownerDb ??= ownerIdentity()
     .then((hash) => {
+      if (generation !== deviceGeneration || deviceResetting) return null;
       if (!hash) ownerStoreProblem = "identity";
       // A newer tab upgraded the schema and closed this connection: the next use opens again.
-      return hash ? openStore(hash, { onClosed: () => { ownerDb = null; } }) : null;
+      return hash ? openStore(hash, { onClosed: (reason) => {
+        ownerDb = null;
+        if (reason === "deleted") discardDeviceSession();
+      } }) : null;
     })
     .then(async (store) => {
       if (!store) return null;
+      if (generation !== deviceGeneration || deviceResetting) { store.close(); return null; }
       annotationRecords = await store.getAll("annotations");
+      if (generation !== deviceGeneration || deviceResetting) { store.close(); return null; }
       // Another tab's change arrives here too.
       store.subscribe(async ({ keys } = {}) => {
         // Mirrored reading states (P6-6) are not records.
@@ -6297,6 +6346,7 @@ function startReadingSession() {
   const progress = bodyProgress();
   readingSession = {
     id: crypto.randomUUID(), workKey: sessionWorkKey(), documentId: readerSession.documentKey, day: localDay(Date.now()),
+    generation: deviceGeneration,
     start: Date.now(), spans: [], length: elements["archive-body"].textContent.length, from: progress, furthest: progress, endOfWork: false,
   };
 }
@@ -6322,9 +6372,10 @@ function sessionRecord(session, deviceId, now = Date.now()) {
 }
 
 async function saveReadingSession(session) {
-  if (!session?.spans.length) return;
+  if (!session?.spans.length || session.generation !== deviceGeneration) return;
+  const generation = deviceGeneration;
   const store = await ownerStore();
-  if (!store) return;
+  if (!store || generation !== deviceGeneration || deviceResetting) return;
   try {
     await store.commit([{ store: "sessions", value: sessionRecord(session, store.deviceId) }]);
   } catch { /* the next pause tries again */ }
@@ -6508,7 +6559,7 @@ function renderOfflineControl() {
   } else {
     save.hidden = false;
     save.textContent = "이어서 내려받기";
-    state.textContent = stored.failed
+    state.textContent = stored.requiredFailed ? "앱 파일 일부를 내려받지 못함 · 이어서 내려받아 주세요" : stored.failed
       ? `일부만 내려받음 · ${stored.done}/${stored.entries.length}편 (${stored.failed}편 실패)`
       : `내려받기 중단됨 · ${stored.done}/${stored.entries.length}편`;
   }
@@ -6561,11 +6612,15 @@ elements["offline-save"].addEventListener("click", async () => {
 elements["offline-delete"].addEventListener("click", async () => {
   const snapshot = offlineWork;
   if (!snapshot?.stored) return;
-  offline.remove(snapshot.workKey, snapshot.stored.entries.map((entry) => entry.url));
-  const store = await ownerStore();
   try {
-    await store?.commit([{ store: "offline", key: snapshot.workKey, value: null }]);
-  } catch { /* the files are gone; the record is retried on the next delete */ }
+    const store = await ownerStore();
+    if (!store) throw new Error("기록 저장소 없음");
+    await offline.remove(snapshot.workKey, snapshot.stored.entries.map((entry) => entry.url));
+    await store.commit([{ store: "offline", key: snapshot.workKey, value: null }]);
+  } catch {
+    showReaderFeedback("지우지 못했어요 · 다시 시도해 주세요", 2400);
+    return;
+  }
   offlineWork = { ...snapshot, stored: null };
   renderOfflineControl();
   showReaderFeedback("이 기기에서 지웠어요");
@@ -6574,6 +6629,18 @@ elements["offline-delete"].addEventListener("click", async () => {
 
 // Worker progress: the header follows it; the end (done, partial or stopped) is recorded.
 async function offlineProgress(message) {
+  if (message.type === "offline-owner-reset") {
+    if (message.owner !== await ownerIdentity()) return;
+    if (message.records && !deviceResetting) {
+      const pendingStore = ownerDb;
+      discardDeviceSession();
+      (await pendingStore)?.close();
+      ownerDb = null;
+    }
+    offlineRuns.clear();
+    renderOfflineControl();
+    return;
+  }
   const run = offlineRuns.get(message.id);
   if (message.type === "offline-progress" && run) {
     Object.assign(run, { done: message.done, failed: message.failed, total: message.total });
@@ -6582,8 +6649,8 @@ async function offlineProgress(message) {
     const store = await ownerStore();
     const stored = await store?.get("offline", message.id);
     if (stored) {
-      const finished = { ...stored, done: message.done, failed: message.failed, bytes: message.bytes,
-        state: message.type === "offline-done" && !message.failed && message.done === stored.entries.length ? "complete" : message.failed ? "partial" : "interrupted" };
+      const finished = { ...stored, done: message.done, failed: message.failed, requiredFailed: message.requiredFailed ?? 0, bytes: message.bytes,
+        state: message.type === "offline-done" && !message.failed && !message.requiredFailed && message.done === stored.entries.length ? "complete" : message.failed || message.requiredFailed ? "partial" : "interrupted" };
       if (!(await writeSnapshot(finished))) { renderOfflineControl(); return; }
       if (offlineWork?.workKey === message.id) offlineWork = { ...offlineWork, stored: finished };
     }
@@ -6651,7 +6718,15 @@ document.querySelector("#auth-saved").addEventListener("click", () => {
 });
 document.querySelector("#other-account-delete").addEventListener("click", async () => {
   const owner = await ownerIdentity();
-  for (const other of otherOwners()) if (other !== owner) await deleteNamespace(other);
+  try {
+    for (const other of otherOwners()) if (other !== owner) {
+      await offline.resetOwner(other, { records: true });
+      await deleteNamespace(other);
+    }
+  } catch {
+    showReaderFeedback("지우지 못했어요 · 다른 탭을 닫고 다시 시도해 주세요", 2400);
+    return;
+  }
   setOtherOwners([]);
   elements["other-account"].hidden = true;
   showReaderFeedback("다른 계정 기록을 지웠어요");
@@ -6662,13 +6737,22 @@ document.querySelector("#clear-device").addEventListener("click", async () => {
   if (!confirm("이 기기의 표시·메모·독서 기록·내려받은 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
   const owner = await ownerIdentity();
   const store = await ownerStore();
-  store?.close();
-  ownerDb = null;
-  annotationRecords = [];
-  paintAnnotations();
-  if (owner) await deleteNamespace(owner);
-  showReaderFeedback("이 기기 기록을 지웠어요");
-  void renderOfflineStorage();
+  if (!owner) return showReaderFeedback("로그인을 확인한 뒤 다시 시도해 주세요", 2400);
+  discardDeviceSession();
+  try {
+    await offline.resetOwner(owner, { records: true });
+    store?.close();
+    ownerDb = null;
+    await deleteNamespace(owner);
+    annotationRecords = [];
+    paintAnnotations();
+    showReaderFeedback("이 기기 기록을 지웠어요");
+  } catch {
+    showReaderFeedback("지우지 못했어요 · 다른 탭을 닫고 다시 시도해 주세요", 2400);
+  } finally {
+    deviceResetting = false;
+    statesRestored = null;
+  }
 });
 
 // ---- 다른 기기에서 (docs/24 P5-1) ---------------------------------------------------------------
@@ -7011,12 +7095,7 @@ async function applyImport(merge) {
 }
 // A backup is gzip (.json.gz, v4) or plain JSON (v1–v3, or where CompressionStream was missing).
 async function backupText(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new TextDecoder().decode(bytes);
-  if (typeof DecompressionStream !== "function") throw new Error("이 브라우저는 압축된 백업을 열 수 없습니다");
-  const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-  if (text.length > 64 * 1_048_576) throw new Error("백업을 풀면 64MB를 넘습니다");
-  return text;
+  return readBackupText(file);
 }
 
 // Marks, notes and sessions are always merged (T22): a deletion stays deleted, the later edit

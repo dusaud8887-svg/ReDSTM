@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampAaZoom, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "../public/aa-viewer.js";
+import { aaInertiaStep, clampAaZoom, createTapJudge, fitAaZoomValue, isSceneHeader, minimapScroll, minimapWindow, pinchAaZoom, sceneAt, sceneTarget, sceneY, scrollKeepingPoint } from "../public/aa-viewer.js";
+
+test("AA inertia preserves direction and distance across frame rates", () => {
+  const whole = aaInertiaStep(1.2, .8, 480);
+  for (const dt of [8, 16, 24, 48]) {
+    let vx = 1.2;
+    let vy = .8;
+    let x = 0;
+    let y = 0;
+    for (let elapsed = 0; elapsed < 480; elapsed += dt) {
+      const step = aaInertiaStep(vx, vy, dt);
+      x += step.x;
+      y += step.y;
+      vx = step.vx;
+      vy = step.vy;
+      assert.ok(Math.abs(vx / vy - 1.5) < 1e-10);
+    }
+    assert.ok(Math.abs(x - whole.x) < 1e-10);
+    assert.ok(Math.abs(y - whole.y) < 1e-10);
+  }
+});
 
 test("AA zoom keeps its 10–300% range and three decimals", () => {
   assert.equal(clampAaZoom(0.01), 0.1);

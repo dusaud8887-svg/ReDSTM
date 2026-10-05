@@ -6,7 +6,7 @@ export default [
   },
   {
     "url": "/aa-viewer.js",
-    "revision": "5582079c5862c0a6"
+    "revision": "4b642d7e9c4b23c5"
   },
   {
     "url": "/annotations.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "fcdc50af12427980"
+    "revision": "6c42f776126edd83"
   },
   {
     "url": "/arca-media.js",
@@ -118,7 +118,7 @@ export default [
   },
   {
     "url": "/offline.js",
-    "revision": "b55e221951acba31"
+    "revision": "45ac8d3a12df58f5"
   },
   {
     "url": "/overlay-manager.js",
@@ -170,11 +170,11 @@ export default [
   },
   {
     "url": "/store.js",
-    "revision": "bf5a3a95f508baf1"
+    "revision": "772216fb68643b85"
   },
   {
     "url": "/styles/aa.css",
-    "revision": "f5ff09ba5934838c"
+    "revision": "f674f20007dc5be0"
   },
   {
     "url": "/styles/base.css",
@@ -206,7 +206,7 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "65714d66148c4b44"
+    "revision": "d8f1a469b6a2c3c6"
   },
   {
     "url": "/text-model.js",
@@ -230,7 +230,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "9b36fc71dd316737"
+    "revision": "2d2e87f714df95a4"
   },
   {
     "url": "/work-header.js",

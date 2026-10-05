@@ -49,9 +49,9 @@ function shortDate(value) {
   return (date.getFullYear() === new Date().getFullYear() ? dateLabel : yearDateLabel).format(date);
 }
 
-function readState() {
+function readState(key = STATE_KEY) {
   try {
-    const saved = JSON.parse(localStorage.getItem(STATE_KEY) || "null");
+    const saved = JSON.parse(localStorage.getItem(key) || "null");
     if (saved?.schema_version === 1 && saved.history && saved.bookmarks) return saved;
   } catch { /* use an empty local state */ }
   return { schema_version: 1, history: {}, bookmarks: {} };
@@ -70,7 +70,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   const list = document.querySelector("#result-list");
   const status = document.querySelector("#result-status");
   const search = document.querySelector("#search-input");
-  const history = readState();
+  const stateKey = () => shell.stateKey?.() ?? STATE_KEY;
+  const history = readState(stateKey());
   const shelvesAdded = ensureShelves(history) | compactTextHistory(history.history);
   const catalogs = new Map();
   const details = new Map();
@@ -129,7 +130,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     try {
       trimTextState(history, TEXT_STATE_CHARS);
       raw = JSON.stringify(history);
-      localStorage.setItem(STATE_KEY, raw);
+      localStorage.setItem(stateKey(), raw);
       if (archiveState) delete archiveState.dataset.storageFailed;
       if (archiveState?.textContent === "로컬 저장 실패") archiveState.textContent = "보존본";
     } catch (error) {
@@ -145,7 +146,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   // Another tab saved text reading state: take it over (every save writes the whole object, so
   // keeping the old copy would erase that tab's records on this tab's next save).
   window.addEventListener("storage", (event) => {
-    if (event.key === STATE_KEY && event.newValue) adoptState(readState());
+    if (event.key === stateKey() && event.newValue) adoptState(readState(stateKey()));
   });
 
   // Also a restored idb copy (P6-6).

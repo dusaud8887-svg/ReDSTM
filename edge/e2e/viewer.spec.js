@@ -2297,3 +2297,59 @@ test("search suggests works for partial, typo and Latin-key input and opens one"
   await panel.locator(".suggest-row").first().click();
   await expect(page).toHaveURL(/\/collections\//);
 });
+
+
+test("AA touch pan follows both axes when a horizontal drag becomes diagonal", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.route(`**/archive/${aaKey}`, (route) => {
+    const payload = aaPostPayload(1, "대각선");
+    payload.post.body_html = `<div class="AA_Text">${Array.from({ length: 180 }, () => `<p>${"＿".repeat(240)}</p>`).join("")}</div>`;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await openPost(page, aaKey);
+  await page.locator("#aa-zoom-reset").click();
+  const pane = page.locator("#reader-pane");
+  await pane.evaluate((element) => { element.scrollLeft = 300; element.scrollTop = 500; });
+  await page.waitForTimeout(100);
+  const before = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
+  const box = await pane.boundingBox();
+  const x = box.x + box.width * .65;
+  const y = box.y + box.height * .55;
+  const client = await page.context().newCDPSession(page);
+  const touch = (type, px, py) => client.send("Input.dispatchTouchEvent", {
+    type, touchPoints: type === "touchEnd" ? [] : [{ x: px, y: py, radiusX: 1, radiusY: 1 }],
+  });
+  await touch("touchStart", x, y);
+  for (let i = 1; i <= 8; i++) {
+    await touch("touchMove", x - i * 15, y - Math.max(0, i - 2) * 10);
+    await page.waitForTimeout(16);
+  }
+  const after = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
+  await touch("touchEnd", 0, 0);
+  expect(after.x - before.x).toBeGreaterThan(80);
+  expect(after.y - before.y).toBeGreaterThan(45);
+  await page.waitForTimeout(120);
+  const coasting = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
+  expect(coasting.x - after.x).toBeGreaterThan(10);
+  expect(coasting.y - after.y).toBeGreaterThan(10);
+  // A new finger stops the fling immediately, including while held still.
+  await touch("touchStart", x, y);
+  const stopped = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
+  await page.waitForTimeout(160);
+  expect(await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }))).toEqual(stopped);
+  await touch("touchEnd", 0, 0);
+  await pane.evaluate((element) => { element.scrollLeft = element.scrollWidth - element.clientWidth - 20; element.scrollTop = 500; });
+  await page.waitForTimeout(50);
+  await touch("touchStart", x, y);
+  for (let i = 1; i <= 6; i++) {
+    await touch("touchMove", x - i * 12, y - i * 12);
+    await page.waitForTimeout(16);
+  }
+  await touch("touchEnd", 0, 0);
+  const edge = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop, max: element.scrollWidth - element.clientWidth }));
+  await page.waitForTimeout(120);
+  const following = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
+  expect(Math.abs(edge.x - edge.max)).toBeLessThanOrEqual(1);
+  expect(following.x).toBe(edge.x);
+  expect(following.y - edge.y).toBeGreaterThan(10);
+});

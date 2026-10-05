@@ -53,6 +53,37 @@ test("P6-6 state migration preserves source bytes and rollback, bounds pending s
 });
 
 const OWNER = "0123456789abcdef";
+
+test("Switching accounts isolates legacy reading state and subsequent saves", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  const first = "0123456789abcdef";
+  const second = "fedcba9876543210";
+  let owner = first;
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: owner }) }));
+  await page.goto("/read/board_a/2");
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: ["board_a:2"] });
+  owner = second;
+  const other = await context.newPage();
+  await other.goto("/saved?view=reading");
+  await expect(other.locator("#archive-state")).toHaveText("보존본");
+  const historyOf = (target, owner) => target.evaluate(async (owner) => {
+    const { openStore } = await import("/store.js");
+    const store = await openStore(owner);
+    const copy = await store.get("meta", "legacy:redstm.userState.v2");
+    const outbox = await store.getAll("outbox");
+    store.close();
+    return { history: Object.keys(JSON.parse(copy?.raw ?? '{"history":{}}').history), foreign: outbox.some((op) => op.value?.history?.["board_a:2"]) };
+  }, owner);
+  await expect.poll(() => historyOf(other, second)).toEqual({ history: [], foreign: false });
+  await other.goto("/read/board_a/3");
+  await expect.poll(() => historyOf(other, second)).toEqual({ history: ["board_a:3"], foreign: false });
+  // The first tab still writes only its own key after another tab signs in as a different owner.
+  await page.locator("#reader-pane").evaluate((element) => { element.scrollTop = 300; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: ["board_a:2"] });
+  owner = first;
+  await page.goto("/saved?view=reading");
+  await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: ["board_a:2"] });
+});
 const KEY = "redstm.userState.v2";
 const stateCopy = (page) => page.evaluate(async ([owner, key]) => {
   const { openStore } = await import("/store.js");

@@ -1,3 +1,5 @@
+import { claimLegacyOwner, stateStorageKey } from "./user-state.js";
+
 const KEYS = { annotations: "id", sessions: "id", works: "workKey", offline: "workKey", meta: "key" };
 
 export function storeName(ownerHash) {
@@ -111,10 +113,10 @@ export async function openStore(ownerHash, { onClosed } = {}) {
     },
     // Another tab needs a newer schema: let it upgrade. This connection is gone for good, so the
     // store reports it (onClosed) and the app opens a fresh one on its next use.
-    blocking() {
+    blocking(_currentVersion, blockedVersion) {
       db.close();
       closed = true;
-      onClosed?.();
+      onClosed?.(blockedVersion === null ? "deleted" : "upgraded");
     },
   });
   const tx = db.transaction("meta", "readwrite");
@@ -177,21 +179,22 @@ export async function openStore(ownerHash, { onClosed } = {}) {
       return operations;
     },
     readLegacy(key, fallback = null) {
-      try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+      try { return JSON.parse(localStorage.getItem(stateStorageKey(key, ownerHash))) ?? fallback; } catch { return fallback; }
     },
     async writeLegacy(key, value) {
       const raw = JSON.stringify(value);
       if (typeof raw !== "string") throw new TypeError("JSON 기록이 필요합니다");
       // Keep the existing localStorage key and bytes, even if the IDB/outbox write fails.
       await locked(async () => {
-        localStorage.setItem(key, raw);
+        await claimLegacyOwner(ownerHash);
+        localStorage.setItem(stateStorageKey(key, ownerHash), raw);
         await bridgeLegacy({ key, raw, updatedAt: value?.updatedAt || new Date().toISOString() });
       });
       notify([key]);
     },
     // sourceRaw: the localStorage bytes when this state was saved (a queued write must not record
     // a later localStorage value as the one it supersedes).
-    async writeState(key, raw, sourceRaw = localStorage.getItem(key) ?? raw) {
+    async writeState(key, raw, sourceRaw = localStorage.getItem(stateStorageKey(key, ownerHash)) ?? raw) {
       if (!["redstm.userState.v2", "redstm.textState.v1"].includes(key) || typeof raw !== "string") throw new TypeError("잘못된 읽기 상태");
       const value = JSON.parse(raw);
       if (value?.schema_version !== (key === "redstm.userState.v2" ? 2 : 1)) throw new TypeError("지원하지 않는 읽기 상태");
@@ -199,11 +202,12 @@ export async function openStore(ownerHash, { onClosed } = {}) {
       notify([key]);
     },
     async reconcileLegacy(keys) {
+      await claimLegacyOwner(ownerHash);
       return locked(async () => {
         const records = [];
         const committed = new Map();
         for (const key of keys) {
-          const raw = localStorage.getItem(key);
+          const raw = localStorage.getItem(stateStorageKey(key, ownerHash));
           if (raw === null) continue;
           const value = JSON.parse(raw);
           records.push({ key, raw, updatedAt: value?.updatedAt || "" });
@@ -221,6 +225,7 @@ export async function openStore(ownerHash, { onClosed } = {}) {
       return () => events.removeEventListener("change", listener);
     },
     close() {
+      closed = true;
       channel?.close();
       globalThis.removeEventListener("storage", storageChanged);
       db.close();

@@ -95,3 +95,85 @@ export function sceneTarget(tops, y, direction) {
   if (direction > 0) return current + 1 < tops.length ? current + 1 : -1;
   return tops[current] < y - SCENE_SLACK ? current : current - 1;
 }
+
+
+// The same time-based decay on both axes preserves a fling's angle at any frame rate.
+export function aaInertiaStep(vx, vy, milliseconds) {
+  const decay = Math.exp(-milliseconds / 240);
+  return { x: vx * 240 * (1 - decay), y: vy * 240 * (1 - decay), vx: vx * decay, vy: vy * decay };
+}
+
+// Native touch scrolling can lock a gesture to its first axis even in a two-axis scroller.
+// Keep single-finger AA pans as one vector; two fingers remain the existing pinch gesture.
+export function createAaPan(element, { enabled, scrollers, onMove = () => {} }) {
+  let drag = null;
+  let frame = 0;
+  function cancel() {
+    drag = null;
+    cancelAnimationFrame(frame);
+    frame = 0;
+  }
+  function moveBy(targets, dx, dy) {
+    const { horizontal, vertical } = targets;
+    const x = horizontal.scrollLeft;
+    const y = vertical.scrollTop;
+    const left = Math.max(0, Math.min(horizontal.scrollWidth - horizontal.clientWidth, x + dx));
+    const top = Math.max(0, Math.min(vertical.scrollHeight - vertical.clientHeight, y + dy));
+    horizontal.scrollLeft = left;
+    vertical.scrollTop = top;
+    return { x: horizontal.scrollLeft - x, y: vertical.scrollTop - y, hitX: left !== x + dx, hitY: top !== y + dy };
+  }
+  element.addEventListener("touchstart", (event) => {
+    cancel();
+    if (!enabled() || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    drag = { id: touch.identifier, x: touch.clientX, y: touch.clientY, time: event.timeStamp,
+      startX: touch.clientX, startY: touch.clientY, vx: 0, vy: 0, moving: false, targets: scrollers() };
+  }, { passive: true });
+  element.addEventListener("touchmove", (event) => {
+    if (!drag) return;
+    if (!enabled() || event.touches.length !== 1 || String(getSelection() ?? "")) return cancel();
+    const touch = Array.from(event.touches).find((point) => point.identifier === drag.id);
+    if (!touch) return cancel();
+    if (!drag.moving && Math.hypot(touch.clientX - drag.startX, touch.clientY - drag.startY) < 5) return;
+    drag.moving = true;
+    event.preventDefault();
+    const dt = Math.max(1, event.timeStamp - drag.time);
+    const moved = moveBy(drag.targets, drag.x - touch.clientX, drag.y - touch.clientY);
+    const blend = 1 - Math.exp(-dt / 45);
+    drag.vx += (moved.x / dt - drag.vx) * blend;
+    drag.vy += (moved.y / dt - drag.vy) * blend;
+    if (moved.hitX) drag.vx = 0;
+    if (moved.hitY) drag.vy = 0;
+    drag.x = touch.clientX;
+    drag.y = touch.clientY;
+    drag.time = event.timeStamp;
+    onMove();
+  }, { passive: false });
+  element.addEventListener("touchend", (event) => {
+    const released = drag;
+    drag = null;
+    if (!released?.moving || event.touches.length || event.timeStamp - released.time > 80 ||
+        matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const speed = Math.hypot(released.vx, released.vy);
+    const scale = Math.min(1, 4 / Math.max(speed, .001));
+    let vx = released.vx * scale;
+    let vy = released.vy * scale;
+    let previous = performance.now();
+    const tick = (now) => {
+      frame = 0;
+      if (!enabled() || !element.isConnected || now - previous > 100) return;
+      const step = aaInertiaStep(vx, vy, now - previous);
+      previous = now;
+      const moved = moveBy(released.targets, step.x, step.y);
+      vx = moved.hitX ? 0 : step.vx;
+      vy = moved.hitY ? 0 : step.vy;
+      onMove();
+      if (Math.hypot(vx, vy) > .02) frame = requestAnimationFrame(tick);
+    };
+    if (speed > .02) frame = requestAnimationFrame(tick);
+  }, { passive: true });
+  element.addEventListener("touchcancel", cancel, { passive: true });
+  element.addEventListener("wheel", cancel, { passive: true });
+  return { cancel };
+}

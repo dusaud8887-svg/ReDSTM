@@ -4,6 +4,52 @@ import { sanitizeLocator } from "./text-model.js";
 
 export const STATE_KEY = "redstm.userState.v2";
 
+export function stateStorageKey(key, owner) {
+  if (!owner) return key;
+  const legacyOwner = localStorage.getItem("redstm.legacyOwner.v1");
+  return !legacyOwner || legacyOwner === owner ? key : `${key}:${owner}`;
+}
+
+export async function claimLegacyOwner(owner) {
+  const claim = () => {
+    if (!localStorage.getItem("redstm.legacyOwner.v1")) {
+      const previous = localStorage.getItem("redstm.owner.v1");
+      localStorage.setItem("redstm.legacyOwner.v1", /^[a-f0-9]{16}$/.test(previous ?? "") ? previous : owner);
+    }
+  };
+  if (navigator.locks?.request) await navigator.locks.request("redstm-legacy-owner", claim);
+  else claim();
+}
+
+// Count decoded bytes while reading, before retaining an oversized gzip expansion in memory.
+export async function readBackupText(file, limit = 64 * 1_048_576) {
+  if (file.size > 16 * 1_048_576) throw new Error("상태 파일은 16MB 이하여야 합니다");
+  const header = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  let stream = file.stream();
+  if (header[0] === 0x1f && header[1] === 0x8b) {
+    if (typeof DecompressionStream !== "function") throw new Error("이 브라우저는 압축된 백업을 열 수 없습니다");
+    stream = stream.pipeThrough(new DecompressionStream("gzip"));
+  }
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) throw new Error("백업을 풀면 허용 크기를 넘습니다 (최대 64MB)");
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 const boardPattern = /^[a-z0-9_]+$/;
 const stablePostIdPattern = /^([a-z0-9_]+):([1-9]\d*)$/;
 const objectKeyPattern = /^posts\/([a-z0-9_]+)\/([1-9]\d*)-[a-f0-9]{64}\.json\.(?:gz|zst)$/;

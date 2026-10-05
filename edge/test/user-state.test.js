@@ -4,6 +4,7 @@ import { createLocator } from "../public/text-model.js";
 
 import {
   STATE_KEY,
+  readBackupText,
   defaultUserState,
   exportUserState,
   migrateLegacyState,
@@ -22,6 +23,17 @@ const defaults = {
   theme: "system", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseFont: "serif",
   aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true,
 };
+
+test("gzip backup limit counts UTF-8 bytes before retaining the decoded file", async () => {
+  const text = "가나다😀".repeat(1024);
+  const compressed = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+  assert.equal(await readBackupText(compressed), text);
+  await assert.rejects(readBackupText(compressed, 4096), /허용 크기/);
+  const plain = new Blob(["가😀"]);
+  assert.equal(await readBackupText(plain, 7), "가😀");
+  await assert.rejects(readBackupText(plain, 6), /허용 크기/);
+  await assert.rejects(readBackupText(new Blob([new Uint8Array([0x1f, 0x8b, 0, 0])])), Error);
+});
 
 test("manual document reading and bookmarks survive backup import", () => {
   const identity = `manual:${"a".repeat(64)}`;

@@ -13,7 +13,7 @@
 .aa-zoom-reset { min-width: 62px !important; }
 .aa-zoom-indicator { position: fixed; top: 50%; left: calc(50% + 216px); z-index: 40; transform: translate(-50%, -50%); padding: 13px 18px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: var(--e2); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
 
-.archive-body.aa { width: 100%; max-width: none; padding: 42px 24px 72px; text-align: start; overflow-x: auto; overflow-y: hidden; overflow-wrap: normal; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre-wrap; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x pan-y; text-size-adjust: 100%; }
+.archive-body.aa { width: 100%; max-width: none; padding: 42px 24px 72px; text-align: start; overflow-x: auto; overflow-y: hidden; overflow-wrap: normal; font-family: Saitamaar, Stmr, "MS PGothic", "ＭＳ Ｐゴシック", IPAMonaPGothic, monospace; font-size: var(--aa-effective-size); line-height: var(--aa-effective-line); white-space: pre-wrap; background: var(--aa-background); color: var(--aa-ink); -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: none; text-size-adjust: 100%; }
 /* Prose settings added by the redesign never reach an AA picture (docs/24 §8.16 "새로 막아야 하는 것").
    @scope limits prose selectors but not inheritance, so the AA root restates these. The rule above
    keeps its values; white-space and overflow-wrap stay as they are, and all: initial is not used. */
@@ -77,7 +77,7 @@ body.reader-controls-hidden .archive-body.aa.aa-can-scroll { box-shadow: none; }
 /* One scroller for both directions (2026-10-03): a wide AA no longer scrolls sideways inside its own
    box while the page scrolls down, which kept a finger to one direction at a time. The reader pane
    (the AA host in full screen) scrolls both ways, so a diagonal drag and its fling are the
-   browser's own. Everything around the picture follows the sideways scroll on the compositor
+   AA pan controller's. Everything around the picture follows the sideways scroll on the compositor
    (scroll-driven translate), so titles, tools and comments stay on screen. Without scroll-driven
    animations the old sideways box stays (app.js aaScroller). A sideways fling that reaches the
    edge stops there instead of turning into the browser's back gesture or the page bounce. */
