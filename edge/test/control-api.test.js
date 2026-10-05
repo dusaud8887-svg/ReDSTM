@@ -791,6 +791,43 @@ test("stale reconciliation exempts only the actively heartbeated run", async () 
   }
 });
 
+test("accepts and displays the 30-hour schedule including timer jitter", async () => {
+  const nextScheduledAt = new Date(Date.now() + (30 * 60 + 15) * 60 * 1000).toISOString();
+  let runner = null;
+  const env = {
+    CONTROL_DB: database((method, sql, parameters) => {
+      if (method === "batch") {
+        const heartbeat = parameters.find((statement) => statement.sql.includes("INSERT INTO runner_status"));
+        if (heartbeat) {
+          const values = heartbeat.parameters;
+          runner = { runner_version: values[0], state: values[1], heartbeat_at: values[2], next_scheduled_at: values[3] };
+        }
+        return parameters.map(() => ({ meta: { changes: 1 } }));
+      }
+      if (sql.includes("runner_status WHERE")) return runner;
+      if (sql.includes("COUNT(*)")) return { count: 0 };
+      return null;
+    }),
+  };
+  const heartbeat = await controlApiResponse(
+    request("/api/v1/runner/heartbeat", {
+      method: "POST",
+      body: { runner_version: "git-abc123", state: "idle", next_scheduled_at: nextScheduledAt },
+      headers: { "Idempotency-Key": "heartbeat-30-hour-schedule" },
+    }),
+    env,
+    { role: "runner", subject: "runner-token" },
+  );
+  assert.equal(heartbeat.status, 200);
+  const overview = await controlApiResponse(
+    request("/api/v1/ops/overview"), env, { role: "user", subject: "reader" },
+  );
+  assert.equal(overview.status, 200);
+  const data = (await overview.json()).data;
+  assert.equal(data.schedule_enabled, true);
+  assert.equal(data.runner.next_scheduled_at, nextScheduledAt);
+});
+
 test("ignores a historical impossible next schedule timestamp", async () => {
   const env = {
     CONTROL_DB: database((method, sql) => {

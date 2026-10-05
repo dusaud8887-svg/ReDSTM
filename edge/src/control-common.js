@@ -24,7 +24,8 @@ const counterNames = new Set([
 ]);
 
 export const CLIENT_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
-export const NEXT_SCHEDULE_MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
+// Allow the 30-hour rest interval, timer jitter, accuracy and clock skew.
+export const NEXT_SCHEDULE_MAX_AHEAD_MS = 31 * 60 * 60 * 1000;
 
 export const COMMAND_MAX_CLAIM_ATTEMPTS = 2;
 
