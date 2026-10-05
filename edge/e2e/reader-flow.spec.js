@@ -2271,11 +2271,18 @@ test("Page mode lays the pages out again when the font grows, so no page is skip
     if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({ schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null, history: {} }));
   });
   await useLongCollection(page, 3);
+  // Enough text to cross a page boundary at every viewport when the font grows.
+  await page.route("**/archive/posts/board_a/2-*", (route) => {
+    const payload = postPayload(2);
+    payload.post.body_html = Array.from({ length: 160 }, (_, index) => `<p>2편 본문 ${index + 1}</p>`).join("");
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
   await page.goto("/read/board_a/2");
   await expect(page.locator("#reader")).toHaveClass(/paged/);
   const status = page.locator("#reader-status");
   await expect(status).toHaveText(/^1 \/ \d+쪽$/);
   const total = async () => Number((await status.textContent()).match(/\/ (\d+)/)[1]);
+  await page.evaluate(() => document.fonts.ready);
   const before = await total();
   await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
   const larger = page.locator('#quick-settings [data-prose-size-delta="1"]');
