@@ -222,8 +222,7 @@ def test_a_cut_off_page_that_cannot_be_stored_retries_as_the_origins_network_err
     # The origin cut the page inside the comments: one is left empty and cannot be stored.
     item["comments"] = [{"position": 1, "content_html": "<script></script>"}]
 
-    with pytest.raises(ValueError):
-        pipeline.process_item(item)
+    assert pipeline.process_item(item) is item
 
     with connect_archive(path) as connection:
         capture = connection.execute(
@@ -234,6 +233,41 @@ def test_a_cut_off_page_that_cannot_be_stored_retries_as_the_origins_network_err
         ).fetchone()
     assert tuple(capture) == ("fetch_failed", "network_error")
     assert tuple(state) == ("retry", "network_error")
+
+
+@pytest.mark.parametrize("has_previous", [False, True])
+def test_truncated_body_never_becomes_latest_and_preserves_capture(
+    tmp_path: Path, has_previous: bool
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    pipeline, frontier, run_id = _setup(path)
+    lease = _claim(frontier, 10)
+    if has_previous:
+        pipeline.process_item(_item(lease, "stored"))
+        frontier.seed(lease.board_id, 10, lease.url, reopen_done=True)
+        replacement = frontier.claim_identity(lease.board_id, 10, lease_seconds=60)
+        assert replacement is not None
+        lease = replacement
+    item = _item(lease, "stored")
+    item["body_html"] = "<p>Still valid HTML, but only half the chapter</p>"
+    item["warnings"] = ["truncated_body"]
+    pipeline.process_item(item)
+    with connect_archive(path, read_only=True) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM post_versions").fetchone()[0] == int(
+            has_previous
+        )
+        capture = connection.execute(
+            "SELECT outcome, error_code, raw_sha256, warc_file FROM captures "
+            "WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        assert tuple(capture) == ("fetch_failed", "network_error", "a" * 64, "capture.warc.gz")
+        assert (
+            connection.execute(
+                "SELECT state FROM crawl_frontier WHERE external_post_id = 10"
+            ).fetchone()[0]
+            == "retry"
+        )
 
 
 def test_pipeline_conditional_hit_completes_lease_without_new_version(tmp_path: Path) -> None:

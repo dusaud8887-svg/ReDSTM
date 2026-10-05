@@ -21,6 +21,32 @@ def _claim_then_crash(path: str, now_text: str) -> None:
     os._exit(17 if len(leases) == 1 else 2)
 
 
+def test_disabled_board_is_excluded_without_losing_its_queue(tmp_path: Path) -> None:
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    store.seed("write_free21", 1, "https://www.typemoon.net/write_free21/1")
+    with connect_archive(path) as connection:
+        connection.execute(
+            "INSERT INTO boards (board_id, name, canonical_url, first_seen_at, "
+            "last_seen_at, is_enabled) VALUES ('write_free21', 'Board', "
+            "'https://www.typemoon.net/write_free21', 'now', 'now', 0)"
+        )
+        max_rowid = connection.execute("SELECT MAX(rowid) FROM crawl_frontier").fetchone()[0]
+    now = datetime.now(UTC)
+    assert store.recovery_candidates(limit=10) == []
+    assert store.claim_identity("write_free21", 1, lease_seconds=60) is None
+    assert store.claim(limit=10, lease_seconds=60) == []
+    assert store.requeue_full_content(limit=10, max_rowid=max_rowid, attempted_before=now) == []
+    assert store.full_content_remaining(max_rowid=max_rowid, attempted_before=now) == 0
+    with connect_archive(path) as connection:
+        assert tuple(
+            connection.execute("SELECT state, attempts FROM crawl_frontier").fetchone()
+        ) == ("pending", 0)
+        connection.execute("UPDATE boards SET is_enabled = 1")
+    assert store.claim_identity("write_free21", 1, lease_seconds=60) is not None
+
+
 def test_expired_lease_recovers_after_process_crash(tmp_path: Path) -> None:
     path = tmp_path / "frontier.sqlite"
     store = FrontierStore(path)

@@ -249,6 +249,7 @@ class FrontierStore:
                     next_attempt_at = ?
                 WHERE board_id = ? AND external_post_id = ?
                   AND state = 'running' AND lease_expires_at <= ?
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                 """,
                 (claimed_at_text, board_id, external_post_id, claimed_at_text),
             )
@@ -259,6 +260,7 @@ class FrontierStore:
                     lease_token = ?, lease_expires_at = ?
                 WHERE board_id = ? AND external_post_id = ?
                   AND state IN ('pending', 'retry')
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 RETURNING url, attempts, expected_comment_count
                 """,
@@ -319,6 +321,7 @@ class FrontierStore:
                 UPDATE crawl_frontier
                 SET state = 'retry', next_attempt_at = ?
                 WHERE state = 'dead'
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND (last_error_code = 'network_error'
                        OR lower(last_error_code) LIKE '%timed out%')
                   {expired_board_clause}
@@ -332,6 +335,7 @@ class FrontierStore:
                 SET state = 'retry', lease_token = NULL, lease_expires_at = NULL,
                     next_attempt_at = ?
                 WHERE state = 'running' AND lease_expires_at <= ?
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   {expired_board_clause}
                 """,
                 (selected_at, selected_at, *([board_id] if board_id is not None else [])),
@@ -372,6 +376,7 @@ class FrontierStore:
                       ON post.board_id = frontier.board_id
                      AND post.external_post_id = frontier.external_post_id
                     WHERE frontier.state IN ('pending', 'retry')
+                      AND COALESCE(board.is_enabled, 1) = 1
                       AND (frontier.next_attempt_at IS NULL OR frontier.next_attempt_at <= ?)
                       {board_clause}
                       {missing_clause}
@@ -428,6 +433,7 @@ class FrontierStore:
                 SET state = 'retry', lease_token = NULL, lease_expires_at = NULL,
                     next_attempt_at = ?
                 WHERE state = 'running' AND lease_expires_at <= ?
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                 """,
                 (selected_at, selected_at),
             )
@@ -436,6 +442,7 @@ class FrontierStore:
                 SELECT board_id, external_post_id
                 FROM crawl_frontier
                 WHERE rowid <= ?
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND (last_attempt_at IS NULL OR julianday(last_attempt_at) < julianday(?))
                   AND state <> 'running'
                   {board_clause}
@@ -475,6 +482,7 @@ class FrontierStore:
                 SELECT COUNT(*)
                 FROM crawl_frontier
                 WHERE rowid <= ?
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND (last_attempt_at IS NULL OR julianday(last_attempt_at) < julianday(?))
                   {board_clause}
                 """,
@@ -504,6 +512,7 @@ class FrontierStore:
                   ON post.board_id = frontier.board_id
                  AND post.external_post_id = frontier.external_post_id
                 WHERE frontier.state = 'done'
+                  AND frontier.board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND julianday(
                     COALESCE(post.last_collected_at, frontier.last_attempt_at)
                   ) <= julianday(?)
@@ -543,6 +552,7 @@ class FrontierStore:
                 SET state = 'retry', attempts = 0, next_attempt_at = NULL,
                     last_error_code = NULL, lease_token = NULL, lease_expires_at = NULL
                 WHERE state = 'dead'
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND last_error_code IN ({", ".join("?" for _ in codes)})
                   {board_clause}
                   AND NOT EXISTS (
@@ -573,6 +583,7 @@ class FrontierStore:
                 WHERE (board_id, external_post_id) IN (
                     SELECT board_id, external_post_id FROM crawl_frontier
                     WHERE state = 'dead' AND last_error_code = ?
+                      AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                       {board_clause}
                     ORDER BY priority DESC, board_id, external_post_id LIMIT ?
                 )
@@ -612,6 +623,7 @@ class FrontierStore:
                 SET state = 'retry', lease_token = NULL, lease_expires_at = NULL,
                     next_attempt_at = ?
                 WHERE state = 'running' AND lease_expires_at <= ?
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                 """,
                 (claimed_at_text, claimed_at_text),
             )
@@ -620,6 +632,7 @@ class FrontierStore:
                 SELECT board_id, external_post_id, url, attempts, expected_comment_count
                 FROM crawl_frontier
                 WHERE state IN ('pending', 'retry')
+                  AND board_id NOT IN (SELECT board_id FROM boards WHERE is_enabled = 0)
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 ORDER BY priority DESC, board_id, external_post_id
                 LIMIT ?

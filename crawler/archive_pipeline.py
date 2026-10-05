@@ -59,6 +59,12 @@ class ArchivePipeline:
             ):
                 raise ValueError("frontier lease does not match captured post")
             outcome = item.get("outcome")
+            # Transport completeness outranks a parser finding a title/body in partial bytes.
+            # Keep the raw capture, but never advance the published version or settle its lease.
+            if "truncated_body" in (item.get("warnings") or ()):
+                outcome = "fetch_failed"
+                item["error_code"] = "network_error"
+                item["outcome"] = outcome
             raw_sha256 = _optional_text(item.get("raw_sha256"))
             warc_file = _optional_text(item.get("warc_file"))
             http_status = item.get("http_status")

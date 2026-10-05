@@ -1155,6 +1155,17 @@ class TypeMoonSpider(scrapy.Spider):
                 **capture_metadata,
             )
             return
+        if response.request is not None and response.request.meta.get("redstm_truncated"):
+            yield CapturedPostItem(
+                board_id=board_id,
+                external_post_id=external_post_id,
+                canonical_url=canonical_url,
+                outcome="fetch_failed",
+                error_code="network_error",
+                warnings=["truncated_body"],
+                **capture_metadata,
+            )
+            return
         title = _first_text(response, _TITLE_SELECTORS)
         content = _content_root(response)
         if content is None and _has_login_form(response):
@@ -1209,23 +1220,7 @@ class TypeMoonSpider(scrapy.Spider):
             )
             return
 
-        if response.request is not None and response.request.meta.get("redstm_truncated"):
-            if title is None or content is None:
-                yield CapturedPostItem(
-                    board_id=board_id,
-                    external_post_id=external_post_id,
-                    canonical_url=canonical_url,
-                    outcome="fetch_failed",
-                    error_code="network_error",
-                    warnings=["truncated_body"],
-                    **capture_metadata,
-                )
-                return
         warnings = []
-        # A cut-off page with its title and content is still stored, but the pipeline treats a
-        # failure to store it as the origin's (network_error), not as local storage_error.
-        if response.request is not None and response.request.meta.get("redstm_truncated"):
-            warnings.append("truncated_body")
         views: int | None = None
         if title is None:
             warnings.append("missing_title")

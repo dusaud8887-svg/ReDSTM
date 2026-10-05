@@ -46,7 +46,7 @@ def test_origin_proxy_middleware_ignores_other_hosts(monkeypatch: pytest.MonkeyP
     assert "proxy" not in request.meta
 
 
-def test_truncated_detail_with_article_is_stored() -> None:
+def test_truncated_detail_with_article_is_network_error() -> None:
     request = Request(
         "https://www.typemoon.net/write_free21/62068",
         meta={"redstm_truncated": True},
@@ -58,8 +58,9 @@ def test_truncated_detail_with_article_is_stored() -> None:
         encoding="utf-8",
     )
     item = list(TypeMoonSpider().parse_detail(response))[0]
-    assert item["outcome"] == "stored"
-    assert item["title"] == "대표 상세 게시물"
+    assert item["outcome"] == "fetch_failed"
+    assert item["error_code"] == "network_error"
+    assert item["warnings"] == ["truncated_body"]
 
 
 def test_truncated_detail_without_article_is_network_error() -> None:
