@@ -640,6 +640,8 @@ def list_novel_link_candidates(db_path: Path) -> list[dict[str, str]]:
             for row in db.execute(
                 """SELECT c.left_site,c.left_work_id,c.right_site,c.right_work_id,
                           c.match_basis,c.status,c.updated_at,
+                          CASE WHEN lg.canonical_work_id=rg.canonical_work_id
+                            THEN lg.canonical_work_id ELSE '' END AS canonical_work_id,
                           l.title AS left_title,l.author AS left_author,
                           r.title AS right_title,r.author AS right_author
                    FROM text_novel_link_candidates c
@@ -647,6 +649,10 @@ def list_novel_link_candidates(db_path: Path) -> list[dict[str, str]]:
                      ON l.site=c.left_site AND l.source_work_id=c.left_work_id
                    JOIN text_novel_sources r
                      ON r.site=c.right_site AND r.source_work_id=c.right_work_id
+                   LEFT JOIN text_novel_work_group_sources lg
+                     ON lg.site=c.left_site AND lg.source_work_id=c.left_work_id
+                   LEFT JOIN text_novel_work_group_sources rg
+                     ON rg.site=c.right_site AND rg.source_work_id=c.right_work_id
                    WHERE c.status IN ('candidate','needs_review')
                    ORDER BY c.updated_at,c.left_site,c.left_work_id,c.right_site,c.right_work_id"""
             )
@@ -722,6 +728,73 @@ def resolve_novel_link_candidate(
             "status": status,
             "canonical_work_id": group_id,
         }
+    finally:
+        db.close()
+
+
+def resolve_novel_review_group(
+    db_path: Path, canonical_work_id: str, *, split: bool
+) -> dict[str, str]:
+    """Explicitly resolve a legacy weak merge as a whole, rather than one edge of it."""
+    db = _connect(db_path)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        with db:
+            members = db.execute(
+                "SELECT site,source_work_id FROM text_novel_work_group_sources "
+                "WHERE canonical_work_id=? ORDER BY site,source_work_id",
+                (canonical_work_id,),
+            ).fetchall()
+            identities = {(str(row["site"]), str(row["source_work_id"])) for row in members}
+            reviews = [
+                row
+                for row in db.execute(
+                    "SELECT * FROM text_novel_link_candidates WHERE status='needs_review'"
+                )
+                if (row["left_site"], row["left_work_id"]) in identities
+                and (row["right_site"], row["right_work_id"]) in identities
+            ]
+            if len(members) < 2 or not reviews:
+                raise KeyError("novel group has no unresolved legacy merge")
+            if split:
+                # Retain the existing canonical route for the first source. Source aliases and
+                # each imported item's provenance follow the other sources into their own groups.
+                for row in members[1:]:
+                    site, work_id = str(row["site"]), str(row["source_work_id"])
+                    new_id = _new_work_id()
+                    db.execute("INSERT INTO text_novel_work_groups VALUES(?,?)", (new_id, _now()))
+                    db.execute(
+                        "UPDATE text_novel_work_group_sources SET canonical_work_id=? "
+                        "WHERE site=? AND source_work_id=?",
+                        (new_id, site, work_id),
+                    )
+                    db.execute(
+                        "UPDATE text_archive_items SET canonical_work_id=? "
+                        "WHERE lane='novel' AND source_site=? AND source_work_id=?",
+                        (new_id, site, work_id),
+                    )
+                    db.execute(
+                        "UPDATE text_novel_work_aliases SET canonical_work_id=? "
+                        "WHERE alias_work_id=?",
+                        (new_id, f"novel:{site}:{work_id}"),
+                    )
+            for row in members:
+                mark_cross_source_covered(db, str(row["site"]), str(row["source_work_id"]))
+            status = "rejected" if split else "accepted"
+            for row in reviews:
+                db.execute(
+                    "UPDATE text_novel_link_candidates SET status=?,updated_at=? "
+                    "WHERE left_site=? AND left_work_id=? AND right_site=? AND right_work_id=?",
+                    (
+                        status,
+                        _now(),
+                        row["left_site"],
+                        row["left_work_id"],
+                        row["right_site"],
+                        row["right_work_id"],
+                    ),
+                )
+        return {"canonical_work_id": canonical_work_id, "status": "split" if split else "kept"}
     finally:
         db.close()
 
@@ -1013,12 +1086,30 @@ def _safe_batch(
     )
 
 
-def _connect(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=30)
+def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    if read_only:
+        db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=30000")
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    if version > 1:
+        db.close()
+        raise RuntimeError("text archive schema is newer than this application")
+    if (
+        version == 1
+        and db.execute(
+            "SELECT COUNT(*) FROM text_novel_identity_migrations WHERE version IN (1,2,3)"
+        ).fetchone()[0]
+        == 3
+    ):
+        return db
+    if read_only:
+        db.close()
+        raise RuntimeError("text archive requires initialization before read-only use")
     for attempt in range(5):
         try:
             db.execute("PRAGMA journal_mode=WAL")
@@ -1072,6 +1163,7 @@ def _connect(path: Path) -> sqlite3.Connection:
                 (source["site"], source["source_work_id"]),
             )
             _refresh_link_candidates(db, str(source["site"]), str(source["source_work_id"]))
+        db.execute("PRAGMA user_version=1")
     return db
 
 

@@ -967,7 +967,7 @@ def build_availability_snapshot(
 ) -> dict[str, Any]:
     """Write a content-addressed, paged snapshot of novel items verified in R2."""
     _check_headroom(headroom)
-    db = _connect(db_path)
+    db = _connect(db_path, read_only=True)
     try:
         # Both passes must see the same rows while imports continue in WAL mode.
         db.execute("BEGIN")

@@ -539,6 +539,74 @@ def test_old_label_only_link_is_split_and_covered_requeued(tmp_path: Path) -> No
         db.close()
 
 
+@pytest.mark.parametrize("split", [False, True])
+def test_three_source_weak_merge_has_explicit_group_resolution(tmp_path: Path, split: bool) -> None:
+    path = tmp_path / "text.sqlite"
+    db = importer._connect(path)
+    with db:
+        db.execute("INSERT INTO text_novel_work_groups VALUES('old','now')")
+        for site, work in [("blacktoon", "1"), ("marumaru", "2"), ("toki", "3")]:
+            db.execute("INSERT INTO text_novel_work_group_sources VALUES(?,?,'old')", (site, work))
+            db.execute(
+                "INSERT INTO text_novel_work_aliases VALUES(?,'old','now')",
+                (f"novel:{site}:{work}",),
+            )
+        db.execute(
+            "INSERT INTO text_novel_link_candidates VALUES('blacktoon','1','marumaru','2',"
+            "'normalized_title_author+chapter_sequence','needs_review','now')"
+        )
+    db.close()
+    result = importer.resolve_novel_review_group(path, "old", split=split)
+    assert result["status"] == ("split" if split else "kept")
+    db = importer._connect(path, read_only=True)
+    try:
+        groups = db.execute(
+            "SELECT site,canonical_work_id FROM text_novel_work_group_sources ORDER BY site"
+        ).fetchall()
+        assert groups[0][1] == "old"
+        assert len({row[1] for row in groups}) == (3 if split else 1)
+        assert db.execute("SELECT status FROM text_novel_link_candidates").fetchone()[0] == (
+            "rejected" if split else "accepted"
+        )
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM text_novel_work_aliases a "
+                "JOIN text_novel_work_group_sources s "
+                "ON a.alias_work_id='novel:'||s.site||':'||s.source_work_id "
+                "WHERE a.canonical_work_id=s.canonical_work_id"
+            ).fetchone()[0]
+            == 3
+        )
+        assert not db.execute("PRAGMA foreign_key_check").fetchall()
+    finally:
+        db.close()
+    with pytest.raises(KeyError):
+        importer.resolve_novel_review_group(path, "old", split=split)
+
+
+def test_initialized_text_connections_do_not_migrate_or_wait_for_a_writer(tmp_path: Path) -> None:
+    path = tmp_path / "text.sqlite"
+    db = importer._connect(path)
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        for read_only in [False, True]:
+            reader = importer._connect(path, read_only=read_only)
+            try:
+                assert reader.execute("SELECT COUNT(*) FROM text_archive_items").fetchone()[0] == 0
+                assert reader.total_changes == 0
+                assert not reader.in_transaction
+                if read_only:
+                    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                        reader.execute("DELETE FROM text_archive_items")
+            finally:
+                reader.close()
+        assert time.monotonic() - started < 2
+    finally:
+        db.rollback()
+        db.close()
+
+
 def test_three_source_weak_merge_remains_flagged_for_review(tmp_path: Path) -> None:
     path = tmp_path / "text.sqlite"
     db = importer._connect(path)
@@ -811,6 +879,7 @@ def test_legacy_toki_sources_backfill_numeric_slug_without_merging(tmp_path: Pat
     db_path = tmp_path / "state" / "text.sqlite"
     db = importer._connect(db_path)
     with db:
+        db.execute("PRAGMA user_version=0")  # Simulate a database predating the schema checkpoint.
         db.execute(
             """INSERT INTO text_novel_sources(
                    site,source_work_id,source_url,slug,title,author,title_key,author_key,last_seen_at)

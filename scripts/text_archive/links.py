@@ -7,6 +7,7 @@ from pathlib import Path
 from scripts.text_archive.importer import (
     list_novel_link_candidates,
     resolve_novel_link_candidate,
+    resolve_novel_review_group,
 )
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
@@ -28,13 +29,27 @@ def main() -> None:
         metavar=("LEFT_SITE", "LEFT_WORK_ID", "RIGHT_SITE", "RIGHT_WORK_ID"),
         help="reject one listed candidate without linking source works",
     )
+    decision.add_argument(
+        "--keep-group",
+        metavar="CANONICAL_WORK_ID",
+        help="confirm every source in a legacy needs_review group",
+    )
+    decision.add_argument(
+        "--split-group",
+        metavar="CANONICAL_WORK_ID",
+        help="separate all sources in a legacy needs_review group",
+    )
     args = parser.parse_args()
 
     db_path = Path("/srv/redstm-text/text-archive.sqlite")
     result: dict[str, str] | list[dict[str, str]]
     try:
         with operation_window():
-            if args.accept or args.reject:
+            if args.keep_group or args.split_group:
+                result = resolve_novel_review_group(
+                    db_path, args.keep_group or args.split_group, split=bool(args.split_group)
+                )
+            elif args.accept or args.reject:
                 left_site, left_work_id, right_site, right_work_id = args.accept or args.reject
                 result = resolve_novel_link_candidate(
                     db_path,
