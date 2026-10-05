@@ -11,6 +11,11 @@ SPIDER_MODULES = ["crawler.spiders"]
 NEWSPIDER_MODULE = "crawler.spiders"
 
 
+def _env_flag(name: str) -> bool:
+    """True only for an explicit on value. ``0``, ``false``, and ``off`` stay off."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     """Parse a bounded positive int from the environment; invalid values fall back."""
     raw = os.environ.get(name, "").strip()
@@ -223,4 +228,4 @@ FEED_EXPORT_ENCODING = "utf-8"
 # the origin is a session-cookie PHP app and a 304 handshake must be canary-validated on one
 # board before it becomes the default. A 304 never overwrites the stored representation; it
 # records an 'unchanged' capture and completes the lease (newtomi F13 regression shape).
-REDSTM_CONDITIONAL_DETAILS = bool(os.environ.get("REDSTM_CONDITIONAL_DETAILS", "").strip())
+REDSTM_CONDITIONAL_DETAILS = _env_flag("REDSTM_CONDITIONAL_DETAILS")

@@ -176,6 +176,51 @@ def test_rotation_then_406_cools_the_source_and_headers_follow_the_rotated_host(
     assert queue == (2, "http_406")
 
 
+def test_rotated_host_404_or_parking_page_does_not_retire_the_chapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "state.sqlite"
+    _seed(db_path)
+    fake = _FakeTime()
+    monkeypatch.setattr(collector, "time", fake)
+    # The first 503 does not rotate (one failure). Each later 503 then probes the next
+    # host: a 404 and an HTML parking page must not become the chapter's own answer.
+    answers = iter((503, 503, 404, 503, 200))
+
+    def fake_get(
+        session: requests.Session, unit: RequestUnit, path: Path
+    ) -> tuple[int, bytes, dict[str, str]]:
+        status = next(answers)
+        if status == 200:
+            return 200, b"<html>not live yet</html>", {"Content-Type": "text/html"}
+        return status, b"", {}
+
+    monkeypatch.setattr(collector, "_get", fake_get)
+
+    first = collector.run_one(
+        db_path, tmp_path / "out", _SOURCES, session=requests.Session(), clock=fake.time
+    )
+    fake.now += 2_000
+    second = collector.run_one(
+        db_path, tmp_path / "out", _SOURCES, session=requests.Session(), clock=fake.time
+    )
+    fake.now += 2_000
+    third = collector.run_one(
+        db_path, tmp_path / "out", _SOURCES, session=requests.Session(), clock=fake.time
+    )
+
+    assert first["status"] == "held" and first["reason"] == "http_503"
+    assert second["reason"] == "rotation_candidate_http_404"
+    assert third["reason"] == "rotation_candidate_http_200"
+    assert third["status"] == "held"
+    with sqlite3.connect(db_path) as db:
+        queue = db.execute(
+            "SELECT status, last_error FROM text_collector_queue WHERE kind='work'"
+        ).fetchone()
+    assert queue[0] == "retry"
+    assert queue[1] == "rotation_candidate_http_200"
+
+
 def test_collector_ua_override_replaces_user_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

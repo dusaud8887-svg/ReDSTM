@@ -184,13 +184,19 @@ class WarcCaptureMiddleware:
         # The spider turns this response into an 'unchanged' capture (docs/31 C5).
         if response.status == 304:
             return response
+        # Drop whatever an earlier attempt left on this request. RetryMiddleware copies meta,
+        # and a 5xx ETag must not become the validator of the 200 that follows it.
+        request.meta.pop("etag", None)
+        request.meta.pop("last_modified", None)
         # A blank validator header is no validator; the pipeline rejects empty text.
-        etag = (response.headers.get("ETag") or b"").decode("latin-1").strip()
-        if etag:
-            request.meta["etag"] = etag
-        last_modified = (response.headers.get("Last-Modified") or b"").decode("latin-1").strip()
-        if last_modified:
-            request.meta["last_modified"] = last_modified
+        # Only a 2xx representation's headers are worth sending back as If-None-Match.
+        if 200 <= response.status < 300:
+            etag = (response.headers.get("ETag") or b"").decode("latin-1").strip()
+            if etag:
+                request.meta["etag"] = etag
+            last_modified = (response.headers.get("Last-Modified") or b"").decode("latin-1").strip()
+            if last_modified:
+                request.meta["last_modified"] = last_modified
         raw_sha256 = hashlib.sha256(response.body).hexdigest()
         request.meta["raw_sha256"] = raw_sha256
         reference = self._seen.get((request.url, raw_sha256))

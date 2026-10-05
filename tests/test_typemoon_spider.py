@@ -739,6 +739,19 @@ def test_conditional_detail_carries_stored_validators() -> None:
     assert "handle_httpstatus_list" not in reopen.meta
 
 
+def test_conditional_details_flag_accepts_only_explicit_on_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("REDSTM_CONDITIONAL_DETAILS", raising=False)
+    assert settings._env_flag("REDSTM_CONDITIONAL_DETAILS") is False
+    for raw in ("", "0", "false", "off", "no"):
+        monkeypatch.setenv("REDSTM_CONDITIONAL_DETAILS", raw)
+        assert settings._env_flag("REDSTM_CONDITIONAL_DETAILS") is False
+    for raw in ("1", "true", "yes", "on", " TRUE "):
+        monkeypatch.setenv("REDSTM_CONDITIONAL_DETAILS", raw)
+        assert settings._env_flag("REDSTM_CONDITIONAL_DETAILS") is True
+
+
 def test_conditional_hit_without_html_type_is_unchanged() -> None:
     # The download handler builds an empty 304 body as a plain TextResponse.
     from scrapy.http import TextResponse

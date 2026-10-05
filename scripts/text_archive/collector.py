@@ -254,12 +254,15 @@ def parse_work_detail(value: Any) -> WorkDetail:
         if episode_number is not None and episode_number.is_integer():
             episode_number = int(episode_number)
         chapter_title = str(row.get("title") or "").strip()
+        explicit_kind = str(row.get("chapterKind") or row.get("kind") or "").strip()
         label = (chapter_title or (str(episode_number) if episode_number is not None else ""))[:300]
-        kind = normalize_chapter_kind(row.get("chapterKind") or row.get("kind"), label)
+        kind = normalize_chapter_kind(explicit_kind, label)
         normalized.append(
             {
                 "id": chapter_id,
                 "label": label,
+                "has_title": bool(chapter_title),
+                "has_kind": bool(explicit_kind),
                 "episode_number": episode_number,
                 "source_episode_number_raw": raw_number_text,
                 "source_toc_position": position,
@@ -732,12 +735,18 @@ def _apply_work(
                    source_toc_position,source_published_at,access,status,last_seen_at)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(site,source_work_id,source_chapter_id)
-                   DO UPDATE SET chapter_label=excluded.chapter_label,
-                   chapter_kind=excluded.chapter_kind,
+                   DO UPDATE SET
+                   -- A list row with only a number is not a new title. Keep the label, kind,
+                   -- and date the episode detail or an earlier list already stored.
+                   chapter_label=CASE WHEN ? THEN excluded.chapter_label
+                                      ELSE text_novel_chapters.chapter_label END,
+                   chapter_kind=CASE WHEN ? THEN excluded.chapter_kind
+                                     ELSE text_novel_chapters.chapter_kind END,
                    source_episode_number_raw=excluded.source_episode_number_raw,
                    source_episode_number_normalized=excluded.source_episode_number_normalized,
                    source_toc_position=excluded.source_toc_position,
-                   source_published_at=excluded.source_published_at,
+                   source_published_at=COALESCE(excluded.source_published_at,
+                                                text_novel_chapters.source_published_at),
                    -- A work list without a price field says nothing new: keep what the
                    -- episode detail learned (paid -> waiting) and any review hold, or the
                    -- weekly refresh re-queues every paid chapter.
@@ -763,6 +772,8 @@ def _apply_work(
                     episode["access"],
                     status,
                     now,
+                    int(episode["has_title"]),
+                    int(episode["has_title"] or episode["has_kind"]),
                 ),
             )
         _refresh_link_candidates(db, unit.source.name, work_id)
@@ -1096,6 +1107,23 @@ def _host_success(db: sqlite3.Connection, unit: RequestUnit) -> None:
         )
 
 
+def _candidate_result(
+    candidate: RequestUnit, status: int, raw: bytes, headers: dict[str, str]
+) -> tuple[RequestUnit, int, bytes, dict[str, str]]:
+    """A rotated host's answer. 404 and a parking page are a failed probe, not the chapter.
+
+    The remembered host's own 404/410 still reaches ``run_one`` and becomes ``gone``.
+    403/406/429/509 stay source-level: a UA gate or a challenge applies to every suffix.
+    """
+    content_type = next(
+        (value for key, value in headers.items() if key.lower() == "content-type"), ""
+    )
+    html = raw.lstrip().startswith(b"<") or "text/html" in str(content_type).lower()
+    if status not in {403, 406, 429, 509} and (status in {404, 410} or html):
+        raise CollectorError(f"rotation_candidate_http_{status}")
+    return candidate, status, raw, headers
+
+
 def _fetch_with_rotation(
     session: requests.Session, unit: RequestUnit, db_path: Path
 ) -> tuple[RequestUnit, int, bytes, dict[str, str]]:
@@ -1106,12 +1134,12 @@ def _fetch_with_rotation(
         if candidate is None:
             raise
         status, raw, headers = _get(session, candidate, db_path)
-        return candidate, status, raw, headers
+        return _candidate_result(candidate, status, raw, headers)
     if 500 <= status <= 599:
         candidate = _host_failure(db_path, unit)
         if candidate is not None:
             status, raw, headers = _get(session, candidate, db_path)
-            return candidate, status, raw, headers
+            return _candidate_result(candidate, status, raw, headers)
     return unit, status, raw, headers
 
 

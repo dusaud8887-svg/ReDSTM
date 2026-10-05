@@ -58,6 +58,9 @@ body.continuous-mode #reader-pane { overflow-anchor: none; }
 .archive-body.plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 /* Long texts come in chunks (media.js); off-screen chunks skip layout and paint. */
 .archive-body.plain-text > .text-chunk { content-visibility: auto; contain-intrinsic-size: auto 1200px; }
+/* Page columns need every chunk's real width. A skipped chunk only adds its intrinsic
+   size, so the last pages of a long text never appear. */
+body.page-mode .archive-body.plain-text > .text-chunk { content-visibility: visible; }
 .media-figure { margin: 1.2em 0; }
 .media-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; background: var(--surface); cursor: zoom-in; }
 .media-open img { display: block; max-width: 100%; max-height: 80vh; height: auto; margin: 0 auto; border-radius: 8px; }

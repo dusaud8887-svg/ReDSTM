@@ -1351,7 +1351,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const anchor = record.anchor || record.loc ? { offset: record.offset, quote: record.anchor, viewportOffset: record.anchorTop ?? 0, atStart: record.scroll === 0, ...(record.loc ? { loc: record.loc } : {}) } : null;
     // Offset-based anchors are exact; legacy quote-only anchors are used only for a new revision.
     shell.scheduleFrame(() => {
-      if (anchor && (anchor.loc || Number.isInteger(record.offset) || (record.revision && record.revision !== hash))) shell.restoreAnchor(anchor);
+      const shouldRestore = anchor && (anchor.loc || Number.isInteger(record.offset) || (record.revision && record.revision !== hash));
+      const restored = shouldRestore ? shell.restoreAnchor(anchor) : true;
+      // A failed restore leaves the pane at the top. Capturing that would replace the
+      // saved sentence, and so would the scroll-save timer the reset already started.
+      if (restored === false) {
+        clearTimeout(saveTimer);
+        return;
+      }
       shell.captureAnchor();
     });
   }

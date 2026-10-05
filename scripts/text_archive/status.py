@@ -185,11 +185,14 @@ def build_status(
                    GROUP BY 1""",
             )
         if _table_exists(db, "text_collector_hosts"):
+            # blocked stores the cooldown's end, or legacy 1. Either is over once it is not
+            # still ahead of this report, which is also when rotation resumes.
+            clock = generated.timestamp()
             collector["hosts"] = {
                 str(row["source"]): {
                     "host": str(row["host"]),
                     "failures": int(row["failures"]),
-                    "blocked": bool(row["blocked"]),
+                    "blocked": int(row["blocked"] or 0) > clock,
                 }
                 for row in db.execute("SELECT * FROM text_collector_hosts ORDER BY source")
             }

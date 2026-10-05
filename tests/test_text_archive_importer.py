@@ -1167,6 +1167,18 @@ def test_status_reports_deliveries_drop_backlog_and_collector_state(tmp_path: Pa
                last_status,last_error,last_source) VALUES('g',1,2000000000,429,?,'blacktoon')""",
             ("x" * 400,),
         )
+        db.execute(
+            """CREATE TABLE text_collector_hosts(
+               source TEXT PRIMARY KEY, host TEXT NOT NULL, failures INTEGER NOT NULL,
+               blocked INTEGER NOT NULL)"""
+        )
+        db.executemany(
+            "INSERT INTO text_collector_hosts(source,host,failures,blocked) VALUES(?,?,?,?)",
+            (
+                ("blacktoon", "blacktoon454.com", 2, 1_800_000_000 + 3600),
+                ("marumaru", "marumaru103.com", 4, 1),
+            ),
+        )
     document = status.build_status(db_path, inbox, now=1_800_000_000)
     assert document["generated_at"] == "2027-01-15T08:00:00Z"
     assert document["lanes"]["arcalive"]["items"] == 1
@@ -1176,6 +1188,8 @@ def test_status_reports_deliveries_drop_backlog_and_collector_state(tmp_path: Pa
     group = document["collector"]["groups"][0]
     assert group["cooldown_until"] == "2033-05-18T03:33:20Z"
     assert group["last_status"] == 429 and len(group["last_error"]) == 160
+    assert document["collector"]["hosts"]["blacktoon"]["blocked"] is True
+    assert document["collector"]["hosts"]["marumaru"]["blocked"] is False
     body = json.dumps(document, ensure_ascii=False)
     assert "fixture body" not in body and str(tmp_path) not in body
 

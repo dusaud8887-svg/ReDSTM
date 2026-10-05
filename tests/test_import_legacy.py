@@ -110,6 +110,13 @@ def test_normalize_source_timestamp_keeps_a_leap_day_ahead_of_the_capture_clock(
     # "02-29" a little ahead of the capture clock has no previous-year date to roll back to.
     base = datetime(2028, 2, 28, 10, 0, tzinfo=_KST)
     assert normalize_source_timestamp("02-29 23:00", base=base) == "2028-02-29T14:00:00+00:00"
+    # A non-leap capture year cannot parse Feb 29 at all; the stamp is the previous leap day.
+    ordinary = datetime(2025, 3, 1, 12, 0, tzinfo=_KST)
+    assert normalize_source_timestamp("02-29", base=ordinary) == "2024-02-28T15:00:00+00:00"
+    assert normalize_source_timestamp("02-29 12:00", base=ordinary) == "2024-02-29T03:00:00+00:00"
+    # Weeks before this year's Feb 29 is not clock skew, so it does not stay in the future.
+    early = datetime(2028, 1, 15, 9, 0, tzinfo=_KST)
+    assert normalize_source_timestamp("02-29", base=early) == "2024-02-28T15:00:00+00:00"
 
 
 def test_normalize_source_timestamp_anchors_year_less_and_time_only_forms_to_base() -> None:

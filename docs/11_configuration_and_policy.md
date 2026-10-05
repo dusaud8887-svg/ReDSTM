@@ -89,7 +89,7 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_ACCESS_TOKEN_EXPIRES_AT` | `access.env` | token expiry warning 사용 시 | 아니오 | Oracle heartbeat |
 | `REDSTM_DISK_LOW_BYTES` | `access.env` optional | 볼륨 20%(5–40GiB) 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
 | `REDSTM_DISK_STOP_BYTES` | `access.env` optional | 볼륨 10%(3–20GiB) 기본 수집 hard floor 변경 시 | 아니오 | Oracle control runner |
-| `REDSTM_CONDITIONAL_DETAILS` | `access.env` optional | 상세 재방문에 저장된 ETag/Last-Modified를 보내 304면 `unchanged`로 기록(docs/31 C5 canary, 기본 꺼짐). 목록이 댓글 수 변화로 다시 연 글은 항상 무조건 요청 | 아니오 | Oracle crawler |
+| `REDSTM_CONDITIONAL_DETAILS` | `access.env` optional | 상세 재방문에 저장된 ETag/Last-Modified를 보내 304면 `unchanged`로 기록(docs/31 C5 canary). `1`/`true`/`yes`/`on`만 켠다. 비어 있거나 `0`/`false`/`off`면 꺼짐. 목록이 댓글 수 변화로 다시 연 글은 항상 무조건 요청 | 아니오 | Oracle crawler |
 | `REDSTM_CONTROL_REJECTION_WARNING_SECONDS` | `access.env` optional | permanent control rejection 경고 기간 변경 시; 기본 24시간 | 아니오 | Oracle heartbeat |
 | `REDSTM_TOKEN_EXPIRING_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
 | `REDSTM_PUBLISH_STALE_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |

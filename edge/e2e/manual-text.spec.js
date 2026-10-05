@@ -84,4 +84,53 @@ test("a long manual document renders in skippable chunks without changing its te
   const modelText = await page.evaluate(async () =>
     (await import("/text-model.js")).createTextModel(document.querySelector("#archive-body")).text);
   expect(modelText).toBe(body.repeat(2));
+  // Page columns lay every chunk out. A skipped chunk has no line boxes, so the last
+  // pages of a long text would be missing.
+  await page.evaluate(() => document.querySelector("#quick-settings button[data-reading-mode='page']").click());
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  const lastChunkLaidOut = await page.evaluate(() => {
+    const chunks = [...document.querySelectorAll("#archive-body > .text-chunk")];
+    const node = chunks.at(-1)?.firstChild;
+    if (!node || node.nodeType !== Node.TEXT_NODE) return false;
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, Math.min(1, node.data.length));
+    const rect = range.getClientRects()[0];
+    return Boolean(rect && rect.width > 0);
+  });
+  expect(lastChunkLaidOut).toBe(true);
+  await page.evaluate(() => document.querySelector("#quick-settings button[data-reading-mode='scroll']").click());
+  await expect(page.locator("#reader")).not.toHaveClass(/paged/);
+  // A place past the first chunk must come back, and must not be overwritten with the top.
+  const savedScroll = await page.evaluate(() => {
+    const pane = document.querySelector("#reader-pane");
+    const chunks = [...document.querySelectorAll("#archive-body > .text-chunk")];
+    const target = chunks[1];
+    for (const chunk of chunks) {
+      chunk.style.contentVisibility = "visible";
+      if (chunk === target) break;
+    }
+    const top = target.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+    pane.scrollTop = top + 80;
+    return pane.scrollTop;
+  });
+  expect(savedScroll).toBeGreaterThan(2000);
+  await page.waitForFunction((target) => {
+    const state = JSON.parse(localStorage.getItem("redstm.textState.v1") || "null");
+    const record = Object.values(state?.history || {})[0];
+    return Boolean(record?.loc) && Math.abs(record.scroll - target) < 2;
+  }, savedScroll);
+  await page.reload();
+  await expect(page.locator("#archive-body")).toContainText("번째 줄");
+  await expect(page.locator("body")).not.toHaveClass(/restoring-text/);
+  await page.waitForFunction((target) => {
+    const pane = document.querySelector("#reader-pane");
+    return pane && Math.abs(pane.scrollTop - target) < 80;
+  }, savedScroll);
+  await page.waitForTimeout(700);
+  const kept = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("redstm.textState.v1") || "null");
+    return Object.values(state?.history || {})[0]?.scroll ?? 0;
+  });
+  expect(kept).toBeGreaterThan(2000);
 });

@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "0120b9549705e479"
+      "revision": "9a47207794634e84"
     },
     {
       "url": "/arca-media.js",
@@ -1088,7 +1088,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/styles/reader.css",
-      "revision": "7e91684b1ac528ae"
+      "revision": "7a7a53299435dd9a"
     },
     {
       "url": "/styles/shell.css",
@@ -1100,11 +1100,11 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-anchor.js",
-      "revision": "dcbc4f250387e482"
+      "revision": "f1a9f172cc62ad43"
     },
     {
       "url": "/text-library.js",
-      "revision": "485bf64b60a65a71"
+      "revision": "65714d66148c4b44"
     },
     {
       "url": "/text-model.js",

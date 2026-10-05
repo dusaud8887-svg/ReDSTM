@@ -73,9 +73,13 @@ DB 연결 시 숫자 source ID로 보완한다.
   `blacktoon452.com`, `marumaru102.com`이고, 운영 값은 `text_collector_hosts`에 저장된 호스트가
   우선한다(2026-10-04 `blacktoon454.com`, `marumaru103.com`). 같은 출처의 연결 실패나 5xx가 두 번
   쌓이면 그 출처만 실패마다 숫자 suffix를 +1부터 +5까지 한 칸씩 바꿔 요청하고, 다 돌면 +1부터 다시
-  돈다(다음 번호가 아직 열리지 않았을 때 영구히 멈추지 않게). JSON 응답을 받은 호스트는 그 단위의 적용 성공과
+  돈다(다음 번호가 아직 열리지 않았을 때 영구히 멈추지 않게). 그 후보가 404/410이나 HTML 주차
+  페이지를 주면 그 회차를 gone으로 확정하지 않고 출처 cooldown도 걸지 않는다. 기억된 호스트의
+  404/410만 gone이다. 제목 없는 목록 갱신은 이미 저장한 회차 제목·종류·게시일을 숫자로 덮지 않는다.
+  JSON 응답을 받은 호스트는 그 단위의 적용 성공과
   무관하게 저장하고, 저장된 호스트가 환경변수 `REDSTM_TEXT_*_HOST`(초기값일 뿐)보다 우선한다. 후보 호스트가
   403/429/509를 주면 그 cooldown이 끝날 때까지만 회전을 멈춘다(`text_collector_hosts.blocked`=종료 epoch).
+  상태 문서의 `blocked`는 그 시각이 아직 남았을 때만 true다. 지난 epoch와 예전 값 `1`은 꺼짐이다.
   proxy, browser, anti-bot/captcha 우회는 없다.
 - API 요청은 브라우저 일관 지문(UA·sec-ch-ua·Accept-Language·Sec-Fetch·동출처 Referer)으로 보낸다.
   `REDSTM_TEXT_COLLECTOR_UA`로 UA를 격상할 수 있다. 이는 올바른 프로토콜 지문이지 우회가 아니다 —

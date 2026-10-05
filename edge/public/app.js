@@ -264,8 +264,10 @@ const textLibrary = createTextLibrary({
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
-      if (!readerSession.restore(anchor) && anchor.loc) showReaderFeedback("읽던 문장을 찾지 못했습니다", 2200);
+      const restored = readerSession.restore(anchor);
+      if (!restored && anchor.loc) showReaderFeedback("읽던 문장을 찾지 못했습니다", 2200);
       syncScrollBaseline();
+      return restored;
     },
   },
   onChange: () => {
@@ -4271,11 +4273,18 @@ function restoreReadingPosition(summary) {
   lastReaderScroll = position;
   readerScrollDelta = 0;
   elements["reader-pane"].scrollTop = position;
+  let restored = true;
   if (entry?.loc || entry?.anchor) {
     const anchor = { offset: entry.offset, quote: entry.anchor, viewportOffset: entry.anchorTop ?? 0, atStart: entry.scroll === 0, ...(entry.loc ? { loc: entry.loc } : {}) };
-    if (!readerSession.restore(anchor) && entry.loc) showReaderFeedback("읽던 문장을 찾지 못했습니다", 2200);
+    restored = readerSession.restore(anchor);
+    if (!restored && entry.loc) showReaderFeedback("읽던 문장을 찾지 못했습니다", 2200);
   }
   syncScrollBaseline();
+  // Same as the text library: a failed restore must not save the top over the sentence.
+  if (!restored) {
+    clearTimeout(scrollTimer);
+    return;
+  }
   readerSession.capture();
 }
 

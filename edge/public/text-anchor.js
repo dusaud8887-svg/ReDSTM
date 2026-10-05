@@ -23,6 +23,21 @@ function locate(container, target) {
   return last ? { node: last, offset: Math.max(0, last.data.length - 1) } : null;
 }
 
+// A skipped plain-text chunk has no line boxes (content-visibility: auto). Measuring a
+// saved place inside one looks like a missing sentence, and the reader then saves the top.
+// Lay out every chunk from the start through the one that holds this node. Later chunks
+// stay skipped. A place in the unchunked tail needs every chunk above it at its real height.
+function revealChunksThrough(node) {
+  const chunk = node?.parentElement?.closest?.(".text-chunk") ?? null;
+  const root = chunk?.parentElement ?? node?.parentElement?.closest?.(".archive-body");
+  if (!root) return;
+  for (const child of root.children) {
+    if (!child.classList?.contains("text-chunk")) continue;
+    child.style.contentVisibility = "visible";
+    if (chunk && child === chunk) return;
+  }
+}
+
 function rectAt(position) {
   const range = document.createRange();
   const end = Math.min(position.node.data.length, position.offset + 1);
@@ -87,6 +102,7 @@ export function restoreTextAnchor(container, scroller, anchor, topInset = 0, rev
     const resolved = resolveLocator(model, anchor.loc, rev);
     if (resolved.status === "unresolved") return false;
     const position = modelPosition(model, resolved.start);
+    if (position) revealChunksThrough(position.node);
     const rect = position && rectAt(position);
     if (!rect) return false;
     const top = scroller.getBoundingClientRect().top + topInset;
@@ -99,6 +115,7 @@ export function restoreTextAnchor(container, scroller, anchor, topInset = 0, rev
   }
   if (target < 0 || target > text.length) return false;
   const position = locate(container, target);
+  if (position) revealChunksThrough(position.node);
   const rect = position && rectAt(position);
   if (!rect) return false;
   const top = scroller.getBoundingClientRect().top + topInset;

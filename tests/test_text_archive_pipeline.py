@@ -1027,6 +1027,27 @@ def test_work_refresh_keeps_paid_and_review_markers(tmp_path: Path) -> None:
         collector._apply_work(db, unit, payload, None)
         with db:
             db.execute(
+                "UPDATE text_novel_chapters SET chapter_label='1화',chapter_kind='side',"
+                "source_published_at='2026-01-01' WHERE source_chapter_id='1'"
+            )
+        collector._apply_work(db, unit, payload, None)
+        kept = db.execute(
+            "SELECT chapter_label,chapter_kind,source_published_at FROM text_novel_chapters "
+            "WHERE source_chapter_id='1'"
+        ).fetchone()
+        assert tuple(kept) == ("1화", "side", "2026-01-01")
+        titled = {
+            **payload,
+            "episodes": [{"id": 1, "number": 1, "title": "1화 개정", "publishedAt": "2026-02-02"}],
+        }
+        collector._apply_work(db, unit, titled, None)
+        revised = db.execute(
+            "SELECT chapter_label,source_published_at FROM text_novel_chapters "
+            "WHERE source_chapter_id='1'"
+        ).fetchone()
+        assert tuple(revised) == ("1화 개정", "2026-02-02")
+        with db:
+            db.execute(
                 "UPDATE text_novel_chapters SET access='point',status='waiting' "
                 "WHERE source_chapter_id='1'"
             )
@@ -1677,6 +1698,8 @@ def test_live_json_shape_keeps_unknown_access_and_rejects_paid_placeholder() -> 
         {
             "id": "31027",
             "label": "1",
+            "has_title": False,
+            "has_kind": False,
             "episode_number": 1,
             "source_episode_number_raw": "1",
             "source_toc_position": 0,

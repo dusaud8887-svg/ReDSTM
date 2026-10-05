@@ -219,6 +219,37 @@ def test_warc_middleware_runs_before_http_decompression() -> None:
     assert settings.DOWNLOADER_MIDDLEWARES["crawler.middlewares.WarcCaptureMiddleware"] == 595
 
 
+def test_error_validator_does_not_stick_to_the_following_200(tmp_path: Path) -> None:
+    path = tmp_path / "capture.warc.gz"
+    spider = TypeMoonSpider()
+    middleware = WarcCaptureMiddleware(path)
+    middleware.spider_opened(spider)
+    failed = Request("https://www.typemoon.net/write_free21/1", meta={"redstm_capture": True})
+    error = HtmlResponse(
+        failed.url,
+        status=503,
+        body=b"down",
+        headers={"ETag": '"err"', "Last-Modified": "Fri, 10 Jul 2026 00:00:00 GMT"},
+        request=failed,
+        encoding="utf-8",
+    )
+    middleware.process_response(failed, error)
+    assert "etag" not in failed.meta
+    assert "last_modified" not in failed.meta
+
+    retried = failed.copy()
+    retried.meta["etag"] = '"err"'
+    retried.meta["last_modified"] = "stale"
+    ok = HtmlResponse(
+        retried.url, status=200, body=b"<html>ok</html>", request=retried, encoding="utf-8"
+    )
+    middleware.process_response(retried, ok)
+    assert "etag" not in retried.meta
+    assert "last_modified" not in retried.meta
+    assert retried.meta["raw_sha256"]
+    middleware.spider_closed(spider, "finished")
+
+
 def test_warc_rotates_and_only_publishes_closed_files(tmp_path: Path) -> None:
     path = tmp_path / "capture.warc.gz"
     spider = TypeMoonSpider()

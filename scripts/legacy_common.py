@@ -125,14 +125,38 @@ def _parse_absolute(rendered: str) -> datetime | None:
     return None
 
 
+def _month_day(rendered: str, date_format: str, year: int) -> datetime | None:
+    try:
+        # The year is prepended rather than using a year-less format: that defaults to
+        # 1900 and, on 3.14+, warns about ambiguous leap days.
+        return datetime.strptime(f"{year} {rendered}", f"%Y {date_format}")
+    except ValueError:
+        return None
+
+
+def _previous_leap_day(candidate: datetime, base_kst: datetime) -> datetime | None:
+    for year in range(candidate.year - 1, candidate.year - 5, -1):
+        try:
+            rolled = candidate.replace(year=year)
+        except ValueError:
+            continue
+        if rolled <= base_kst + timedelta(days=1):
+            return rolled
+    return None
+
+
 def _parse_base_anchored(rendered: str, base: datetime) -> datetime | None:
     base_kst = base.astimezone(_KST)
+    # Only Feb 29 fails because of the year. Other month-days parse or they are junk.
+    leap_day = rendered.startswith(("02-29", "02.29"))
     for date_format in _MONTH_DAY_FORMATS:
-        try:
-            # Parse with the capture year prepended rather than a year-less format: the
-            # latter defaults to 1900 and, on 3.14+, warns about ambiguous leap days.
-            partial = datetime.strptime(f"{base_kst.year} {rendered}", f"%Y {date_format}")
-        except ValueError:
+        partial = _month_day(rendered, date_format, base_kst.year)
+        if partial is None and leap_day:
+            for year in range(base_kst.year - 1, base_kst.year - 5, -1):
+                partial = _month_day(rendered, date_format, year)
+                if partial is not None:
+                    break
+        if partial is None:
             continue
         candidate = partial.replace(tzinfo=_KST)
         # A short "MM-DD" carries no year: it belongs to the capture year unless that would
@@ -142,8 +166,13 @@ def _parse_base_anchored(rendered: str, base: datetime) -> datetime | None:
             try:
                 candidate = candidate.replace(year=base_kst.year - 1)
             except ValueError:
-                # 02-29 has no previous-year date: it can only be this year's, ahead by skew.
-                pass
+                # Keep this Feb 29 only when the capture clock is at most a day behind it.
+                # Earlier than that, the stamp is the previous leap day, not weeks ahead.
+                if candidate.date() - base_kst.date() > timedelta(days=1):
+                    rolled = _previous_leap_day(candidate, base_kst)
+                    if rolled is None:
+                        continue
+                    candidate = rolled
         return candidate
     for time_format in _TIME_ONLY_FORMATS:
         try:
