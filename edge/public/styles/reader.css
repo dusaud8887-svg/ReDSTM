@@ -311,7 +311,7 @@ body.find-open .reader-bottom { visibility: hidden; }
   box-sizing: content-box; width: var(--page-width); height: var(--page-height); max-width: none;
   margin: 0 0 0 var(--page-left); padding: 0; position: absolute; top: var(--page-top); left: 0;
   column-width: var(--page-width); column-gap: var(--page-gap); column-fill: auto; overflow: visible;
-  overflow-wrap: anywhere; will-change: transform; touch-action: pan-y pinch-zoom;
+  overflow-wrap: anywhere; will-change: transform; touch-action: pan-y;
 }
 .reader.paged .archive-body.turning { transition: transform 200ms var(--ease-out); }
 .reader.paged .archive-body :is(img, video, .media-figure, figure) { max-height: var(--page-height); break-inside: avoid; }

@@ -742,7 +742,7 @@ function applySettings() {
   elements["prose-font"].value = settings.proseFont;
   // The font is judged on the reader's own text: the first lines of the open chapter, if any.
   const preview = document.querySelector("#font-preview");
-  preview.textContent = elements["archive-body"].textContent.replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
+  preview.textContent = elements["archive-body"].textContent.slice(0, 600).replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
   preview.style.fontFamily = proseFontStack();
   document.querySelector("#quick-size-output").value = String(settings.proseSize);
   elements["aa-zoom-output"].value = `${Math.round(aaZoom * 100)}%`;
@@ -776,6 +776,16 @@ function applySettings() {
   }
   elements["aa-background"].closest(".aa-color-picker").classList.toggle("active", !backgroundPresetSelected);
   requestAnimationFrame(() => updateAaOverflowCue());
+  syncReaderLayout();
+}
+
+// Settings reach the open body from many places (the mode buttons, profiles, 이 작품만, reset,
+// import, another tab). A changed reading mode switches the layout; any other change that can
+// reflow the text (size, line, width, margin, spacing) lays the pages out again.
+function syncReaderLayout() {
+  if (!readerSource) return;
+  if (appliedReadingMode !== null && appliedReadingMode !== settings.readingMode) applyReadingMode();
+  else relayoutPages();
 }
 
 function syncThemeColor() {
@@ -1462,6 +1472,7 @@ function setReaderSource(source) {
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
   if (!source) {
+    hideSelectionMenu();
     continuous.reset(); readerDocument = null; continuousPreview = null;
     document.body.classList.remove("continuous-mode");
     stopAutoScroll();
@@ -1663,7 +1674,9 @@ const pagedAdapter = {
 };
 
 // Chooses the layout for the open body and keeps the sentence at the reader's place across it.
+let appliedReadingMode = null;
 function applyReadingMode() {
+  appliedReadingMode = settings.readingMode;
   const want = settings.readingMode === "page" && Boolean(readerSource) && currentMode !== "aa";
   if (settings.readingMode === "page" && readerSource && currentMode === "aa" && !pageNoticeShown) {
     pageNoticeShown = true;
@@ -5464,7 +5477,6 @@ for (const choice of document.querySelectorAll("button[data-reading-mode]")) {
   choice.addEventListener("click", () => {
     settings.readingMode = choice.dataset.readingMode;
     saveSettings();
-    applyReadingMode();
   });
 }
 elements["comments-toggle"].addEventListener("click", () => setCommentsOpen(Boolean(elements["comment-list"].hidden)));
@@ -5872,6 +5884,17 @@ function discardDeviceSession() {
   offlineRuns.clear();
   mirrorQueue.clear();
 }
+// Another tab cleared this device: drop what this tab held, then use records again once that
+// deletion has had time to finish (an open queued behind the delete gets a fresh, empty store).
+function discardForOtherTab() {
+  discardDeviceSession();
+  const generation = deviceGeneration;
+  setTimeout(() => {
+    if (generation !== deviceGeneration) return;
+    deviceResetting = false;
+    statesRestored = null;
+  }, 10_000);
+}
 function recordsUnavailableText() {
   return ownerStoreProblem === "identity"
     ? "로그인을 확인하지 못해 기록을 열 수 없습니다. 새로 고침하거나 다시 로그인해 주세요."
@@ -5888,7 +5911,7 @@ function ownerStore() {
       // A newer tab upgraded the schema and closed this connection: the next use opens again.
       return hash ? openStore(hash, { onClosed: (reason) => {
         ownerDb = null;
-        if (reason === "deleted") discardDeviceSession();
+        if (reason === "deleted" && !deviceResetting) discardForOtherTab();
       } }) : null;
     })
     .then(async (store) => {
@@ -5899,7 +5922,8 @@ function ownerStore() {
       // Another tab's change arrives here too.
       store.subscribe(async ({ keys } = {}) => {
         // Mirrored reading states (P6-6) are not records.
-        if (keys?.every((key) => key.startsWith("redstm."))) return;
+        // Sessions and offline bookkeeping are not marks either: repaint only for annotations.
+        if (keys && !keys.some((key) => key.startsWith("annotations:"))) return;
         annotationRecords = await store.getAll("annotations");
         paintAnnotations();
       });
@@ -6633,7 +6657,7 @@ async function offlineProgress(message) {
     if (message.owner !== await ownerIdentity()) return;
     if (message.records && !deviceResetting) {
       const pendingStore = ownerDb;
-      discardDeviceSession();
+      discardForOtherTab();
       (await pendingStore)?.close();
       ownerDb = null;
     }
@@ -6722,6 +6746,10 @@ document.querySelector("#other-account-delete").addEventListener("click", async 
     for (const other of otherOwners()) if (other !== owner) {
       await offline.resetOwner(other, { records: true });
       await deleteNamespace(other);
+      // Their reading places and settings in localStorage go too, as the message says.
+      for (const key of [STATE_KEY, TEXT_STATE_KEY]) {
+        try { localStorage.removeItem(stateStorageKey(key, other)); } catch { /* storage blocked */ }
+      }
     }
   } catch {
     showReaderFeedback("지우지 못했어요 · 다른 탭을 닫고 다시 시도해 주세요", 2400);
@@ -6927,6 +6955,9 @@ function stopAutoScroll() {
   autoScroll = null;
   elements["autoscroll-bar"].hidden = true;
   document.body.classList.remove("autoscroll-open");
+  // Stopped from outside the bar (next episode, mode change): its layer and CloseWatcher go too,
+  // or the next Back would close an invisible bar.
+  overlays.closeLayer("autoscroll-bar", "navigate");
 }
 document.querySelector("#more-autoscroll").addEventListener("click", () => {
   closeReaderMore();

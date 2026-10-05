@@ -2266,6 +2266,28 @@ test("Page mode turns pages and keeps the sentence through size, rotation, reloa
   expect(Math.abs(Number(top.match(/\d+$/)[0]) - Number(sentence.match(/\d+$/)[0]))).toBeLessThanOrEqual(2);
 });
 
+test("Page mode lays the pages out again when the font grows, so no page is skipped", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({ schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, lastCatalogState: null, history: {} }));
+  });
+  await useLongCollection(page, 3);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#reader")).toHaveClass(/paged/);
+  const status = page.locator("#reader-status");
+  await expect(status).toHaveText(/^1 \/ \d+쪽$/);
+  const total = async () => Number((await status.textContent()).match(/\/ (\d+)/)[1]);
+  const before = await total();
+  await page.locator(mobileWidth(page) ? "#reader-bottom-settings" : "#reader-settings").click();
+  const larger = page.locator('#quick-settings [data-prose-size-delta="1"]');
+  for (let step = 0; step < 6; step += 1) await larger.click();
+  await page.keyboard.press("Escape");
+  // Bigger letters need more pages; the count follows without a resize.
+  await expect.poll(total).toBeGreaterThan(before);
+  // A profile switching to scroll mode leaves page mode at once, not on the next document.
+  await page.evaluate(() => document.querySelector('#quick-settings [data-reading-mode="scroll"]').click());
+  await expect(page.locator("#reader")).not.toHaveClass(/paged/);
+});
+
 // P5-1: 다른 기기에서 shows the place as a QR code and a link; opening the link (the other device)
 // lands on that sentence rather than at the top or the reader's saved place.
 test("다른 기기에서 hands the sentence over in a QR link that opens at it", async ({ page }) => {

@@ -116,6 +116,12 @@ export async function openStore(ownerHash, { onClosed } = {}) {
     blocking(_currentVersion, blockedVersion) {
       db.close();
       closed = true;
+      // The change channel and storage listener belong to this connection; they go with it
+      // (unless this fires while the store is still opening, before they exist).
+      try {
+        channel?.close();
+        globalThis.removeEventListener("storage", storageChanged);
+      } catch { /* not created yet */ }
       onClosed?.(blockedVersion === null ? "deleted" : "upgraded");
     },
   });
