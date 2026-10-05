@@ -250,6 +250,22 @@ class FrontierStore:
                 """,
                 (board_id, external_post_id),
             ).fetchone()
+            # Existing retry-capped rows predate the listing fingerprint. Their last
+            # observed outline still provides a baseline, so the first changed listing
+            # after the migration can reopen them rather than merely initializing it.
+            if row is not None and row["listing_sha256"] is None:
+                connection.execute(
+                    "UPDATE crawl_frontier SET listing_sha256 = ? "
+                    "WHERE board_id = ? AND external_post_id = ? "
+                    "AND state = 'dead' AND listing_sha256 IS NULL",
+                    (
+                        listing_fingerprint(
+                            str(row["title"]), row["category"], int(row["comment_count"])
+                        ),
+                        board_id,
+                        external_post_id,
+                    ),
+                )
         # A locked post (secret post, permission wall) has no body by nature. Refetching it on
         # every listing pass only spends the sync budget, so an unchanged listing row leaves it
         # alone until the slow revisit window passes (the author may unlock it).
