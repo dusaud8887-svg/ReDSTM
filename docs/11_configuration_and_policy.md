@@ -171,7 +171,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | control | active command conflict | process/marker별 D1 partial unique | `edge/migrations/0005_control_integrity.sql` |
 | control | stale running reconciliation | 시작 후 8시간 | `edge/src/control-read.js` |
 | control | 성공/실패 evidence retention | 30일 / 90일, 매일 03:00 UTC | `edge/src/control-read.js`, `wrangler.jsonc` |
-| observability | Worker head sampling | 10% | `edge/wrangler.jsonc` |
+| observability | Worker head sampling | 100% (단일 사용자 트래픽, 5xx 원인 로그 보존) | `edge/wrangler.jsonc` |
 
 automatic/manual publish action은 marker 유무와 무관하게 bounded incremental exporter와 verified
 publisher를 항상 실행한다. verified state/ledger가 없거나 불일치하면 `partial`로 fail-closed하고 full

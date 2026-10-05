@@ -311,6 +311,78 @@ test("handles health, missing objects, methods, and invalid keys", async () => {
   assert.equal((await workerFetch(request("/archive/release.json", { method: "POST" }), env)).status, 405);
 });
 
+test("storage failures answer a plain 503 and an unsatisfiable range answers 416", async () => {
+  const failing = environment({
+    ARCHIVE: {
+      async get(_key, options) {
+        if (options?.range) throw new Error("get: The requested range is not satisfiable (10039)");
+        throw new Error("get: We encountered an internal error. Please try again. (10001)");
+      },
+      async head() { return archiveObject("0123456789"); },
+    },
+    TEXT_ARCHIVE: { async get() { throw new Error("internal (10001)"); }, async head() { throw new Error("internal (10001)"); } },
+  });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const broken = await workerFetch(request("/archive/warc/run.warc.gz"), failing);
+    assert.equal(broken.status, 503);
+    // Never HTML: the service worker reads HTML on /archive/ or /api/ as an Access sign-in page.
+    assert.match(broken.headers.get("Content-Type"), /^text\/plain/);
+    assert.equal(broken.headers.get("Cache-Control"), "no-store");
+
+    const range = await workerFetch(request("/archive/warc/run.warc.gz", { headers: { Range: "bytes=20-" } }), failing);
+    assert.equal(range.status, 416);
+    assert.equal(range.headers.get("Content-Range"), "bytes */10");
+
+    const text = await workerFetch(request(`/api/v1/text/object/${"a".repeat(64)}`), failing);
+    assert.equal(text.status, 503);
+    assert.match(text.headers.get("Content-Type"), /^text\/plain/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test("an unreachable Access key set is a retryable 503, not a lost sign-in", async () => {
+  const issuer = "https://redstm-jwks-down.cloudflareaccess.com";
+  const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+  const token = await new SignJWT({ email: "reader@example.test" })
+    .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+    .setIssuer(issuer)
+    .setAudience("aud")
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(privateKey);
+  const env = environment({ VIEWER_USERNAME: "", VIEWER_PASSWORD: "", TEAM_DOMAIN: issuer, POLICY_AUD: "aud" });
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    for (const failure of [
+      async () => { throw new TypeError("network connection lost"); },
+      async () => new Response("bad gateway", { status: 502 }),
+    ]) {
+      globalThis.fetch = failure;
+      const result = await workerFetch(
+        new Request("https://archive.example/health", { headers: { "Cf-Access-Jwt-Assertion": token } }),
+        env,
+      );
+      assert.equal(result.status, 503);
+      assert.match(result.headers.get("Content-Type"), /^text\/plain/);
+    }
+    // A malformed token is still judged and refused.
+    globalThis.fetch = async () => Response.json({ keys: [] });
+    const malformed = await workerFetch(
+      new Request("https://archive.example/health", { headers: { "Cf-Access-Jwt-Assertion": "not-a-jwt" } }),
+      env,
+    );
+    assert.equal(malformed.status, 403);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
+});
+
 test("release.json is served as a no-cache pointer", async () => {
   const result = await workerFetch(request("/archive/release.json"), environment());
   assert.equal(result.status, 200);

@@ -7,6 +7,10 @@ const encoder = new TextEncoder();
 const keyPattern = /^[a-zA-Z0-9_./-]+$/;
 const IMMUTABLE_CACHE_SECONDS = 365 * 24 * 60 * 60;
 const accessJwks = new Map();
+// The key set could not be fetched (timeout, non-200, bad JSON, network): the token was never
+// judged. Answering 403 would read as a lost sign-in; the caller gets a retryable 503 instead.
+const JWKS_UNAVAILABLE_CODES = new Set(["ERR_JWKS_TIMEOUT", "ERR_JWKS_INVALID", "ERR_JOSE_GENERIC"]);
+const UNAVAILABLE = "unavailable";
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'none'",
@@ -76,8 +80,8 @@ async function authorized(request, env, role) {
         : null;
       if (role === "runner") return serviceToken && !email ? { role, subject: serviceToken } : false;
       return email ? { role, subject: email } : false;
-    } catch {
-      return false;
+    } catch (error) {
+      return !error?.code || JWKS_UNAVAILABLE_CODES.has(error.code) ? UNAVAILABLE : false;
     }
   }
   if (!env.VIEWER_USERNAME || !env.VIEWER_PASSWORD) {
@@ -91,6 +95,24 @@ async function authorized(request, env, role) {
 
 function response(body, status, headers = {}) {
   return new Response(body, { status, headers });
+}
+
+// Plain text, never HTML: the service worker reads an HTML answer on /api/ or /archive/ as an
+// Access sign-in page, and a storage hiccup must not open the sign-in dialog.
+function unavailable(cause) {
+  console.error("storage_unavailable", cause instanceof Error ? cause.message : String(cause));
+  return response("Temporarily unavailable", 503, {
+    "Cache-Control": "no-store",
+    "Content-Type": "text/plain; charset=utf-8",
+    "Retry-After": "30",
+  });
+}
+
+// R2 throws (code 10039) instead of returning null for a range past the end of the object.
+async function rangeNotSatisfiable(env, key) {
+  const object = await env.ARCHIVE.head(key);
+  if (!object) return response("Not found", 404);
+  return response(null, 416, { "Content-Range": `bytes */${object.size}`, "Cache-Control": "no-store" });
 }
 
 function objectKey(url) {
@@ -199,6 +221,9 @@ export default {
     if (isAuthorized === null) {
       return response("Worker secrets are not configured", 500);
     }
+    if (isAuthorized === UNAVAILABLE) {
+      return unavailable("access_jwks_unavailable");
+    }
     if (!isAuthorized) {
       const accessMode = Boolean(env.TEAM_DOMAIN || env.POLICY_AUD);
       return response(
@@ -215,7 +240,11 @@ export default {
       return Response.json({ ownerHash }, { headers: { "Cache-Control": "private, no-store" } });
     }
     if (url.pathname.startsWith("/api/v1/text/")) {
-      return textArchiveResponse(request, env);
+      try {
+        return await textArchiveResponse(request, env);
+      } catch (error) {
+        return unavailable(error);
+      }
     }
     if (url.pathname.startsWith("/api/v1/")) {
       return controlApiResponse(request, env, isAuthorized);
@@ -242,7 +271,18 @@ export default {
     if (key === "") {
       return response("Invalid archive key", 400);
     }
-    return archiveResponse(request, env, key, ctx);
+    try {
+      return await archiveResponse(request, env, key, ctx);
+    } catch (error) {
+      if (String(error?.message ?? "").includes("10039")) {
+        try {
+          return await rangeNotSatisfiable(env, key);
+        } catch (headError) {
+          return unavailable(headError);
+        }
+      }
+      return unavailable(error);
+    }
   },
   async scheduled(controller, env) {
     await runControlMaintenance(env, new Date(controller.scheduledTime));
