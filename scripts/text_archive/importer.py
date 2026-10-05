@@ -1762,20 +1762,17 @@ def _next_ready_batch(inbox_root: Path, attempts_root: Path | None = None) -> st
                 and not (inbox_root / "receipts" / f"{directory.name}.json").is_file()
                 and not (inbox_root / "receipts" / f"{directory.name}.status.json").exists()
             ):
-                # The oldest ready batch waits out its failure backoff; later ones keep their
-                # order behind it rather than overtaking it.
+                # A deferred batch keeps its original files; independent later batches proceed.
                 if attempts_root is not None and _attempt_backoff_active(
                     attempts_root, directory.name
                 ):
-                    return None
+                    continue
                 return directory.name
     return None
 
 
-# A batch whose import fails unexpectedly (an OSError, a SQLite or JSON error, not a validation
-# rejection) is retried with growing waits and rejected after this many attempts, so one bad
-# batch cannot hold every later batch, and Newtomi's 2 GiB drop, forever.
-_IMPORT_ATTEMPTS = 5
+# Only explicit validation failures reject a batch. Operational failures retain it for retry,
+# with capped backoff, even when a lock or disk outage lasts for many timer ticks.
 _IMPORT_BACKOFF_SECONDS = (300, 900, 1800, 3600)
 
 
@@ -1796,10 +1793,6 @@ def _record_import_failure(
     except OSError, ValueError, KeyError, TypeError:
         attempts = 1
     reason = f"import_failed:{type(error).__name__}"
-    if attempts >= _IMPORT_ATTEMPTS:
-        _record_batch_rejection(inbox_root, batch_id, reason)
-        path.unlink(missing_ok=True)
-        return {"status": "rejected", "batch_id": batch_id, "reason": reason}
     delay = _IMPORT_BACKOFF_SECONDS[min(attempts, len(_IMPORT_BACKOFF_SECONDS)) - 1]
     attempts_root.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -1851,11 +1844,14 @@ def main() -> None:
     deadline = time.monotonic() + _DRAIN_SECONDS
     seen: set[str] = set()
     imported = 0
+    failed = False
     while True:
         batch_id = args.batch_id or _next_ready_batch(inbox_root, _ATTEMPTS_ROOT)
         if batch_id is None or batch_id in seen:
             if not imported:
                 print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
+            if failed:
+                parser.exit(1)
             return
         seen.add(batch_id)
         try:
@@ -1865,12 +1861,14 @@ def main() -> None:
         if outcome is None:
             parser.exit(0, "batch not ready; no receipt written\n")
         print(json.dumps(outcome))
-        if outcome.get("status") == "failed":
-            # Later batches wait behind it; the next timer tick retries after the backoff.
+        failed = failed or outcome.get("status") == "failed"
+        if outcome.get("status") == "failed" and args.batch_id:
             parser.exit(1, "text import failed; retried after a backoff\n")
         imported += 1
         # Newtomi keeps up to eight batches in flight; one per timer tick left them waiting.
         if args.batch_id or imported >= _DRAIN_BATCHES or time.monotonic() >= deadline:
+            if failed:
+                parser.exit(1)
             return
 
 

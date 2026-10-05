@@ -2,7 +2,12 @@
 const BLOCKS = new Set(["P", "DIV", "LI", "PRE", "H1", "H2", "H3", "H4", "H5", "H6"]);
 const EXCLUDED = "#comments, .media-failed, .media-retry, figcaption, button, script, style, [data-reader-ui]";
 
+const models = new WeakMap();
+
 export function createTextModel(root) {
+  const cached = models.get(root);
+  if (cached && !cached.observer.takeRecords().length) return cached.model;
+  cached?.observer.disconnect();
   let text = "";
   // The last character is tracked instead of asking the growing string: endsWith() flattens the
   // concatenated text on every block, which made a 20 MB document take seconds per capture.
@@ -30,7 +35,25 @@ export function createTextModel(root) {
     if (block) newline();
   }
   visit(root);
-  return { tm: 1, text, segments, positions, root };
+  const rawNodes = [];
+  const rawPositions = new WeakMap();
+  let rawOffset = 0;
+  const walker = root.ownerDocument?.createTreeWalker(root, 4);
+  for (let node = walker?.nextNode(); node; node = walker.nextNode()) {
+    rawNodes.push({ node, start: rawOffset, end: rawOffset + node.data.length });
+    rawPositions.set(node, rawOffset);
+    rawOffset += node.data.length;
+  }
+  const model = { tm: 1, text, segments, positions, root, rawNodes, rawPositions,
+    rawText: root.textContent ?? "", visibleSegments: segments.filter(({ node }) => node.data.trim()) };
+  const Observer = root.ownerDocument?.defaultView?.MutationObserver;
+  if (Observer) {
+    const observer = new Observer(() => { models.delete(root); observer.disconnect(); });
+    observer.observe(root, { childList: true, characterData: true, subtree: true,
+      attributes: true, attributeFilter: ["class", "id", "data-reader-ui"] });
+    models.set(root, { model, observer });
+  }
+  return model;
 }
 
 export function searchCopy(text) {
@@ -75,11 +98,16 @@ export function modelOffset(model, node, offset) {
 
 export function modelPosition(model, offset, end = false) {
   if (!Number.isInteger(offset) || offset < 0 || offset > model.text.length) return null;
-  for (const segment of model.segments) {
-    if (offset < segment.end || (end && offset <= segment.end)) {
-      return { node: segment.node, offset: Math.max(0, offset - segment.start) };
-    }
+  let low = 0;
+  let high = model.segments.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const segment = model.segments[middle];
+    if (offset < segment.end || (end && offset <= segment.end)) high = middle;
+    else low = middle + 1;
   }
+  const segment = model.segments[low];
+  if (segment) return { node: segment.node, offset: Math.max(0, offset - segment.start) };
   const last = model.segments.at(-1);
   return last ? { node: last.node, offset: last.end - last.start } : null;
 }

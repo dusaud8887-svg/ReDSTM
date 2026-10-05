@@ -1,3 +1,4 @@
+import { limitHistoryForStorage } from "../public/user-state.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createLocator } from "../public/text-model.js";
@@ -424,4 +425,22 @@ test("reading profiles, work exceptions and the auto-scroll speed survive storag
   assert.deepEqual(restored.workProfiles, { "typemoon:collection:1": "밤" });
   state.settings.autoScrollSpeed = 11;
   assert.equal(planImport(exportUserState(state), defaults).state.settings.autoScrollSpeed, undefined);
+});
+
+
+test("history storage budget counts locators and scroll and retains the most recent records", () => {
+  const history = {};
+  const scroll = {};
+  for (let index = 1; index <= 10_000; index += 1) {
+    history[`board:${index}`] = { readAt: new Date(1_000_000 + index * 1000).toISOString(), anchor: "가".repeat(500), loc: { exact: "나".repeat(10_000) } };
+    scroll[`board:${index}`] = index;
+  }
+  const state = { history, scroll, bookmarks: { "board:1": { savedAt: "2026-10-05T00:00:00Z" } } };
+  const bounded = limitHistoryForStorage(state);
+  assert.ok(JSON.stringify({ history: bounded.history, scroll: bounded.scroll }).length * 2 < 1_048_576);
+  assert.ok(bounded.history["board:10000"]);
+  assert.equal(bounded.history["board:1"], undefined);
+  assert.deepEqual(Object.keys(bounded.scroll), Object.keys(bounded.history));
+  assert.deepEqual(bounded.bookmarks, state.bookmarks);
+  assert.equal(Object.keys(state.history).length, 10_000);
 });
