@@ -57,7 +57,11 @@ schema v4여서 이번 앱 배포에 DB 재마이그레이션은 필요하지 �
 
 ## 완료 기록
 
-고정 커밋의 전체 검증 및 배포 후 실제 결과를 기록할 예정.
+배포 후 완료 결과는 `artifacts/releases/`의 `scripts.release` JSON과 최종 점검 기록에서 확인한다.
+
+운영 점유를 줄이려는 후속 요청을 반영해 TypeMoon 정기 실행을 종료 후 30시간 휴식으로 변경했다.
+첫 활성화·재부팅 뒤에는 30시간 후 최초 실행한다. 15분 jitter를 유지하고, 원격 명령 poll·텍스트
+타이머는 별도로 유지한다. 다음 실행 시각 표시도 실제 systemd monotonic deadline을 사용한다.
 
 리더 수정 커밋 `640f1f9`의 GitHub CI [37252038844](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/37252038844)는
 Python, Edge, Linux 시각 비교, 4폭 E2E, text-edge, dependency audit 모두 성공했다.

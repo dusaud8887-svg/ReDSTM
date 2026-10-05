@@ -168,6 +168,41 @@ def test_installed_schedule_rejects_unsupported_systemd_calendar_syntax(tmp_path
     assert _installed_next_scheduled_at(timer) is None
 
 
+def test_monotonic_schedule_reports_the_actual_systemd_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timer = tmp_path / "redstm-schedule.timer"
+    timer.write_text("[Timer]\nOnActiveSec=30h\nOnUnitInactiveSec=30h\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        assert kwargs["timeout"] == 5
+        return subprocess.CompletedProcess(command, 0, stdout="t 109120000000\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
+    # 30 hours plus 120 seconds of systemd random delay, from its real deadline.
+    assert _installed_next_scheduled_at(timer, datetime(2026, 10, 5, tzinfo=UTC)) == (
+        "2026-10-06T06:02:00Z"
+    )
+    assert commands[0][-1] == "NextElapseUSecMonotonic"
+
+
+@pytest.mark.parametrize("value", ["t 0", "t 18446744073709551615", "t -1", "s 123", "bad"])
+def test_monotonic_schedule_rejects_missing_or_invalid_deadlines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    timer = tmp_path / "redstm-schedule.timer"
+    timer.write_text("[Timer]\nOnUnitInactiveSec=30h\n", encoding="utf-8")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout=value),
+    )
+    assert _installed_next_scheduled_at(timer) is None
+
+
 def test_heartbeat_only_reports_a_next_run_for_an_active_timer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

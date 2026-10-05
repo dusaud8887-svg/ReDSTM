@@ -1,10 +1,10 @@
 [Unit]
-Description=Run the ReDSTM archive cycle every six hours
+Description=Run the ReDSTM archive cycle after 30 hours of rest
 
 [Timer]
-OnCalendar=*-*-* 00,06,12,18:17:00 UTC
+OnActiveSec=30h
+OnUnitInactiveSec=30h
 RandomizedDelaySec=15m
-Persistent=true
 Unit=redstm-schedule.service
 
 [Install]

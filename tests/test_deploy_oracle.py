@@ -878,8 +878,10 @@ def test_install_assets_enable_control_only_and_never_touch_legacy() -> None:
     assert "Persistent=true" in timer
     assert "--scheduled" in schedule_service
     assert "ConditionPathExists" not in schedule_service
-    assert "00,06,12,18:17:00 UTC" in schedule_timer
-    assert "Persistent=true" in schedule_timer
+    assert "OnActiveSec=30h" in schedule_timer
+    assert "OnUnitInactiveSec=30h" in schedule_timer
+    assert "OnCalendar=" not in schedule_timer
+    assert "Persistent=" not in schedule_timer
     assert "redstm-schedule.timer" in installer
     assert "systemctl disable --now redstm-schedule.timer" in installer
     assert "/etc/systemd/journald.conf.d/redstm.conf" in installer

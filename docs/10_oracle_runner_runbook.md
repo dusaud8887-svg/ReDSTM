@@ -6,6 +6,11 @@
 - control plane: [08 Operations](08_operations_control_plane.md)
 - 제외: 실제 DB 삭제, 원격 서비스 중지, credential 원문
 
+2026-10-05 주기 변경: TypeMoon 정기 실행은 종료 후 30시간(+최대 15분 jitter) 쉬도록
+`OnUnitInactiveSec=30h`를 사용한다. 첫 활성화·재부팅 뒤에는 `OnActiveSec=30h`로 최초 실행을 예약한다.
+원격 명령 poll과 텍스트 타이머는 유지한다. `/ops`의 다음 실행 시각은 systemd의 실제 monotonic
+deadline을 UTC로 변환한다. 이하 날짜별 6시간 운영 기록은 변경 전 이력이다.
+
 2026-09-29 운영 확인: Oracle `current`는 `ccf9b7c3fd481170becdfb1f8220635f2ffe6301`이고
 control timer는 enabled/active, schedule timer는 disabled/inactive다. full baseline과 이후
 verified delta publish·인증 readback은 통과했다. `aa_19` crawl canary는 2026-09-28
@@ -306,7 +311,7 @@ object, 변경된 board/search/collection object와 release manifest만 올린�
 - 오래된 search/board manifest GC는 최근 2개 release와 7일 rollback window 뒤 별도 bounded
   maintenance job으로만 수행한다.
 - automatic/manual publish action은 `publish.pending` 유무와 무관하게 bounded incremental exporter와
-  verified publisher를 항상 실행하며, 실패하면 다음 6시간 cycle에서 다시 reconcile한다.
+  verified publisher를 항상 실행하며, 실패하면 다음 정기 cycle에서 다시 reconcile한다.
 
 `/srv/redstm/state/publish.pending`은 최초 미게시 변경 시각을 나타내는 advisory age marker일 뿐
 correctness trigger가 아니다. 변경 시 하나만 atomic create하고, export/upload/pointer readback/smoke 중
@@ -319,7 +324,7 @@ R2 remote는 Oracle canonical control runner 하나만 writer로 사용한다. a
 remote를 동시에 쓰는 것은 지원하지 않는다. manual full publish/activate는 아래 maintenance 절차처럼
 control/schedule service가 inactive인 단일-writer window에서만 실행한다.
 matching rollback ledger가 없는 `publish_static --activate`는 pointer를 명시 전환한 뒤 remote size를
-확인할 수 있는 수동 incident 경로이지, 6시간 automatic cycle의 bounded 복구 경로가 아니다.
+확인할 수 있는 수동 incident 경로이지, 정기 automatic cycle의 bounded 복구 경로가 아니다.
 
 #### G3.1 최초 bootstrap과 재구축
 
@@ -486,7 +491,7 @@ schedule을 시작한다. 그 전에는 timer를 disabled로 유지한다. 이�
 
 | 작업 | 시작값 | 제한 |
 |---|---|---|
-| incremental board cycle | 6시간마다 | exact anchor + overlap 2 page, detail concurrency 1, 10초 delay |
+| incremental board cycle | 종료 후 30시간 휴식 | exact anchor + overlap 2 page, detail concurrency 1, 10초 delay |
 | automatic due retry | incremental 뒤 | 20건·최대 2시간 단일 batch, 실패는 다음 slot로 defer |
 | full catalog | 수동 요청 | 첫 page부터 전부, 완료까지 같은 command가 지속 |
 | full content / retry | 수동 요청 | 내부 chunk를 남은 항목 0까지 지속; sync와 직렬 |

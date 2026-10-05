@@ -190,10 +190,44 @@ def _installed_next_scheduled_at(timer_path: Path, now: datetime | None = None) 
     try:
         with timer_path.open(encoding="utf-8") as source:
             parser.read_file(source)
-        on_calendar = parser["Timer"]["OnCalendar"]
+        timer = parser["Timer"]
     except OSError, KeyError, configparser.Error:
         return None
-    return _next_scheduled_at(on_calendar, now)
+    if on_calendar := timer.get("OnCalendar"):
+        return _next_scheduled_at(on_calendar, now)
+    if "OnUnitInactiveSec" not in timer:
+        return None
+    # Monotonic timers depend on the last service finish, not a fixed UTC calendar.
+    # Read systemd's actual deadline, which also includes its randomized delay.
+    try:
+        result = subprocess.run(
+            [
+                "busctl",
+                "get-property",
+                "org.freedesktop.systemd1",
+                "/org/freedesktop/systemd1/unit/redstm_2dschedule_2etimer",
+                "org.freedesktop.systemd1.Timer",
+                "NextElapseUSecMonotonic",
+            ],
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        signature, value = result.stdout.strip().split()
+        deadline = int(value)
+        if signature != "t" or not 0 < deadline < 2**64 - 1:
+            return None
+        remaining = max(0, deadline / 1_000_000 - time.monotonic())
+        return (
+            ((now or datetime.now(UTC)).astimezone(UTC) + timedelta(seconds=remaining))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+    except OSError, subprocess.SubprocessError, ValueError, OverflowError:
+        return None
 
 
 def _optional_positive_int(value: object, *, name: str, maximum: int) -> int | None:

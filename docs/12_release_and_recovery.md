@@ -64,7 +64,7 @@ R2 copy/check에서 제외한다. 없거나 불일치하면 full verify로 강�
 
 R2 pointer 전환은 두 단계 local transaction으로 기록한다. `.publish-ledger.pending.json`은 pointer
 readback 뒤 active budget/predecessor ledger로 승격하고, 별도 `.publish-smoke.pending.json`은 authenticated
-Reader smoke가 성공할 때까지 남긴다. 전환 직후 process/host가 중단되면 다음 6시간 주기의 publish
+Reader smoke가 성공할 때까지 남긴다. 전환 직후 process/host가 중단되면 다음 정기 주기의 publish
 reconciliation이 이 marker와 predecessor를 복구해 smoke를 다시 실행한다. smoke 실패 시 expected-current guard로
 이전 manifest를 활성화하고 rollback smoke까지 통과한 뒤 marker를 닫는다. marker가 손상됐거나 smoke
 성공 상태를 local에 확정하지 못하면 성공으로 보고하지 않고 marker를 보존해 다음 주기에서 재조정한다.
@@ -303,7 +303,7 @@ state를 재사용한다. 이 세 필드와 migration hash가 모두 맞아야 v
 `canonical_schema_migration_ambiguous`로 중단한다. 재실행한 idempotent doctor가 `noop`을 반환해야 완료다.
 
 automatic R2 rollback은 publish 시 기록한 predecessor 관계로 pointer와 active ledger를 함께 복구해
-다음 6시간 cycle도 bounded delta를 이어 갈 수 있어야 한다. matching ledger가 없는
+다음 정기 cycle도 bounded delta를 이어 갈 수 있어야 한다. matching ledger가 없는
 `publish_static --activate`는 remote size 확인이 필요할 수 있는 명시적 수동 incident 경로이며 bounded
 automatic rollback으로 취급하지 않는다.
 

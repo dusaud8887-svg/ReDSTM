@@ -109,7 +109,7 @@ process에 주입한다. session 기본 경로는 `.data/private/typemoon-sessio
 - private R2 object를 읽고 Access JWT를 검증하는 Worker viewer
 - R2 baseline upload/check/pointer와 authenticated data smoke/rollback
 - Access user/service role을 분리한 remote `/ops`, D1 heartbeat와 fixed command marker/outbox/expiry canary
-- 6시간 최신 글 증분 수집·bounded 실패 재시도·변경 배포와, 목차 완료 후 누락 본문까지 이어지는 전체 수집
+- 종료 후 30시간 휴식하는 최신 글 증분 수집·bounded 실패 재시도·변경 배포와, 목차 완료 후 누락 본문까지 이어지는 전체 수집
 - AA -> 창작 -> 팬픽 우선의 설정 기반 순차 recovery chunk
 - stable post identity user-state export/import와 vendored Saitamaar font
 - 홈/탐색/보관함 mobile-first Reader, 소설/AA filter, direct save와 Operations 상호 진입
@@ -139,8 +139,10 @@ network breaker 뒤 장기 수동 작업은 1건 canary로 원본 회복을 확�
 복귀한다. 실행 중 Operations 집계는 5분마다 canonical
 `captures`의 저장·전송 실패·파싱 실패를 읽어 실제 성공/실패를 표시한다. Oracle canonical live와
 repository target은 schema v4다.
-자동 모드는 최신 page incremental 뒤 due 실패 20건을 최대 2시간 재처리하고 변경분을 6시간마다
-배포한다. 이전 기준 게시글이 나온 page 뒤 2 page를 더 확인하고, 이미 다른 cycle이 실행 중이면 새
+자동 모드는 최신 page incremental 뒤 due 실패 20건을 최대 2시간 재처리하고 변경분을
+배포한다. Oracle 정기 실행은 종료 후 30시간(+최대 15분 jitter) 쉬며, 타이머의 첫 활성화·재부팅 뒤에는
+30시간 후 처음 실행한다. 원격 명령 poll과 텍스트 작업 주기는 별도다.
+이전 기준 게시글이 나온 page 뒤 2 page를 더 확인하고, 이미 다른 cycle이 실행 중이면 새
 cycle은 `busy`로 통과한다. 전체 수집은 Operations의 명시적 수동 작업이며, 목차를 끝낸 뒤 같은
 작업에서 누락 본문·댓글을 이어간다. 원본의 명시적 `글이 존재하지 않습니다` 오류 페이지는 HTTP
 200이어도 missing으로 확정한다. 레거시 missing도 한 번 재검증해 현재 상태를 확정한다. 기존 성공분까지 다시 검증할 때만 별도
