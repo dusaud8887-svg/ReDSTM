@@ -6,7 +6,7 @@ export default [
   },
   {
     "url": "/aa-viewer.js",
-    "revision": "4b642d7e9c4b23c5"
+    "revision": "3dc83711fb0db295"
   },
   {
     "url": "/annotations.js",

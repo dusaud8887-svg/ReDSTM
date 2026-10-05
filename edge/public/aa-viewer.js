@@ -162,7 +162,7 @@ export function createAaPan(element, { enabled, scrollers, onMove = () => {} }) 
     let previous = performance.now();
     const tick = (now) => {
       frame = 0;
-      if (!enabled() || !element.isConnected || now - previous > 100) return;
+      if (!enabled() || !element.isConnected) return;
       const step = aaInertiaStep(vx, vy, now - previous);
       previous = now;
       const moved = moveBy(released.targets, step.x, step.y);
@@ -175,5 +175,6 @@ export function createAaPan(element, { enabled, scrollers, onMove = () => {} }) 
   }, { passive: true });
   element.addEventListener("touchcancel", cancel, { passive: true });
   element.addEventListener("wheel", cancel, { passive: true });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) cancel(); });
   return { cancel };
 }

@@ -2316,9 +2316,13 @@ test("AA touch pan follows both axes when a horizontal drag becomes diagonal", a
   const x = box.x + box.width * .65;
   const y = box.y + box.height * .55;
   const client = await page.context().newCDPSession(page);
-  const touch = (type, px, py) => client.send("Input.dispatchTouchEvent", {
-    type, touchPoints: type === "touchEnd" ? [] : [{ x: px, y: py, radiusX: 1, radiusY: 1 }],
-  });
+  let timestamp;
+  const touch = (type, px, py) => {
+    timestamp = type === "touchStart" ? Date.now() / 1000 : timestamp + .016;
+    return client.send("Input.dispatchTouchEvent", {
+      type, timestamp, touchPoints: type === "touchEnd" ? [] : [{ x: px, y: py, radiusX: 1, radiusY: 1 }],
+    });
+  };
   await touch("touchStart", x, y);
   for (let i = 1; i <= 8; i++) {
     await touch("touchMove", x - i * 15, y - Math.max(0, i - 2) * 10);
@@ -2328,6 +2332,7 @@ test("AA touch pan follows both axes when a horizontal drag becomes diagonal", a
   await touch("touchEnd", 0, 0);
   expect(after.x - before.x).toBeGreaterThan(80);
   expect(after.y - before.y).toBeGreaterThan(45);
+  await expect.poll(() => pane.evaluate((element, left) => element.scrollLeft - left, after.x)).toBeGreaterThan(10);
   await page.waitForTimeout(120);
   const coasting = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
   expect(coasting.x - after.x).toBeGreaterThan(10);
@@ -2347,6 +2352,7 @@ test("AA touch pan follows both axes when a horizontal drag becomes diagonal", a
   }
   await touch("touchEnd", 0, 0);
   const edge = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop, max: element.scrollWidth - element.clientWidth }));
+  await expect.poll(() => pane.evaluate((element, top) => element.scrollTop - top, edge.y)).toBeGreaterThan(10);
   await page.waitForTimeout(120);
   const following = await pane.evaluate((element) => ({ x: element.scrollLeft, y: element.scrollTop }));
   expect(Math.abs(edge.x - edge.max)).toBeLessThanOrEqual(1);

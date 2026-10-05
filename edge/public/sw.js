@@ -904,7 +904,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/aa-viewer.js",
-      "revision": "4b642d7e9c4b23c5"
+      "revision": "3dc83711fb0db295"
     },
     {
       "url": "/annotations.js",
