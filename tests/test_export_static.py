@@ -1077,7 +1077,7 @@ def test_metadata_projection_uses_covering_index_without_body_table_reads(tmp_pa
     source = tmp_path / "archive.sqlite"
     _canonical(source)
     with connect_archive(source, read_only=True) as connection:
-        queries = []
+        queries: list[str] = []
         connection.set_trace_callback(queries.append)
         export_static_module._snapshot_fingerprint(connection)
         list(export_static_module._projection_rows(connection))
