@@ -4,23 +4,16 @@ import { createLocator, createTextModel, modelOffset, modelPosition, resolveLoca
 
 const QUOTE_LENGTH = 48;
 
-function textNodes(container) {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const nodes = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
-  return nodes;
-}
-
-function locate(container, target) {
-  let total = 0;
-  for (const node of textNodes(container)) {
-    // A boundary offset belongs to the next node's first character, not the previous node's end.
-    if (target < total + node.data.length) return { node, offset: Math.max(0, target - total) };
-    total += node.data.length;
+function locate(model, target) {
+  let low = 0;
+  let high = model.rawNodes.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (target < model.rawNodes[middle].end) high = middle;
+    else low = middle + 1;
   }
-  const nodes = textNodes(container);
-  const last = nodes.at(-1);
-  return last ? { node: last, offset: Math.max(0, last.data.length - 1) } : null;
+  const segment = model.rawNodes[low] ?? model.rawNodes.at(-1);
+  return segment ? { node: segment.node, offset: Math.max(0, Math.min(target - segment.start, segment.node.data.length - 1)) } : null;
 }
 
 // A skipped plain-text chunk has no line boxes (content-visibility: auto). Measuring a
@@ -50,7 +43,8 @@ function rectAt(position) {
 function nodeBottom(node) {
   const range = document.createRange();
   range.selectNodeContents(node);
-  return range.getBoundingClientRect().bottom;
+  const rect = range.getBoundingClientRect();
+  return rect.height ? rect.bottom : (node.parentElement?.closest(".text-chunk")?.getBoundingClientRect().bottom ?? rect.bottom);
 }
 
 // First character of a text node whose line ends below `top` (binary search over layout rects).
@@ -73,21 +67,26 @@ export function captureTextAnchor(container, scroller, topInset = 0, rev = "") {
   const top = scroller.getBoundingClientRect().top + topInset;
   if (container.getBoundingClientRect().bottom <= top) return null;
   const model = createTextModel(container);
-  let total = 0;
-  for (const node of textNodes(container)) {
-    if (node.data.trim() && modelOffset(model, node, 0) !== null && nodeBottom(node) > top) {
-      const local = firstVisibleOffset(node, top);
-      const rect = rectAt({ node, offset: local });
-      const offset = total + local;
-      const start = modelOffset(model, node, local);
-      return {
-        offset,
-        quote: container.textContent.slice(offset, offset + QUOTE_LENGTH),
-        viewportOffset: rect ? rect.top - top : 0,
-        ...(start !== null ? { loc: createLocator(model, start, start + QUOTE_LENGTH, rev) } : {}),
-      };
-    }
-    total += node.data.length;
+  const segments = model.visibleSegments;
+  let low = 0;
+  let high = segments.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (nodeBottom(segments[middle].node) > top) high = middle;
+    else low = middle + 1;
+  }
+  const node = segments[low]?.node;
+  if (node) {
+    const local = firstVisibleOffset(node, top);
+    const rect = rectAt({ node, offset: local });
+    const offset = model.rawPositions.get(node) + local;
+    const start = modelOffset(model, node, local);
+    return {
+      offset,
+      quote: model.rawText.slice(offset, offset + QUOTE_LENGTH),
+      viewportOffset: rect ? rect.top - top : 0,
+      ...(start !== null ? { loc: createLocator(model, start, start + QUOTE_LENGTH, rev) } : {}),
+    };
   }
   return null;
 }
@@ -96,9 +95,9 @@ export function captureTextAnchor(container, scroller, topInset = 0, rev = "") {
 // (a revised body), and reports false so callers can fall back to a stored pixel position.
 export function restoreTextAnchor(container, scroller, anchor, topInset = 0, rev = "") {
   if (!container?.isConnected || !scroller || !anchor) return false;
-  const text = container.textContent ?? "";
+  const model = createTextModel(container);
+  const text = model.rawText;
   if (anchor.loc) {
-    const model = createTextModel(container);
     const resolved = resolveLocator(model, anchor.loc, rev);
     if (resolved.status === "unresolved") return false;
     const position = modelPosition(model, resolved.start);
@@ -114,7 +113,7 @@ export function restoreTextAnchor(container, scroller, anchor, topInset = 0, rev
     target = text.indexOf(anchor.quote);
   }
   if (target < 0 || target > text.length) return false;
-  const position = locate(container, target);
+  const position = locate(model, target);
   if (position) revealChunksThrough(position.node);
   const rect = position && rectAt(position);
   if (!rect) return false;

@@ -59,7 +59,8 @@ def _capture_failure_codes(archive: Path, run_id: str) -> list[str]:
 def _run_status(outcomes: dict[str, int], scheduled: int, failures: list[str]) -> str:
     incomplete = sum(outcomes.values()) != scheduled
     item_failures = outcomes.get("parse_failed", 0) + outcomes.get("fetch_failed", 0)
-    if not failures and not incomplete and not item_failures:
+    operational_failures = set(failures) - {"password_protected", "permission_denied"}
+    if not operational_failures and not incomplete and not item_failures:
         return "succeeded"
     return "partial" if outcomes else "failed"
 

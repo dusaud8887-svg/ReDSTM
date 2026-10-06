@@ -413,16 +413,14 @@ def next_ready_batch(inbox_root: Path, attempts_root: Path | None = None) -> str
             and not (receipts / f"{name}.json").exists()
             and not (receipts / f"{name}.status.json").exists()
         ):
-            # The oldest ready batch waits out its failure backoff; later ones stay behind it.
+            # Retain a deferred batch without blocking independent later uploads.
             if attempts_root is not None and _backoff_active(attempts_root, name):
-                return None
+                continue
             return name
     return None
 
 
-# A batch failing on an unexpected error (rclone, OSError, SQLite) is retried with growing
-# waits and rejected after this many attempts, so it cannot block the media lane forever.
-_IMPORT_ATTEMPTS = 5
+# Operational failures retry with capped backoff; only validation rejects a batch.
 _IMPORT_BACKOFF_SECONDS = (300, 900, 1800, 3600)
 
 
@@ -443,10 +441,6 @@ def record_failure(
     except OSError, ValueError, KeyError, TypeError:
         attempts = 1
     reason = f"import_failed:{type(error).__name__}"
-    if attempts >= _IMPORT_ATTEMPTS:
-        record_rejection(receipts_root, batch_id, reason)
-        path.unlink(missing_ok=True)
-        return {"status": "rejected", "batch_id": batch_id, "reason": reason}
     delay = _IMPORT_BACKOFF_SECONDS[min(attempts, len(_IMPORT_BACKOFF_SECONDS)) - 1]
     attempts_root.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -476,11 +470,14 @@ def main() -> None:
     deadline = time.monotonic() + _DRAIN_SECONDS
     seen: set[str] = set()
     done = 0
+    failed = False
     while True:
         batch_id = args.batch_id or next_ready_batch(inbox_root, _ATTEMPTS_ROOT)
         if batch_id is None or batch_id in seen:
             if not done:
                 print(json.dumps({"status": "idle", "reason": "no_ready_media_batch"}))
+            if failed:
+                parser.exit(1)
             return
         seen.add(batch_id)
         try:
@@ -502,7 +499,8 @@ def main() -> None:
         except (OSError, sqlite3.Error, ValueError, subprocess.SubprocessError) as exc:
             failure = record_failure(receipts_root, _ATTEMPTS_ROOT, batch_id, exc)
             print(json.dumps(failure))
-            if failure["status"] == "failed":
+            failed = True
+            if args.batch_id:
                 parser.exit(1, f"media import of {batch_id} failed: {exc!r}\n")
         else:
             (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
@@ -516,6 +514,8 @@ def main() -> None:
         # Newtomi deletes a batch from the 2 GiB drop only after its receipt, so a
         # waiting batch also holds back the next upload.
         if args.batch_id or done >= _DRAIN_BATCHES or time.monotonic() >= deadline:
+            if failed:
+                parser.exit(1)
             return
 
 

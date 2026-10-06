@@ -244,7 +244,7 @@ def test_main_drains_ready_batches_in_one_run(
     assert media_importer.next_ready_batch(inbox) is None
 
 
-def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
+def test_temporary_media_failure_is_never_permanently_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     inbox = tmp_path / "inbox"
@@ -264,7 +264,7 @@ def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
     assert stopped.value.code == 1
     # Waiting out the backoff, the lane does not retry it on every tick.
     assert media_importer.next_ready_batch(inbox, attempts) is None
-    for _attempt in range(media_importer._IMPORT_ATTEMPTS - 1):
+    for _attempt in range(8):
         record = attempts / f"{_BATCH}.json"
         if record.exists():
             data = json.loads(record.read_text(encoding="utf-8"))
@@ -275,5 +275,5 @@ def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
         except SystemExit:
             pass
     capsys.readouterr()
-    assert (inbox / "receipts" / f"{_BATCH}.status.json").exists()
+    assert not (inbox / "receipts" / f"{_BATCH}.status.json").exists()
     assert media_importer.next_ready_batch(inbox, attempts) is None

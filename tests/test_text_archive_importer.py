@@ -1178,7 +1178,7 @@ def test_main_drains_every_ready_batch_in_one_run(
     assert not (inbox / "receipts" / f"{_BATCHES[2]}.json").exists()
 
 
-def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
+def test_temporary_batch_failure_retains_original_and_allows_later_batch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     inbox = tmp_path / "inbox"
@@ -1195,16 +1195,16 @@ def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
 
     def broken(inbox_root: Path, batch_id: str, *args: Any) -> Any:
         if batch_id == _BATCHES[0]:
-            raise OSError("existing content object failed verification")
+            raise sqlite3.OperationalError("database is locked")
         return real_import(inbox_root, batch_id, *args)
 
     monkeypatch.setattr(importer, "import_batch", broken)
     with pytest.raises(SystemExit) as stopped:
         importer.main()
     assert stopped.value.code == 1
-    # Waiting out the backoff, the later batch does not overtake it.
+    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
     assert importer._next_ready_batch(inbox, attempts) is None
-    for _attempt in range(importer._IMPORT_ATTEMPTS - 1):
+    for _attempt in range(8):
         record = attempts / f"{_BATCHES[0]}.json"
         if record.exists():
             data = json.loads(record.read_text(encoding="utf-8"))
@@ -1215,8 +1215,14 @@ def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
         except SystemExit:
             pass
     capsys.readouterr()
-    assert (inbox / "receipts" / f"{_BATCHES[0]}.status.json").exists()
-    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
+    assert not (inbox / "receipts" / f"{_BATCHES[0]}.status.json").exists()
+    assert not (inbox / "drop" / _BATCHES[0] / "rejected.json").exists()
+    monkeypatch.setattr(importer, "import_batch", real_import)
+    data = json.loads(record.read_text(encoding="utf-8"))
+    data["next_at"] = 0
+    record.write_text(json.dumps(data), encoding="utf-8")
+    importer.main()
+    assert (inbox / "receipts" / f"{_BATCHES[0]}.json").is_file()
 
 
 def _imported_for_status(tmp_path: Path) -> tuple[Path, Path]:

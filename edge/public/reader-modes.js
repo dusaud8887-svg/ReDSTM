@@ -31,13 +31,6 @@ export function swipeTarget(page, pages, dx, elapsed, width) {
   return Math.max(0, Math.min(pages - 1, page + (dx < 0 ? 1 : -1)));
 }
 
-function textNodes(container) {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const nodes = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.trim()) nodes.push(node);
-  return nodes;
-}
-
 function charRect(node, offset) {
   const range = document.createRange();
   range.setStart(node, offset);
@@ -47,8 +40,8 @@ function charRect(node, offset) {
 
 // First character on or after screen x = left, in document order (columns run left to right).
 export function capturePagedAnchor(container, left, rev = "") {
-  const nodes = textNodes(container);
   const model = createTextModel(container);
+  const nodes = model.visibleSegments;
   let low = 0;
   let high = nodes.length;
   const nodeRight = (node) => {
@@ -58,10 +51,10 @@ export function capturePagedAnchor(container, left, rev = "") {
   };
   while (low < high) {
     const middle = (low + high) >> 1;
-    if (nodeRight(nodes[middle]) > left + 1) high = middle;
+    if (nodeRight(nodes[middle].node) > left + 1) high = middle;
     else low = middle + 1;
   }
-  const node = nodes[low];
+  const node = nodes[low]?.node;
   if (!node) return null;
   let first = 0;
   let last = node.data.length - 1;

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from crawler.archive import SCHEMA_VERSION, compress_body, connect_archive
-from crawler.frontier import FrontierLease, FrontierStore, transition_lease
+from crawler.frontier import FrontierLease, FrontierStore, listing_fingerprint, transition_lease
 
 
 def _claim_then_crash(path: str, now_text: str) -> None:
@@ -535,3 +535,32 @@ def test_full_content_requeue_uses_a_stable_rowid_and_time_checkpoint(
             ],
         )
     assert store.full_content_remaining(max_rowid=max_rowid, attempted_before=cutoff) == 1
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "parse_drift",
+        "storage_error",
+        "incomplete_comments",
+        "origin_unresponsive",
+        "permission_denied",
+    ],
+)
+def test_listing_change_reopens_only_retry_capped_dead_posts(tmp_path: Path, code: str) -> None:
+    store = FrontierStore(tmp_path / "archive.sqlite")
+    store.initialize()
+    old = listing_fingerprint("old title", None, 1)
+    new = listing_fingerprint("new title", None, 2)
+    store.seed("board", 1, "https://example.test/1", listing_sha256=old)
+    lease = store.claim_identity("board", 1, lease_seconds=60)
+    assert lease is not None
+    with connect_archive(store.path) as connection:
+        transition_lease(connection, lease, state="dead", error_code=code)
+    store.seed("board", 1, lease.url, reopen_done=True, listing_sha256=old)
+    assert store.claim_identity("board", 1, lease_seconds=60) is None
+    store.seed("board", 1, lease.url, reopen_done=True, listing_sha256=new)
+    reopened = store.claim_identity("board", 1, lease_seconds=60)
+    assert (reopened is not None) == (code != "permission_denied")
+    if reopened is not None:
+        assert reopened.attempts == 1

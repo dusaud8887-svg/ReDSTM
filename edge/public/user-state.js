@@ -537,6 +537,24 @@ export function mergeTextStates(current, incoming) {
   return merged;
 }
 
+// Bound history and its pixel positions by UTF-16 storage size, including sentence locators.
+// Keep the most recently read records; bookmarks have their own lifetime.
+export function limitHistoryForStorage(state, limit = 1_048_576) {
+  const history = {};
+  const scroll = {};
+  let size = 4;
+  const records = Object.entries(state.history).sort((a, b) => Date.parse(b[1].readAt) - Date.parse(a[1].readAt));
+  for (const [identity, record] of records) {
+    const offset = state.scroll[identity] ?? 0;
+    const bytes = 2 * (JSON.stringify(identity).length * 2 + JSON.stringify(record).length + JSON.stringify(offset).length + 4);
+    if (size + bytes > limit) break;
+    size += bytes;
+    history[identity] = record;
+    scroll[identity] = offset;
+  }
+  return { ...state, history, scroll };
+}
+
 // The localStorage copy: the same normalized state without indentation. It is rewritten on
 // every scroll save, so its size matters more than its readability.
 export function serializeUserState(state) {

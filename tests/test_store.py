@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from crawler.archive import connect_archive, decompress_body, initialize_archive
-from crawler.frontier import FrontierLease, FrontierStore
+from crawler.frontier import FrontierLease, FrontierStore, listing_fingerprint, transition_lease
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.settings import REDSTM_FRONTIER_MAX_ATTEMPTS, REDSTM_NETWORK_MAX_ATTEMPTS
@@ -1075,3 +1075,74 @@ def test_not_found_requires_two_runs_and_rate_limit_honors_retry_after(tmp_path:
         }
     assert rows[7] == ("done", None)
     assert rows[8] == ("retry", "2026-07-11T02:30:00+00:00")
+
+
+def test_listing_refresh_preserves_full_title_and_uses_separate_listing_metadata(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    frontier = FrontierStore(path)
+    post = replace(_post(), title="The complete title of the captured post")
+    run = store.start_run("sync", now=_NOW)
+    frontier.seed(
+        post.board_id,
+        post.external_post_id,
+        post.canonical_url,
+        listing_sha256=listing_fingerprint("The complete...", None, 1),
+    )
+    lease = frontier.claim_identity(post.board_id, post.external_post_id, lease_seconds=60)
+    store.store_post(run, post, captured_at=_NOW, raw_sha256=None, warc_file=None, lease=lease)
+    store.store_discovered_post(
+        DiscoveredPostItem(
+            board_id=post.board_id,
+            external_post_id=post.external_post_id,
+            canonical_url=post.canonical_url,
+            title="The complete...",
+            comment_count=1,
+        )
+    )
+    with connect_archive(path) as connection:
+        assert connection.execute("SELECT title FROM posts").fetchone()[0] == post.title
+    assert frontier.listing_is_unchanged(
+        post.board_id,
+        post.external_post_id,
+        title="The complete...",
+        category=None,
+        comment_count=1,
+    )
+    assert not frontier.listing_is_unchanged(
+        post.board_id,
+        post.external_post_id,
+        title="A changed title...",
+        category=None,
+        comment_count=1,
+    )
+
+
+def test_first_listing_change_after_migration_reopens_existing_retry_capped_post(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    store = ArchiveStore(path)
+    frontier = FrontierStore(path)
+    item = DiscoveredPostItem(
+        board_id="ss_temp01",
+        external_post_id=7,
+        canonical_url="https://www.typemoon.net/ss_temp01/7",
+        title="Old listing title",
+        comment_count=1,
+    )
+    store.store_discovered_post(item)
+    frontier.seed("ss_temp01", 7, str(item["canonical_url"]))
+    lease = frontier.claim_identity("ss_temp01", 7, lease_seconds=60)
+    assert lease is not None
+    with connect_archive(path) as connection:
+        transition_lease(connection, lease, state="dead", error_code="parse_drift")
+    for title, expected in [("Old listing title", False), ("Changed listing title", True)]:
+        frontier.listing_is_unchanged("ss_temp01", 7, title=title, category=None, comment_count=1)
+        frontier.seed("ss_temp01", 7, lease.url, listing_sha256=listing_fingerprint(title, None, 1))
+        reopened = frontier.claim_identity("ss_temp01", 7, lease_seconds=60)
+        assert (reopened is not None) == expected
