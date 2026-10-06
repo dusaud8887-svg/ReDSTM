@@ -306,6 +306,7 @@ def build_publish_tree(
     *,
     headroom: Callable[[], None] | None = None,
     verified_only: bool = False,
+    verify_objects: bool = True,
 ) -> dict[str, Any]:
     """Build deterministic, content-addressed artifacts without touching remote storage."""
     if lane not in {"novel", "arcalive", "manual"}:
@@ -602,7 +603,7 @@ def build_publish_tree(
         for target_key, digest, source_key, size in _plan_rows(plans["objects"]):
             if source_key != target_key.removeprefix("published/"):
                 raise ValueError(f"local content object is not content-addressed: {digest}")
-            if _published_hash(db, target_key) == digest:
+            if not verify_objects or _published_hash(db, target_key) == digest:
                 continue
             source = object_root / source_key
             with source.open("rb") as body_stream:
@@ -645,6 +646,12 @@ def _publish_object_batch(
     indexes: bool = False,
 ) -> None:
     """Transfer a small immutable group, then SHA-256-check every R2 body."""
+    for key, digest in objects:
+        source_file = build_root / key if indexes else object_root / key.removeprefix("published/")
+        with source_file.open("rb") as body_stream:
+            actual_digest = hashlib.file_digest(body_stream, "sha256").hexdigest()
+        if actual_digest != digest:
+            raise ValueError(f"local content object failed verification: {digest}")
     if (
         len(objects) == 1
         and (
@@ -1252,7 +1259,9 @@ def publish_lane(
                         db_path, receipts_root, headroom
                     )
                 return result
-    tree = build_publish_tree(db_path, object_root, build_root, lane, headroom=headroom)
+    tree = build_publish_tree(
+        db_path, object_root, build_root, lane, headroom=headroom, verify_objects=False
+    )
     db = _connect(db_path)
     try:
         pending_objects: list[tuple[str, str]] = []
@@ -1297,7 +1306,7 @@ def publish_lane(
                         pending_bytes = 0
                     if time.monotonic() - started >= _BODY_TURN_SECONDS:
                         break
-                except (OSError, subprocess.SubprocessError) as exc:
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     transfer_error = type(exc).__name__
                     transfer_exception = exc
                     pending_objects.clear()
@@ -1305,7 +1314,7 @@ def publish_lane(
         if pending_objects:
             try:
                 publish_batch()
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 transfer_error = type(exc).__name__
                 transfer_exception = exc
         # Catalogs must include only bodies whose complete readback has succeeded. Existing
@@ -1435,21 +1444,29 @@ def main() -> None:
     outcome, reason, exit_code = "published", "", 0
     for lane in lanes:
         try:
-            results.append(
-                publish_lane(
-                    db_path,
-                    Path("/srv/redstm-text/objects"),
-                    Path("/srv/redstm-text/build"),
-                    receipts_root,
-                    lane,
-                )
+            result = publish_lane(
+                db_path,
+                Path("/srv/redstm-text/objects"),
+                Path("/srv/redstm-text/build"),
+                receipts_root,
+                lane,
             )
+            results.append(result)
+            if result.get("transfer_error") or result.get("status") == "deferred":
+                if exit_code != 1:
+                    outcome, reason, exit_code = (
+                        "deferred",
+                        str(result.get("transfer_error") or result.get("reason") or "body_pending"),
+                        75,
+                    )
         except RuntimeWindowError as exc:
             results.append({"lane": lane, "status": "deferred", "reason": str(exc)})
             if exit_code != 1:
                 outcome, reason, exit_code = "deferred", str(exc), 75
         except Exception as exc:
-            results.append({"lane": lane, "status": "failed", "reason": type(exc).__name__})
+            results.append(
+                {"lane": lane, "status": "failed", "reason": f"{type(exc).__name__}: {exc}"[:300]}
+            )
             outcome, reason, exit_code = "failed", type(exc).__name__, 1
     tell_pc(outcome, reason)
     # Operational status (docs/18 §5.2 "운영 상태"). It never fails the publish.

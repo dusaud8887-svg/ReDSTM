@@ -1109,6 +1109,10 @@ def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     if (
         version == 1
         and db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='text_archive_publish_attempts'"
+        ).fetchone()
+        and db.execute(
             "SELECT COUNT(*) FROM text_novel_identity_migrations WHERE version IN (1,2,3)"
         ).fetchone()[0]
         == 3

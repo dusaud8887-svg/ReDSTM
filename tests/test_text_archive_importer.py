@@ -1677,3 +1677,17 @@ def test_manual_document_above_old_limit_imports_and_reuses_streamed_object(
     assert peak < 2 * 1024**2
     with (objects / key).open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == digest
+
+
+def test_existing_initialized_archive_adds_publish_attempt_queue(tmp_path: Path) -> None:
+    path = tmp_path / "existing.sqlite"
+    db = importer._connect(path)
+    db.execute("DROP TABLE text_archive_publish_attempts")
+    db.commit()
+    db.close()
+    db = importer._connect(path)
+    try:
+        assert db.execute("SELECT count(*) FROM text_archive_publish_attempts").fetchone()[0] == 0
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        db.close()
