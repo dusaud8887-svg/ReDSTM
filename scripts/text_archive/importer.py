@@ -21,8 +21,8 @@ from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _MAX_ITEMS = 100
 _MAX_FILE_BYTES = 2 * 1024 * 1024
-_MAX_MANUAL_FILE_BYTES = 32 * 1024 * 1024
-_MAX_BATCH_BYTES = 32 * 1024 * 1024
+_MAX_MANUAL_FILE_BYTES = 64 * 1024 * 1024
+_MAX_BATCH_BYTES = 64 * 1024 * 1024
 _MAX_MANIFEST_BYTES = 256 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BATCH_ID = re.compile(r"\d{8}T\d{6}Z-pc-[a-f0-9]{8}\Z")
@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS text_archive_conflicts (
 );
 CREATE TABLE IF NOT EXISTS text_archive_publications (
   key TEXT PRIMARY KEY, sha256 TEXT NOT NULL, verified_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS text_archive_publish_attempts (
+  key TEXT PRIMARY KEY, attempted_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS text_novel_sources (
   site TEXT NOT NULL, source_work_id TEXT NOT NULL, source_url TEXT NOT NULL DEFAULT '',
@@ -1362,8 +1365,9 @@ def _store_object(root: Path, body: bytes, digest: str) -> str:
     if target.is_symlink():
         raise OSError("object path is a symlink")
     if target.exists():
-        current = target.read_bytes()
-        if hashlib.sha256(current).hexdigest() != digest or len(current) != len(body):
+        with target.open("rb") as stream:
+            current_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if current_digest != digest or target.stat().st_size != len(body):
             raise OSError("existing content object failed verification")
         return key
     with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".pending-", delete=False) as stream:

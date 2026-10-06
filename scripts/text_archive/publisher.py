@@ -43,6 +43,9 @@ _AVAILABILITY_PAGE_SIZE = 500
 _RELEASE_RETENTION = 5
 # Remote keys deleted per publish so a backlog never holds the run past its rclone timeout.
 _PRUNE_BATCH_LIMIT = 500
+# Publish verified progress each turn instead of waiting for an entire growing lane.
+_BODY_TURN_SECONDS = 120
+_BODY_BATCH_BYTES = 16 * 1024 * 1024
 # A pruned key's ledger row carries this until R2 confirms the delete, so it is never
 # mistaken for a verified upload and is retried by the next prune.
 _PRUNING = "pruning"
@@ -302,6 +305,7 @@ def build_publish_tree(
     lane: str,
     *,
     headroom: Callable[[], None] | None = None,
+    verified_only: bool = False,
 ) -> dict[str, Any]:
     """Build deterministic, content-addressed artifacts without touching remote storage."""
     if lane not in {"novel", "arcalive", "manual"}:
@@ -313,7 +317,7 @@ def build_publish_tree(
     }
     db = _connect(db_path)
     try:
-        if lane == "novel":
+        if lane == "novel" and not verified_only:
             with db:
                 for row in db.execute(
                     """SELECT identity,source_site,source_work_id,source_chapter_id,
@@ -340,6 +344,13 @@ def build_publish_tree(
                             row["source_chapter_id"],
                         ),
                     )
+        if verified_only:
+            # Shadow only reads on this connection; the durable importer state is untouched.
+            db.execute(
+                "CREATE TEMP VIEW text_archive_items AS SELECT i.* FROM main.text_archive_items i "
+                "JOIN main.text_archive_publications p "
+                "ON p.key='published/'||i.object_key AND p.sha256=i.content_sha256"
+            )
         # Keep catalog, object and item passes on one imported snapshot in WAL mode.
         # Headroom is rechecked around this read so a TypeMoon unit that became active
         # after the preflight stops the local build without holding the publish lock.
@@ -571,8 +582,11 @@ def build_publish_tree(
             ):
                 _plan_write(item_plan, row["identity"], row["content_sha256"])
             for row in db.execute(
-                "SELECT DISTINCT content_sha256,bytes,object_key "
-                "FROM text_archive_items WHERE lane=?",
+                "SELECT i.content_sha256,i.bytes,i.object_key "
+                "FROM text_archive_items i LEFT JOIN text_archive_publish_attempts a "
+                "ON a.key='published/'||i.object_key WHERE i.lane=? "
+                "GROUP BY i.content_sha256,i.bytes,i.object_key "
+                "ORDER BY COALESCE(a.attempted_at,0),MIN(i.imported_at),i.content_sha256",
                 (lane,),
             ):
                 digest = row["content_sha256"]
@@ -590,8 +604,10 @@ def build_publish_tree(
                 raise ValueError(f"local content object is not content-addressed: {digest}")
             if _published_hash(db, target_key) == digest:
                 continue
-            body = (object_root / source_key).read_bytes()
-            if len(body) != int(size) or hashlib.sha256(body).hexdigest() != digest:
+            source = object_root / source_key
+            with source.open("rb") as body_stream:
+                actual_digest = hashlib.file_digest(body_stream, "sha256").hexdigest()
+            if source.stat().st_size != int(size) or actual_digest != digest:
                 raise ValueError(f"local content object failed verification: {digest}")
         return {
             "lane": lane,
@@ -625,10 +641,59 @@ def _publish_object_batch(
     remote: str,
     objects: list[tuple[str, str]],
     runner: Any,
+    *,
+    indexes: bool = False,
 ) -> None:
     """Transfer a small immutable group, then SHA-256-check every R2 body."""
-    source = object_root / "objects/sha256"
-    names = [key.removeprefix("published/objects/sha256/") for key, _ in objects]
+    if (
+        len(objects) == 1
+        and (
+            build_root / objects[0][0]
+            if indexes
+            else object_root / objects[0][0].removeprefix("published/")
+        )
+        .stat()
+        .st_size
+        <= _BODY_BATCH_BYTES
+    ):
+        key, digest = objects[0]
+        local = build_root / key if indexes else object_root / key.removeprefix("published/")
+        with _network_window():
+            _run(
+                [
+                    "rclone",
+                    "--config",
+                    _RCLONE_CONFIG,
+                    "copyto",
+                    str(local),
+                    f"{remote}/{key}",
+                    "--buffer-size",
+                    "0",
+                    "--s3-upload-concurrency",
+                    "1",
+                ],
+                runner,
+            )
+        with _network_window():
+            readback = _run(
+                [
+                    "rclone",
+                    "--config",
+                    _RCLONE_CONFIG,
+                    "cat",
+                    f"{remote}/{key}",
+                    "--buffer-size",
+                    "0",
+                ],
+                runner,
+            )
+        if hashlib.sha256(readback).hexdigest() != digest:
+            raise OSError(f"R2 readback mismatch: {key}")
+        return
+    source = build_root if indexes else object_root / "objects/sha256"
+    names = [
+        key if indexes else key.removeprefix("published/objects/sha256/") for key, _ in objects
+    ]
     selection = build_root / "pending-objects.txt"
     checksums = build_root / "pending-objects.sha256"
     _write(selection, ("\n".join(names) + "\n").encode())
@@ -636,7 +701,7 @@ def _publish_object_batch(
         checksums,
         ("".join(f"{digest}  {name}\n" for name, (_, digest) in zip(names, objects))).encode(),
     )
-    destination = f"{remote}/published/objects/sha256"
+    destination = remote if indexes else f"{remote}/published/objects/sha256"
     with _network_window():
         _run(
             [
@@ -655,6 +720,10 @@ def _publish_object_batch(
                 "2",
                 "--checkers",
                 "2",
+                "--buffer-size",
+                "0",
+                "--s3-upload-concurrency",
+                "1",
                 "--contimeout",
                 "10s",
                 "--timeout",
@@ -683,6 +752,8 @@ def _publish_object_batch(
                     str(selection),
                     "--checkers",
                     "2",
+                    "--buffer-size",
+                    "0",
                     "--contimeout",
                     "10s",
                     "--timeout",
@@ -1185,54 +1256,95 @@ def publish_lane(
     db = _connect(db_path)
     try:
         pending_objects: list[tuple[str, str]] = []
+        pending_bytes = 0
+        started = time.monotonic()
+        transfer_error = ""
+        transfer_exception: Exception | None = None
 
         def publish_batch() -> None:
             if pending_objects:
                 batch = pending_objects[:]
+                with _window(), db:
+                    db.executemany(
+                        "INSERT INTO text_archive_publish_attempts(key,attempted_at) VALUES(?,?) "
+                        "ON CONFLICT(key) DO UPDATE SET attempted_at=excluded.attempted_at",
+                        [(key, time.time()) for key, _ in batch],
+                    )
                 _publish_object_batch(build_root, object_root, remote, batch, runner)
                 with _window():
                     for key, digest in batch:
                         _record_publication(db_path, key, digest)
+                    with db:
+                        db.executemany(
+                            "DELETE FROM text_archive_publish_attempts WHERE key=?",
+                            [(key,) for key, _ in batch],
+                        )
                 pending_objects.clear()
 
-        for key, digest, *_ in _plan_rows(Path(tree["object_plan"])):
+        for key, digest, _, size in _plan_rows(Path(tree["object_plan"])):
             if _published_hash(db, key) != digest:
-                pending_objects.append((key, digest))
-                if len(pending_objects) == 8:
-                    publish_batch()
-        if len(pending_objects) > 1:
-            publish_batch()
+                try:
+                    retry = db.execute(
+                        "SELECT 1 FROM text_archive_publish_attempts WHERE key=?", (key,)
+                    ).fetchone()
+                    if pending_objects and (retry or pending_bytes + int(size) > _BODY_BATCH_BYTES):
+                        publish_batch()
+                        pending_bytes = 0
+                    pending_objects.append((key, digest))
+                    pending_bytes += int(size)
+                    if retry or len(pending_objects) == 8 or pending_bytes >= _BODY_BATCH_BYTES:
+                        publish_batch()
+                        pending_bytes = 0
+                    if time.monotonic() - started >= _BODY_TURN_SECONDS:
+                        break
+                except (OSError, subprocess.SubprocessError) as exc:
+                    transfer_error = type(exc).__name__
+                    transfer_exception = exc
+                    pending_objects.clear()
+                    break
+        if pending_objects:
+            try:
+                publish_batch()
+            except (OSError, subprocess.SubprocessError) as exc:
+                transfer_error = type(exc).__name__
+                transfer_exception = exc
+        # Catalogs must include only bodies whose complete readback has succeeded. Existing
+        # verified entries remain visible while new arrivals or failed bodies wait for retry.
+        try:
+            tree = build_publish_tree(
+                db_path, object_root, build_root, lane, headroom=headroom, verified_only=True
+            )
+        except ValueError as exc:
+            if str(exc) != "no_publishable_items":
+                raise
+            if transfer_exception is not None:
+                raise transfer_exception
+            return {"lane": lane, "status": "deferred", "reason": transfer_error or "body_pending"}
 
-        for plan in ("object_plan", "index_plan"):
-            for row in _plan_rows(Path(tree[plan])):
-                key, digest = row[:2]
-                if _published_hash(db, key) == digest:
-                    continue
-                local = object_root / row[2] if plan == "object_plan" else build_root / key
-                body = local.read_bytes()
-                if hashlib.sha256(body).hexdigest() != digest:
-                    raise ValueError(f"local publish file failed verification: {key}")
-                with _network_window():
-                    _run(
-                        [
-                            "rclone",
-                            "--config",
-                            _RCLONE_CONFIG,
-                            "copyto",
-                            str(local),
-                            f"{remote}/{key}",
-                        ],
-                        runner,
-                    )
-                with _network_window():
-                    readback = _run(
-                        ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
-                        runner,
-                    )
-                if hashlib.sha256(readback).hexdigest() != digest:
-                    raise OSError(f"R2 readback mismatch: {key}")
-                with _window():
+        index_batch: list[tuple[str, str]] = []
+
+        def publish_indexes() -> None:
+            _publish_object_batch(
+                build_root, object_root, remote, index_batch, runner, indexes=True
+            )
+            with _window():
+                for key, digest in index_batch:
                     _record_publication(db_path, key, digest)
+            index_batch.clear()
+
+        for row in _plan_rows(Path(tree["index_plan"])):
+            key, digest = row[:2]
+            if _published_hash(db, key) == digest:
+                continue
+            local = build_root / key
+            body = local.read_bytes()
+            if hashlib.sha256(body).hexdigest() != digest:
+                raise ValueError(f"local publish file failed verification: {key}")
+            index_batch.append((key, digest))
+            if len(index_batch) == 32:
+                publish_indexes()
+        if index_batch:
+            publish_indexes()
         pointer_path = Path(tree["pointer_path"])
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
@@ -1277,7 +1389,10 @@ def publish_lane(
         "lane": lane,
         "item_count": tree["item_count"],
         "release_sha256": tree["release_sha256"],
+        "pending_count": item_count - tree["item_count"],
     }
+    if transfer_error:
+        result["transfer_error"] = transfer_error
     # The new pointer is verified; retention is cleanup and never fails the publish.
     try:
         result["prune"] = _prune_lane(
@@ -1304,7 +1419,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Publish the independent text archive")
     parser.add_argument("lane", choices=("novel", "arcalive", "manual", "both"))
     args = parser.parse_args()
-    lanes = ("novel", "arcalive", "manual") if args.lane == "both" else (args.lane,)
+    lanes = ("manual", "novel", "arcalive") if args.lane == "both" else (args.lane,)
     db_path = Path("/srv/redstm-text/text-archive.sqlite")
     receipts_root = Path("/srv/redstm-text-inbox/receipts")
 

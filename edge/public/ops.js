@@ -74,7 +74,7 @@ const warningLabels = {
   auth_failed: "원본 인증을 확인해야 합니다.", parse_drift: "원본 구조 변경이 감지됐습니다.",
   rate_limited: "원본 서버의 속도 제한으로 감속했습니다.",
   site_unreachable: "원본 서버가 느리거나 응답이 끊겼습니다. 진행분은 보존되며 실패 항목은 지연 후 다시 시도합니다.",
-  disk_low: "Oracle 저장 공간이 부족합니다.",
+  disk_low: "Oracle 여유 공간이 안전 하한에 가까워졌습니다. 기본 설정은 5GiB 미만에서 경고하고 4GiB를 남겨 수집을 멈춥니다.",
   control_rejected: "운영 상태 보고가 최근 거부됐습니다. 최신 거부 원인과 배포 상태를 확인하세요.",
   token_expiring: "수집기 인증 갱신이 필요합니다.",
   publish_stale: "새 보존본 게시가 지연되고 있습니다.",

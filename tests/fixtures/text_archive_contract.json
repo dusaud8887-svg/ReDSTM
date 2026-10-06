@@ -2,7 +2,7 @@
   "schema": 1,
   "limits": {
     "batch_items": 100,
-    "batch_bytes": 33554432,
+    "batch_bytes": 67108864,
     "file_bytes": 2097152,
     "manifest_bytes": 262144
   },

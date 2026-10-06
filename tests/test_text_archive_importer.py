@@ -1625,9 +1625,14 @@ def test_slow_publisher_transfer_allows_new_batch_import(
             receipt = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
         assert receipt is not None and receipt["revision"] == 1
         calls.append(argv[3])
-        return subprocess.CompletedProcess(argv, 0, b"", b"")
+        return subprocess.CompletedProcess(
+            argv, 0, b"fixture body" if argv[3] == "cat" else b"", b""
+        )
 
     digest = hashlib.sha256(b"fixture body").hexdigest()
+    source = objects / f"objects/sha256/{digest[:2]}/{digest}.md"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"fixture body")
     publisher._publish_object_batch(
         tmp_path / "build",
         objects,
@@ -1635,5 +1640,40 @@ def test_slow_publisher_transfer_allows_new_batch_import(
         [(f"published/objects/sha256/{digest[:2]}/{digest}.md", digest)],
         transfer,
     )
-    assert calls == ["copy", "hashsum"]
+    assert calls == ["copyto", "cat"]
     assert json.loads((receipts / f"{_BATCHES[0]}.json").read_text())["revision"] == 1
+
+
+def test_manual_document_above_old_limit_imports_and_reuses_streamed_object(
+    tmp_path: Path,
+) -> None:
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    item: dict[str, object] = {
+        "kind": "manual_document",
+        "identity": "manual:" + "b" * 64,
+        "title": "large complete novel",
+        "created_at": "2026-10-01T00:00:00Z",
+        "folder": "fixture",
+        "source_url": "",
+    }
+    body = b"large complete novel prose\n" * 1_500_000
+    assert 32 * 1024**2 < len(body) < 64 * 1024**2
+    _batch(inbox, _BATCHES[0], body=body, item=item)
+    first = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+    assert first is not None and first["items"][0]["status"] == "accepted"
+    digest = hashlib.sha256(body).hexdigest()
+    # Reusing a content object must not allocate a second complete body.
+    tracemalloc.start()
+    try:
+        key = importer._store_object(objects, body, digest)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * 1024**2
+    with (objects / key).open("rb") as stream:
+        assert hashlib.file_digest(stream, "sha256").hexdigest() == digest

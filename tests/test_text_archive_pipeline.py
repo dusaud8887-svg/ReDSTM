@@ -238,6 +238,8 @@ def test_publisher_pointer_is_last_and_receipt_advances_after_readback(
     calls: list[tuple[str, str]] = []
 
     def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] in {"copy", "hashsum"}:
+            return _fake_r2(remote)(argv)
         if argv[3] == "copyto":
             local, remote_path = argv[4], argv[5]
             key = remote_path.split("redstm-text-archive/", 1)[1]
@@ -711,6 +713,8 @@ def test_novel_publisher_writes_a_paged_receipt_snapshot_after_r2_pointer(
     calls: list[tuple[str, str]] = []
 
     def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] in {"copy", "hashsum"}:
+            return _fake_r2(remote)(argv)
         if argv[3] == "copyto":
             local, remote_path = argv[4], argv[5]
             key = remote_path.split("redstm-text-archive/", 1)[1]
@@ -911,7 +915,9 @@ def test_publisher_does_not_claim_an_item_imported_after_build(
         lane: str,
         **_kwargs: object,
     ) -> dict[str, Any]:
-        tree = original_build(db_path_arg, object_root, output_root, lane)
+        tree = original_build(db_path_arg, object_root, output_root, lane, **_kwargs)
+        if _kwargs.get("verified_only"):
+            return tree
         with sqlite3.connect(db_path) as db:
             db.execute(
                 """INSERT INTO text_archive_items(
@@ -929,7 +935,9 @@ def test_publisher_does_not_claim_an_item_imported_after_build(
     remote: dict[str, bytes] = {}
 
     def rclone(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        key = argv[-1].split("redstm-text-archive/", 1)[1]
+        if argv[3] in {"copy", "hashsum"}:
+            return _fake_r2(remote)(argv)
+        key = argv[5 if argv[3] == "copyto" else 4].split("redstm-text-archive/", 1)[1]
         if argv[3] == "copyto":
             remote[key] = Path(argv[4]).read_bytes()
             return subprocess.CompletedProcess(argv, 0, b"", b"")
@@ -2018,15 +2026,28 @@ def _fake_r2(remote: dict[str, bytes], *, fail_delete: bool = False) -> Any:
     def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
         operation = argv[3]
         if operation in {"copy", "delete"}:
-            prefix = argv[5 if operation == "copy" else 4].split("redstm-text-archive/", 1)[1]
+            prefix = (
+                argv[5 if operation == "copy" else 4]
+                .partition("redstm-text-archive")[2]
+                .lstrip("/")
+            )
             names = Path(argv[argv.index("--files-from-raw") + 1]).read_text().split()
             if operation == "delete" and fail_delete:
                 raise subprocess.CalledProcessError(1, argv)
             for name in names:
+                key = f"{prefix}/{name}" if prefix else name
                 if operation == "copy":
-                    remote[f"{prefix}/{name}"] = (Path(argv[4]) / name).read_bytes()
+                    remote[key] = (Path(argv[4]) / name).read_bytes()
                 else:
-                    remote.pop(f"{prefix}/{name}", None)
+                    remote.pop(key, None)
+        elif operation == "hashsum":
+            prefix = argv[5].partition("redstm-text-archive")[2].lstrip("/")
+            checksum = Path(argv[argv.index("--checkfile") + 1]).read_text()
+            for line in checksum.splitlines():
+                digest, name = line.split("  ", 1)
+                key = f"{prefix}/{name}" if prefix else name
+                if key not in remote or hashlib.sha256(remote[key]).hexdigest() != digest:
+                    raise subprocess.CalledProcessError(1, argv)
         elif operation == "copyto":
             remote[argv[5].split("redstm-text-archive/", 1)[1]] = Path(argv[4]).read_bytes()
         elif operation == "cat":
@@ -2152,6 +2173,8 @@ def test_availability_window_deferral_keeps_the_published_lane(
     remote: dict[str, bytes] = {}
 
     def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] in {"copy", "hashsum"}:
+            return _fake_r2(remote)(argv)
         if argv[3] == "copyto":
             key = argv[5].split("redstm-text-archive/", 1)[1]
             remote[key] = Path(argv[4]).read_bytes()
@@ -2383,7 +2406,89 @@ def test_publisher_attempts_every_lane_after_a_failure(
     with pytest.raises(SystemExit) as stopped:
         publisher.main()
     assert stopped.value.code == (75 if deferred else 1)
-    assert attempted == ["novel", "arcalive", "manual"]
+    assert attempted == ["manual", "novel", "arcalive"]
     assert reported == ["deferred" if deferred else "failed"]
     results = json.loads(capsys.readouterr().out)
     assert len([r for r in results if r.get("status") == "published"]) == 2
+
+
+def test_partial_manual_publish_keeps_verified_progress_and_skips_failed_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    db_path, objects, receipts = _novel_archive(tmp_path)
+    build = tmp_path / "build"
+    remote: dict[str, bytes] = {}
+    identities: list[str] = []
+    with sqlite3.connect(db_path) as db:
+        for index in range(10):
+            identity = "manual:" + f"{index:064x}"
+            identities.append(identity)
+            body = f"manual document {index}".encode()
+            digest = hashlib.sha256(body).hexdigest()
+            key = f"objects/sha256/{digest[:2]}/{digest}.md"
+            target = objects / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(body)
+            db.execute(
+                "INSERT INTO text_archive_items(identity,lane,source_site,source_url,title,"
+                "content_sha256,bytes,object_key,batch_id,imported_at) "
+                "VALUES(?,'manual','manual','',?,?,?,?, 'fixture','now')",
+                (identity, identity, digest, len(body), key),
+            )
+            db.execute(
+                "INSERT INTO text_manual_documents VALUES(?,'2026-10-01T00:00:00Z','fixture')",
+                (identity,),
+            )
+        # One body was verified by a previous interrupted run, without a visible catalog.
+        key, digest = db.execute(
+            "SELECT object_key,content_sha256 FROM text_archive_items WHERE identity=?",
+            (identities[0],),
+        ).fetchone()
+    remote["published/" + key] = (objects / key).read_bytes()
+    publisher._record_publication(db_path, "published/" + key, digest)
+    normal = _fake_r2(remote)
+    failed_keys: list[str] = []
+
+    def fail_group(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] == "copy" and "objects/sha256" in argv[5]:
+            failed_keys.extend(
+                Path(argv[argv.index("--files-from-raw") + 1]).read_text().splitlines()
+            )
+            raise subprocess.TimeoutExpired(argv, 300)
+        return normal(argv, **kwargs)
+
+    first = publisher.publish_lane(db_path, objects, build, receipts, "manual", runner=fail_group)
+    assert first["item_count"] == 1 and first["pending_count"] == 9
+    assert first["transfer_error"] == "TimeoutExpired"
+    pointer = json.loads(remote["published/manual/release.json"])
+    release = json.loads(remote[pointer["release_key"]])
+    assert release["item_count"] == 1
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute(
+                "SELECT count(*) FROM text_archive_publications WHERE key LIKE 'item:manual:%'"
+            ).fetchone()[0]
+            == 1
+        )
+    assert len(failed_keys) == 8
+    copied: list[str] = []
+
+    def retry(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] == "copyto" and "objects/sha256" in argv[5]:
+            copied.append(argv[5].split("published/objects/sha256/", 1)[1])
+        return normal(argv, **kwargs)
+
+    final = publisher.publish_lane(db_path, objects, build, receipts, "manual", runner=retry)
+    assert final["item_count"] == 10 and final["pending_count"] == 0
+    assert copied[0] not in failed_keys  # An unattempted file passes the failed group first.
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT count(*) FROM text_archive_publish_attempts").fetchone()[0] == 0
+
+
+def test_shared_disk_reserve_allows_thirty_gib_free() -> None:
+    from scripts.storage_policy import disk_low_bytes, disk_stop_bytes, text_disk_floor_bytes
+
+    total = 194 * 1024**3
+    assert disk_stop_bytes(total) == text_disk_floor_bytes(total) < 4 * 1024**3 + 1
+    assert disk_low_bytes(total) < 5 * 1024**3 + 1 < 30 * 1024**3

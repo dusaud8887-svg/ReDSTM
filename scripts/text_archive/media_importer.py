@@ -250,7 +250,18 @@ def upload(build_root: Path, batch_id: str, items: list[dict[str, Any]], runner:
             checksums.write_text(
                 "".join(f"{item['sha256']}  {item['path_key']}\n" for item in group), "utf-8"
             )
-            common = ["--contimeout", "10s", "--timeout", "60s", "--retries", "1"]
+            common = [
+                "--contimeout",
+                "10s",
+                "--timeout",
+                "60s",
+                "--retries",
+                "1",
+                "--buffer-size",
+                "0",
+                "--s3-upload-concurrency",
+                "1",
+            ]
             _run(
                 [
                     "rclone",
