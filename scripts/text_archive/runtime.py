@@ -13,7 +13,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from scripts.storage_policy import disk_low_bytes
+from scripts.storage_policy import text_disk_floor_bytes
 
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
@@ -161,8 +161,8 @@ def _admit(
         usage = shutil.disk_usage(root_path)
     except OSError as exc:
         raise RuntimeWindowError("disk_metrics_unavailable") from exc
-    # Text stops at TypeMoon's warning level, so the space below it stays TypeMoon's.
-    if usage.free < disk_low_bytes(usage.total):
+    # Text keeps only a small reserve so the volume never fills completely.
+    if usage.free < text_disk_floor_bytes(usage.total):
         raise RuntimeWindowError("disk_below_floor")
 
 

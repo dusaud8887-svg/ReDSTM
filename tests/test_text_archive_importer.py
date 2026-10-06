@@ -983,7 +983,7 @@ def test_importer_operation_window_checks_locks_resources_and_timer(
         ),
         (
             "MemAvailable: 400000 kB\nSwapTotal: 4000000 kB\nSwapFree: 3900000 kB\n",
-            40 * 1024**3 - 1,
+            4 * 1024**3 - 1,
             "disk_below_floor",
         ),
     ],

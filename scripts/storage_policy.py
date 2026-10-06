@@ -1,8 +1,8 @@
 """Disk thresholds shared by the TypeMoon runner and the text archive on one Oracle volume.
 
 The fixed 40 GiB warning / 20 GiB stop only made sense on a large boot volume: on a small one the
-warning never cleared and text work (which waits at the warning level) never ran. Defaults now
-scale with the volume and keep the old values as the ceiling.
+warning never cleared. Defaults now scale with the volume and keep the old values as the
+ceiling. Text work no longer waits at the warning level; it keeps only a 1-4 GiB reserve.
 """
 
 from __future__ import annotations
@@ -15,8 +15,16 @@ def _clamp(value: float, low: int, high: int) -> int:
 
 
 def disk_low_bytes(total_bytes: int) -> int:
-    """Warning level for TypeMoon; text work stops here so TypeMoon keeps the rest."""
+    """Warning level for TypeMoon."""
     return _clamp(total_bytes * 0.20, 5 * _GIB, 40 * _GIB)
+
+
+def text_disk_floor_bytes(total_bytes: int) -> int:
+    """Text archive work stops only near a full disk (owner decision 2026-10-06).
+
+    Below TypeMoon's stop level its new crawl chunks still wait; text growth is small.
+    """
+    return _clamp(total_bytes * 0.02, 1 * _GIB, 4 * _GIB)
 
 
 def disk_stop_bytes(total_bytes: int) -> int:
