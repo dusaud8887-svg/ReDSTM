@@ -431,7 +431,26 @@ install_release() {
   mark_release_complete "$release"
   INSTALL_MUTATED=0
   INSTALL_ACTIVE=0
+  prune_old_releases
   printf 'release=%s\n' "$release"
+}
+
+# Keep current, previous and the newest few; 100+ releases had piled up with nothing pruning
+# them. Rollback only targets previous, which is always kept.
+RELEASES_KEEP=5
+prune_old_releases() {
+  local current previous entry index=0
+  current="$(readlink -f "$CURRENT" 2>/dev/null || true)"
+  previous="$(readlink -f "$PREVIOUS" 2>/dev/null || true)"
+  [[ "$current" == "${RELEASES}/"* ]] || return 0
+  while IFS= read -r entry; do
+    index=$((index + 1))
+    [[ "$entry" == "$current" || "$entry" == "$previous" ]] && continue
+    (( index <= RELEASES_KEEP )) && continue
+    [[ "$entry" == "${RELEASES}/"* && "$entry" != *.partial ]] || continue
+    rm -rf -- "$entry"
+  done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d ! -name '*.partial' \
+             -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
 }
 
 canonical_transfer_size() {
