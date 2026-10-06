@@ -753,7 +753,8 @@ def _snapshot_fingerprint(connection: sqlite3.Connection) -> dict[str, int | str
                p.latest_version_id, v.content_sha256, v.comments_sha256,
                v.capture_origin, v.warc_record_id
         FROM posts AS p
-        JOIN post_versions AS v ON v.id = p.latest_version_id
+        JOIN post_versions AS v INDEXED BY post_versions_projection_idx
+                ON v.id = p.latest_version_id
         ORDER BY p.id
         """,
     )
@@ -1389,7 +1390,8 @@ def _projection_rows(connection: sqlite3.Connection) -> Iterator[sqlite3.Row]:
                    (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
                    v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
             FROM posts AS p
-            JOIN post_versions AS v ON v.id = p.latest_version_id
+            JOIN post_versions AS v INDEXED BY post_versions_projection_idx
+                ON v.id = p.latest_version_id
             ORDER BY p.id
             """
         )
@@ -1785,7 +1787,8 @@ def _write_projection_release(
                        (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
                        v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
                 FROM posts AS p
-                JOIN post_versions AS v ON v.id = p.latest_version_id
+                JOIN post_versions AS v INDEXED BY post_versions_projection_idx
+                ON v.id = p.latest_version_id
                 WHERE p.board_id = ?
                 ORDER BY p.external_post_id DESC
                 """,
@@ -1957,10 +1960,8 @@ def _full_export_static(
     output = output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     writer = _ObjectWriter(output)
-    board_posts: dict[str, list[dict[str, object]]] = defaultdict(list)
-    search_rows: list[tuple[str, StaticPostSummary]] = []
-    summary_by_post_id: dict[int, StaticPostSummary] = {}
-    comment_count = 0
+    post_refs: dict[str, dict[int, _StoredPostRef]] = {}
+    post_count = 0
 
     with archive_transaction(source, read_only=True) as connection:
         if int(connection.execute("PRAGMA application_id").fetchone()[0]) != APPLICATION_ID:
@@ -1972,18 +1973,6 @@ def _full_export_static(
         capture_high_water = int(
             connection.execute("SELECT COALESCE(MAX(id), 0) FROM captures").fetchone()[0]
         )
-        boards = [dict(row) for row in connection.execute("SELECT * FROM boards ORDER BY board_id")]
-        unavailable_counts = connection.execute(
-            """
-            SELECT COUNT(DISTINCT p.id) AS post_count, COUNT(c.position) AS comment_count
-            FROM posts AS p
-            LEFT JOIN comments AS c ON c.post_id = p.id
-            WHERE p.latest_version_id IS NULL
-            """
-        ).fetchone()
-        assert unavailable_counts is not None
-        unavailable_post_count = int(unavailable_counts["post_count"])
-        unavailable_comment_count = int(unavailable_counts["comment_count"])
         comment_groups = iter(_grouped_comments(connection))
         current_comments = next(comment_groups, None)
 
@@ -2036,15 +2025,15 @@ def _full_export_static(
                     **_object_ref(prepared.summary.object_key, prepared.payload, prepared.body),
                     "source_projection_sha256": prepared.source_projection_sha256,
                 }
-                board_posts[prepared.summary.board_id].append(post_ref)
-                search_rows.append((prepared.created_at_source, prepared.summary))
-                summary_by_post_id[prepared.post_id] = prepared.summary
-                comment_count += prepared.summary.comment_count
-                if len(search_rows) % 1000 == 0:
+                post_refs.setdefault(prepared.summary.board_id, {})[
+                    prepared.summary.external_post_id
+                ] = _stored_post_ref(post_ref)
+                post_count += 1
+                if post_count % 1000 == 0:
                     print(
                         json.dumps(
                             {
-                                "exported_posts": len(search_rows),
+                                "exported_posts": post_count,
                                 "objects_written": writer.written,
                                 "objects_reused": writer.reused,
                             }
@@ -2058,116 +2047,11 @@ def _full_export_static(
                 f"comments reference post without latest version: {current_comments[0]}"
             )
 
-        board_refs: list[dict[str, object]] = []
-        for board in boards:
-            board_id = str(board["board_id"])
-            posts = sorted(
-                board_posts.get(board_id, []),
-                key=lambda summary: cast(int, summary["external_post_id"]),
-                reverse=True,
-            )
-            payload = _json_bytes(
-                {
-                    "schema_version": 1,
-                    "board_id": board_id,
-                    "name": board["name"],
-                    "group_name": board["group_name"],
-                    "canonical_url": board["canonical_url"],
-                    "posts": posts,
-                }
-            )
-            ref = _write_zstd_object(
-                writer,
-                f"boards/{board_id}/manifest-v2",
-                payload,
-                level=_AGGREGATE_COMPRESSION_LEVEL,
-            )
-            board_refs.append(
-                {
-                    "board_id": board_id,
-                    "name": board["name"],
-                    "group_name": board["group_name"],
-                    "post_count": len(posts),
-                    **ref,
-                }
-            )
-
-        ordered_search = sorted(
-            search_rows,
-            key=lambda item: (item[0], item[1].external_post_id, item[1].board_id),
-            reverse=True,
-        )
-        search_payload = _json_bytes(
-            {
-                "schema_version": 1,
-                "fields": _SEARCH_FIELDS_WITH_STATS,
-                "posts": [
-                    [
-                        summary.board_id,
-                        summary.external_post_id,
-                        summary.title,
-                        summary.author,
-                        summary.category,
-                        summary.created_at_raw,
-                        summary.payload_sha256,
-                        summary.is_aa,
-                        summary.views,
-                        summary.comment_count,
-                    ]
-                    for _, summary in ordered_search
-                ],
-            }
-        )
-        search_ref = {
-            **_write_zstd_object(
-                writer,
-                "search/title-author-v2",
-                search_payload,
-                level=_AGGREGATE_COMPRESSION_LEVEL,
-            ),
-            "post_count": len(ordered_search),
-        }
-
-        def collection_post(row: sqlite3.Row) -> StaticPostSummary | None:
-            if row["latest_version_id"] is None or row["post_id"] is None:
-                return None
-            return summary_by_post_id.get(int(row["post_id"]))
-
-        (
-            staged_collection_details,
-            staged_collection_memberships,
-            collection_summaries,
-            collection_count,
-            collection_entry_count,
-        ) = _stage_collection_objects(connection, writer, collection_post)
-        collection_ref = _write_collection_objects(
-            writer,
-            staged_collection_details,
-            staged_collection_memberships,
-            collection_summaries,
-            collection_count,
-            collection_entry_count,
-        )
         fingerprint = _snapshot_fingerprint(connection)
+        release_body, _counts = _write_projection_release(
+            connection, writer, post_refs, fingerprint
+        )
 
-    post_count = len(search_rows)
-    release_body = _json_bytes(
-        {
-            "schema_version": 1,
-            "canonical_schema_version": SCHEMA_VERSION,
-            "source": "typemoon",
-            "post_count": post_count,
-            "comment_count": comment_count,
-            "unavailable_post_count": unavailable_post_count,
-            "unavailable_comment_count": unavailable_comment_count,
-            "board_count": len(board_refs),
-            "collection_count": collection_count,
-            "collection_entry_count": collection_entry_count,
-            "boards": board_refs,
-            "search": search_ref,
-            "collections": collection_ref,
-        }
-    )
     release_key = f"releases/{_sha256(release_body)}.json"
     writer.write(release_key, release_body)
     activation = _promote_release(

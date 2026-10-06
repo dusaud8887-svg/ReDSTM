@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import uuid
 from contextlib import AbstractContextManager
@@ -13,8 +15,17 @@ from crawler.settings import (
     REDSTM_FRONTIER_BACKOFF_BASE_SECONDS,
     REDSTM_FRONTIER_BACKOFF_CAP_SECONDS,
     REDSTM_LOCKED_REVISIT_DAYS,
+    REDSTM_ORIGIN_UNRESPONSIVE_CODE,
     REDSTM_RECOVERY_GROUP_ORDER,
 )
+
+
+def listing_fingerprint(title: str, category: str | None, comment_count: int) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            [title, category, comment_count], ensure_ascii=False, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +138,7 @@ class FrontierStore:
         reopen_done: bool = False,
         expected_comment_count: int | None = None,
         captured: bool = False,
+        listing_sha256: str | None = None,
     ) -> None:
         """Queue a post, or refresh an existing row.
 
@@ -138,33 +150,61 @@ class FrontierStore:
             type(expected_comment_count) is not int or expected_comment_count < 0
         ):
             raise ValueError("expected_comment_count must be a non-negative integer or None")
+        retry_codes = ", ".join(
+            f"'{code}'"
+            for code in sorted(REDSTM_CAPPED_RETRY_ERROR_CODES | {REDSTM_ORIGIN_UNRESPONSIVE_CODE})
+        )
         with self._connect() as connection:
             connection.execute(
-                """
+                f"""
                 INSERT INTO crawl_frontier (
-                    board_id, external_post_id, url, priority, expected_comment_count, state
+                    board_id, external_post_id, url, priority, expected_comment_count, state,
+                    listing_sha256
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (board_id, external_post_id) DO UPDATE SET
                     url = excluded.url,
                     priority = excluded.priority,
                     expected_comment_count = excluded.expected_comment_count,
                     state = CASE
-                        WHEN ? AND crawl_frontier.state = 'done' THEN 'pending'
+                        WHEN (? AND crawl_frontier.state = 'done') OR (
+                            crawl_frontier.state = 'dead'
+                            AND crawl_frontier.last_error_code IN ({retry_codes})
+                            AND crawl_frontier.listing_sha256 IS NOT NULL
+                            AND excluded.listing_sha256 != crawl_frontier.listing_sha256
+                        ) THEN 'pending'
                         ELSE crawl_frontier.state
                     END,
                     attempts = CASE
-                        WHEN ? AND crawl_frontier.state = 'done' THEN 0
+                        WHEN (? AND crawl_frontier.state = 'done') OR (
+                            crawl_frontier.state = 'dead'
+                            AND crawl_frontier.last_error_code IN ({retry_codes})
+                            AND crawl_frontier.listing_sha256 IS NOT NULL
+                            AND excluded.listing_sha256 != crawl_frontier.listing_sha256
+                        ) THEN 0
                         ELSE crawl_frontier.attempts
                     END,
                     next_attempt_at = CASE
-                        WHEN ? AND crawl_frontier.state = 'done' THEN NULL
+                        WHEN (? AND crawl_frontier.state = 'done') OR (
+                            crawl_frontier.state = 'dead'
+                            AND crawl_frontier.last_error_code IN ({retry_codes})
+                            AND crawl_frontier.listing_sha256 IS NOT NULL
+                            AND excluded.listing_sha256 != crawl_frontier.listing_sha256
+                        ) THEN NULL
                         ELSE crawl_frontier.next_attempt_at
                     END,
                     last_error_code = CASE
-                        WHEN ? AND crawl_frontier.state = 'done' THEN NULL
+                        WHEN (? AND crawl_frontier.state = 'done') OR (
+                            crawl_frontier.state = 'dead'
+                            AND crawl_frontier.last_error_code IN ({retry_codes})
+                            AND crawl_frontier.listing_sha256 IS NOT NULL
+                            AND excluded.listing_sha256 != crawl_frontier.listing_sha256
+                        ) THEN NULL
                         ELSE crawl_frontier.last_error_code
-                    END
+                    END,
+                    listing_sha256 = COALESCE(
+                        excluded.listing_sha256, crawl_frontier.listing_sha256
+                    )
                 """,
                 (
                     board_id,
@@ -173,6 +213,7 @@ class FrontierStore:
                     priority,
                     expected_comment_count,
                     "done" if captured else "pending",
+                    listing_sha256,
                     reopen_done,
                     reopen_done,
                     reopen_done,
@@ -200,7 +241,7 @@ class FrontierStore:
             row = connection.execute(
                 """
                 SELECT post.title, post.category, post.comment_count, post.latest_version_id,
-                    post.availability, frontier.last_attempt_at
+                    post.availability, frontier.last_attempt_at, frontier.listing_sha256
                 FROM posts AS post
                 LEFT JOIN crawl_frontier AS frontier
                   ON frontier.board_id = post.board_id
@@ -209,6 +250,22 @@ class FrontierStore:
                 """,
                 (board_id, external_post_id),
             ).fetchone()
+            # Existing retry-capped rows predate the listing fingerprint. Their last
+            # observed outline still provides a baseline, so the first changed listing
+            # after the migration can reopen them rather than merely initializing it.
+            if row is not None and row["listing_sha256"] is None:
+                connection.execute(
+                    "UPDATE crawl_frontier SET listing_sha256 = ? "
+                    "WHERE board_id = ? AND external_post_id = ? "
+                    "AND state = 'dead' AND listing_sha256 IS NULL",
+                    (
+                        listing_fingerprint(
+                            str(row["title"]), row["category"], int(row["comment_count"])
+                        ),
+                        board_id,
+                        external_post_id,
+                    ),
+                )
         # A locked post (secret post, permission wall) has no body by nature. Refetching it on
         # every listing pass only spends the sync budget, so an unchanged listing row leaves it
         # alone until the slow revisit window passes (the author may unlock it).
@@ -221,9 +278,14 @@ class FrontierStore:
         return bool(
             row is not None
             and (row["latest_version_id"] is not None or locked_recently)
-            and row["title"] == title
-            and (category is None or row["category"] == category)
             and row["comment_count"] == comment_count
+            and (
+                row["listing_sha256"] == listing_fingerprint(title, category, comment_count)
+                if row["listing_sha256"] is not None
+                else row["title"] == title
+                and (category is None or row["category"] == category)
+                and row["comment_count"] == comment_count
+            )
         )
 
     def claim_identity(

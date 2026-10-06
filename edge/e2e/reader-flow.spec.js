@@ -2710,3 +2710,33 @@ test("AA scene moves follow the original 레스 headers and hide without them", 
   await expect(page.locator("#reader-title")).toHaveText("2편 제목");
   await expect(group).toBeHidden();
 });
+
+
+test("reading anchors reuse the text model and refresh synchronously after a body mutation", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { createTextModel } = await import("/text-model.js");
+    const { captureTextAnchor } = await import("/text-anchor.js");
+    const scroller = document.createElement("div");
+    scroller.style.cssText = "position:fixed;top:0;height:300px;width:300px;overflow:auto;background:white";
+    const root = document.createElement("div");
+    for (let index = 0; index < 4000; index += 1) {
+      const p = document.createElement("p"); p.textContent = `Paragraph ${index} has a saved sentence.`; root.append(p);
+    }
+    scroller.append(root); document.body.append(scroller);
+    const original = createTextModel(root);
+    scroller.scrollTop = scroller.scrollHeight / 2;
+    const first = captureTextAnchor(root, scroller);
+    const same = createTextModel(root) === original;
+    root.firstChild.firstChild.data = "Changed first paragraph";
+    const updated = createTextModel(root);
+    const second = captureTextAnchor(root, scroller);
+    const answer = { same, refreshed: updated !== original, changed: updated.text.startsWith("Changed first paragraph"), first: first?.loc.exact, second: second?.loc.exact };
+    scroller.remove(); return answer;
+  });
+  expect(result.same).toBe(true);
+  expect(result.refreshed).toBe(true);
+  expect(result.changed).toBe(true);
+  expect(result.first).toContain("Paragraph");
+  expect(result.second).toContain("Paragraph");
+});

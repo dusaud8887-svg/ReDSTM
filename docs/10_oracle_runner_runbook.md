@@ -132,7 +132,7 @@ Dockerfile은 reproducible smoke와 emergency container fallback으로 유지한
 
 ```text
 /opt/redstm/current                 immutable application release symlink
-/opt/redstm/releases/<git-sha>/     source + frozen virtual environment
+/opt/redstm/releases/<git-sha>/     source + frozen virtual environment (install keeps current, previous, newest 5)
 /srv/redstm/canonical/              active SQLite, redstm:redstm, 0750
 /srv/redstm/warc/                   partial/closed WARC, 0700
 /srv/redstm/static/                 content-addressed serving derivatives
@@ -197,7 +197,7 @@ WARC는 원본 증거다. canonical DB가 모든 파싱 버전을 보존하므�
 장기 보관이 필요하면 삭제 전에 외부로 옮긴다(현재 자동 백업 없음, §4).
 - crawler와 full export/backup/restore를 같은 시간에 실행하지 않는다.
 - journald와 report는 본문/cookie/token을 남기지 않고 size/retention을 제한한다.
-  `deploy/oracle/redstm-journald.conf`는 persistent 1GiB, runtime 256MiB, 14일/1일 file rotation을
+  `deploy/oracle/redstm-journald.conf`는 persistent 512MiB(2026-10-06 1GiB에서 축소), runtime 256MiB, 14일/1일 file rotation을
   적용한다. installer/rollback은 drop-in 문법만 검증하고 전역 journald를 재시작하지 않는다.
   최초 활성화는 bootstrap reboot 또는 별도 maintenance window에서 확인한다. 민감 본문이 남은
   과거 실패 journal은 회전 후 폐기한다.

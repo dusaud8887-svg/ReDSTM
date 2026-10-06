@@ -1191,7 +1191,7 @@ def test_main_drains_every_ready_batch_in_one_run(
     assert not (inbox / "receipts" / f"{_BATCHES[2]}.json").exists()
 
 
-def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
+def test_temporary_batch_failure_retains_original_and_allows_later_batch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     inbox = tmp_path / "inbox"
@@ -1208,16 +1208,16 @@ def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
 
     def broken(inbox_root: Path, batch_id: str, *args: Any) -> Any:
         if batch_id == _BATCHES[0]:
-            raise OSError("existing content object failed verification")
+            raise sqlite3.OperationalError("database is locked")
         return real_import(inbox_root, batch_id, *args)
 
     monkeypatch.setattr(importer, "import_batch", broken)
     with pytest.raises(SystemExit) as stopped:
         importer.main()
     assert stopped.value.code == 1
-    # Waiting out the backoff, the later batch does not overtake it.
+    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
     assert importer._next_ready_batch(inbox, attempts) is None
-    for _attempt in range(importer._IMPORT_ATTEMPTS - 1):
+    for _attempt in range(8):
         record = attempts / f"{_BATCHES[0]}.json"
         if record.exists():
             data = json.loads(record.read_text(encoding="utf-8"))
@@ -1228,8 +1228,14 @@ def test_a_batch_that_keeps_failing_is_retried_then_rejected_without_overtaking(
         except SystemExit:
             pass
     capsys.readouterr()
-    assert (inbox / "receipts" / f"{_BATCHES[0]}.status.json").exists()
-    assert (inbox / "receipts" / f"{_BATCHES[1]}.json").is_file()
+    assert not (inbox / "receipts" / f"{_BATCHES[0]}.status.json").exists()
+    assert not (inbox / "drop" / _BATCHES[0] / "rejected.json").exists()
+    monkeypatch.setattr(importer, "import_batch", real_import)
+    data = json.loads(record.read_text(encoding="utf-8"))
+    data["next_at"] = 0
+    record.write_text(json.dumps(data), encoding="utf-8")
+    importer.main()
+    assert (inbox / "receipts" / f"{_BATCHES[0]}.json").is_file()
 
 
 def _imported_for_status(tmp_path: Path) -> tuple[Path, Path]:
@@ -1526,3 +1532,42 @@ def test_arcalive_equivalence_stays_off_until_newtomi_knows_the_rule(
     receipt = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
     assert receipt is not None
     assert receipt["items"][0]["status"] == "held_conflict"
+
+
+def test_unexpected_or_fatal_import_failure_still_backs_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A RuntimeError, or an OOM kill that never reaches an except clause, used to leave no
+    attempt record, so every timer tick retried the same head batch with no backoff."""
+    inbox = tmp_path / "inbox"
+    attempts = tmp_path / "attempts"
+    _batch(inbox, _BATCHES[0])
+    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
+    monkeypatch.setattr(importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["importer"])
+
+    def crash(*_args: Any) -> Any:
+        raise RuntimeError("schema guard")
+
+    monkeypatch.setattr(importer, "import_batch", crash)
+    with pytest.raises(SystemExit):
+        importer.main()
+    record = json.loads((attempts / f"{_BATCHES[0]}.json").read_text(encoding="utf-8"))
+    assert record["attempts"] == 1 and record["reason"] == "import_failed:RuntimeError"
+    assert importer._next_ready_batch(inbox, attempts) is None
+
+    def killed(*_args: Any) -> Any:
+        raise KeyboardInterrupt  # stands in for SIGKILL: no handler runs
+
+    record["next_at"] = 0
+    (attempts / f"{_BATCHES[0]}.json").write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setattr(importer, "import_batch", killed)
+    with pytest.raises(KeyboardInterrupt):
+        importer.main()
+    record = json.loads((attempts / f"{_BATCHES[0]}.json").read_text(encoding="utf-8"))
+    assert record["attempts"] == 2 and record["reason"] == "import_started"
+    assert importer._next_ready_batch(inbox, attempts) is None
+    capsys.readouterr()

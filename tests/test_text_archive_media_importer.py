@@ -125,6 +125,7 @@ def test_stores_valid_images_by_path_key_and_rejects_bad_items(tmp_path: Path) -
     copies = [call for call in r2.calls if call[3] == "copy"]
     assert all(call[5] == "r2text:redstm-text-archive/media/arca" for call in copies)
     assert all("--ignore-times" in call for call in copies)
+    assert all("--no-traverse" in call for call in copies)
     with closing(sqlite3.connect(tmp_path / "text.sqlite")) as db:
         rows = db.execute("SELECT path_key,content_type,post FROM text_archive_media ORDER BY 1")
         assert rows.fetchall() == [(_PATH_A, "image/webp", _POST), (_PATH_B, "image/gif", _POST)]
@@ -244,7 +245,7 @@ def test_main_drains_ready_batches_in_one_run(
     assert media_importer.next_ready_batch(inbox) is None
 
 
-def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
+def test_temporary_media_failure_is_never_permanently_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     inbox = tmp_path / "inbox"
@@ -264,7 +265,7 @@ def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
     assert stopped.value.code == 1
     # Waiting out the backoff, the lane does not retry it on every tick.
     assert media_importer.next_ready_batch(inbox, attempts) is None
-    for _attempt in range(media_importer._IMPORT_ATTEMPTS - 1):
+    for _attempt in range(8):
         record = attempts / f"{_BATCH}.json"
         if record.exists():
             data = json.loads(record.read_text(encoding="utf-8"))
@@ -275,5 +276,5 @@ def test_a_media_batch_that_keeps_failing_is_retried_then_rejected(
         except SystemExit:
             pass
     capsys.readouterr()
-    assert (inbox / "receipts" / f"{_BATCH}.status.json").exists()
+    assert not (inbox / "receipts" / f"{_BATCH}.status.json").exists()
     assert media_importer.next_ready_batch(inbox, attempts) is None

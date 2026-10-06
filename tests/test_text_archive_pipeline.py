@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import nullcontext
@@ -2283,3 +2284,39 @@ def test_drop_state_counts_only_rejected_status_sidecars(tmp_path: Path) -> None
     state = text_status._drop_state(tmp_path)
     assert state["text_rejected_in_drop"] == 1
     assert state["text_waiting"] == 0
+
+
+@pytest.mark.parametrize("failed_lane", ["novel", "arcalive", "manual"])
+@pytest.mark.parametrize("deferred", [False, True])
+def test_publisher_attempts_every_lane_after_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failed_lane: str,
+    deferred: bool,
+) -> None:
+    attempted: list[str] = []
+    reported: list[str] = []
+
+    def publish(*args: Any) -> dict[str, Any]:
+        lane = str(args[4])
+        attempted.append(lane)
+        if lane == failed_lane:
+            if deferred:
+                raise publisher.RuntimeWindowError("lane_busy")
+            raise OSError("remote unavailable")
+        return {"lane": lane, "status": "published"}
+
+    monkeypatch.setattr(sys, "argv", ["publisher", "both"])
+    monkeypatch.setattr(publisher, "publish_lane", publish)
+    monkeypatch.setattr(
+        publisher, "write_pc_state", lambda *a, **kw: reported.append(kw["outcome"])
+    )
+    monkeypatch.setattr(publisher, "publish_status", lambda *a: {})
+    monkeypatch.setattr(publisher, "prune_receipts", lambda *a: 0)
+    with pytest.raises(SystemExit) as stopped:
+        publisher.main()
+    assert stopped.value.code == (75 if deferred else 1)
+    assert attempted == ["novel", "arcalive", "manual"]
+    assert reported == ["deferred" if deferred else "failed"]
+    results = json.loads(capsys.readouterr().out)
+    assert len([r for r in results if r.get("status") == "published"]) == 2

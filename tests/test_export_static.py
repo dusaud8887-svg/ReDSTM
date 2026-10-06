@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 import scripts.export_static as export_static_module
-from crawler.archive import compress_body, connect_archive, initialize_archive
+from crawler.archive import SCHEMA_VERSION, compress_body, connect_archive, initialize_archive
 from crawler.items import CapturedPostItem, CommentItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.store import ArchiveStore
@@ -237,7 +237,7 @@ def test_full_canonical_export_is_complete_deterministic_and_reusable(
     }
 
     release = json.loads((output / "release.json").read_bytes())
-    assert release["canonical_schema_version"] == 4
+    assert release["canonical_schema_version"] == SCHEMA_VERSION
     assert export_static_module._AGGREGATE_COMPRESSION_LEVEL == 6
     assert release["search"]["object_key"].startswith("search/title-author-v2-")
     assert release["collections"]["object_key"].startswith("collections/index-v2-")
@@ -933,8 +933,8 @@ def test_frontier_only_schema_upgrade_reuses_verified_v3_projection_state(
     assert result["mode"] == "incremental_noop"
     assert result["release_key"] == legacy_key
     promoted = json.loads(state_path.read_text(encoding="utf-8"))
-    assert promoted["source"]["schema_version"] == 4
-    assert export_static_module._projection_compatible_schema_versions() == {3, 4}
+    assert promoted["source"]["schema_version"] == SCHEMA_VERSION
+    assert export_static_module._projection_compatible_schema_versions() == {3, 4, 5}
 
 
 def test_interrupted_pointer_promotion_is_recovered_on_retry(
@@ -1071,3 +1071,36 @@ def test_source_change_after_snapshot_is_picked_up_by_the_next_delta(
     second_delta = export_static(source, output, incremental_only=True)
     assert second_delta["post_count"] == 3
     assert second_delta["changed_posts"] == 1
+
+
+def test_metadata_projection_uses_covering_index_without_body_table_reads(tmp_path: Path) -> None:
+    source = tmp_path / "archive.sqlite"
+    _canonical(source)
+    with connect_archive(source, read_only=True) as connection:
+        queries: list[str] = []
+        connection.set_trace_callback(queries.append)
+        export_static_module._snapshot_fingerprint(connection)
+        list(export_static_module._projection_rows(connection))
+        connection.set_trace_callback(None)
+        for query in queries:
+            if "JOIN post_versions" not in query:
+                continue
+            plan = connection.execute("EXPLAIN QUERY PLAN " + query).fetchall()
+            assert any("COVERING INDEX post_versions_projection_idx" in str(row[3]) for row in plan)
+
+
+def test_full_export_streams_large_aggregates_instead_of_serializing_posts_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "archive.sqlite"
+    _canonical(source)
+    original = export_static_module._json_bytes
+
+    def bounded(value: object) -> bytes:
+        if isinstance(value, dict) and isinstance(value.get("posts"), list):
+            pytest.fail("aggregate posts must be streamed, not serialized as a whole list")
+        return original(value)
+
+    monkeypatch.setattr(export_static_module, "_json_bytes", bounded)
+    report = export_static(source, tmp_path / "static", force_full=True)
+    assert report["post_count"] == 2

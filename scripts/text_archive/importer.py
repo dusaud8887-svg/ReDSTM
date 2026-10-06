@@ -1096,6 +1096,9 @@ def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=30000")
+    # Truncate the WAL back to 64 MiB after a checkpoint; a long publish read used to leave
+    # it at its high-water size on a disk the text lane now uses down to a small reserve.
+    db.execute("PRAGMA journal_size_limit=67108864")
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > 1:
         db.close()
@@ -1763,20 +1766,17 @@ def _next_ready_batch(inbox_root: Path, attempts_root: Path | None = None) -> st
                 and not (inbox_root / "receipts" / f"{directory.name}.json").is_file()
                 and not (inbox_root / "receipts" / f"{directory.name}.status.json").exists()
             ):
-                # The oldest ready batch waits out its failure backoff; later ones keep their
-                # order behind it rather than overtaking it.
+                # A deferred batch keeps its original files; independent later batches proceed.
                 if attempts_root is not None and _attempt_backoff_active(
                     attempts_root, directory.name
                 ):
-                    return None
+                    continue
                 return directory.name
     return None
 
 
-# A batch whose import fails unexpectedly (an OSError, a SQLite or JSON error, not a validation
-# rejection) is retried with growing waits and rejected after this many attempts, so one bad
-# batch cannot hold every later batch, and Newtomi's 2 GiB drop, forever.
-_IMPORT_ATTEMPTS = 5
+# Only explicit validation failures reject a batch. Operational failures retain it for retry,
+# with capped backoff, even when a lock or disk outage lasts for many timer ticks.
 _IMPORT_BACKOFF_SECONDS = (300, 900, 1800, 3600)
 
 
@@ -1788,19 +1788,8 @@ def _attempt_backoff_active(attempts_root: Path, batch_id: str) -> bool:
         return False
 
 
-def _record_import_failure(
-    inbox_root: Path, attempts_root: Path, batch_id: str, error: BaseException
-) -> dict[str, Any]:
+def _write_attempt(attempts_root: Path, batch_id: str, attempts: int, reason: str) -> None:
     path = attempts_root / f"{batch_id}.json"
-    try:
-        attempts = int(json.loads(path.read_text(encoding="utf-8"))["attempts"]) + 1
-    except OSError, ValueError, KeyError, TypeError:
-        attempts = 1
-    reason = f"import_failed:{type(error).__name__}"
-    if attempts >= _IMPORT_ATTEMPTS:
-        _record_batch_rejection(inbox_root, batch_id, reason)
-        path.unlink(missing_ok=True)
-        return {"status": "rejected", "batch_id": batch_id, "reason": reason}
     delay = _IMPORT_BACKOFF_SECONDS[min(attempts, len(_IMPORT_BACKOFF_SECONDS)) - 1]
     attempts_root.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -1809,6 +1798,30 @@ def _record_import_failure(
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _previous_attempts(attempts_root: Path, batch_id: str) -> int:
+    try:
+        record = json.loads((attempts_root / f"{batch_id}.json").read_text(encoding="utf-8"))
+        return int(record["attempts"])
+    except OSError, ValueError, KeyError, TypeError:
+        return 0
+
+
+def _begin_attempt(attempts_root: Path, batch_id: str) -> int:
+    """Count the attempt before running it, so an OOM kill or unit timeout (which never
+    reaches an except clause) also backs off instead of retrying the head batch every tick."""
+    attempts = _previous_attempts(attempts_root, batch_id) + 1
+    _write_attempt(attempts_root, batch_id, attempts, "import_started")
+    return attempts
+
+
+def _record_import_failure(
+    inbox_root: Path, attempts_root: Path, batch_id: str, error: BaseException
+) -> dict[str, Any]:
+    attempts = max(1, _previous_attempts(attempts_root, batch_id))
+    reason = f"import_failed:{type(error).__name__}"
+    _write_attempt(attempts_root, batch_id, attempts, reason)
     return {"status": "failed", "batch_id": batch_id, "reason": reason, "attempt": attempts}
 
 
@@ -1824,6 +1837,7 @@ _ATTEMPTS_ROOT = Path("/srv/redstm-text/import-attempts")
 def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
     try:
         with operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=100 * 1024 * 1024):
+            _begin_attempt(_ATTEMPTS_ROOT, batch_id)
             result = import_batch(
                 inbox_root,
                 batch_id,
@@ -1831,14 +1845,23 @@ def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
                 _OBJECT_ROOT,
                 inbox_root / "receipts",
             )
+    except RuntimeWindowError:
+        raise
     except BatchRejectedError as exc:
+        (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
         _record_batch_rejection(inbox_root, batch_id, str(exc))
         return {"status": "rejected", "batch_id": batch_id, "reason": str(exc)}
-    except (OSError, sqlite3.Error, ValueError) as exc:
+    except Exception as exc:  # any failure backs off; only validation rejects
         failure = _record_import_failure(inbox_root, _ATTEMPTS_ROOT, batch_id, exc)
         print(f"text import of {batch_id} failed: {exc!r}", file=sys.stderr)
         return failure
     if result is None:
+        # Not ready yet is not a failed attempt; restore the previous record, if any.
+        attempts = _previous_attempts(_ATTEMPTS_ROOT, batch_id) - 1
+        if attempts > 0:
+            _write_attempt(_ATTEMPTS_ROOT, batch_id, attempts, "import_not_ready")
+        else:
+            (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
         return None
     (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
     return {"batch_id": batch_id, "revision": result["revision"], "items": len(result["items"])}
@@ -1852,11 +1875,23 @@ def main() -> None:
     deadline = time.monotonic() + _DRAIN_SECONDS
     seen: set[str] = set()
     imported = 0
+    failed = False
     while True:
         batch_id = args.batch_id or _next_ready_batch(inbox_root, _ATTEMPTS_ROOT)
         if batch_id is None or batch_id in seen:
             if not imported:
-                print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
+                # Separate "nothing to do" from "everything is waiting out a backoff".
+                waiting = sorted(
+                    path.stem
+                    for path in (_ATTEMPTS_ROOT.glob("*.json") if _ATTEMPTS_ROOT.is_dir() else ())
+                    if _attempt_backoff_active(_ATTEMPTS_ROOT, path.stem)
+                )
+                idle: dict[str, Any] = {"status": "idle", "reason": "no_ready_batch"}
+                if waiting:
+                    idle.update(reason="all_ready_batches_backing_off", backoff=waiting[:5])
+                print(json.dumps(idle))
+            if failed:
+                parser.exit(1)
             return
         seen.add(batch_id)
         try:
@@ -1866,12 +1901,14 @@ def main() -> None:
         if outcome is None:
             parser.exit(0, "batch not ready; no receipt written\n")
         print(json.dumps(outcome))
-        if outcome.get("status") == "failed":
-            # Later batches wait behind it; the next timer tick retries after the backoff.
+        failed = failed or outcome.get("status") == "failed"
+        if outcome.get("status") == "failed" and args.batch_id:
             parser.exit(1, "text import failed; retried after a backoff\n")
         imported += 1
         # Newtomi keeps up to eight batches in flight; one per timer tick left them waiting.
         if args.batch_id or imported >= _DRAIN_BATCHES or time.monotonic() >= deadline:
+            if failed:
+                parser.exit(1)
             return
 
 

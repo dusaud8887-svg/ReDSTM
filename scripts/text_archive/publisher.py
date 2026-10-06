@@ -645,6 +645,8 @@ def _publish_object_batch(
                 "--files-from-raw",
                 str(selection),
                 "--ignore-times",
+                # Upload the listed keys without listing the bucket (a Class A op per page).
+                "--no-traverse",
                 "--transfers",
                 "2",
                 "--checkers",
@@ -1311,6 +1313,7 @@ def main() -> None:
             pass
 
     results = []
+    outcome, reason, exit_code = "published", "", 0
     for lane in lanes:
         try:
             results.append(
@@ -1323,12 +1326,13 @@ def main() -> None:
                 )
             )
         except RuntimeWindowError as exc:
-            tell_pc("deferred", str(exc))
-            parser.exit(75, f"text publish deferred: {exc}\n")
+            results.append({"lane": lane, "status": "deferred", "reason": str(exc)})
+            if exit_code != 1:
+                outcome, reason, exit_code = "deferred", str(exc), 75
         except Exception as exc:
-            tell_pc("failed", type(exc).__name__)
-            raise
-    tell_pc("published")
+            results.append({"lane": lane, "status": "failed", "reason": type(exc).__name__})
+            outcome, reason, exit_code = "failed", type(exc).__name__, 1
+    tell_pc(outcome, reason)
     # Operational status (docs/18 §5.2 "운영 상태"). It never fails the publish.
     try:
         results.append(
@@ -1353,6 +1357,8 @@ def main() -> None:
     except OSError as exc:
         results.append({"pruned_receipts": f"failed: {type(exc).__name__}"})
     print(json.dumps(results, sort_keys=True))
+    if exit_code:
+        parser.exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,13 @@ _RETRY_BACKOFF = 900
 _MAX_RETRY_BACKOFF = 7 * 24 * 3600
 _WINDOW_RETRY_ATTEMPTS = 8
 _GONE_ERRORS = frozenset({"http_404", "http_410"})
+# An episode with no body yet (unpublished, or emptied while the author edits) recovers on
+# its own; it backs off like a network failure instead of parking in review forever.
+_TRANSIENT_BODY_ERRORS = frozenset({"episode_body_missing", "body_empty_or_invalid"})
+# Review and gone were terminal: one format blip or one 404 from a remembered host stopped a
+# work or chapter for good. They are re-probed rarely instead.
+_REVIEW_REPROBE = 14 * 24 * 3600
+_GONE_REPROBE = 30 * 24 * 3600
 
 _HOSTS = {
     "blacktoon": re.compile(r"blacktoon\d+\.com\Z", re.I),
@@ -371,7 +378,8 @@ def _next_unit(
             continue
         queued = db.execute(
             """SELECT kind,entity_id FROM text_collector_queue
-               WHERE source=? AND status IN ('pending','retry') AND next_check_at<=?
+               WHERE source=? AND status IN ('pending','retry','review','gone')
+                 AND next_check_at<=?
                  AND (kind!='episode' OR ? IN (source,'both'))
                ORDER BY CASE WHEN kind=? THEN 0 WHEN kind=? THEN 1 ELSE 2 END,
                         updated_at,kind,entity_id LIMIT 1""",
@@ -1001,7 +1009,7 @@ def _note_failure(
                     ),
                 )
             else:
-                review = any(
+                review = error not in _TRANSIENT_BODY_ERRORS and any(
                     token in error
                     for token in ("requires_review", "unknown", "invalid", "missing", "too_large")
                 )
@@ -1010,6 +1018,11 @@ def _note_failure(
                 # spends the shared request budget and fills the body window.
                 gone = error in _GONE_ERRORS
                 queue_status = "review" if review or conflict else "gone" if gone else "retry"
+                clock_now = now or int(time.time())
+                parked_until = {
+                    "review": clock_now + _REVIEW_REPROBE,
+                    "gone": clock_now + _GONE_REPROBE,
+                }.get(queue_status, retry_at)
                 db.execute(
                     """UPDATE text_collector_queue SET status=?,attempts=attempts+1,
                        last_error=?,
@@ -1025,7 +1038,7 @@ def _note_failure(
                         now,
                         _MAX_RETRY_BACKOFF,
                         _RETRY_BACKOFF,
-                        retry_at,
+                        parked_until,
                         _now(),
                         unit.source.name,
                         unit.kind,

@@ -17,6 +17,7 @@ import {
   sanitizeBookmarkMetadata,
   samePost,
   serializeUserState,
+  limitHistoryForStorage,
 } from "/user-state.js";
 import {
   boardDisplayName,
@@ -516,6 +517,8 @@ function persistUserState() {
   };
   let serialized;
   try {
+    userState = limitHistoryForStorage(userState);
+    historyEntries = historyEntries.filter((entry) => postIdentity(entry.summary) in userState.history);
     serialized = serializeUserState(userState);
     localStorage.setItem(stateKey(STATE_KEY), serialized);
     lastStoredState = serialized;

@@ -129,7 +129,8 @@ class ArchiveStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (board_id, external_post_id) DO UPDATE SET
                     canonical_url = excluded.canonical_url,
-                    title = excluded.title,
+                    title = CASE WHEN posts.latest_version_id IS NULL
+                        THEN excluded.title ELSE posts.title END,
                     author = COALESCE(excluded.author, posts.author),
                     category = COALESCE(excluded.category, posts.category),
                     created_at_raw = COALESCE(excluded.created_at_raw, posts.created_at_raw),
