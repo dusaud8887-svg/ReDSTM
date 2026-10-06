@@ -54,6 +54,11 @@ def _window() -> Any:
     return operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=150 * 1024 * 1024)
 
 
+def _network_window() -> Any:
+    """Remote I/O must not hold the importer/collector's local mutation lock."""
+    return operation_window(lock_wait_seconds=30, need_bytes=150 * 1024 * 1024)
+
+
 def _check_headroom(headroom: Callable[[], None] | None) -> None:
     if headroom is not None:
         headroom()
@@ -632,7 +637,7 @@ def _publish_object_batch(
         ("".join(f"{digest}  {name}\n" for name, (_, digest) in zip(names, objects))).encode(),
     )
     destination = f"{remote}/published/objects/sha256"
-    with _window():
+    with _network_window():
         _run(
             [
                 "rclone",
@@ -662,7 +667,7 @@ def _publish_object_batch(
             runner,
         )
     try:
-        with _window():
+        with _network_window():
             _run(
                 [
                     "rclone",
@@ -787,7 +792,7 @@ def _prune_lane(
     selection = build_root / f"pending-prune-{lane}.txt"
     _write(selection, ("\n".join(key.removeprefix("published/") for key in batch) + "\n").encode())
     try:
-        with _window():
+        with _network_window():
             _run(
                 [
                     "rclone",
@@ -1157,7 +1162,7 @@ def publish_lane(
             pointer_hash = _published_hash(db, f"published/{lane}/release.json")
             metadata_matches = _published_hash(db, metadata_key) == metadata_digest
         if pending is None and pointer_hash and not metadata_updated and metadata_matches:
-            with _window():
+            with _network_window():
                 pointer = _run(
                     [
                         "rclone",
@@ -1207,7 +1212,7 @@ def publish_lane(
                 body = local.read_bytes()
                 if hashlib.sha256(body).hexdigest() != digest:
                     raise ValueError(f"local publish file failed verification: {key}")
-                with _window():
+                with _network_window():
                     _run(
                         [
                             "rclone",
@@ -1219,7 +1224,7 @@ def publish_lane(
                         ],
                         runner,
                     )
-                with _window():
+                with _network_window():
                     readback = _run(
                         ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{key}"],
                         runner,
@@ -1232,7 +1237,7 @@ def publish_lane(
         pointer_key = f"published/{lane}/release.json"
         pointer_body = pointer_path.read_bytes()
         pointer_hash = hashlib.sha256(pointer_body).hexdigest()
-        with _window():
+        with _network_window():
             _run(
                 [
                     "rclone",
@@ -1244,7 +1249,7 @@ def publish_lane(
                 ],
                 runner,
             )
-        with _window():
+        with _network_window():
             pointer_readback = _run(
                 ["rclone", "--config", _RCLONE_CONFIG, "cat", f"{remote}/{pointer_key}"],
                 runner,

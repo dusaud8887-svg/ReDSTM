@@ -1576,3 +1576,55 @@ def test_unexpected_or_fatal_import_failure_still_backs_off(
     assert record["attempts"] == 2 and record["reason"] == "import_started"
     assert importer._next_ready_batch(inbox, attempts) is None
     capsys.readouterr()
+
+
+def test_slow_publisher_transfer_allows_new_batch_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 1000000 kB\n")
+    options = {
+        "publish_lock": tmp_path / "publish.lock",
+        "operation_lock": tmp_path / "operation.lock",
+        "lane_path": tmp_path / "no-lane.json",
+        "meminfo_path": meminfo,
+        "status_path": _process_status(tmp_path),
+        "root_path": tmp_path,
+    }
+    monkeypatch.setattr(
+        runtime.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=200 * 1024**3, free=41 * 1024**3),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "operation_window",
+        lambda **kwargs: runtime.operation_window(**kwargs, **options),
+    )
+    inbox, db_path, objects, receipts = (
+        tmp_path / "inbox",
+        tmp_path / "archive.db",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+    )
+    _batch(inbox, _BATCHES[0])
+    calls: list[str] = []
+
+    def transfer(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        # Execute an actual import while the remote upload/readback window is open.
+        with runtime.operation_window(exclusive=True, lock_wait_seconds=0, **options):
+            receipt = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+        assert receipt is not None and receipt["revision"] == 1
+        calls.append(argv[3])
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    digest = hashlib.sha256(b"fixture body").hexdigest()
+    publisher._publish_object_batch(
+        tmp_path / "build",
+        objects,
+        "r2text:redstm-text-archive",
+        [(f"published/objects/sha256/{digest[:2]}/{digest}.md", digest)],
+        transfer,
+    )
+    assert calls == ["copy", "hashsum"]
+    assert json.loads((receipts / f"{_BATCHES[0]}.json").read_text())["revision"] == 1
