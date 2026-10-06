@@ -1014,8 +1014,7 @@ def _note_failure(
                     for token in ("requires_review", "unknown", "invalid", "missing", "too_large")
                 )
                 conflict = "source_id_hash_changed" in error
-                # A removed chapter or work answers 404/410 for good: retrying it forever
-                # spends the shared request budget and fills the body window.
+                # Removed content is checked rarely, preserving capacity for healthy works.
                 gone = error in _GONE_ERRORS
                 queue_status = "review" if review or conflict else "gone" if gone else "retry"
                 clock_now = now or int(time.time())

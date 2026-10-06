@@ -1077,7 +1077,7 @@ def test_work_refresh_keeps_paid_and_review_markers(tmp_path: Path) -> None:
         db.close()
 
 
-def test_failed_units_back_off_and_removed_ones_stop(
+def test_failed_units_back_off_and_removed_ones_wait_for_rare_reprobe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = tmp_path / "text.sqlite"
@@ -1104,8 +1104,47 @@ def test_failed_units_back_off_and_removed_ones_stop(
             "SELECT entity_id,status,attempts,next_check_at FROM text_collector_queue "
             "ORDER BY entity_id"
         ).fetchall()
-    # Third failure waits 900 << 2 seconds; a 404 is terminal.
-    assert rows == [("1", "retry", 3, 1_000 + 3_600), ("2", "gone", 1, 1_000 + 900)]
+    # Third failure waits 900 << 2 seconds; a 404 waits thirty days.
+    assert rows == [
+        ("1", "retry", 3, 1_000 + 3_600),
+        ("2", "gone", 1, 1_000 + collector._GONE_REPROBE),
+    ]
+
+
+@pytest.mark.parametrize("error,status,delay", [
+    ("episode_body_missing", "retry", 900),
+    ("body_empty_or_invalid", "retry", 900),
+    ("access_unknown_requires_review", "review", collector._REVIEW_REPROBE),
+    ("http_404", "gone", collector._GONE_REPROBE),
+])
+def test_collector_rechecks_deferred_bodies_after_their_deadline(
+    tmp_path: Path, error: str, status: str, delay: int,
+) -> None:
+    db_path = tmp_path / "text.sqlite"
+    db = importer._connect(db_path)
+    try:
+        db.executescript(collector._SCHEMA)
+        db.execute(
+            "INSERT INTO text_collector_queue(source,kind,entity_id,status,updated_at) "
+            "VALUES('blacktoon','episode','1','pending','now')"
+        )
+        db.commit()
+        source = collector.Source("blacktoon", "blacktoon452.com")
+        unit = collector.RequestUnit(source, "episode", "1", source.base_url + "/api/episodes/1")
+        collector._note_failure(db_path, unit, error, 1_900, backoff=True, now=1_000)
+        assert tuple(db.execute(
+            "SELECT status,next_check_at FROM text_collector_queue"
+        ).fetchone()) == (status, 1_000 + delay)
+        sources = collector.configured_sources({})
+        assert collector._next_unit(db, sources, 1_000 + delay - 1, "both").kind == "list"
+        db.execute(
+            "INSERT INTO text_collector_state(source,next_page,next_check_at,updated_at) "
+            "VALUES('blacktoon:list',0,?,'now'),('marumaru:list',0,?,'now')",
+            (1_000 + delay + 10, 1_000 + delay + 10),
+        )
+        assert collector._next_unit(db, sources, 1_000 + delay, "both").entity_id == "1"
+    finally:
+        db.close()
 
 
 def test_work_recrawl_repairs_imported_title_without_changing_identity(tmp_path: Path) -> None:
