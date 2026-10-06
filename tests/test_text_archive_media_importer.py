@@ -278,3 +278,55 @@ def test_temporary_media_failure_is_never_permanently_rejected(
     capsys.readouterr()
     assert not (inbox / "receipts" / f"{_BATCH}.status.json").exists()
     assert media_importer.next_ready_batch(inbox, attempts) is None
+
+
+def test_media_transfer_does_not_block_text_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.text_archive import importer, runtime
+
+    inbox = tmp_path / "inbox"
+    db_path = tmp_path / "text.sqlite"
+    operation_lock = tmp_path / "operation.lock"
+    _batch(inbox, {"000001.webp": _WEBP}, [_item(_PATH_A, "000001.webp", _WEBP, "image/webp")])
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text("MemAvailable: 1000000 kB\n")
+    status = tmp_path / "status"
+    status.write_text("VmRSS: 1000 kB\n")
+    options: dict[str, Any] = {
+        "operation_lock": operation_lock,
+        "publish_lock": tmp_path / "publish.lock",
+        "lane_path": tmp_path / "no-lane.json",
+        "meminfo_path": meminfo,
+        "status_path": status,
+        "root_path": tmp_path,
+    }
+    monkeypatch.setattr(
+        media_importer,
+        "operation_window",
+        lambda **kwargs: runtime.operation_window(**kwargs, **options),
+    )
+    original = media_importer.import_media_batch
+
+    class ConcurrentR2(FakeR2):
+        def __call__(self, argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            with runtime.operation_window(exclusive=True, lock_wait_seconds=0, **options):
+                with closing(importer._connect(db_path)) as db:
+                    assert db.execute("SELECT count(*) FROM text_archive_items").fetchone()[0] == 0
+            return super().__call__(argv, **kwargs)
+
+    r2 = ConcurrentR2()
+
+    def import_with_r2(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return original(*args, **{**kwargs, "runner": r2})
+
+    monkeypatch.setattr(media_importer, "import_media_batch", import_with_r2)
+    monkeypatch.setattr(media_importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(media_importer, "_DB_PATH", db_path)
+    monkeypatch.setattr(media_importer, "_BUILD_ROOT", tmp_path / "build")
+    monkeypatch.setattr(media_importer, "_ATTEMPTS_ROOT", tmp_path / "attempts")
+    monkeypatch.setattr(sys, "argv", ["media_importer"])
+    media_importer.main()
+    receipt = json.loads((inbox / "receipts" / f"{_BATCH}.json").read_text())
+    assert receipt["items"][0]["status"] == "stored"
+    assert [call[3] for call in r2.calls] == ["copy", "hashsum"]
