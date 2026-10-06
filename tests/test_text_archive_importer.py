@@ -1369,6 +1369,15 @@ def test_new_image_signature_and_header_metadata_are_the_same_body() -> None:
     assert b"arca-media:" + _ARCA_KEY.encode() in (importer.canonical_arcalive_bytes(old) or b"")
 
 
+def test_shared_arcalive_body_contract() -> None:
+    contract = json.loads(
+        (_ROOT / "fixtures/arcalive_text_contract.json").read_text(encoding="utf-8")
+    )
+    for case in contract["cases"]:
+        expected = case["canonical"].encode() if case["canonical"] is not None else None
+        assert importer.canonical_arcalive_bytes(case["raw"].encode()) == expected
+
+
 @pytest.mark.parametrize(
     "change",
     [

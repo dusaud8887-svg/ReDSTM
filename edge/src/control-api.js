@@ -7,6 +7,7 @@ import {
   commandLeaseStatements,
   envelope,
   failure,
+  readJson,
   reapedAsStale,
   runView,
   validCounters,
@@ -84,43 +85,6 @@ function validRequestId(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-async function readJson(request, limit) {
-  const contentType = request.headers.get("Content-Type") || "";
-  if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
-    throw Object.assign(new Error("JSON content type is required"), { status: 400 });
-  }
-  const declared = Number(request.headers.get("Content-Length") || 0);
-  if (!Number.isFinite(declared) || declared < 0 || declared > limit) {
-    throw Object.assign(new Error("Request body is too large"), { status: 413 });
-  }
-  const reader = request.body?.getReader();
-  const chunks = [];
-  let size = 0;
-  while (reader) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      throw Object.assign(new Error("Request body is too large"), { status: 413 });
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const text = new TextDecoder().decode(body);
-  try {
-    const value = JSON.parse(text);
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
-    return value;
-  } catch {
-    throw Object.assign(new Error("Request body must be a JSON object"), { status: 400 });
-  }
-}
 
 async function subjectHash(subject) {
   const bytes = new TextEncoder().encode(subject);

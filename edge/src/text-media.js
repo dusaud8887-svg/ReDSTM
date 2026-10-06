@@ -3,9 +3,11 @@
 // Reader swaps expired signed links for these copies. There is no write API here.
 
 import { isArcaPathKey } from "../public/arca-media.js";
+import { readJson } from "./control-common.js";
 
 // One R2 head per path; stays well under the Workers subrequest limit.
 const MAX_PATHS = 40;
+const RESOLVE_BODY_MAX_BYTES = 16 * 1024;
 const IMAGE_TYPES = new Set(["image/webp", "image/png", "image/jpeg", "image/gif"]);
 
 function json(status, body) {
@@ -25,15 +27,6 @@ const error = (status, code) => json(status, { error: code });
 const objectKey = (path) => `media/arca/${path}`;
 const mediaUrl = (path) => `/api/v1/text/media/arca/${path}`;
 
-async function readJson(request) {
-  if (!String(request.headers.get("Content-Type") ?? "").startsWith("application/json")) return null;
-  try {
-    return await request.json();
-  } catch {
-    return null;
-  }
-}
-
 function validPaths(value) {
   if (!Array.isArray(value) || !value.length || value.length > MAX_PATHS) return null;
   const paths = [...new Set(value)];
@@ -41,7 +34,12 @@ function validPaths(value) {
 }
 
 async function resolve(request, env) {
-  const body = await readJson(request);
+  let body;
+  try { body = await readJson(request, RESOLVE_BODY_MAX_BYTES); }
+  catch (failure) {
+    return error(failure.status === 413 ? 413 : 400,
+      failure.status === 413 ? "body_too_large" : "invalid_paths");
+  }
   const paths = validPaths(body?.paths);
   if (!paths) return error(400, "invalid_paths");
   const found = await Promise.all(paths.map((path) => env.TEXT_ARCHIVE.head(objectKey(path))));

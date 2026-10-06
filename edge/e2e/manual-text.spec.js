@@ -8,6 +8,47 @@ const docs = [2, 10].map((n) => ({
   created_at: "2026-10-01T00:00:00Z", bytes: 100,
 }));
 
+for (const lane of ["manual", "arcalive"]) {
+  test(`${lane} catalog loads pages in bounded groups without losing entries`, async ({ page }) => {
+    const refs = Array.from({ length: 12 }, (_, index) => ({
+      sha256: (index + 1).toString(16).padStart(64, "c"),
+    })).map((ref) => ({ ...ref, key: `published/indexes/${lane}/${ref.sha256}.json` }));
+    const workRefs = lane === "arcalive" ? Array.from({ length: 6 }, (_, index) => ({
+      sha256: (index + 20).toString(16).padStart(64, "d"),
+    })).map((ref) => ({ ...ref, key: `published/indexes/arcalive/${ref.sha256}.json` })) : [];
+    let active = 0;
+    let peak = 0;
+    let completed = 0;
+    await page.route("**/api/v1/text/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const json = (value) => route.fulfill({ contentType: "application/json", body: JSON.stringify(value) });
+      if (path.endsWith(`/release/${lane}`)) return json({ schema: 1, lane, sha256: release });
+      if (path.endsWith(`/release-manifest/${lane}/${release}.json`)) return json({
+        schema: 1, lane, catalog_pages: refs, work_catalog_pages: workRefs,
+      });
+      const index = refs.findIndex((ref) => path.endsWith(`/${ref.sha256}.json`));
+      const workIndex = workRefs.findIndex((ref) => path.endsWith(`/${ref.sha256}.json`));
+      if (index < 0 && workIndex < 0) return route.fulfill({ status: 404 });
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, index === 0 ? 10 : 150));
+      try {
+        return await json(workIndex >= 0
+          ? { schema: 1, lane, view: "works", items: [] }
+          : { schema: 1, lane, items: [{ ...docs[0], identity: `manual:${String(index).padStart(64, "a")}`,
+            title: `${index}화`, category: "작품/회차", board: "novel", post_id: index + 1 }] });
+      } finally { active -= 1; completed += 1; }
+    });
+    await page.goto(`/text?lane=${lane}`);
+    await expect.poll(() => completed).toBe(refs.length + workRefs.length);
+    await expect(page.locator("#result-status")).not.toContainText("불러오는 중");
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    const folder = page.locator("#result-list .result-item").filter({ hasText: lane === "manual" ? "작품/회차" : "novel" });
+    await expect(folder).toContainText("12");
+  });
+}
+
 test("manual folders preserve full bodies, natural file order and saved reading state", async ({ page }) => {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));

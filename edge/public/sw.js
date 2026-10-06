@@ -1104,7 +1104,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "d8f1a469b6a2c3c6"
+      "revision": "33cc2230313b2d91"
     },
     {
       "url": "/text-model.js",

@@ -51,6 +51,26 @@ test("resolves only the path keys archived in R2", async () => {
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", body: JSON.stringify({ paths: [pathA] }) })).status, 400);
 });
 
+test("rejects oversized media lookups before R2 access, including chunked bodies", async () => {
+  let heads = 0;
+  const env = { TEXT_ARCHIVE: { head: async () => { heads += 1; } } };
+  const declared = await call(env, "/api/v1/text/media/resolve", {
+    method: "POST", headers: { "Content-Length": "20000" }, json: { paths: [pathA] },
+  });
+  assert.equal(declared.status, 413);
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(17000)); },
+    cancel() { cancelled = true; },
+  });
+  const chunked = await textMediaResponse(new Request("https://archive.example/api/v1/text/media/resolve", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body, duplex: "half",
+  }), env);
+  assert.equal(chunked.status, 413);
+  assert.equal(cancelled, true);
+  assert.equal(heads, 0);
+});
+
 test("serves archived images with their stored type and immutable caching", async () => {
   const env = { TEXT_ARCHIVE: r2({
     [`media/arca/${pathA}`]: { type: "image/webp", body: "webp-bytes" },

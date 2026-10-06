@@ -32,7 +32,7 @@ const READ_FILTERS = [["all", "전체"], ["reading", "읽는 중"], ["new", "새
 const READ_FILTER_VALUES = new Set(READ_FILTERS.map(([value]) => value));
 const SOURCE_LABELS = {
   toki: "북토끼", newtoki: "뉴토끼", blacktoon: "블랙툰", marumaru: "마루마루", ondobook: "온도북", bookkor: "북코",
-  sbxh: "SBXH",
+  sbxh: "SBXH", toonkor: "툰코어",
 };
 const dateLabel = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" });
 const yearDateLabel = new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "numeric", day: "numeric" });
@@ -107,6 +107,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let sequence = null;
   let saveTimer;
   let requestId = 0;
+  let catalogController = null;
   let moving = false;
   // Page of the list shown under the body; null follows the current chapter.
   let listPage = null;
@@ -934,14 +935,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     document.body.classList.toggle("text-work-open", Boolean(active && work));
   }
 
-  async function json(path) {
-    const response = await fetch(path, { credentials: "same-origin", redirect: "error" });
+  async function json(path, signal) {
+    const response = await fetch(path, { credentials: "same-origin", redirect: "error", signal });
     if (!response.ok) throw new Error(`request_${response.status}`);
     return response.json();
   }
 
-  async function loadCatalog(selectedLane, onFirstPage) {
-    const pointer = await json(`/api/v1/text/release/${selectedLane}`).catch((error) => {
+  async function loadCatalog(selectedLane, onFirstPage, signal) {
+    const pointer = await json(`/api/v1/text/release/${selectedLane}`, signal).catch((error) => {
       if (selectedLane === "manual" && error.message === "request_404") return null;
       if (selectedLane === "novel" && error.message === "request_404") throw new Error("novel_unpublished");
       throw error;
@@ -954,14 +955,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (selectedLane === "arcalive") arcaliveWorks = catalogs.get(selectedLane).works;
       return catalogs.get(selectedLane).items;
     }
-    const release = await json(`/api/v1/text/release-manifest/${selectedLane}/${pointer.sha256}.json`);
+    const release = await json(`/api/v1/text/release-manifest/${selectedLane}/${pointer.sha256}.json`, signal);
     if (release.schema !== 1 || release.lane !== selectedLane || !Array.isArray(release.catalog_pages)) {
       throw new Error("release_manifest_invalid");
     }
     const catalogPage = async (ref) => {
       const match = new RegExp(`^published/indexes/${selectedLane}/([a-f0-9]{64})\\.json$`).exec(ref.key || "");
       if (!match || ref.sha256 !== match[1]) throw new Error("catalog_reference_invalid");
-      const page = await json(`/api/v1/text/index/${selectedLane}/${match[1]}.json`);
+      const page = await json(`/api/v1/text/index/${selectedLane}/${match[1]}.json`, signal);
       if (page.schema !== 1 || page.lane !== selectedLane || !Array.isArray(page.items)) {
         throw new Error("catalog_page_invalid");
       }
@@ -970,20 +971,35 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const workPage = async (ref) => {
       const match = /^published\/indexes\/arcalive\/([a-f0-9]{64})\.json$/.exec(ref.key || "");
       if (!match || ref.sha256 !== match[1]) throw new Error("work_catalog_reference_invalid");
-      const page = await json(`/api/v1/text/index/arcalive/${match[1]}.json`);
+      const page = await json(`/api/v1/text/index/arcalive/${match[1]}.json`, signal);
       if (page.schema !== 1 || page.lane !== "arcalive" || page.view !== "works" || !Array.isArray(page.items)) {
         throw new Error("work_catalog_page_invalid");
       }
       return page.items;
     };
-    // The first page shows as soon as it arrives; the rest load together, kept in page order.
+    // Show the first page immediately, then load both catalogs with four requests in total.
+    // Keep reference order even when pages arrive out of order.
     const [firstRef, ...restRefs] = release.catalog_pages;
     const items = firstRef ? [...await catalogPage(firstRef)] : [];
     if (firstRef && onFirstPage) onFirstPage(items.slice());
-    const [rest, workPages] = await Promise.all([
-      Promise.all(restRefs.map(catalogPage)),
-      selectedLane === "arcalive" ? Promise.all((release.work_catalog_pages ?? []).map(workPage)) : [],
-    ]);
+    const rest = [];
+    const workPages = [];
+    const jobs = [
+      ...restRefs.map((ref, index) => ({ ref, index, read: catalogPage, pages: rest })),
+      ...(selectedLane === "arcalive" ? release.work_catalog_pages ?? [] : [])
+        .map((ref, index) => ({ ref, index, read: workPage, pages: workPages })),
+    ];
+    let next = 0;
+    let failed = false;
+    await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, async () => {
+      try {
+        while (!failed && next < jobs.length) {
+          signal?.throwIfAborted();
+          const job = jobs[next++];
+          job.pages[job.index] = await job.read(job.ref);
+        }
+      } catch (error) { failed = true; throw error; }
+    }));
     for (const page of rest) items.push(...page);
     const works = workPages.flat();
     if (selectedLane === "arcalive") arcaliveWorks = works;
@@ -1050,6 +1066,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   async function open(options = {}) {
     active = true;
     const activeRequest = ++requestId;
+    catalogController?.abort();
+    catalogController = new AbortController();
+    const catalogSignal = catalogController.signal;
     flushPosition();
     const params = options instanceof URLSearchParams ? options : new URLSearchParams();
     const requestedLane = params.get("lane");
@@ -1077,7 +1096,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           catalog = first;
           renderCatalog();
           status.textContent = "목록 첫 화면 · 나머지를 불러오는 중…";
-        });
+        }, catalogSignal);
       if (activeRequest !== requestId) return;
       catalog = loaded;
       if (lane === "novel" && (migrateNovelState(history, catalog) | migrateShelfAliases(history, catalog))) persist();
@@ -2094,6 +2113,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function leave() {
     active = false;
     ++requestId;
+    catalogController?.abort();
     flushPosition();
     current = null;
     sequence = null;

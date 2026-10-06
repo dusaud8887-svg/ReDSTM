@@ -152,3 +152,42 @@ export function runView(row) {
   }
   return run;
 }
+
+export async function readJson(request, limit) {
+  const contentType = request.headers.get("Content-Type") || "";
+  if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+    throw Object.assign(new Error("JSON content type is required"), { status: 400 });
+  }
+  const declared = Number(request.headers.get("Content-Length") || 0);
+  if (!Number.isFinite(declared) || declared < 0 || declared > limit) {
+    throw Object.assign(new Error("Request body is too large"), { status: 413 });
+  }
+  const reader = request.body?.getReader();
+  const chunks = [];
+  let size = 0;
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw Object.assign(new Error("Request body is too large"), { status: 413 });
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(body);
+  try {
+    const value = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    return value;
+  } catch {
+    throw Object.assign(new Error("Request body must be a JSON object"), { status: 400 });
+  }
+}
+

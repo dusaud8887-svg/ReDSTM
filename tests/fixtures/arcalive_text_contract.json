@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "raw": "# 제목\n\n- channel: novel\n- url: https://arca.live/b/novel/108\n\n---\n\n본문 한 줄\n\n[image] https://ac-o.arca.live/20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp?expires=1&key=OLD&type=orig\n\n[링크](https://example.com/page?ref=1)\n",
+      "canonical": "\n본문 한 줄\n\n[image] arca-media:20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp\n\n[링크](https://example.com/page?ref=1)\n"
+    },
+    {
+      "raw": "# 수정 제목\n\n- channel: novel\n- url: https://arca.live/b/novel/108\n\n---\n\n본문 한 줄\n\n[image] https://ac.namu.la/20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp?expires=999&key=NEW\n\n[링크](https://example.com/page?ref=1)\n",
+      "canonical": "\n본문 한 줄\n\n[image] arca-media:20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp\n\n[링크](https://example.com/page?ref=1)\n"
+    },
+    {
+      "raw": "# 제목\n\n- channel: novel\n- url: https://arca.live/b/novel/108\n\n---\n\n다른 본문\n\n[image] https://ac-o.arca.live/20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp?expires=1&key=OLD&type=orig\n\n[링크](https://example.com/page?ref=1)\n",
+      "canonical": "\n다른 본문\n\n[image] arca-media:20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp\n\n[링크](https://example.com/page?ref=1)\n"
+    },
+    {
+      "raw": "# 제목\n\n- channel: novel\n- url: https://arca.live/b/novel/108\n\n---\n\n본문 한 줄\n\n[image] https://example.com/20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp?expires=2\n\n[링크](https://example.com/page?ref=1)\n",
+      "canonical": "\n본문 한 줄\n\n[image] https://example.com/20230607sac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp?expires=2\n\n[링크](https://example.com/page?ref=1)\n"
+    },
+    {
+      "raw": "# title\nnot export metadata\n---\nbody\n",
+      "canonical": null
+    },
+    {
+      "raw": "plain body\n",
+      "canonical": null
+    }
+  ]
+}
