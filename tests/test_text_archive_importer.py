@@ -1519,3 +1519,42 @@ def test_arcalive_equivalence_stays_off_until_newtomi_knows_the_rule(
     receipt = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
     assert receipt is not None
     assert receipt["items"][0]["status"] == "held_conflict"
+
+
+def test_unexpected_or_fatal_import_failure_still_backs_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A RuntimeError, or an OOM kill that never reaches an except clause, used to leave no
+    attempt record, so every timer tick retried the same head batch with no backoff."""
+    inbox = tmp_path / "inbox"
+    attempts = tmp_path / "attempts"
+    _batch(inbox, _BATCHES[0])
+    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
+    monkeypatch.setattr(importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["importer"])
+
+    def crash(*_args: Any) -> Any:
+        raise RuntimeError("schema guard")
+
+    monkeypatch.setattr(importer, "import_batch", crash)
+    with pytest.raises(SystemExit):
+        importer.main()
+    record = json.loads((attempts / f"{_BATCHES[0]}.json").read_text(encoding="utf-8"))
+    assert record["attempts"] == 1 and record["reason"] == "import_failed:RuntimeError"
+    assert importer._next_ready_batch(inbox, attempts) is None
+
+    def killed(*_args: Any) -> Any:
+        raise KeyboardInterrupt  # stands in for SIGKILL: no handler runs
+
+    record["next_at"] = 0
+    (attempts / f"{_BATCHES[0]}.json").write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setattr(importer, "import_batch", killed)
+    with pytest.raises(KeyboardInterrupt):
+        importer.main()
+    record = json.loads((attempts / f"{_BATCHES[0]}.json").read_text(encoding="utf-8"))
+    assert record["attempts"] == 2 and record["reason"] == "import_started"
+    assert importer._next_ready_batch(inbox, attempts) is None
+    capsys.readouterr()

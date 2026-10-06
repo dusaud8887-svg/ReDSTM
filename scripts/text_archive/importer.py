@@ -1784,15 +1784,8 @@ def _attempt_backoff_active(attempts_root: Path, batch_id: str) -> bool:
         return False
 
 
-def _record_import_failure(
-    inbox_root: Path, attempts_root: Path, batch_id: str, error: BaseException
-) -> dict[str, Any]:
+def _write_attempt(attempts_root: Path, batch_id: str, attempts: int, reason: str) -> None:
     path = attempts_root / f"{batch_id}.json"
-    try:
-        attempts = int(json.loads(path.read_text(encoding="utf-8"))["attempts"]) + 1
-    except OSError, ValueError, KeyError, TypeError:
-        attempts = 1
-    reason = f"import_failed:{type(error).__name__}"
     delay = _IMPORT_BACKOFF_SECONDS[min(attempts, len(_IMPORT_BACKOFF_SECONDS)) - 1]
     attempts_root.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -1801,6 +1794,30 @@ def _record_import_failure(
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _previous_attempts(attempts_root: Path, batch_id: str) -> int:
+    try:
+        record = json.loads((attempts_root / f"{batch_id}.json").read_text(encoding="utf-8"))
+        return int(record["attempts"])
+    except OSError, ValueError, KeyError, TypeError:
+        return 0
+
+
+def _begin_attempt(attempts_root: Path, batch_id: str) -> int:
+    """Count the attempt before running it, so an OOM kill or unit timeout (which never
+    reaches an except clause) also backs off instead of retrying the head batch every tick."""
+    attempts = _previous_attempts(attempts_root, batch_id) + 1
+    _write_attempt(attempts_root, batch_id, attempts, "import_started")
+    return attempts
+
+
+def _record_import_failure(
+    inbox_root: Path, attempts_root: Path, batch_id: str, error: BaseException
+) -> dict[str, Any]:
+    attempts = max(1, _previous_attempts(attempts_root, batch_id))
+    reason = f"import_failed:{type(error).__name__}"
+    _write_attempt(attempts_root, batch_id, attempts, reason)
     return {"status": "failed", "batch_id": batch_id, "reason": reason, "attempt": attempts}
 
 
@@ -1816,6 +1833,7 @@ _ATTEMPTS_ROOT = Path("/srv/redstm-text/import-attempts")
 def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
     try:
         with operation_window(lock_wait_seconds=30, exclusive=True, need_bytes=100 * 1024 * 1024):
+            _begin_attempt(_ATTEMPTS_ROOT, batch_id)
             result = import_batch(
                 inbox_root,
                 batch_id,
@@ -1823,14 +1841,23 @@ def _import_one(inbox_root: Path, batch_id: str) -> dict[str, Any] | None:
                 _OBJECT_ROOT,
                 inbox_root / "receipts",
             )
+    except RuntimeWindowError:
+        raise
     except BatchRejectedError as exc:
+        (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
         _record_batch_rejection(inbox_root, batch_id, str(exc))
         return {"status": "rejected", "batch_id": batch_id, "reason": str(exc)}
-    except (OSError, sqlite3.Error, ValueError) as exc:
+    except Exception as exc:  # any failure backs off; only validation rejects
         failure = _record_import_failure(inbox_root, _ATTEMPTS_ROOT, batch_id, exc)
         print(f"text import of {batch_id} failed: {exc!r}", file=sys.stderr)
         return failure
     if result is None:
+        # Not ready yet is not a failed attempt; restore the previous record, if any.
+        attempts = _previous_attempts(_ATTEMPTS_ROOT, batch_id) - 1
+        if attempts > 0:
+            _write_attempt(_ATTEMPTS_ROOT, batch_id, attempts, "import_not_ready")
+        else:
+            (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
         return None
     (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
     return {"batch_id": batch_id, "revision": result["revision"], "items": len(result["items"])}
@@ -1849,7 +1876,16 @@ def main() -> None:
         batch_id = args.batch_id or _next_ready_batch(inbox_root, _ATTEMPTS_ROOT)
         if batch_id is None or batch_id in seen:
             if not imported:
-                print(json.dumps({"status": "idle", "reason": "no_ready_batch"}))
+                # Separate "nothing to do" from "everything is waiting out a backoff".
+                waiting = sorted(
+                    path.stem
+                    for path in (_ATTEMPTS_ROOT.glob("*.json") if _ATTEMPTS_ROOT.is_dir() else ())
+                    if _attempt_backoff_active(_ATTEMPTS_ROOT, path.stem)
+                )
+                idle: dict[str, Any] = {"status": "idle", "reason": "no_ready_batch"}
+                if waiting:
+                    idle.update(reason="all_ready_batches_backing_off", backoff=waiting[:5])
+                print(json.dumps(idle))
             if failed:
                 parser.exit(1)
             return
