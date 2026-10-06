@@ -675,6 +675,28 @@ def test_object_batch_uses_downloaded_sha256_before_accepting(
     assert calls == ["copy", "hashsum"]
 
 
+def test_derived_artifact_repairs_same_size_damage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b"verified index"
+    path = tmp_path / f"{hashlib.sha256(body).hexdigest()}.json"
+    publisher._write_content_addressed(path, body)
+    original = publisher._write
+    writes = []
+
+    def write(target: Path, value: bytes) -> None:
+        writes.append(target)
+        original(target, value)
+
+    monkeypatch.setattr(publisher, "_write", write)
+    publisher._write_content_addressed(path, body)
+    assert writes == []
+    path.write_bytes(b"x" * len(body))
+    publisher._write_content_addressed(path, body)
+    assert path.read_bytes() == body
+    assert writes == [path]
+
+
 def test_novel_publisher_writes_a_paged_receipt_snapshot_after_r2_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

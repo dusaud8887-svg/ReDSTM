@@ -199,12 +199,11 @@ def _share_availability(path: Path, receipts_root: Path) -> None:
 
 
 def _write_content_addressed(path: Path, body: bytes) -> None:
-    """The name is the body hash and writes are atomic, so a same-size file is this body.
-
-    A damaged file still cannot reach R2: the upload path hashes it before sending.
-    """
+    """Reuse verified artifacts; rebuild a damaged derived index from the current body."""
     if path.is_file() and not path.is_symlink() and path.stat().st_size == len(body):
-        return
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").digest() == hashlib.sha256(body).digest():
+                return
     _write(path, body)
 
 
