@@ -1583,7 +1583,7 @@ def test_slow_publisher_transfer_allows_new_batch_import(
 ) -> None:
     meminfo = tmp_path / "meminfo"
     meminfo.write_text("MemAvailable: 1000000 kB\n")
-    options = {
+    options: dict[str, Any] = {
         "publish_lock": tmp_path / "publish.lock",
         "operation_lock": tmp_path / "operation.lock",
         "lane_path": tmp_path / "no-lane.json",
