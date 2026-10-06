@@ -1111,14 +1111,20 @@ def test_failed_units_back_off_and_removed_ones_wait_for_rare_reprobe(
     ]
 
 
-@pytest.mark.parametrize("error,status,delay", [
-    ("episode_body_missing", "retry", 900),
-    ("body_empty_or_invalid", "retry", 900),
-    ("access_unknown_requires_review", "review", collector._REVIEW_REPROBE),
-    ("http_404", "gone", collector._GONE_REPROBE),
-])
+@pytest.mark.parametrize(
+    "error,status,delay",
+    [
+        ("episode_body_missing", "retry", 900),
+        ("body_empty_or_invalid", "retry", 900),
+        ("access_unknown_requires_review", "review", collector._REVIEW_REPROBE),
+        ("http_404", "gone", collector._GONE_REPROBE),
+    ],
+)
 def test_collector_rechecks_deferred_bodies_after_their_deadline(
-    tmp_path: Path, error: str, status: str, delay: int,
+    tmp_path: Path,
+    error: str,
+    status: str,
+    delay: int,
 ) -> None:
     db_path = tmp_path / "text.sqlite"
     db = importer._connect(db_path)
@@ -1132,9 +1138,9 @@ def test_collector_rechecks_deferred_bodies_after_their_deadline(
         source = collector.Source("blacktoon", "blacktoon452.com")
         unit = collector.RequestUnit(source, "episode", "1", source.base_url + "/api/episodes/1")
         collector._note_failure(db_path, unit, error, 1_900, backoff=True, now=1_000)
-        assert tuple(db.execute(
-            "SELECT status,next_check_at FROM text_collector_queue"
-        ).fetchone()) == (status, 1_000 + delay)
+        assert tuple(
+            db.execute("SELECT status,next_check_at FROM text_collector_queue").fetchone()
+        ) == (status, 1_000 + delay)
         sources = collector.configured_sources({})
         assert collector._next_unit(db, sources, 1_000 + delay - 1, "both").kind == "list"
         db.execute(
