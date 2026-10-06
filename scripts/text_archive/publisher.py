@@ -645,6 +645,8 @@ def _publish_object_batch(
                 "--files-from-raw",
                 str(selection),
                 "--ignore-times",
+                # Upload the listed keys without listing the bucket (a Class A op per page).
+                "--no-traverse",
                 "--transfers",
                 "2",
                 "--checkers",

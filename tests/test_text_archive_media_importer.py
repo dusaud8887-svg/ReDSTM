@@ -125,6 +125,7 @@ def test_stores_valid_images_by_path_key_and_rejects_bad_items(tmp_path: Path) -
     copies = [call for call in r2.calls if call[3] == "copy"]
     assert all(call[5] == "r2text:redstm-text-archive/media/arca" for call in copies)
     assert all("--ignore-times" in call for call in copies)
+    assert all("--no-traverse" in call for call in copies)
     with closing(sqlite3.connect(tmp_path / "text.sqlite")) as db:
         rows = db.execute("SELECT path_key,content_type,post FROM text_archive_media ORDER BY 1")
         assert rows.fetchall() == [(_PATH_A, "image/webp", _POST), (_PATH_B, "image/gif", _POST)]

@@ -65,11 +65,16 @@ def prune_warc(
 ) -> Pruned:
     if not directory.is_dir():
         return Pruned()
-    return prune_files(
+    pruned = prune_files(
         sorted(directory.glob("*.warc.gz")),
         keep_seconds=keep_days * _DAY,
         max_bytes=max_bytes,
         now=now,
+    )
+    # A dead worker's .partial the crawl never renamed (27 since July on Oracle) ages out with
+    # the window; never by byte budget, since a fresh .partial may still be written.
+    return pruned + prune_files(
+        sorted(directory.glob("*.warc.gz.partial")), keep_seconds=keep_days * _DAY, now=now
     )
 
 

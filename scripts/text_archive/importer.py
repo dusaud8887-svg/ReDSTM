@@ -1095,6 +1095,9 @@ def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.execute("PRAGMA busy_timeout=30000")
+    # Truncate the WAL back to 64 MiB after a checkpoint; a long publish read used to leave
+    # it at its high-water size on a disk the text lane now uses down to a small reserve.
+    db.execute("PRAGMA journal_size_limit=67108864")
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > 1:
         db.close()

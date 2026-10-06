@@ -262,6 +262,8 @@ def upload(build_root: Path, batch_id: str, items: list[dict[str, Any]], runner:
                     "--files-from-raw",
                     str(selection),
                     "--ignore-times",
+                    # Upload the listed keys without listing the bucket (a Class A op per page).
+                    "--no-traverse",
                     "--header-upload",
                     f"Content-Type: {content_type}",
                     "--transfers",
