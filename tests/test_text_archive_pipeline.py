@@ -913,7 +913,7 @@ def test_publisher_does_not_claim_an_item_imported_after_build(
         object_root: Path,
         output_root: Path,
         lane: str,
-        **_kwargs: object,
+        **_kwargs: Any,
     ) -> dict[str, Any]:
         tree = original_build(db_path_arg, object_root, output_root, lane, **_kwargs)
         if _kwargs.get("verified_only"):
