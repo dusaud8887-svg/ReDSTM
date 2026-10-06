@@ -139,6 +139,19 @@ def test_bookkor_chapter_identity_requires_matching_work_and_chapter() -> None:
     )[0]
 
 
+def test_toonkor_chapter_identity_accepts_only_its_source_host() -> None:
+    item = {
+        "kind": "novel_chapter", "site": "toonkor",
+        "source_work_id": "24960", "source_chapter_id": "837742",
+        "identity": "novel_chapter:toonkor:24960:837742",
+        "source_url": "https://toonkor404.com/novel/24960/837742",
+    }
+    assert importer._identity_matches(item)[0]
+    assert not importer._identity_matches({
+        **item, "source_url": "https://blacktoon454.com/novel/24960/837742",
+    })[0]
+
+
 def test_concurrent_connections_serialize_identity_migrations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -34,6 +34,7 @@ _SITE_HOSTS = {
     "sbxh": re.compile(r"sbxh\d*\.com\Z", re.I),
     "blacktoon": re.compile(r"blacktoon\d*\.com\Z", re.I),
     "marumaru": re.compile(r"marumaru\d*\.com\Z", re.I),
+    "toonkor": re.compile(r"toonkor\d*\.com\Z", re.I),
     "ondobook": re.compile(r"\d+\.ondobook\.net\Z", re.I),
     "bookkor": re.compile(r"\d+\.bookkor\.com\Z", re.I),
 }
