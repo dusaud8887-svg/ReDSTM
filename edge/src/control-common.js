@@ -190,4 +190,3 @@ export async function readJson(request, limit) {
     throw Object.assign(new Error("Request body must be a JSON object"), { status: 400 });
   }
 }
-
