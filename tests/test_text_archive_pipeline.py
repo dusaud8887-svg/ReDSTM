@@ -2406,7 +2406,7 @@ def test_drop_state_counts_only_rejected_status_sidecars(tmp_path: Path) -> None
     assert state["text_waiting"] == 0
 
 
-@pytest.mark.parametrize("failed_lane", ["novel", "arcalive", "manual"])
+@pytest.mark.parametrize("failed_lane", ["novel", "arcalive", "manual", "tuna"])
 @pytest.mark.parametrize("deferred", [False, True])
 def test_publisher_attempts_every_lane_after_a_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -2436,10 +2436,10 @@ def test_publisher_attempts_every_lane_after_a_failure(
     with pytest.raises(SystemExit) as stopped:
         publisher.main()
     assert stopped.value.code == (75 if deferred else 1)
-    assert attempted == ["manual", "novel", "arcalive"]
+    assert attempted == ["manual", "novel", "arcalive", "tuna"]
     assert reported == ["deferred" if deferred else "failed"]
     results = json.loads(capsys.readouterr().out)
-    assert len([r for r in results if r.get("status") == "published"]) == 2
+    assert len([r for r in results if r.get("status") == "published"]) == 3
 
 
 def test_partial_manual_publish_keeps_verified_progress_and_skips_failed_group(

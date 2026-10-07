@@ -106,7 +106,7 @@ registerRoute(path((p) => p.startsWith("/api/v1/sync") || p === "/api/v1/rum" ||
 // 4. Archive freshness must not show a past value as current.
 registerRoute(path((p) => p === "/api/v1/text/status"), new NetworkOnly());
 // 5. Text release pointers.
-registerRoute(path((p) => /^\/api\/v1\/text\/release\/(?:novel|arcalive|manual)$/.test(p)), ownedStrategy(NetworkFirst, "text-pointer", { networkTimeoutSeconds: 3 }));
+registerRoute(path((p) => /^\/api\/v1\/text\/release\/(?:novel|arcalive|manual|tuna)$/.test(p)), ownedStrategy(NetworkFirst, "text-pointer", { networkTimeoutSeconds: 3 }));
 // 6–7. Immutable release manifests and indexes.
 // One expiry for the shared cache, so manifests count toward (and leave by) the same limit.
 const textMetaExpiry = expiring(200);

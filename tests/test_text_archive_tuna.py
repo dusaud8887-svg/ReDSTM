@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+import subprocess
 from contextlib import closing, nullcontext
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from scripts.text_archive import tuna
+from scripts.text_archive import publisher, tuna
 from scripts.text_archive.importer import _object_key
 
 _HASH = "$2b$10$oPTgOyl1MllOlgbzzsGPMeYOPp1WscVBcaybpsR6OAhE4PKIiEnQe"
@@ -347,3 +349,112 @@ def test_a_malformed_thread_backs_off_alone(archive: tuple[Path, Path, FakeSite]
     _step(archive, 0)
     assert _step(archive, 1) == {"status": "failed", "reason": "timestamp_invalid", "thread_id": 3}
     assert _step(archive, 2)["status"] == "idle"
+
+
+def _fake_r2(remote: dict[str, bytes]) -> Any:
+    """The rclone subset the publisher uses, over an in-memory bucket."""
+
+    def rclone(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        operation = argv[3]
+        if operation in {"copy", "delete"}:
+            target = argv[5 if operation == "copy" else 4]
+            prefix = target.partition("redstm-text-archive")[2].lstrip("/")
+            names = Path(argv[argv.index("--files-from-raw") + 1]).read_text().split()
+            for name in names:
+                key = f"{prefix}/{name}" if prefix else name
+                if operation == "copy":
+                    remote[key] = (Path(argv[4]) / name).read_bytes()
+                else:
+                    remote.pop(key, None)
+        elif operation == "hashsum":
+            prefix = argv[5].partition("redstm-text-archive")[2].lstrip("/")
+            for line in Path(argv[argv.index("--checkfile") + 1]).read_text().splitlines():
+                digest, name = line.split("  ", 1)
+                key = f"{prefix}/{name}" if prefix else name
+                if hashlib.sha256(remote.get(key, b"")).hexdigest() != digest:
+                    raise subprocess.CalledProcessError(1, argv)
+        elif operation == "copyto":
+            remote[argv[5].split("redstm-text-archive/", 1)[1]] = Path(argv[4]).read_bytes()
+        elif operation == "cat":
+            body = remote[argv[4].split("redstm-text-archive/", 1)[1]]
+            return subprocess.CompletedProcess(argv, 0, body, b"")
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    return rclone
+
+
+def test_publish_groups_threads_into_works_and_prunes_replaced_tails(
+    archive: tuple[Path, Path, FakeSite], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path, objects, site = archive
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    # The default range is a whole number of segments, so backfill replaces no segment.
+    assert tuna._RANGE % tuna.SEGMENT == 0
+    site.threads = [
+        _thread(
+            10,
+            count=1002,
+            updated="2026-10-06T00:00:00Z",
+            ended=True,
+            title="[AA/역극] 별의 노래 (1)",
+        ),
+        _thread(11, count=120, updated="2026-10-07T00:00:00Z", title="[AA/역극] 별의 노래 (2)"),
+        _thread(
+            12,
+            count=5,
+            updated="2026-10-05T00:00:00Z",
+            title="[다이스] 다른 작품 -1-",
+            username="다른이◆ZZZZZZZZZZ",
+        ),
+    ]
+    site.responses = {
+        10: [_response(10, seq) for seq in range(1002)],
+        11: [_response(11, seq) for seq in range(120)],
+        12: [_response(12, seq) for seq in range(5)],
+    }
+    clock = 0.0
+    while _step(archive, clock)["status"] != "idle":
+        clock += 1
+    build, receipts = tmp_path / "build", tmp_path / "receipts"
+    remote: dict[str, bytes] = {}
+    rclone = _fake_r2(remote)
+    published = publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+    assert published["pending_count"] == 0
+    pointer = json.loads(remote["published/tuna/release.json"])
+    release = json.loads(remote[pointer["release_key"]])
+    works = json.loads(remote[release["catalog_pages"][0]["key"]])["items"]
+    assert [(w["title"], w["thread_count"], w["chapter_count"]) for w in works] == [
+        ("다른 작품", 1, 1),
+        ("별의 노래", 2, 13),
+    ]
+    star = works[1]
+    assert star["latest_label"] == "[AA/역극] 별의 노래 (2)" and star["ended"] is False
+    detail = json.loads(remote[star["detail_key"]])
+    labels = [chapter["label"] for chapter in detail["chapters"]]
+    assert labels[0] == "[AA/역극] 별의 노래 (1) · #0–99"
+    assert labels[10] == "[AA/역극] 별의 노래 (1) · #1000–1001"
+    assert labels[-1] == "[AA/역극] 별의 노래 (2) · #100–119"
+    tail = detail["chapters"][-1]["sha256"]
+    tail_key = f"published/objects/sha256/{tail[:2]}/{tail}.md"
+    assert remote[tail_key].decode().startswith("──── #100 ")
+
+    # The running thread grows; its tail is replaced and pruned only after 72 hours.
+    site.threads[1] = _thread(
+        11, count=130, updated="2026-10-07T02:00:00Z", title="[AA/역극] 별의 노래 (2)"
+    )
+    site.responses[11] += [_response(11, seq) for seq in range(120, 130)]
+    clock += tuna._REFRESH_SECONDS + tuna._LIST_INTERVAL
+    while _step(archive, clock)["status"] != "idle":
+        clock += 1
+    publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+    assert tail_key in remote and (objects / tail_key.removeprefix("published/")).is_file()
+    with closing(_db(db_path)) as db:
+        db.execute("UPDATE text_tuna_superseded SET superseded_at='2000-01-01T00:00:00Z'")
+        db.execute("UPDATE text_tuna_threads SET tags='[AA/역극/완결]' WHERE thread_id=11")
+        db.commit()
+    pruned = publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+    assert pruned["prune"]["objects_removed"] == 1
+    assert tail_key not in remote
+    assert not (objects / tail_key.removeprefix("published/")).exists()
+    with closing(_db(db_path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM text_tuna_superseded").fetchone()[0] == 0

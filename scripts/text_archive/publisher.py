@@ -44,6 +44,8 @@ _RELEASE_RETENTION = 5
 # Publishing reruns a minute after each run, so five releases can be minutes old. A tab keeps
 # the catalog it loaded and fetches a work's detail_key on first open; a day keeps those alive.
 _RELEASE_KEEP_SECONDS = 24 * 60 * 60
+# Replaced tuna tail segments stay this long so an open tab still reads the body it listed.
+_TUNA_SUPERSEDED_SECONDS = 72 * 60 * 60
 # Remote keys deleted per publish so a backlog never holds the run past its rclone timeout.
 _PRUNE_BATCH_LIMIT = 500
 # Publish verified progress each turn instead of waiting for an entire growing lane.
@@ -312,8 +314,8 @@ def build_publish_tree(
     verify_objects: bool = True,
 ) -> dict[str, Any]:
     """Build deterministic, content-addressed artifacts without touching remote storage."""
-    if lane not in {"novel", "arcalive", "manual"}:
-        raise ValueError("lane must be novel, arcalive or manual")
+    if lane not in {"novel", "arcalive", "manual", "tuna"}:
+        raise ValueError("lane must be novel, arcalive, manual or tuna")
     output_root.mkdir(parents=True, exist_ok=True)
     plans = {
         kind: output_root / f".publish-{lane}-{kind}.jsonl"
@@ -514,6 +516,11 @@ def build_publish_tree(
                 if page_items:
                     page(page_items)
                 work_count = 0
+            elif lane == "tuna":
+                tuna_works = _tuna_works(db, output_root, index_plan, headroom)
+                for offset in range(0, len(tuna_works), _INDEX_PAGE_SIZE):
+                    page(tuna_works[offset : offset + _INDEX_PAGE_SIZE])
+                work_count = len(tuna_works)
             else:
                 page_items = []
                 source_rows: list[dict[str, Any]] = []
@@ -635,6 +642,71 @@ def build_publish_tree(
         }
     finally:
         db.close()
+
+
+def _tuna_works(
+    db: sqlite3.Connection,
+    output_root: Path,
+    index_plan: TextIO,
+    headroom: Callable[[], None] | None,
+) -> list[dict[str, Any]]:
+    """Tunaground works (docs/34 §6): a work's chapters are its threads' 100-response segments."""
+    rows = db.execute(
+        """SELECT i.identity,i.canonical_work_id,i.source_post_id,i.source_chapter_id,
+                  i.source_url,i.title,i.author,i.chapter_label,i.content_sha256,i.imported_at,
+                  t.created_at AS thread_created_at,t.ended,t.tags,t.series_title
+           FROM text_archive_items i JOIN main.text_tuna_threads t
+             ON t.board=i.source_board AND t.thread_id=CAST(i.source_post_id AS INTEGER)
+           WHERE i.lane='tuna' ORDER BY i.canonical_work_id"""
+    )
+    works: list[dict[str, Any]] = []
+    for count, (work_id, work_rows) in enumerate(
+        groupby(rows, key=lambda row: str(row["canonical_work_id"])), start=1
+    ):
+        if count % 50 == 0:
+            _check_headroom(headroom)
+        chapters = sorted(
+            (dict(row) for row in work_rows),
+            key=lambda row: (
+                row["thread_created_at"],
+                int(row["source_post_id"]),
+                int(row["source_chapter_id"].split(":")[1]),
+            ),
+        )
+        latest = chapters[-1]
+        work = {
+            "work_id": work_id,
+            "title": latest["series_title"],
+            "author": latest["author"],
+            "tags": latest["tags"],
+            "thread_count": len({row["source_post_id"] for row in chapters}),
+            "chapter_count": len(chapters),
+            "latest_label": latest["title"],
+            "last_imported_at": max(str(row["imported_at"]) for row in chapters),
+            "ended": bool(latest["ended"]),
+        }
+        detail = {
+            "schema": 1,
+            "lane": "tuna",
+            "work": {key: work[key] for key in ("work_id", "title", "author")},
+            "chapters": [
+                {
+                    "chapter_id": row["identity"],
+                    "reading_order": position,
+                    "label": f"{row['title']} · {row['chapter_label']}",
+                    "thread_id": int(row["source_post_id"]),
+                    "segment": int(row["source_chapter_id"].split(":")[1]),
+                    "source_url": row["source_url"],
+                    "sha256": row["content_sha256"],
+                }
+                for position, row in enumerate(chapters)
+            ],
+        }
+        work["detail_key"], body = _indexed_file(output_root, "tuna", detail)
+        _plan_write(index_plan, str(work["detail_key"]), hashlib.sha256(body).hexdigest())
+        works.append(work)
+    works.sort(key=lambda item: (item["title"].casefold(), item["work_id"]))
+    return works
 
 
 def _run(argv: list[str], runner: Any) -> bytes:
@@ -854,10 +926,41 @@ def _retained_keys(db_path: Path, build_root: Path, lane: str, active_release: s
     return keep
 
 
+def _superseded_tuna_objects(db: sqlite3.Connection) -> list[tuple[str, str]]:
+    """(publication key, object key) of tail segments the tuna lane replaced 72 hours ago."""
+    if not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='text_tuna_superseded'"
+    ).fetchone():
+        return []
+    cutoff = (datetime.now(UTC) - timedelta(seconds=_TUNA_SUPERSEDED_SECONDS)).isoformat(
+        timespec="seconds"
+    )
+    # A body that became current again (same bytes) is no longer superseded.
+    db.execute(
+        "DELETE FROM text_tuna_superseded WHERE sha256 IN "
+        "(SELECT content_sha256 FROM text_archive_items)"
+    )
+    return [
+        (f"published/{row[1]}", str(row[1]))
+        for row in db.execute(
+            "SELECT sha256,object_key FROM text_tuna_superseded WHERE superseded_at<=? "
+            "ORDER BY superseded_at,sha256",
+            (cutoff.replace("+00:00", "Z"),),
+        )
+    ]
+
+
 def _prune_lane(
-    db_path: Path, build_root: Path, lane: str, active_release: str, remote: str, runner: Any
+    db_path: Path,
+    build_root: Path,
+    lane: str,
+    active_release: str,
+    remote: str,
+    runner: Any,
+    object_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Drop superseded releases and indexes locally and in R2. Content objects are never pruned."""
+    """Drop superseded releases and indexes locally and in R2. Content objects are never pruned,
+    except the tuna lane's replaced tail segments (docs/34 §6)."""
     pattern = re.compile(_PRUNABLE_KEY.format(lane=lane))
     keep = _retained_keys(db_path, build_root, lane, active_release)
     local_removed = 0
@@ -878,6 +981,8 @@ def _prune_lane(
             )
             if pattern.fullmatch(str(row[0])) and str(row[0]) not in keep
         ]
+        superseded = dict(_superseded_tuna_objects(db)) if lane == "tuna" else {}
+        candidates += list(superseded)
         batch = candidates[:_PRUNE_BATCH_LIMIT]
         # Unclaim first: if the delete dies halfway, a later release re-uploads the key.
         db.executemany(
@@ -926,7 +1031,16 @@ def _prune_lane(
             "DELETE FROM text_archive_publications WHERE key=? AND sha256=?",
             [(key, _PRUNING) for key in batch],
         )
+        removed_objects = [superseded[key] for key in batch if key in superseded]
+        for object_key in removed_objects:
+            digest = Path(object_key).stem
+            db.execute("DELETE FROM text_tuna_superseded WHERE sha256=?", (digest,))
+            db.execute("DELETE FROM text_archive_objects WHERE sha256=?", (digest,))
+            if object_root is not None:
+                (object_root / object_key).unlink(missing_ok=True)
     result["remote_removed"] = len(batch)
+    if removed_objects:
+        result["objects_removed"] = len(removed_objects)
     return result
 
 
@@ -1255,7 +1369,9 @@ def publish_lane(
     # while it writes local files. A TypeMoon unit that starts mid-build stops the step.
     with _window():
         pass
-    if lane in {"arcalive", "novel", "manual"} and not (lane == "arcalive" and metadata_updated):
+    if lane in {"arcalive", "novel", "manual", "tuna"} and not (
+        lane == "arcalive" and metadata_updated
+    ):
         with closing(sqlite3.connect(db_path, timeout=30)) as db, db:
             pending = db.execute(
                 "SELECT 1 FROM text_archive_items i LEFT JOIN text_archive_publications p "
@@ -1431,7 +1547,7 @@ def publish_lane(
     # The new pointer is verified; retention is cleanup and never fails the publish.
     try:
         result["prune"] = _prune_lane(
-            db_path, build_root, lane, str(tree["release_key"]), remote, runner
+            db_path, build_root, lane, str(tree["release_key"]), remote, runner, object_root
         )
     except (
         OSError,
@@ -1452,9 +1568,9 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Publish the independent text archive")
-    parser.add_argument("lane", choices=("novel", "arcalive", "manual", "both"))
+    parser.add_argument("lane", choices=("novel", "arcalive", "manual", "tuna", "both"))
     args = parser.parse_args()
-    lanes = ("manual", "novel", "arcalive") if args.lane == "both" else (args.lane,)
+    lanes = ("manual", "novel", "arcalive", "tuna") if args.lane == "both" else (args.lane,)
     db_path = Path("/srv/redstm-text/text-archive.sqlite")
     receipts_root = Path("/srv/redstm-text-inbox/receipts")
 

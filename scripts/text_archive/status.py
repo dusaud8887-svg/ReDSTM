@@ -126,7 +126,7 @@ def build_status(
     db.row_factory = sqlite3.Row
     try:
         lanes: dict[str, Any] = {}
-        for lane in ("novel", "arcalive", "manual"):
+        for lane in ("novel", "arcalive", "manual", "tuna"):
             row = db.execute(
                 """SELECT COUNT(*) AS items,MAX(imported_at) AS last_imported_at,
                           SUM(p.key IS NOT NULL) AS published,
@@ -143,6 +143,23 @@ def build_status(
                 "last_published_at": row["last_published_at"],
             }
         status["lanes"] = lanes
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='text_tuna_threads'"
+        ).fetchone():
+            status["tuna"] = {
+                "threads": {
+                    str(row[0]): int(row[1])
+                    for row in db.execute(
+                        "SELECT status,COUNT(*) FROM text_tuna_threads GROUP BY status"
+                    )
+                },
+                "pending_threads": int(
+                    db.execute(
+                        "SELECT COUNT(*) FROM text_tuna_threads "
+                        "WHERE status='active' AND next_seq<response_count"
+                    ).fetchone()[0]
+                ),
+            }
         pc = db.execute(
             """SELECT COUNT(*) AS batches,MAX(imported_at) AS last_batch_at,
                       SUM(revision=2) AS published_batches

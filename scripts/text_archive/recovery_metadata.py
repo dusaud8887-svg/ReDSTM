@@ -47,6 +47,15 @@ def metadata_fingerprint(db_path: Path, lane: str) -> str:
                 for row in db.execute(query):
                     digest.update(json.dumps(list(row), ensure_ascii=False).encode())
                     digest.update(b"\n")
+        if lane == "tuna":
+            # Work titles, tags and the ended flag come from the threads, not the items.
+            for row in db.execute(
+                "SELECT thread_id,created_at,ended,tags,series_title FROM text_tuna_threads "
+                "WHERE thread_id IN (SELECT CAST(source_post_id AS INTEGER) "
+                "FROM text_archive_items WHERE lane='tuna') ORDER BY thread_id"
+            ):
+                digest.update(json.dumps(list(row), ensure_ascii=False).encode())
+                digest.update(b"\n")
         if lane == "manual":
             for row in db.execute(
                 "SELECT identity,created_at,folder FROM text_manual_documents ORDER BY identity"
