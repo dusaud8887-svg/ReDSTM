@@ -86,6 +86,7 @@ drop/<YYYYMMDDTHHMMSSZ>-media-<8hex>/
    항목 검증(틀린 항목만 거부): 확장자=`content_type`, 게시글 id, 크기·sha256 일치, 매직 바이트=`content_type`, 접근 거부 이미지 아님, 가로·세로 1–20000.
 4. 올리기: 통과한 항목을 `build/media/<id>/<type>/<경로 키>` symlink로 모아 형식별로 `rclone copy --copy-links --header-upload "Content-Type: <type>"` → `r2text:redstm-text-archive/media/arca/`. 이어서 `rclone hashsum SHA256 --download --checkfile`로 되읽어 확인한다.
 5. sqlite `text_archive_media(path_key PK, sha256, content_type, bytes, width, height, batch_id, stored_at)`에 기록하고 영수증을 쓴다. 같은 경로 키가 다시 오면 다시 올린다(멱등, 같은 키 덮어쓰기).
+6. 재시도(텍스트 importer와 같은 `scripts/text_archive/attempts.py`): 배치를 처리하기 전에 `/srv/redstm-text/media-attempts/<id>.json`에 시도를 먼저 기록한다. 구조 검증 실패만 거부 영수증을 쓰고, 그 밖의 모든 예외와 except에 닿지 못하는 강제 종료(OOM·unit timeout)는 원본을 지우지 않은 채 5·15·30·60분 backoff로 남는다. backoff 중인 배치는 건너뛰고 뒤의 준비된 배치를 계속 처리한다. 아직 준비되지 않은 배치는 시도로 세지 않는다.
 
 ## 4. Worker와 Reader
 

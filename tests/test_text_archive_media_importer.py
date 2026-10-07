@@ -237,6 +237,7 @@ def test_main_drains_ready_batches_in_one_run(
     monkeypatch.setattr(media_importer, "_INBOX_ROOT", inbox)
     monkeypatch.setattr(media_importer, "_DB_PATH", tmp_path / "text.sqlite")
     monkeypatch.setattr(media_importer, "_BUILD_ROOT", tmp_path / "build")
+    monkeypatch.setattr(media_importer, "_ATTEMPTS_ROOT", tmp_path / "attempts")
     monkeypatch.setattr(media_importer, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(sys, "argv", ["media_importer"])
     media_importer.main()
@@ -278,6 +279,90 @@ def test_temporary_media_failure_is_never_permanently_rejected(
     capsys.readouterr()
     assert not (inbox / "receipts" / f"{_BATCH}.status.json").exists()
     assert media_importer.next_ready_batch(inbox, attempts) is None
+
+
+_KILLED_RUN = """
+import os, sys
+from contextlib import nullcontext
+from pathlib import Path
+from scripts.text_archive import media_importer as m
+root = Path(sys.argv[1])
+m._INBOX_ROOT, m._ATTEMPTS_ROOT = root / "inbox", root / "attempts"
+m._DB_PATH, m._BUILD_ROOT = root / "text.sqlite", root / "build"
+m.operation_window = lambda **_: nullcontext()
+m.import_media_batch = lambda *_a, **_k: os._exit(137)  # no except clause or finally runs
+sys.argv = ["media_importer"]
+m.main()
+"""
+
+
+def test_killed_media_import_backs_off_and_later_batches_proceed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An OOM kill or unit timeout never reached record_failure, so every run picked the
+    same first batch again and the batches behind it never moved."""
+    inbox, attempts = tmp_path / "inbox", tmp_path / "attempts"
+    second = "20260927T120001Z-media-0000000b"
+    _batch(inbox, {"000001.webp": _WEBP}, [_item(_PATH_A, "000001.webp", _WEBP, "image/webp")])
+    _batch(
+        inbox,
+        {"000001.gif": _GIF},
+        [_item(_PATH_B, "000001.gif", _GIF, "image/gif")],
+        batch_id=second,
+    )
+    killed = subprocess.run(
+        [sys.executable, "-c", _KILLED_RUN, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        check=False,
+    )
+    assert killed.returncode == 137, killed.stderr
+    record = json.loads((attempts / f"{_BATCH}.json").read_text(encoding="utf-8"))
+    assert record["attempts"] == 1 and record["reason"] == "import_started"
+    assert media_importer.next_ready_batch(inbox, attempts) == second
+
+    r2 = FakeR2()
+    original = media_importer.import_media_batch
+
+    def with_fake_r2(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return original(*args, **{**kwargs, "runner": r2})
+
+    monkeypatch.setattr(media_importer, "import_media_batch", with_fake_r2)
+    monkeypatch.setattr(media_importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(media_importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(media_importer, "_BUILD_ROOT", tmp_path / "build")
+    monkeypatch.setattr(media_importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(media_importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["media_importer"])
+    media_importer.main()
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["batch_id"] for line in lines] == [second]
+    assert (inbox / "receipts" / f"{second}.json").is_file()
+    assert not (attempts / f"{second}.json").exists()
+    assert (inbox / "drop" / _BATCH / "manifest.json").is_file()  # the original is kept
+
+
+def test_unexpected_media_failure_backs_off_instead_of_crashing_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, attempts = tmp_path / "inbox", tmp_path / "attempts"
+    _batch(inbox, {"000001.webp": _WEBP}, [_item(_PATH_A, "000001.webp", _WEBP, "image/webp")])
+
+    def crash(*_args: Any, **_kwargs: Any) -> dict[str, Any] | None:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(media_importer, "import_media_batch", crash)
+    monkeypatch.setattr(media_importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(media_importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(media_importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["media_importer"])
+    with pytest.raises(SystemExit) as stopped:
+        media_importer.main()
+    assert stopped.value.code == 1
+    record = json.loads((attempts / f"{_BATCH}.json").read_text(encoding="utf-8"))
+    assert record["attempts"] == 1 and record["reason"] == "import_failed:RuntimeError"
+    assert media_importer.next_ready_batch(inbox, attempts) is None
+    capsys.readouterr()
 
 
 def test_media_transfer_does_not_block_text_database_access(

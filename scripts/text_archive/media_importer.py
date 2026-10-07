@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.text_archive import attempts
 from scripts.text_archive.runtime import RuntimeWindowError, operation_window
 
 _BATCH_ID = re.compile(r"\d{8}T\d{6}Z-media-[a-f0-9]{8}\Z")
@@ -427,42 +428,10 @@ def next_ready_batch(inbox_root: Path, attempts_root: Path | None = None) -> str
             and not (receipts / f"{name}.status.json").exists()
         ):
             # Retain a deferred batch without blocking independent later uploads.
-            if attempts_root is not None and _backoff_active(attempts_root, name):
+            if attempts_root is not None and attempts.backoff_active(attempts_root, name):
                 continue
             return name
     return None
-
-
-# Operational failures retry with capped backoff; only validation rejects a batch.
-_IMPORT_BACKOFF_SECONDS = (300, 900, 1800, 3600)
-
-
-def _backoff_active(attempts_root: Path, batch_id: str) -> bool:
-    try:
-        record = json.loads((attempts_root / f"{batch_id}.json").read_text(encoding="utf-8"))
-        return float(record["next_at"]) > time.time()
-    except OSError, ValueError, KeyError, TypeError:
-        return False
-
-
-def record_failure(
-    receipts_root: Path, attempts_root: Path, batch_id: str, error: BaseException
-) -> dict[str, Any]:
-    path = attempts_root / f"{batch_id}.json"
-    try:
-        attempts = int(json.loads(path.read_text(encoding="utf-8"))["attempts"]) + 1
-    except OSError, ValueError, KeyError, TypeError:
-        attempts = 1
-    reason = f"import_failed:{type(error).__name__}"
-    delay = _IMPORT_BACKOFF_SECONDS[min(attempts, len(_IMPORT_BACKOFF_SECONDS)) - 1]
-    attempts_root.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(
-        json.dumps({"attempts": attempts, "next_at": time.time() + delay, "reason": reason}),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
-    return {"status": "failed", "batch_id": batch_id, "reason": reason, "attempt": attempts}
 
 
 # One run drains ready batches in order, well inside the unit's 20 min timeout.
@@ -495,6 +464,7 @@ def main() -> None:
         seen.add(batch_id)
         try:
             with operation_window(lock_wait_seconds=30, need_bytes=120 * 1024 * 1024):
+                attempts.begin(_ATTEMPTS_ROOT, batch_id)
                 receipt = import_media_batch(
                     inbox_root,
                     batch_id,
@@ -505,18 +475,20 @@ def main() -> None:
         except RuntimeWindowError as exc:
             parser.exit(75, f"media import deferred: {exc}\n")
         except MediaBatchRejectedError as exc:
+            attempts.clear(_ATTEMPTS_ROOT, batch_id)
             record_rejection(receipts_root, batch_id, str(exc))
             print(json.dumps({"status": "rejected", "batch_id": batch_id, "reason": str(exc)}))
-        except (OSError, sqlite3.Error, ValueError, subprocess.SubprocessError) as exc:
-            failure = record_failure(receipts_root, _ATTEMPTS_ROOT, batch_id, exc)
+        except Exception as exc:  # any failure backs off; only validation rejects
+            failure = attempts.record_failure(_ATTEMPTS_ROOT, batch_id, exc)
             print(json.dumps(failure))
             failed = True
             if args.batch_id:
                 parser.exit(1, f"media import of {batch_id} failed: {exc!r}\n")
         else:
-            (_ATTEMPTS_ROOT / f"{batch_id}.json").unlink(missing_ok=True)
             if receipt is None:
+                attempts.not_ready(_ATTEMPTS_ROOT, batch_id)
                 parser.exit(0, "media batch not ready; no receipt written\n")
+            attempts.clear(_ATTEMPTS_ROOT, batch_id)
             counts: dict[str, int] = {}
             for item in receipt["items"]:
                 counts[item["status"]] = counts.get(item["status"], 0) + 1
