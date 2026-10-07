@@ -2479,9 +2479,26 @@ def test_partial_manual_publish_keeps_verified_progress_and_skips_failed_group(
     publisher._record_publication(db_path, "published/" + key, digest)
     normal = _fake_r2(remote)
     failed_keys: list[str] = []
+    late = "manual:" + "f" * 64
 
     def fail_group(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         if argv[3] == "copy" and "objects/sha256" in argv[5]:
+            if not failed_keys:
+                # An import during the uploads reuses the already verified body. The release
+                # then holds two items; the pending count must come from that same snapshot.
+                with sqlite3.connect(db_path) as late_db:
+                    late_db.execute(
+                        "INSERT INTO text_archive_items(identity,lane,source_site,source_url,"
+                        "title,content_sha256,bytes,object_key,batch_id,imported_at) "
+                        "SELECT ?,lane,source_site,source_url,?,content_sha256,bytes,object_key,"
+                        "batch_id,imported_at FROM text_archive_items WHERE identity=?",
+                        (late, late, identities[0]),
+                    )
+                    late_db.execute(
+                        "INSERT INTO text_manual_documents VALUES(?,'2026-10-01T00:00:00Z',"
+                        "'fixture')",
+                        (late,),
+                    )
             failed_keys.extend(
                 Path(argv[argv.index("--files-from-raw") + 1]).read_text().splitlines()
             )
@@ -2489,17 +2506,17 @@ def test_partial_manual_publish_keeps_verified_progress_and_skips_failed_group(
         return normal(argv, **kwargs)
 
     first = publisher.publish_lane(db_path, objects, build, receipts, "manual", runner=fail_group)
-    assert first["item_count"] == 1 and first["pending_count"] == 9
+    assert first["item_count"] == 2 and first["pending_count"] == 9
     assert first["transfer_error"] == "TimeoutExpired"
     pointer = json.loads(remote["published/manual/release.json"])
     release = json.loads(remote[pointer["release_key"]])
-    assert release["item_count"] == 1
+    assert release["item_count"] == 2
     with sqlite3.connect(db_path) as db:
         assert (
             db.execute(
                 "SELECT count(*) FROM text_archive_publications WHERE key LIKE 'item:manual:%'"
             ).fetchone()[0]
-            == 1
+            == 2
         )
     assert len(failed_keys) == 8
     copied: list[str] = []
@@ -2510,7 +2527,7 @@ def test_partial_manual_publish_keeps_verified_progress_and_skips_failed_group(
         return normal(argv, **kwargs)
 
     final = publisher.publish_lane(db_path, objects, build, receipts, "manual", runner=retry)
-    assert final["item_count"] == 10 and final["pending_count"] == 0
+    assert final["item_count"] == 11 and final["pending_count"] == 0
     assert copied[0] not in failed_keys  # An unattempted file passes the failed group first.
     with sqlite3.connect(db_path) as db:
         assert db.execute("SELECT count(*) FROM text_archive_publish_attempts").fetchone()[0] == 0

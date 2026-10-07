@@ -367,6 +367,15 @@ def build_publish_tree(
         ).fetchone()
         if not item_count:
             raise ValueError("no_publishable_items")
+        # Counted in the same snapshot: imports during the body uploads change the lane.
+        pending_count = 0
+        if verified_only:
+            pending_count = (
+                db.execute(
+                    "SELECT COUNT(*) FROM main.text_archive_items WHERE lane=?", (lane,)
+                ).fetchone()[0]
+                - item_count
+            )
         with (
             plans["items"].open("w", encoding="utf-8", newline="\n") as item_plan,
             plans["objects"].open("w", encoding="utf-8", newline="\n") as object_plan,
@@ -616,6 +625,7 @@ def build_publish_tree(
         return {
             "lane": lane,
             "item_count": item_count,
+            "pending_count": pending_count,
             "item_plan": plans["items"],
             "object_plan": plans["objects"],
             "index_plan": plans["indexes"],
@@ -1414,7 +1424,7 @@ def publish_lane(
         "lane": lane,
         "item_count": tree["item_count"],
         "release_sha256": tree["release_sha256"],
-        "pending_count": item_count - tree["item_count"],
+        "pending_count": tree["pending_count"],
     }
     if transfer_error:
         result["transfer_error"] = transfer_error
