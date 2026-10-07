@@ -2442,10 +2442,51 @@ def test_publisher_attempts_every_lane_after_a_failure(
     assert len([r for r in results if r.get("status") == "published"]) == 3
 
 
+def test_many_small_bodies_are_verified_in_one_copy_and_hashsum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Groups of 8 cost two rclone starts each and verified ~900 bodies an hour."""
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    db_path, objects, receipts = _novel_archive(tmp_path)
+    with sqlite3.connect(db_path) as db:
+        for index in range(40):
+            identity = "manual:" + f"{index:064x}"
+            body = f"small document {index}".encode()
+            digest = hashlib.sha256(body).hexdigest()
+            key = f"objects/sha256/{digest[:2]}/{digest}.md"
+            (objects / key).parent.mkdir(parents=True, exist_ok=True)
+            (objects / key).write_bytes(body)
+            db.execute(
+                "INSERT INTO text_archive_items(identity,lane,source_site,source_url,title,"
+                "content_sha256,bytes,object_key,batch_id,imported_at) "
+                "VALUES(?,'manual','manual','',?,?,?,?, 'fixture','now')",
+                (identity, identity, digest, len(body), key),
+            )
+            db.execute(
+                "INSERT INTO text_manual_documents VALUES(?,'2026-10-01T00:00:00Z','fixture')",
+                (identity,),
+            )
+    remote: dict[str, bytes] = {}
+    normal = _fake_r2(remote)
+    calls: list[str] = []
+
+    def counting(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[3] in {"copy", "hashsum"} and "objects/sha256" in " ".join(argv):
+            calls.append(argv[3])
+        return normal(argv, **kwargs)
+
+    result = publisher.publish_lane(
+        db_path, objects, tmp_path / "build", receipts, "manual", runner=counting
+    )
+    assert result["item_count"] == 40 and result["pending_count"] == 0
+    assert calls == ["copy", "hashsum"]
+
+
 def test_partial_manual_publish_keeps_verified_progress_and_skips_failed_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(publisher, "_BODY_BATCH_OBJECTS", 8)
     db_path, objects, receipts = _novel_archive(tmp_path)
     build = tmp_path / "build"
     remote: dict[str, bytes] = {}

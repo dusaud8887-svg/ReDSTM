@@ -51,6 +51,9 @@ _PRUNE_BATCH_LIMIT = 500
 # Publish verified progress each turn instead of waiting for an entire growing lane.
 _BODY_TURN_SECONDS = 120
 _BODY_BATCH_BYTES = 16 * 1024 * 1024
+# Objects per rclone copy + hashsum pair. Each pair costs two process starts and TLS setups
+# (~15 s on the 1 GiB VM), so 8 per pair verified ~900 bodies an hour against ~10k imported.
+_BODY_BATCH_OBJECTS = 128
 # A pruned key's ledger row carries this until R2 confirms the delete, so it is never
 # mistaken for a verified upload and is retried by the next prune.
 _PRUNING = "pruning"
@@ -1443,7 +1446,11 @@ def publish_lane(
                         pending_bytes = 0
                     pending_objects.append((key, digest))
                     pending_bytes += int(size)
-                    if retry or len(pending_objects) == 8 or pending_bytes >= _BODY_BATCH_BYTES:
+                    if (
+                        retry
+                        or len(pending_objects) >= _BODY_BATCH_OBJECTS
+                        or pending_bytes >= _BODY_BATCH_BYTES
+                    ):
                         publish_batch()
                         pending_bytes = 0
                     if time.monotonic() - started >= _BODY_TURN_SECONDS:
