@@ -1008,13 +1008,26 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return items;
   }
 
-  async function workDetail(item) {
+  async function workDetail(item, retried = false) {
     const cached = details.get(item.work_id);
     if (cached) return cached;
     const hash = item.detail_key?.match(/\/([a-f0-9]{64})\.json$/)?.[1];
     if (!hash) throw new Error("work_index_invalid");
     const detailLane = item.work_id.startsWith("arcalive:") ? "arcalive" : "novel";
-    const detail = await json(`/api/v1/text/index/${detailLane}/${hash}.json`);
+    let detail;
+    try {
+      detail = await json(`/api/v1/text/index/${detailLane}/${hash}.json`);
+    } catch (error) {
+      // A long-open tab keeps the catalog it loaded; once later releases replace this work's
+      // index and retention prunes it, reread the current release once and find the same work.
+      if (retried || error.message !== "request_404") throw error;
+      await loadCatalog(detailLane);
+      const current = detailLane === "arcalive" ? catalogs.get("arcalive")?.works : catalogs.get("novel")?.items;
+      const found = current?.find((entry) => entry.work_id === item.work_id
+        || entry.legacy_work_ids?.includes(item.work_id));
+      if (!found || found.detail_key === item.detail_key) throw error;
+      return workDetail(found, true);
+    }
     if (detail.schema !== 1 || detail.lane !== detailLane || !Array.isArray(detail.chapters)) {
       throw new Error("work_detail_invalid");
     }

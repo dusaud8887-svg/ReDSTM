@@ -174,7 +174,9 @@ DB 연결 시 숫자 source ID로 보완한다.
      receipt 전체를 거부하므로, Oracle에서 `REDSTM_TEXT_ARCALIVE_EQUIVALENCE=1`을 켜기 전까지는 꺼져 있다
      (꺼진 동안 동작은 이전과 같음: `held_conflict`). 들어오는 `text_sha256`은 lane 규칙으로 검사한다.
 6. 게시 보존: 새 pointer readback이 끝난 뒤에만 lane별로 가장 최근에 검증된 release 5개
-   (`publisher._RELEASE_RETENTION`)와 활성 pointer의 release, 그리고 이들이 참조하는 catalog·work
+   (`publisher._RELEASE_RETENTION`), 최근 24시간 안에 검증된 release(`publisher._RELEASE_KEEP_SECONDS`;
+   게시가 실행 종료 60초 뒤 다시 돌아 5개는 몇 분이면 교체되므로 오래 열린 탭이 가진 catalog를 지킨다),
+   활성 pointer의 release, 그리고 이들이 참조하는 catalog·work
    catalog·작품 상세 index를 남긴다. 나머지 `published/releases/{lane}/`·`published/indexes/{lane}/`
    파일은 로컬 build와 R2에서 지운다. 순서는 게시 원장(`text_archive_publications`)의 최초 검증 시각이다.
    원장 행을 먼저 `pruning`으로 바꿔 재참조 시 다시 올라가게 한 다음 `rclone delete --files-from-raw`로
@@ -182,6 +184,8 @@ DB 연결 시 숫자 source ID로 보완한다.
    누락은 게시를 실패시키지 않고 결과 JSON `prune.status=failed`로 보고하며 `pruning` 행은 다음 게시가
    재시도한다. `published/objects/`(참조가 끊긴 본문 객체 포함), `media/`, receipt, 원본은 지우지 않는다.
    no-op 게시는 정리하지 않는다. 저장된 Reader 기록이 지워진 상세 index를 가리키면 현재 catalog로 되돌아간다.
+   열린 탭의 catalog가 가리키는 상세 index가 404이면 Reader는 최신 pointer·catalog를 한 번 다시 읽고 같은
+   work ID(또는 `legacy_work_ids`)로 다시 찾는다. 목록과 읽던 위치는 그대로 둔다.
 
 아카라이브 2개 배치 40건은 실제 신규 bucket에 게시·readback·revision 2 receipt까지 확인했다. PC 전송은 SFTP의 SSH 압축(`-C`)을 사용하므로 원본 바이트/SHA 검증 계약은 바뀌지 않는다. R2 Class A/B, 1,000화 압축 크기,
 작품 단위 묶음 여부, 텍스트 bucket 비용/중단선은 아직 측정되지 않아 대량 게시를 지원한다고 주장하지 않는다.

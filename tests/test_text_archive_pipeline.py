@@ -2236,6 +2236,7 @@ def test_retention_keeps_recent_releases_and_their_references(
 ) -> None:
     monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(publisher, "_RELEASE_RETENTION", 2)
+    monkeypatch.setattr(publisher, "_RELEASE_KEEP_SECONDS", 0)
     db_path, objects, receipts = _novel_archive(tmp_path)
     build = tmp_path / "build"
     remote: dict[str, bytes] = {}
@@ -2277,11 +2278,40 @@ def test_retention_keeps_recent_releases_and_their_references(
     assert ledger == keys("published/releases/") | keys("published/indexes/")
 
 
+def test_retention_keeps_a_day_of_releases_for_tabs_holding_an_old_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Publishing reruns a minute after each run. Count-only retention dropped the first
+    release's indexes within minutes, so a tab that loaded that catalog hit a 404."""
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(publisher, "_RELEASE_RETENTION", 1)
+    db_path, objects, receipts = _novel_archive(tmp_path)
+    build = tmp_path / "build"
+    remote: dict[str, bytes] = {}
+    rclone = _fake_r2(remote)
+    results = [_republish(db_path, objects, build, receipts, run, rclone) for run in range(4)]
+    releases = [f"published/releases/novel/{result['release_sha256']}.json" for result in results]
+    assert {key for key in remote if key.startswith("published/releases/")} == set(releases)
+    first_pages = [page["key"] for page in json.loads(remote[releases[0]])["catalog_pages"]]
+    assert all(key in remote for key in first_pages)
+
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE text_archive_publications SET verified_at='2000-01-01T00:00:00Z' WHERE key=?",
+            (releases[0],),
+        )
+    later = _republish(db_path, objects, build, receipts, 4, rclone)
+    assert releases[0] not in remote
+    assert releases[1] in remote
+    assert later["prune"]["status"] == "pruned"
+
+
 def test_failed_prune_keeps_the_publish_and_is_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
     monkeypatch.setattr(publisher, "_RELEASE_RETENTION", 1)
+    monkeypatch.setattr(publisher, "_RELEASE_KEEP_SECONDS", 0)
     db_path, objects, receipts = _novel_archive(tmp_path)
     build = tmp_path / "build"
     remote: dict[str, bytes] = {}

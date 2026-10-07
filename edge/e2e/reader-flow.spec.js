@@ -2712,6 +2712,36 @@ test("AA scene moves follow the original 레스 headers and hide without them", 
 });
 
 
+test("Text: a work whose index a later release pruned still opens from an old catalog", async ({ page }) => {
+  const work = novelWork({ id: 1, title: "오래 연 소설", chapters: 3 });
+  await useTextArchive(page, { novels: [work] });
+  await page.goto("/text?lane=novel");
+  const row = page.locator("#result-list .result-item", { hasText: "오래 연 소설" });
+  await expect(row).toBeVisible();
+  // Later releases changed this work's index and retention removed the one the tab knows.
+  const release = "6".repeat(64);
+  const page2 = "7".repeat(64);
+  const detail = "8".repeat(64);
+  const oldDetail = /([a-f0-9]{64})\.json$/.exec(work.item.detail_key)[1];
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (payload) => route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+    if (path.endsWith("/release/novel")) return json({ schema: 1, lane: "novel", sha256: release });
+    if (path.endsWith(`/release-manifest/novel/${release}.json`)) {
+      return json({ schema: 1, lane: "novel", generated_at: "2026-09-03T00:00:00Z",
+        catalog_pages: [{ key: `published/indexes/novel/${page2}.json`, sha256: page2 }] });
+    }
+    if (path.endsWith(`/index/novel/${page2}.json`)) {
+      return json({ schema: 1, lane: "novel", items: [{ ...work.item, detail_key: `published/indexes/novel/${detail}.json` }] });
+    }
+    if (path.endsWith(`/index/novel/${detail}.json`)) return json(work.detail);
+    if (path.endsWith(`/index/novel/${oldDetail}.json`)) return route.fulfill({ status: 404, body: "" });
+    return route.fallback();
+  });
+  await row.click();
+  await expect(page.locator('#result-list [data-key="chapter:1-1"]')).toBeVisible();
+});
+
 test("a reading anchor in a table body is the visible text and survives a font change", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {

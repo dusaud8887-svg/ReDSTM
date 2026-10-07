@@ -11,7 +11,7 @@ import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from itertools import groupby
 from pathlib import Path
@@ -41,6 +41,9 @@ _RCLONE_TIMEOUT_S = 5 * 60
 _AVAILABILITY_PAGE_SIZE = 500
 # Release manifests kept per lane besides the active one; older unreferenced indexes are pruned.
 _RELEASE_RETENTION = 5
+# Publishing reruns a minute after each run, so five releases can be minutes old. A tab keeps
+# the catalog it loaded and fetches a work's detail_key on first open; a day keeps those alive.
+_RELEASE_KEEP_SECONDS = 24 * 60 * 60
 # Remote keys deleted per publish so a backlog never holds the run past its rclone timeout.
 _PRUNE_BATCH_LIMIT = 500
 # Publish verified progress each turn instead of waiting for an entire growing lane.
@@ -803,7 +806,10 @@ def _published_hash(db: sqlite3.Connection, key: str) -> str | None:
 
 
 def _retained_keys(db_path: Path, build_root: Path, lane: str, active_release: str) -> set[str]:
-    """Active release, the newest verified releases, and every index they reference."""
+    """Active release, the newest and the last day's verified releases, and their indexes."""
+    cutoff = (datetime.now(UTC) - timedelta(seconds=_RELEASE_KEEP_SECONDS)).isoformat(
+        timespec="seconds"
+    )
     with closing(sqlite3.connect(db_path, timeout=30)) as db:
         recent = [
             str(row[0])
@@ -813,8 +819,18 @@ def _retained_keys(db_path: Path, build_root: Path, lane: str, active_release: s
                 (f"published/releases/{lane}/%", _PRUNING, _RELEASE_RETENTION),
             )
         ]
+        young = [
+            str(row[0])
+            for row in db.execute(
+                "SELECT key FROM text_archive_publications WHERE key LIKE ? AND sha256<>? "
+                "AND verified_at>? ORDER BY verified_at DESC, rowid DESC",
+                (f"published/releases/{lane}/%", _PRUNING, cutoff.replace("+00:00", "Z")),
+            )
+            # A local copy removed before this window existed cannot be walked; skip it.
+            if (build_root / str(row[0])).is_file()
+        ]
     keep: set[str] = set()
-    for release_key in dict.fromkeys([active_release, *recent]):
+    for release_key in dict.fromkeys([active_release, *recent, *young]):
         # A kept release whose local copy is gone cannot be walked; the caller then skips pruning.
         release = json.loads((build_root / release_key).read_bytes())
         keep.add(release_key)
