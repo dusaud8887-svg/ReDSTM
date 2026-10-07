@@ -56,9 +56,11 @@ export function minimapScroll(ratio, { clientWidth, scrollWidth }) {
 // Scene moves (DESIGN §8.4) follow only a clear block boundary of the original: the header line of
 // each 레스, `2405 ： ◆nXsLRB5hfY ： 2024/11/29(金) 22:44:32 ID:udvPw2Ed` (298 of 300 sampled AA posts).
 const RES_HEADER = /^\s*\d{1,5}\s*[：:].{0,80}?[：:]\s*\d{4}\/\d{1,2}\/\d{1,2}.{0,60}$/u;
+// Tunaground segments (docs/34 §6): `──── #12 작가◆trip · 2026-10-07 20:35`.
+const TUNA_HEADER = /^─{4} #\d{1,5} .{0,200}· \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/u;
 export function isSceneHeader(line) {
   const text = line.trim();
-  return text.length <= 200 && RES_HEADER.test(text);
+  return text.length <= 240 && (RES_HEADER.test(text) || TUNA_HEADER.test(text));
 }
 
 // Rounded scroll offsets and sub-pixel line tops count as the same place within this many px.

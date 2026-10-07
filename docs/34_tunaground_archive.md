@@ -120,7 +120,8 @@ CREATE TABLE text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- hig
 
 ## 7. Reader
 
-- 텍스트 목적지에 레인 `참치어장`(`lane=tuna`)을 추가한다. 동작은 소설 레인처럼 작품 목록 → 회차 목록 → 본문이다.
+- 텍스트 목적지와 둘러보기 출처 전환(5번째 버튼)에 레인 `참치어장`(`lane=tuna`)을 추가한다. 동작은 소설 레인처럼 작품 목록 → 회차 목록 → 본문이다. 작품 줄에는 태그·작가·스레드 수·구간 수가 보인다.
+- 본문 레스 머리줄(`──── #n 작가 · 시각`)이 AA 장면 이동 단위다. AA 배율은 이번 방문 동안 작품마다 기억한다(저장 상태 `aaViews`는 TypeMoon 글만 보존).
 - 본문은 AA 모드로 연다(`.archive-body.aa`, Saitamaar 글꼴, 확대·맞춤·장면 이동). `[image]` 줄은 기존 텍스트 본문처럼 이미지로 보인다.
 - 다음 회차는 다음 구간, 그다음 스레드로 이어진다. 연속 읽기 모드도 같은 순서다.
 - 읽기 기록·북마크·저장함 identity는 `tuna:anchor:{thread}:{segment}` 형식이다(`user-state` 텍스트 identity 패턴에 `tuna` 추가).

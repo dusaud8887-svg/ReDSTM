@@ -75,6 +75,14 @@ test("legacy API paths do not serve the retired duplicate viewer", async () => {
   assert.equal(response.headers.get("Location"), "https://redstm-edge.redstm-archive-private.workers.dev/text");
 });
 
+test("Tunaground links keep their lane, work, and chapter", async () => {
+  const response = await worker.fetch(request("/?lane=tuna&work=tuna:08a707eb12239cbf&chapter=tuna:anchor:14993:0"), environment());
+  const target = new URL(response.headers.get("Location"));
+  assert.equal(target.searchParams.get("lane"), "tuna");
+  assert.equal(target.searchParams.get("work"), "tuna:08a707eb12239cbf");
+  assert.equal(target.searchParams.get("chapter"), "tuna:anchor:14993:0");
+});
+
 test("manual document links preserve their folder and identity", async () => {
   const response = await worker.fetch(request("/?lane=manual&category=book%2Fchapters&item=manual:" + "a".repeat(64)), environment());
   const target = new URL(response.headers.get("Location"));

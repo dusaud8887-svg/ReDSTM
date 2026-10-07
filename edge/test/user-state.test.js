@@ -50,6 +50,20 @@ test("manual document reading and bookmarks survive backup import", () => {
   assert.equal(backup.text.bookmarks[identity].lane, "manual");
   assert.equal(backup.text.bookmarks[identity].entry.created_at, "2026-10-01T00:00:00Z");
 });
+test("Tunaground segment reading and bookmarks survive backup import", () => {
+  const identity = "tuna:anchor:14993:0";
+  const text = { schema_version: 1, history: {
+    [identity]: { readAt: "2026-10-07T00:00:00Z", progress: 0.4, title: "Dark Eternals · #0–50", workId: "tuna:08a707eb12239cbf" },
+  }, bookmarks: {
+    [identity]: { savedAt: "2026-10-07T00:00:00Z", lane: "tuna", title: "Dark Eternals", entry: {
+      chapter_id: identity, label: "Dark Eternals · #0–50", sha256: "c".repeat(64), thread_id: 14993, segment: 0,
+    } },
+  } };
+  const backup = JSON.parse(exportUserState(defaultUserState(defaults), text));
+  assert.equal(backup.text.history[identity].progress, 0.4);
+  assert.equal(backup.text.bookmarks[identity].lane, "tuna");
+  assert.equal(backup.text.bookmarks[identity].entry.chapter_id, identity);
+});
 const summary = (extension = "zst", hash = "a") => ({
   board_id: "write_free21",
   external_post_id: 62068,

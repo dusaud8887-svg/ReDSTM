@@ -322,9 +322,9 @@ function normalizeV2State(value, defaultSettings = {}) {
   };
 }
 
-const textIdentityPattern = /^(?:novel|arcalive|manual):[^\s]{1,300}$/;
+const textIdentityPattern = /^(?:novel|arcalive|manual|tuna):[^\s]{1,300}$/;
 const textHashPattern = /^[a-f0-9]{64}$/;
-const textLanes = new Set(["novel", "arcalive", "manual"]);
+const textLanes = new Set(["novel", "arcalive", "manual", "tuna"]);
 
 function validTimestamp(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));

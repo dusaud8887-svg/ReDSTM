@@ -20,6 +20,8 @@
 .archive-body.aa { letter-spacing: 0; word-spacing: 0; text-indent: 0; text-align: start; font-weight: 400; font-style: normal; text-transform: none; font-feature-settings: normal; font-variant-numeric: normal; hyphens: manual; text-autospace: no-autospace; text-wrap: wrap; }
 .archive-body.aa.aa-can-scroll { box-shadow: inset -26px 0 22px -22px rgb(11 13 18 / 58%); }
 .aa-canvas { width: fit-content; min-width: 100%; }
+/* A plain-text AA body (Tunaground, docs/34): lines are pictures, so they never wrap. */
+.aa-canvas.aa-plain { white-space: pre; }
 .aa-canvas[data-width="680"] { width: 680px; min-width: 680px; }
 .aa-canvas[data-width="800"] { width: 800px; min-width: 800px; }
 .archive-body.aa p { margin: 0; }

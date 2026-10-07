@@ -73,6 +73,8 @@ test("scenes start only at the original 레스 header lines", () => {
     "2405 ： ◆nXsLRB5hfY ： 2024/11/29(金) 22:44:32 ID:udvPw2Ed",
     "3324 ： 隔壁内の名無しさん ： 2025/01/18(土) 18:49:39.36 ID:sQnTeehH",
     "83 ： 名無しさん＠狐板 ： 2022/08/18(木) 00:36:59 ID:EVfAk+RG",
+    "──── #12 회색인간◆dzSJ7kSvjO · 2026-10-07 20:35",
+    "──── #0 익명의 참치 씨 · 2026-01-02 03:04",
   ]) assert.equal(isSceneHeader(line), true, line);
   for (const line of [
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -80,6 +82,8 @@ test("scenes start only at the original 레스 header lines", () => {
     "2024/11/29 에 올렸다",
     "（　´∀｀）",
     `1 ： ${"가".repeat(300)} ： 2024/11/29`,
+    "──── 장면 전환 ────",
+    "──── #12 회색인간 · 어제",
   ]) assert.equal(isSceneHeader(line), false, line);
 });
 

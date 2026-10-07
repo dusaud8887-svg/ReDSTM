@@ -94,7 +94,49 @@ test("manual folders preserve full bodies, natural file order and saved reading 
   await expect(page.locator("#reader-title")).toHaveText("10화");
   await page.goto("/text?lane=manual&category=작품%2F회차");
   await expect(page.locator("#result-list .result-title")).toHaveText(["2화", "10화"]);
+  // 폴더 목록 goes up a level, also beside an open body (the list and body share the screen).
+  const folderRow = page.locator("#result-list .result-item").filter({ hasText: "작품/회차" });
+  await page.locator("#text-work-back").click();
+  await expect(folderRow).toBeVisible();
+  await folderRow.click();
+  await page.locator("#result-list .result-item").filter({ hasText: "2화" }).click();
+  await expect(page.locator("#reader-title")).toHaveText("2화");
+  if (await page.locator("#text-work-back").isVisible()) {
+    await page.locator("#text-work-back").click();
+    await expect(folderRow).toBeVisible();
+    await expect(page.locator("#reader-title")).toHaveText("2화");
+    await expect(page).toHaveURL(/item=manual/);
+  }
   expect(errors).toEqual([]);
+});
+
+test("documents without a folder are grouped by their title's first character", async ({ page }) => {
+  const titles = ["가나다", "까치", "Zebra", "apple", "[태그]제목", "10년", "漢字", "あいう", "하늘"];
+  const items = titles.map((title, index) => ({
+    identity: `manual:${String(index).padStart(64, "e")}`, title, category: ".", board: "수동 문서",
+    sha256: String(index).padStart(64, "f"), created_at: "2026-10-01T00:00:00Z", bytes: 10,
+  }));
+  items.push({ ...docs[0] });
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (payload) => route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+    if (path.endsWith("/release/manual")) return json({ schema: 1, lane: "manual", sha256: release });
+    if (path.endsWith(`/release-manifest/manual/${release}.json`)) {
+      return json({ schema: 1, lane: "manual", catalog_pages: [{ key: `published/indexes/manual/${catalog}.json`, sha256: catalog }] });
+    }
+    if (path.endsWith(`/index/manual/${catalog}.json`)) return json({ schema: 1, lane: "manual", items });
+    return route.fulfill({ status: 404, body: "" });
+  });
+  await page.goto("/text?lane=manual");
+  await expect(page.locator("#result-list .result-title")).toHaveText([
+    "작품/회차", "폴더 없음 · 0–9·기호", "폴더 없음 · A–Z", "폴더 없음 · ㄱ", "폴더 없음 · ㅎ", "폴더 없음 · 가나", "폴더 없음 · 한자",
+  ]);
+  await expect(page.locator("#result-list .result-item").filter({ hasText: "폴더 없음 · 0–9·기호" })).toContainText("2개 글");
+  await page.locator("#result-list .result-item").filter({ hasText: "폴더 없음 · ㄱ" }).click();
+  await expect(page.locator("#result-list .result-title")).toHaveText(["가나다", "까치"]);
+  // A link from before the groups still lists every document without a folder.
+  await page.goto("/text?lane=manual&category=.");
+  await expect(page.locator("#result-list .result-item")).toHaveCount(titles.length);
 });
 
 test("manual library is empty before its first publication", async ({ page }) => {

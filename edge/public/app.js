@@ -329,7 +329,7 @@ function refreshContinuous() {
     const node = document.createElement("div"); node.className = elements["archive-body"].className;
     if (next.sourceLane) {
       const raw = await response.text();
-      const parsed = next.sourceLane === "manual" ? { text: raw, sourceUrl: "" } : next.sourceLane === "novel" ? novelBody(raw) : arcaliveBody(raw);
+      const parsed = next.sourceLane === "manual" || next.sourceLane === "tuna" ? { text: raw, sourceUrl: "" } : next.sourceLane === "novel" ? novelBody(raw) : arcaliveBody(raw);
       renderPlainTextWithMedia(node, parsed.text, { sourceUrl: parsed.sourceUrl });
     } else {
       const payload = await response.json();
@@ -830,7 +830,11 @@ function showZoomFeedback() {
 // AA zoom is kept per picture (aaViews): the zoom chosen for this post, else an automatic fit
 // for this visit (넓은 AA 화면에 맞추기), else the default zoom.
 function currentAaKey() {
-  return currentSummary && currentMode === "aa" ? postIdentity(currentSummary) : "";
+  if (currentMode !== "aa") return "";
+  if (currentSummary) return postIdentity(currentSummary);
+  // Text AA (Tunaground, docs/34) keeps its zoom per work for this visit; the saved state keeps
+  // TypeMoon posts only (aaViewMap).
+  return readerSource === "text" && readerDocument?.workId ? `text:${readerDocument.workId}` : "";
 }
 
 function effectiveAaZoom() {
@@ -1172,13 +1176,13 @@ function renderTextContinue(text) {
   elements["continue-title"].textContent = text.title || "텍스트 장서";
   const finished = postReadingState(text.progress) === "finished";
   elements["continue-meta"].textContent = [
-    text.identity.startsWith("manual:") ? "수동 문서" : text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    textSourceLabel(text.identity),
     finished ? (text.identity.startsWith("novel:") ? "다 읽음 · 다음 화로 이어서" : "다 읽음") : postReadingLabel(text.progress, { seen: true }),
   ].filter(Boolean).join(" · ");
   elements["continue-toc"].hidden = !text.identity.startsWith("novel:");
   setContinueProgress(finished ? 0 : text.progress);
   fillContinueCard(continueCardParts(), {
-    title: text.work || text.title || "텍스트 장서", source: text.identity.startsWith("manual:") ? "수동 문서" : text.identity.startsWith("novel:") ? "소설" : "아카라이브",
+    title: text.work || text.title || "텍스트 장서", source: textSourceLabel(text.identity),
     hueKey: textHueKey(text), progress: finished ? 0 : text.progress, sentence: finished || settings.homeQuote === "off" ? "" : lastSentenceQuote(text.loc), readAt: text.readAt,
   });
 }
@@ -1187,10 +1191,17 @@ function continueCardParts() {
   return { cover: elements["continue-cover"], quote: elements["continue-quote"], when: elements["continue-when"] };
 }
 
+function textSourceLabel(identity) {
+  if (identity.startsWith("manual:")) return "수동 문서";
+  if (identity.startsWith("novel:")) return "소설";
+  return identity.startsWith("tuna:") ? "참치어장" : "아카라이브";
+}
+
 // Stable cover keys (DESIGN §2.5) for records that only know an identity.
 function textHueKey(text) {
   if (text.identity?.startsWith("manual:")) return text.identity;
   if (text.identity?.startsWith("novel:")) return workKey({ source: "novel", id: text.workId || text.work || text.identity });
+  if (text.identity?.startsWith("tuna:")) return workKey({ source: "tuna", id: text.workId || text.work || text.identity });
   return workKey({ source: "arcalive", board: text.board || "", id: text.workId || text.work || text.identity });
 }
 function postHueKey(summary, collectionId = null) {
@@ -1543,7 +1554,7 @@ const kwic = createKwic({
     // An inert document: a detached element of the live page would still load every image.
     const body = document.implementation.createHTMLDocument("").createElement("div");
     if (entry.type === "typemoon") body.innerHTML = JSON.parse(raw).post.body_html;
-    else body.textContent = (entry.type === "manual" ? raw : (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text);
+    else body.textContent = (entry.type === "manual" || entry.type === "tuna" ? raw : (entry.type === "novel" ? novelBody(raw) : arcaliveBody(raw)).text);
     return createTextModel(body).text;
   },
   async onOpen(hit, parent) {
@@ -1764,7 +1775,7 @@ function relayoutPages() {
   if (!anchor || !pagedAdapter.scrollToRange(anchor)) showPage(paged.page);
 }
 
-function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision }) {
+function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, workId, revision, aa = false }) {
   if (currentSummary) persistReadingPosition();
   readerDocument = { key: documentId, title, workId };
   continuous.prepare(readerDocument);
@@ -1772,7 +1783,8 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   currentSummary = null;
   currentPayload = null;
   currentCollection = null;
-  currentMode = "prose";
+  aaPan.cancel();
+  currentMode = aa ? "aa" : "prose";
   beginReaderDocument(documentId, workId, revision);
   const continuing = readerSource === "text";
   setReaderSource("text");
@@ -1785,11 +1797,25 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   setSourceLink(sourceUrl);
   document.title = `${title} — ReDSTM`;
   const body = elements["archive-body"];
-  body.classList.remove("aa", "normalize-source-styles");
-  body.classList.add("plain-text");
-  body.ariaLabel = "텍스트 본문";
-  renderPlainTextWithMedia(body, text, { sourceUrl });
+  body.classList.remove("normalize-source-styles");
+  body.classList.toggle("aa", aa);
+  body.classList.toggle("plain-text", !aa);
+  elements["aa-controls"].hidden = !aa;
+  if (aa) {
+    body.ariaLabel = "AA 본문 · 좌우로 이동하거나 두 손가락으로 확대할 수 있습니다";
+    const canvas = document.createElement("div");
+    canvas.className = "aa-canvas aa-plain";
+    renderPlainTextWithMedia(canvas, text, { sourceUrl });
+    splitSceneHeaders(canvas);
+    body.replaceChildren(canvas);
+    applySettings();
+  } else {
+    body.ariaLabel = "텍스트 본문";
+    renderPlainTextWithMedia(body, text, { sourceUrl });
+  }
   updateReaderLength();
+  if (aa) restoreAaView();
+  findAaScenes();
   const renderId = String(++textRenderId);
   body.dataset.renderId = renderId;
   void archiveTextMedia(body, renderId);
@@ -1799,6 +1825,29 @@ function openTextReader({ kicker, title, meta, text, sourceUrl, documentId, work
   if (joined) readerSession.frame(() => { syncScrollBaseline(); readerSession.capture(); });
   updateShellMode();
   readerSession.frame(() => elements["reader-title"].focus({ preventScroll: true }));
+}
+
+// A plain-text AA body is one text node per run of lines. Scene moves look for header lines as
+// their own text nodes, so each header line is split out; the text itself is unchanged.
+function splitSceneHeaders(root) {
+  const nodes = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+  for (const original of nodes) {
+    let node = original;
+    let start = 0;
+    while (node && start < node.data.length) {
+      const newline = node.data.indexOf("\n", start);
+      const end = newline < 0 ? node.data.length : newline;
+      if (!isSceneHeader(node.data.slice(start, end))) {
+        start = end + 1;
+        continue;
+      }
+      const header = start > 0 ? node.splitText(start) : node;
+      node = end - start < header.data.length ? header.splitText(end - start) : null;
+      start = 0;
+    }
+  }
 }
 
 // Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
@@ -2157,7 +2206,7 @@ const browseSourceKey = "redstm.browseSource";
 function rememberedBrowseSource() {
   try {
     const source = localStorage.getItem(browseSourceKey);
-    return ["novel", "arcalive", "manual"].includes(source) ? source : "typemoon";
+    return ["novel", "arcalive", "manual", "tuna"].includes(source) ? source : "typemoon";
   } catch {
     return "typemoon";
   }

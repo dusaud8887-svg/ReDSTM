@@ -3,7 +3,7 @@ import { gunzipSync } from "node:zlib";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-import { arcalivePost, arcaliveWork, novelWork, useTextArchive } from "./text-fixture.js";
+import { arcalivePost, arcaliveWork, novelWork, useTextArchive, useTunaArchive } from "./text-fixture.js";
 import { collectionIndexKey, hashFor, postPayload, useLongCollection } from "./typemoon-fixture.js";
 
 // Reading-flow contracts from docs/19: one history entry per reading session, Back returns to
@@ -2712,6 +2712,31 @@ test("AA scene moves follow the original 레스 headers and hide without them", 
 });
 
 
+test("Tunaground: a work opens its thread segments as AA with response scenes and the next segment", async ({ page }) => {
+  await useTunaArchive(page);
+  await page.goto("/text?lane=tuna");
+  const row = page.locator("#result-list .result-item", { hasText: "별의 노래" });
+  await expect(row).toContainText("2스레드");
+  await row.click();
+  await expect(page.locator('#result-list [data-key="chapter:tuna:anchor:1:0"]')).toBeVisible();
+  await page.locator('#result-list [data-key="chapter:tuna:anchor:1:0"]').click();
+  await expect(page.locator("#reader-title")).toHaveText("[AA/역극] 별의 노래 (1) · #0–99");
+  const body = page.locator("#archive-body");
+  await expect(body).toHaveClass(/\baa\b/);
+  await expect(page.locator("#aa-controls")).toBeVisible();
+  await expect(page.locator("#aa-scenes")).toBeVisible();
+  await expect(page.locator("#aa-scene-output")).toHaveText("장면 1/100");
+  // AA lines are pictures: the long line stays on one line instead of wrapping.
+  const wraps = await body.evaluate((element) => getComputedStyle(element.querySelector(".aa-canvas")).whiteSpace);
+  expect(wraps).toBe("pre");
+  await page.locator("#aa-scene-next").click();
+  await expect(page.locator("#aa-scene-output")).toHaveText("장면 2/100");
+  await expect(page).toHaveURL(/chapter=tuna%3Aanchor%3A1%3A0/);
+  await page.locator(mobileWidth(page) ? "#reader-bottom-next" : "#next-post").click();
+  await expect(page.locator("#reader-title")).toHaveText("[AA/역극] 별의 노래 (1) · #100–101");
+  await expect(body).toHaveClass(/\baa\b/);
+});
+
 test("Text: a work whose index a later release pruned still opens from an old catalog", async ({ page }) => {
   const work = novelWork({ id: 1, title: "오래 연 소설", chapters: 3 });
   await useTextArchive(page, { novels: [work] });
@@ -2766,7 +2791,7 @@ test("a reading anchor in a table body is the visible text and survives a font c
         const range = document.createRange();
         range.setStart(node, index); range.setEnd(node, index + 1);
         const rect = range.getClientRects()[0];
-        return rect.top >= scrollRect.top - 1 && rect.top < scrollRect.bottom;
+        return rect.bottom > scrollRect.top && rect.top < scrollRect.bottom;
       }
       return false;
     };
