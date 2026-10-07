@@ -842,6 +842,8 @@ offline[workKey] = {
 
 - owner = 서버가 검증한 Access `email`의 SHA-256 앞 16자. 클라이언트는 `/api/v1/me`(신규, Access 사용자만, `{ownerHash}`)로 받는다.
   캐시 이름·idb DB 이름에 ownerHash를 붙인다.
+- localStorage 읽기 상태는 공용 legacy 키(처음 확인된 owner `redstm.legacyOwner.v1`)와 `<key>:<ownerHash>`로 나뉜다. owner 확인 때
+  메모리 상태를 불러온 키와 확인된 owner의 키가 다르면(기억된 owner가 없던 첫 확인 포함) 읽기 기록·설정·텍스트 상태를 다시 읽는다.
 
 #### 12.6.4 SW 업데이트 · 플래그
 

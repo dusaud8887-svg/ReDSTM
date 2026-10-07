@@ -5807,8 +5807,12 @@ function ownerIdentity() {
       if (hash && previous && previous !== hash) setOtherOwners([...otherOwners(), previous]);
       if (hash) setOtherOwners(otherOwners().filter((value) => value !== hash));
       if (hash) {
+        // Reload whenever the storage namespace changes, not only on an owner change: with no
+        // remembered owner the state came from the shared legacy keys, which may be another
+        // owner's, and keeping it would save that owner's records into this owner's keys.
+        const loadedFrom = stateKey(STATE_KEY);
         await claimLegacyOwner(hash);
-        const switched = stateOwner && stateOwner !== hash;
+        const switched = loadedFrom !== stateStorageKey(STATE_KEY, hash);
         stateOwner = hash;
         if (switched) {
           mirrorQueue.clear();

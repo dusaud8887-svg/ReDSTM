@@ -105,6 +105,26 @@ test("Switching accounts isolates legacy reading state and subsequent saves", as
   await page.goto("/saved?view=reading");
   await expect.poll(() => stateCopy(page)).toEqual({ copy: ["board_a:2"], local: ["board_a:2"] });
 });
+test("A first verified owner with no remembered owner does not keep another owner's legacy state", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  const first = "0123456789abcdef";
+  const second = "fedcba9876543210";
+  let owner = first;
+  await context.route("**/api/v1/me", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ ownerHash: owner }) }));
+  await page.goto("/read/board_a/2");
+  const keys = (target, key) => target.evaluate((key) => Object.keys(JSON.parse(localStorage.getItem(key) ?? '{"history":{}}').history), key);
+  await expect.poll(() => keys(page, KEY)).toEqual(["board_a:2"]);
+  // The legacy keys hold the first owner's records, but the remembered owner is gone.
+  await page.evaluate(() => localStorage.removeItem("redstm.owner.v1"));
+  await page.close();
+  owner = second;
+  const other = await context.newPage();
+  await other.goto("/read/board_a/3");
+  await other.locator("#reader-pane").evaluate((element) => { element.scrollTop = 300; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => keys(other, `${KEY}:${second}`)).toContain("board_a:3");
+  expect(await keys(other, `${KEY}:${second}`)).not.toContain("board_a:2");
+  expect(await keys(other, KEY)).toContain("board_a:2");
+});
 const KEY = "redstm.userState.v2";
 const stateCopy = (page) => page.evaluate(async ([owner, key]) => {
   const { openStore } = await import("/store.js");
