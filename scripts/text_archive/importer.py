@@ -1829,7 +1829,11 @@ def _record_import_failure(
 ) -> dict[str, Any]:
     attempts = max(1, _previous_attempts(attempts_root, batch_id))
     reason = f"import_failed:{type(error).__name__}"
-    _write_attempt(attempts_root, batch_id, attempts, reason)
+    try:
+        _write_attempt(attempts_root, batch_id, attempts, reason)
+    except OSError as exc:
+        # An unwritable attempts root must not replace the original import error.
+        reason += f";attempt_record_failed:{type(exc).__name__}"
     return {"status": "failed", "batch_id": batch_id, "reason": reason, "attempt": attempts}
 
 

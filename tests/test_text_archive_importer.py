@@ -28,6 +28,20 @@ _BATCHES = (
 )
 
 
+@pytest.fixture
+def cli_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Point every production path the importer CLI touches at tmp_path; a missed one
+    (e.g. the attempts root) would otherwise write under /srv and fail on CI."""
+    inbox, attempts = tmp_path / "inbox", tmp_path / "attempts"
+    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
+    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
+    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
+    monkeypatch.setattr(importer, "_ATTEMPTS_ROOT", attempts)
+    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(sys, "argv", ["importer"])
+    return inbox, attempts
+
+
 def test_manual_document_import_publish_duplicate_and_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1178,17 +1192,12 @@ def test_operation_window_defers_only_for_typemoon_publish(
 
 
 def test_main_drains_every_ready_batch_in_one_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    cli_roots: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    inbox = tmp_path / "inbox"
+    inbox, _attempts = cli_roots
     _batch(inbox, _BATCHES[0])
     _batch(inbox, _BATCHES[1], body=b"second body")
     _batch(inbox, _BATCHES[2], ready=False)
-    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
-    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
-    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
-    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
-    monkeypatch.setattr(sys, "argv", ["importer"])
     importer.main()
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [line["batch_id"] for line in lines] == list(_BATCHES[:2])
@@ -1197,18 +1206,13 @@ def test_main_drains_every_ready_batch_in_one_run(
 
 
 def test_temporary_batch_failure_retains_original_and_allows_later_batch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    cli_roots: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    inbox = tmp_path / "inbox"
-    attempts = tmp_path / "attempts"
+    inbox, attempts = cli_roots
     _batch(inbox, _BATCHES[0])
     _batch(inbox, _BATCHES[1], body=b"second body")
-    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
-    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
-    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
-    monkeypatch.setattr(importer, "_ATTEMPTS_ROOT", attempts)
-    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
-    monkeypatch.setattr(sys, "argv", ["importer"])
     real_import = importer.import_batch
 
     def broken(inbox_root: Path, batch_id: str, *args: Any) -> Any:
@@ -1549,19 +1553,14 @@ def test_arcalive_equivalence_stays_off_until_newtomi_knows_the_rule(
 
 
 def test_unexpected_or_fatal_import_failure_still_backs_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    cli_roots: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A RuntimeError, or an OOM kill that never reaches an except clause, used to leave no
     attempt record, so every timer tick retried the same head batch with no backoff."""
-    inbox = tmp_path / "inbox"
-    attempts = tmp_path / "attempts"
+    inbox, attempts = cli_roots
     _batch(inbox, _BATCHES[0])
-    monkeypatch.setattr(importer, "_INBOX_ROOT", inbox)
-    monkeypatch.setattr(importer, "_DB_PATH", tmp_path / "text.sqlite")
-    monkeypatch.setattr(importer, "_OBJECT_ROOT", tmp_path / "objects")
-    monkeypatch.setattr(importer, "_ATTEMPTS_ROOT", attempts)
-    monkeypatch.setattr(importer, "operation_window", lambda **_: nullcontext())
-    monkeypatch.setattr(sys, "argv", ["importer"])
 
     def crash(*_args: Any) -> Any:
         raise RuntimeError("schema guard")
@@ -1584,6 +1583,27 @@ def test_unexpected_or_fatal_import_failure_still_backs_off(
     record = json.loads((attempts / f"{_BATCHES[0]}.json").read_text(encoding="utf-8"))
     assert record["attempts"] == 2 and record["reason"] == "import_started"
     assert importer._next_ready_batch(inbox, attempts) is None
+    capsys.readouterr()
+
+
+def test_unwritable_attempts_root_still_reports_the_import_failure(
+    cli_roots: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inbox, attempts = cli_roots
+    _batch(inbox, _BATCHES[0])
+    attempts.write_text("not a directory", encoding="utf-8")
+
+    def crash(*_args: Any) -> Any:
+        raise RuntimeError("schema guard")
+
+    monkeypatch.setattr(importer, "import_batch", crash)
+    outcome = importer._import_one(inbox, _BATCHES[0])
+    assert outcome is not None and outcome["status"] == "failed"
+    assert outcome["reason"].startswith("import_failed:")
+    assert "attempt_record_failed:" in outcome["reason"]
+    assert not (inbox / "receipts" / f"{_BATCHES[0]}.json").exists()
     capsys.readouterr()
 
 
