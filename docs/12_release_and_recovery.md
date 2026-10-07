@@ -302,6 +302,12 @@ state를 재사용한다. 이 세 필드와 migration hash가 모두 맞아야 v
 두 번의 migration 응답을 모두 잃으면 exact schema만으로 doctor 성공을 추정하지 않고
 `canonical_schema_migration_ambiguous`로 중단한다. 재실행한 idempotent doctor가 `noop`을 반환해야 완료다.
 
+현재 repository target은 schema v5다(nullable `crawl_frontier.listing_sha256`, `post_versions_projection_idx`).
+exporter가 그 인덱스를 `INDEXED BY`로 지정하므로 앱 파일만 바꾸는 배포는 안 된다. `deploy` preflight가 canonical이
+exact v5가 아니면 `canonical_schema_upgrade_pending`으로 거부하므로 v4 전환과 같은 bridge 2회 → `migrate-canonical` →
+`deploy` 순서를 따른다. 적용 증거로 `PRAGMA user_version`(5), `PRAGMA index_info(post_versions_projection_idx)`,
+`schema_migrations`의 version 5 행(sha256·applied_at)을 읽기 전용으로 남긴다([`11`](11_configuration_and_policy.md)).
+
 automatic R2 rollback은 publish 시 기록한 predecessor 관계로 pointer와 active ledger를 함께 복구해
 다음 정기 cycle도 bounded delta를 이어 갈 수 있어야 한다. matching ledger가 없는
 `publish_static --activate`는 remote size 확인이 필요할 수 있는 명시적 수동 incident 경로이며 bounded

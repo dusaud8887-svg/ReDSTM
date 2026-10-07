@@ -9,9 +9,18 @@
 source는 코드와 native deployment declaration이며, 이 문서는 source 위치와 변경 gate를 연결한다.
 같은 값을 별도 YAML에 다시 복사하지 않는다.
 
-canonical live와 repository target은 schema v4다. migration SQL/hash는 `crawler/archive.py`가
-단일 source다. exporter는 exact migration ledger와 v4의 `static_projection_compatible=True`
-선언을 함께 확인할 때만 기존 v3 export state를 승격한다.
+repository target은 schema v5(`crawler/archive.py` `SCHEMA_VERSION=5`)다. v5는 nullable
+`crawl_frontier.listing_sha256`와 `post_versions_projection_idx`를 더하며, exporter가 이 인덱스를
+`INDEXED BY`로 지정하므로 v5가 적용되지 않은 canonical에서는 export가 실패한다. migration SQL/hash는
+`crawler/archive.py`가 단일 source다. exporter는 exact migration ledger와 v4·v5의
+`static_projection_compatible=True` 선언을 함께 확인할 때만 기존 export state를 승격한다.
+v5 배포 뒤 다음 읽기 전용 확인을 배포 증거로 남긴다(설치된 unit/env override가 있으면 실효값은 따로 확인).
+
+```sql
+PRAGMA user_version;                              -- 5
+PRAGMA index_info(post_versions_projection_idx);  -- id, content_sha256, comments_sha256, capture_origin, warc_record_id
+SELECT version, sha256, applied_at FROM schema_migrations WHERE version = 5;
+```
 
 ## 1. 설정 원칙
 
@@ -87,8 +96,8 @@ systemd 환경 파일은 shell command가 아니라 `EnvironmentFile` 형식의 
 | `REDSTM_ACCESS_CLIENT_ID` | `access.env` | production Operations 연결 | 예 | Oracle control client |
 | `REDSTM_ACCESS_CLIENT_SECRET` | `access.env` | production Operations 연결 | 예 | Oracle control client |
 | `REDSTM_ACCESS_TOKEN_EXPIRES_AT` | `access.env` | token expiry warning 사용 시 | 아니오 | Oracle heartbeat |
-| `REDSTM_DISK_LOW_BYTES` | `access.env` optional | 볼륨 20%(5–40GiB) 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
-| `REDSTM_DISK_STOP_BYTES` | `access.env` optional | 볼륨 10%(3–20GiB) 기본 수집 hard floor 변경 시 | 아니오 | Oracle control runner |
+| `REDSTM_DISK_LOW_BYTES` | `access.env` optional | 기본 경고 5GiB(hard floor + 1GiB) 변경 시 | 아니오 | Oracle heartbeat |
+| `REDSTM_DISK_STOP_BYTES` | `access.env` optional | 기본 수집 hard floor 4GiB(텍스트 archive와 같은 reserve) 변경 시 | 아니오 | Oracle control runner |
 | `REDSTM_CONDITIONAL_DETAILS` | `access.env` optional | 상세 재방문에 저장된 ETag/Last-Modified를 보내 304면 `unchanged`로 기록(docs/31 C5 canary). `1`/`true`/`yes`/`on`만 켠다. 비어 있거나 `0`/`false`/`off`면 꺼짐. 목록이 댓글 수 변화로 다시 연 글은 항상 무조건 요청 | 아니오 | Oracle crawler |
 | `REDSTM_CONTROL_REJECTION_WARNING_SECONDS` | `access.env` optional | permanent control rejection 경고 기간 변경 시; 기본 24시간 | 아니오 | Oracle heartbeat |
 | `REDSTM_TOKEN_EXPIRING_SECONDS` | `access.env` optional | 24시간 기본 경고 변경 시 | 아니오 | Oracle heartbeat |
@@ -150,7 +159,7 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | recovery | 내부 chunk | normal 20건 / full-content 100건; spider network breaker 뒤에만 1건 canary | 고립 fetch 실패는 20건 유지. 수동 command는 canary 성공 뒤 정상 chunk로 복귀해 남은 항목 0까지 반복; 자동 cycle은 20건·최대 2시간 단일 batch |
 | recovery | missing-only 순서 | 본문 없는 pending을 due retry보다 앞 | `crawler/frontier.py` |
 | request | origin proxy | optional `REDSTM_ORIGIN_PROXY`; TypeMoon host만, listener 없으면 직접 연결 | `crawler/origin_proxy.py` |
-| request | detail connection | 요청마다 `Connection: close`; 부분 HTML은 본문이 보이면 salvage | `crawler/download_handlers.py` |
+| request | detail connection | 요청마다 `Connection: close`; 잘린 응답은 본문이 보여도 `fetch_failed`/`network_error`(`truncated_body`)로 기록하고 최신 버전으로 승격하지 않음 | `crawler/download_handlers.py`, `crawler/spiders/typemoon.py` |
 | telemetry | 실행 중 canonical 집계 | 5분마다 post stored 및 parse/fetch failure, frontier in-flight | 기존 `archive_snapshot` event; 원문 미전송 |
 | recovery | board group order | AA → 창작 → 팬픽 → 나머지 | `crawler/settings.py` |
 | export | automatic workers / changed-post cap | 1 / 0(무제한) | `crawler/settings.py` |
@@ -159,8 +168,8 @@ Worker CSP는 script를 `self`로 제한하고 inline script를 허용하지 않
 | publish | rclone checkers/transfers | 16 / 16 | `scripts.publish_static` |
 | systemd | wall-clock policy | `TimeoutStartSec=infinity`; 수동 full command는 내부 양수 chunk/checkpoint로 지속 | service unit + runner |
 | systemd | service memory/tasks hard stop | 700MiB / 64 | service unit |
-| runner warning | disk/control/token/publish | 볼륨 20%(5–40GiB) / rejection 24시간 / 만료 24시간 전 / pending 24시간 | `scripts.storage_policy`, `scripts.control_runner` CLI/env |
-| runner hard stop | 새 crawl/장기 chunk 시작 전 disk floor | 볼륨 10%(3–20GiB), 먼저 WARC·보고서 정리; checkpoint 보존 `disk_low` 종료 | `scripts.storage_policy`, `scripts.control_runner` CLI/env |
+| runner warning | disk/control/token/publish | 5GiB / rejection 24시간 / 만료 24시간 전 / pending 24시간 | `scripts.storage_policy`, `scripts.control_runner` CLI/env |
+| runner hard stop | 새 crawl/장기 chunk 시작 전 disk floor | 4GiB(텍스트 archive 하한과 공유), 먼저 WARC·보고서 정리; checkpoint 보존 `disk_low` 종료 | `scripts.storage_policy`, `scripts.control_runner` CLI/env |
 | retention | WARC / reports / static·R2 | 60일·볼륨 10%(2–20GiB) / 90일 / 미참조 7일, release 5개 유지 | `scripts.retention`, `scripts.publish_static` |
 | crawl memory | Scrapy graceful close | 560MiB(`MEMUSAGE_LIMIT_MB`), unit hard stop 700MiB | `crawler/settings.py` |
 | control client | response body max | 128KiB | `scripts.control_client` |
@@ -195,7 +204,7 @@ oldest-first로 진전시키는 audit 시작값이다. 실제 quota와 oldest la
 warning threshold의 `0`은 해당 warning을 끈다. 동시에 여러 조건이 참이면
 `disk_low → control_rejected → token_expiring → publish_stale` 순서로 하나만 전송한다.
 disk hard floor의 `0`도 중단을 끄며, 활성화할 때는 warning보다 반드시 낮아야 한다. 기본값은
-볼륨 20%(5–40GiB)에서 먼저 경고하고 10%(3–20GiB) 미만에서 새 crawl child를 시작하지 않는 두 단계다. 며칠 걸리는
+5GiB에서 먼저 경고하고 4GiB 미만에서 새 crawl child를 시작하지 않는 두 단계다(2026-10-06 소유자 결정, 텍스트 archive도 같은 4GiB reserve). 며칠 걸리는
 전체 목차·본문은 child 경계에서도 다시 확인해 현재 SQLite/WARC transaction을 자르지 않고 다음
 bounded chunk 전에 `disk_low` partial로 끝내며 pass marker와 cursor를 보존한다.
 401/403/429와 release mismatch 409는 복구 가능한 control 단절로 outbox에 남긴다. 그 외 permanent
