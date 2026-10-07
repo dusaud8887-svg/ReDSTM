@@ -141,3 +141,14 @@ CREATE TABLE text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- hig
 | T2 | publisher `tuna` 레인(catalog·detail·대체 객체 정리), status·recovery_metadata, Worker·SW 레인 허용 | 게시 트리 테스트, 대체 객체 72시간 정리 테스트, Worker 테스트 |
 | T3 | Reader 레인·AA 모드 본문·identity | E2E: 작품 → 회차 → AA 본문 → 다음 구간 |
 | T4 | systemd unit·설치 스크립트·운영 문서, Oracle canary(목록 1페이지 + 스레드 1개) | 설치 후 1회 실행 결과 JSON, 게시 pointer readback |
+
+## 10. 운영(T4)
+
+- unit: `deploy/text-archive/redstm-text-tuna.{service,timer}`. 텍스트 수집기와 같은 사용자·cgroup(150M)·보호 설정이고,
+  5분마다(:02, :07 …, 소설 수집기와 2분 어긋남) 시작한다. `install_oracle.sh`가 unit을 설치하고 `--help`로
+  모듈을 확인한다. 소설 수집기처럼 **자동으로 켜지 않는다**.
+- 첫 실행(canary): 설치 뒤 `sudo systemctl start redstm-text-tuna.service`. 첫 목록 갱신이 약 193페이지(2초 간격,
+  약 7분)라서 두 번에 나눠 끝난다. `journalctl -u redstm-text-tuna -o cat | tail -1`의 `steps`와 `stop_reason`,
+  `/api/v1/text/status`의 `tuna.threads`·`pending_threads`를 확인한 뒤 `sudo systemctl enable --now redstm-text-tuna.timer`.
+- 게시는 기존 `redstm-text-publish`(`both`)가 `tuna` 레인까지 다룬다. 별도 timer는 없다.
+- 멈추려면 `systemctl disable --now redstm-text-tuna.timer`. 받은 레스와 게시본은 그대로 남는다.

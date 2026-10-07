@@ -458,3 +458,23 @@ def test_publish_groups_threads_into_works_and_prunes_replaced_tails(
     assert not (objects / tail_key.removeprefix("published/")).exists()
     with closing(_db(db_path)) as db:
         assert db.execute("SELECT COUNT(*) FROM text_tuna_superseded").fetchone()[0] == 0
+
+
+def test_tuna_unit_runs_the_module_inside_the_text_lane_limits() -> None:
+    unit = Path("deploy/text-archive/redstm-text-tuna.service").read_text(encoding="utf-8")
+    assert (
+        "ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.tuna" in unit
+    )
+    for line in (
+        "User=redstm-text",
+        "MemoryMax=150M",
+        "MemorySwapMax=0",
+        "ProtectSystem=strict",
+        "ReadWritePaths=/srv/redstm-text",
+        "SuccessExitStatus=75",
+    ):
+        assert line in unit.splitlines()
+    timer = Path("deploy/text-archive/redstm-text-tuna.timer").read_text(encoding="utf-8")
+    assert "Unit=redstm-text-tuna.service" in timer
+    install = Path("deploy/text-archive/install_oracle.sh").read_text(encoding="utf-8")
+    assert "media tuna; do" in install and "scripts.text_archive.tuna --help" in install

@@ -1,0 +1,12 @@
+[Unit]
+Description=Start the paced Tunaground collector (one process runs about 4.5 minutes)
+
+[Timer]
+OnCalendar=*-*-* *:2/5:00
+RandomizedDelaySec=10s
+AccuracySec=1s
+Persistent=true
+Unit=redstm-text-tuna.service
+
+[Install]
+WantedBy=timers.target

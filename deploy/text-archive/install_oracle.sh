@@ -67,11 +67,11 @@ uv pip install --python "$release/.venv/bin/python" filelock==4.0.10 requests==2
   sudo -u redstm-text "$release/.venv/bin/python" \
   -m scripts.text_archive.publisher --help >/dev/null && \
   sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.media_importer --help >/dev/null)
+  -m scripts.text_archive.media_importer --help >/dev/null && \n  sudo -u redstm-text "$release/.venv/bin/python" \n  -m scripts.text_archive.tuna --help >/dev/null)
 ln -s "$release" /opt/redstm-text/current.next
 mv -Tf /opt/redstm-text/current.next /opt/redstm-text/current
 
-for kind in collector import publish media; do
+for kind in collector import publish media tuna; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.service" \
     "/etc/systemd/system/redstm-text-$kind.service"
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.timer" \
@@ -81,7 +81,7 @@ for kind in import media; do
   install -o root -g root -m 0644 "$stage/deploy/text-archive/redstm-text-$kind.path" \
     "/etc/systemd/system/redstm-text-$kind.path"
 done
-systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish,media}.{service,timer} \
+systemd-analyze verify /etc/systemd/system/redstm-text-{collector,import,publish,media,tuna}.{service,timer} \
   /etc/systemd/system/redstm-text-{import,media}.path
 systemctl daemon-reload
 systemctl enable --now redstm-text-import.path redstm-text-media.path redstm-text-media.timer

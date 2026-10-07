@@ -1,0 +1,36 @@
+[Unit]
+Description=Run paced Tunaground anchor board collector steps for one timer period (docs/34)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=redstm-text
+Group=redstm-text
+WorkingDirectory=/opt/redstm-text/current
+Environment=PYTHONUNBUFFERED=1
+# Skip the Python startup while TypeMoon owns the publish window.
+ExecCondition=/usr/bin/flock -n /srv/redstm/static/.publish.lock /usr/bin/true
+ExecStart=/opt/redstm-text/current/.venv/bin/python -m scripts.text_archive.tuna
+SuccessExitStatus=75
+Restart=no
+TimeoutStartSec=6min
+MemoryHigh=128M
+MemoryMax=150M
+MemorySwapMax=0
+CPUWeight=10
+IOWeight=10
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/srv/redstm-text
+ReadWritePaths=/srv/redstm/static/.publish.lock
