@@ -113,6 +113,7 @@ ReDSTM의 기반(보존·검색·Reader·Back 계약·AA parity)은 탄탄하지
 셸(레일·앱 바·하단 탭 5) · `#catalog` + `#reader-pane`(홈 `#empty-reader` / 작품 `#collection-view` / Reader `#reader`).
 텍스트 장서는 `텍스트` 목적지 안에 `소설·아카라이브·저장함` 레인. Reader 모바일은 context bar + 하단 `목록·이전·다음·Aa·더보기`.
 `text-anchor.js`는 **세로 스크롤 전용**(첫 보이는 문자를 `rect.bottom > top`으로 찾고 `scrollTop`으로 복원).
+anchor는 실제 화면 안의 문장이어야 한다. 텍스트 노드 이진 탐색은 DOM 순서대로 아래로 흐르는 본문에서만 맞으므로, 고른 문장이 화면 아래 밖이면(표·float·다단) 앞쪽 노드를 DOM 순서로 다시 훑어 첫 `bottom > top` 노드를 쓴다.
 
 ### 2.3 조사·검토 문서
 

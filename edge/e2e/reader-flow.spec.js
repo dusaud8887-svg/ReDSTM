@@ -2712,6 +2712,47 @@ test("AA scene moves follow the original 레스 headers and hide without them", 
 });
 
 
+test("a reading anchor in a table body is the visible text and survives a font change", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { captureTextAnchor, restoreTextAnchor } = await import("/text-anchor.js");
+    const scroller = document.createElement("div");
+    scroller.style.cssText = "position:fixed;top:0;left:0;height:240px;width:320px;overflow:auto;background:white;font-size:16px";
+    const root = document.createElement("div");
+    // The long left cell is what shows; the short right cell and the text after the table
+    // break the DOM-order growth that the fast search relies on.
+    root.innerHTML = `<p>Intro line.</p><table><tr><td style="width:70%">${
+      Array.from({ length: 120 }, (_, index) => `Left sentence ${index}.`).join(" ")
+    }</td><td>Right short.</td></tr></table><p>AFTER THE TABLE: NOT VISIBLE</p>`;
+    scroller.append(root); document.body.append(scroller);
+    scroller.scrollTop = 200;
+    const anchor = captureTextAnchor(root, scroller);
+    const visibleAt = (quote) => {
+      const scrollRect = scroller.getBoundingClientRect();
+      const walker = document.createTreeWalker(root, 4);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const index = node.data.indexOf(quote);
+        if (index < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, index); range.setEnd(node, index + 1);
+        const rect = range.getClientRects()[0];
+        return rect.top >= scrollRect.top - 1 && rect.top < scrollRect.bottom;
+      }
+      return false;
+    };
+    const quote = anchor.loc.exact.slice(0, 16);
+    const before = visibleAt(quote);
+    scroller.style.fontSize = "22px";
+    const restored = restoreTextAnchor(root, scroller, anchor);
+    const answer = { exact: anchor.loc.exact, before, restored, after: visibleAt(quote) };
+    scroller.remove(); return answer;
+  });
+  expect(result.exact).toContain("Left sentence");
+  expect(result.before).toBe(true);
+  expect(result.restored).toBe(true);
+  expect(result.after).toBe(true);
+});
+
 test("reading anchors reuse the text model and refresh synchronously after a body mutation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {

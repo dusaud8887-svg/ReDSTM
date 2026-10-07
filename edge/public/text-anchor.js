@@ -68,6 +68,9 @@ export function captureTextAnchor(container, scroller, topInset = 0, rev = "") {
   if (container.getBoundingClientRect().bottom <= top) return null;
   const model = createTextModel(container);
   const segments = model.visibleSegments;
+  // The binary search assumes text bottoms grow in DOM order. That holds for flowing prose, but a
+  // table, float, or columns put later nodes beside earlier ones, and the search can land on text
+  // far below the screen. Such a pick is checked, then the earlier nodes are scanned in order.
   let low = 0;
   let high = segments.length;
   while (low < high) {
@@ -75,10 +78,18 @@ export function captureTextAnchor(container, scroller, topInset = 0, rev = "") {
     if (nodeBottom(segments[middle].node) > top) high = middle;
     else low = middle + 1;
   }
-  const node = segments[low]?.node;
+  let node = segments[low]?.node;
+  let local = node ? firstVisibleOffset(node, top) : 0;
+  let rect = node ? rectAt({ node, offset: local }) : null;
+  if (!rect || rect.top >= scroller.getBoundingClientRect().bottom) {
+    const earlier = segments.slice(0, low).find((segment) => nodeBottom(segment.node) > top);
+    if (earlier) {
+      node = earlier.node;
+      local = firstVisibleOffset(node, top);
+      rect = rectAt({ node, offset: local });
+    }
+  }
   if (node) {
-    const local = firstVisibleOffset(node, top);
-    const rect = rectAt({ node, offset: local });
     const offset = model.rawPositions.get(node) + local;
     const start = modelOffset(model, node, local);
     return {
