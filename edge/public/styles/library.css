@@ -369,6 +369,13 @@ body.reading .home { display: none; }
 .shelf-edit:hover { border-color: var(--accent); color: var(--accent); }
 .result-list li.shelf-row { position: relative; }
 .result-list li.shelf-row .result-item { padding-right: 6.5rem; }
+/* 숨기기 on text library rows (2026-10-08): only the list hides; 설정 › 숨긴 항목 보이기 marks them. */
+.result-list li.hideable-row { position: relative; }
+.result-list li.hideable-row .result-item { padding-right: 6.5rem; }
+.row-hide { position: absolute; right: 10px; bottom: 10px; min-width: 44px; min-height: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.row-hide:hover, .row-hide:focus-visible { border-color: var(--line); color: var(--ink); }
+.result-list li.is-hidden .result-item { opacity: 0.55; }
+.result-list li.is-hidden .row-hide { border-color: var(--line); color: var(--accent); }
 .view-tabs.novel-views { grid-template-columns: 1fr 1fr auto; }
 .novel-views .novel-shelf-manage { padding: 0 10px; color: var(--ink-2); font-size: 13px; }
 .text-work-summary .shelf-summary { justify-self: start; min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }

@@ -217,3 +217,41 @@ test("a long manual document renders in skippable chunks without changing its te
   });
   expect(kept).toBeGreaterThan(2000);
 });
+
+// 2026-10-08: a document's size on its row, a size sort, and 숨기기 that only this list honours.
+test("manual documents show their size and can be hidden from the list", async ({ page }) => {
+  const sized = [
+    { ...docs[0], title: "작은 문서", bytes: 2_048 },
+    { ...docs[1], title: "큰 문서", bytes: 5 * 1024 * 1024 },
+  ];
+  await page.route("**/api/v1/text/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let payload;
+    if (path.endsWith("/release/manual")) payload = { schema: 1, lane: "manual", sha256: release };
+    else if (path.endsWith(`/release-manifest/manual/${release}.json`)) payload = {
+      schema: 1, lane: "manual", catalog_pages: [{ key: `published/indexes/manual/${catalog}.json`, sha256: catalog }],
+    };
+    else if (path.endsWith(`/index/manual/${catalog}.json`)) payload = { schema: 1, lane: "manual", items: sized };
+    else return route.fulfill({ status: 404, body: "" });
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/text?lane=manual&category=%EC%9E%91%ED%92%88%2F%ED%9A%8C%EC%B0%A8");
+  const rows = page.locator("#result-list .result-item");
+  await expect(rows.filter({ hasText: "작은 문서" })).toContainText("2KB");
+  await expect(rows.filter({ hasText: "큰 문서" })).toContainText("5.0MB");
+  await page.locator("#sort-filter").selectOption("largest");
+  await expect(page.locator("#result-list .result-title")).toHaveText(["큰 문서", "작은 문서"]);
+
+  await page.locator("#result-list li", { hasText: "큰 문서" }).locator(".row-hide").click();
+  await expect(page.locator("#result-list .result-title")).toHaveText(["작은 문서"]);
+  await expect(page.locator("#result-status")).toContainText("숨김");
+  // Only the screen hides it: 설정 › 숨긴 항목 보이기 lists it again, marked, to be shown again.
+  await page.evaluate(() => document.querySelector('[data-show-hidden="on"]').click());
+  await expect(page.locator("#result-list .result-title")).toHaveText(["큰 문서", "작은 문서"]);
+  const hiddenRow = page.locator("#result-list li.is-hidden");
+  await expect(hiddenRow).toContainText("숨김");
+  await hiddenRow.locator(".row-hide").click();
+  await page.evaluate(() => document.querySelector('[data-show-hidden="off"]').click());
+  await expect(page.locator("#result-list .result-title")).toHaveText(["큰 문서", "작은 문서"]);
+  await expect(page.locator("#result-list li.is-hidden")).toHaveCount(0);
+});

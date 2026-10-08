@@ -86,13 +86,13 @@ const storageKeys = {
   bookmarks: "redstm.bookmarks.v1",
 };
 const defaultSettings = {
-  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", readingMode: "scroll", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
+  theme: "system", readerSurface: "default", readerDim: 0, readerWarm: 0, paragraphSpacing: 0.95, textIndent: 0, homeQuote: "on", showHidden: "off", readingMode: "scroll", proseSize: 18, lineHeight: 1.8, proseWidth: 760, proseMargin: 20,
   proseFont: "serif", proseAlign: "start", tapPaging: "off", aaAutoFit: "off", aaSize: 16, aaZoom: 1, aaCanvasWidth: null, aaBackground: "#f5f5f0", aaPreserveStyles: true, aaBold: false,
   viewModes: {},
 };
 const settingLabels = {
   theme: "테마", proseSize: "본문 크기", lineHeight: "줄 간격", proseWidth: "본문 너비", proseMargin: "좌우 여백",
-  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", readingMode: "읽기 방식", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
+  proseFont: "본문 서체", proseAlign: "문단 정렬", readerSurface: "본문 면", readerDim: "밝기", readerWarm: "따뜻하게", paragraphSpacing: "문단 간격", textIndent: "들여쓰기", homeQuote: "마지막 문장", showHidden: "숨긴 항목 보이기", readingMode: "읽기 방식", tapPaging: "화면 탭으로 넘기기", aaAutoFit: "넓은 AA 맞추기", aaSize: "AA 크기", aaZoom: "AA 확대", aaCanvasWidth: "AA 폭",
   aaBackground: "AA 배경", aaPreserveStyles: "AA 원본색", aaBold: "AA 굵게",
 };
 const elements = Object.fromEntries(
@@ -109,7 +109,7 @@ const elements = Object.fromEntries(
     "export-state", "import-state", "import-state-file", "continue-reading", "continue-title", "continue-work",
     "continue-meta", "continue-block", "continue-toc", "continue-cover", "continue-quote", "continue-when", "home-onboarding", "catalog-back", "prose-font", "aa-controls", "aa-scenes", "aa-scene-previous", "aa-scene-output", "aa-scene-next",
     "catalog-search-row", "catalog-toolbar", "catalog-controls", "filter-toggle", "active-filters", "search-clear",
-    "mode-chips", "kind-chips", "category-chips",
+    "kind-chips", "category-chips",
     "search-empty", "search-empty-copy", "search-widen", "recent-queries", "reading-works", "reading-works-list", "reading-works-all",
     "recent-all", "filter-dialog", "filter-dialog-fields", "filter-reset", "filter-apply",
     "board-dock", "board-dock-button", "board-dock-group", "board-dock-name", "board-dock-clear", "board-dialog", "board-panel", "board-search",
@@ -269,6 +269,7 @@ const textLibrary = createTextLibrary({
     cancelPendingWork: () => readerSession.cancelPendingWork(),
     mirrorState: (raw) => mirrorState(TEXT_STATE_KEY, raw),
     stateKey: () => stateKey(TEXT_STATE_KEY),
+    showHidden: () => settings.showHidden === "on",
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
@@ -720,6 +721,7 @@ function applySettings() {
     ["[data-tap-paging]", "tapPaging", settings.tapPaging],
     ["[data-aa-auto-fit]", "aaAutoFit", settings.aaAutoFit],
     ["[data-home-quote]", "homeQuote", settings.homeQuote],
+    ["[data-show-hidden]", "showHidden", settings.showHidden],
     ["[data-reading-mode]", "readingMode", settings.readingMode],
   ]) {
     for (const choice of document.querySelectorAll(selector)) {
@@ -2306,8 +2308,8 @@ function currentSearchState() {
 }
 
 // 둘러보기 and 검색 keep their own conditions (DESIGN §4.3): words typed in Search never filter
-// Browse (which has no search field), and Browse finds its own board, format and sort again when
-// you come back to it. Search opened from Browse searches the board on screen (removable in the
+// Browse, and Browse finds its own board, quick-search words and sort again when you come back
+// to it (2026-10-08: Browse has a quick search; its format filter is gone). Search opened from Browse searches the board on screen (removable in the
 // dock) and keeps its last words. Links and Back still restore exactly what their URL says.
 const catalogConditions = new Map();
 let catalogConditionsRemembered = false;
@@ -2320,8 +2322,9 @@ function restoreCatalogConditions(destination) {
   catalogConditionsRemembered = true;
   const saved = catalogConditions.get(destination);
   const scope = destination === "search" && currentDestination === "browse" ? catalogConditions.get("browse") : saved;
-  elements["search-input"].value = destination === "search" ? saved?.query ?? "" : "";
-  elements["mode-filter"].value = scope?.mode ?? "all";
+  elements["search-input"].value = saved?.query ?? "";
+  // Boards are AA or not, so Browse has no format filter; one carried over must not hide posts.
+  elements["mode-filter"].value = destination === "browse" ? "all" : scope?.mode ?? "all";
   // The board options follow the format filter; rebuild them before picking the board.
   populateBoardFilter();
   elements["board-filter"].value = scope?.boardId ?? "";
@@ -2370,7 +2373,8 @@ function applyCatalogRoute(destination) {
   elements["board-filter"].value = params.get("board") ?? "";
   setCategory(params.get("category"), params.get("board") ?? "");
   const mode = params.get("mode");
-  elements["mode-filter"].value = searchSupportsAa && (mode === "aa" || mode === "prose") ? mode : "all";
+  elements["mode-filter"].value = destination !== "browse" && searchSupportsAa
+    && (mode === "aa" || mode === "prose") ? mode : "all";
   elements["search-target"].value = ["title", "author"].includes(params.get("target")) ? params.get("target") : "all";
   elements["search-match"].value = params.get("match") === "or" ? "or" : "and";
   const requestedSort = params.get("sort");
@@ -2443,9 +2447,9 @@ function updateDestinationLayout() {
   // 검색 범위 내 기록: the same words in 기록 › 발췌 (B4).
   document.querySelector("[data-records-scope]").hidden = !searching;
   // 통계 has nothing to search.
-  elements["catalog-search-row"].hidden = (!searching && !saved && !text) || (saved && currentView === "stats");
+  elements["catalog-search-row"].hidden = (!searching && !browsing && !saved && !text)
+    || (saved && currentView === "stats");
   elements["catalog-toolbar"].hidden = saved && currentView !== "all";
-  elements["mode-chips"].hidden = saved || collections || searching || text;
   elements["kind-chips"].hidden = saved || !collections || searching;
   document.querySelector(".sort-field").hidden = saved;
   // The board lives in its own picker (board dock); the select only carries the value.
@@ -2453,7 +2457,7 @@ function updateDestinationLayout() {
   elements["board-dock"].hidden = !browsing && !searching;
   elements["search-input"].placeholder = saved ? "제목, 메모, 태그 검색"
     : text ? textLibrary.searchPlaceholder()
-    : collections ? "작품 제목 검색" : "제목, 작성자, 분류 검색";
+    : collections ? "작품 제목 검색" : browsing ? "이 목록에서 제목·작성자 찾기" : "제목, 작성자, 분류 검색";
   elements["catalog-title"].textContent = saved ? "기록"
     : text ? "텍스트 장서"
     : collections ? (browsing ? "작품 둘러보기" : "작품 검색")
@@ -2484,7 +2488,7 @@ function syncFilterSheetFields() {
   const posts = (searching || browsing) && currentScope === "posts";
   const collections = currentScope === "collections";
   const fields = [
-    [elements["mode-filter"].closest("label"), posts && (searching || elements["mode-chips"].hidden)],
+    [elements["mode-filter"].closest("label"), searching && posts],
     [document.querySelector(".search-target-field"), searching && posts],
     [document.querySelector(".search-match-field"), searching && posts],
     [document.querySelector(".collection-kind-field"), searching && collections],
@@ -2522,7 +2526,6 @@ async function renderCategoryChips() {
   const selected = activeCategory();
   row.hidden = categories.length < 2;
   if (row.hidden) return;
-  elements["mode-chips"].hidden = true;
   syncFilterSheetFields();
   const chip = (label, value, count) => {
     const button = document.createElement("button");
@@ -2540,10 +2543,6 @@ async function renderCategoryChips() {
 }
 
 function syncFilterChips() {
-  for (const button of elements["mode-chips"].querySelectorAll("[data-mode]")) {
-    button.setAttribute("aria-pressed", button.dataset.mode === elements["mode-filter"].value);
-    button.disabled = button.dataset.mode !== "all" && !searchSupportsAa;
-  }
   for (const button of elements["kind-chips"].querySelectorAll("[data-kind]")) {
     button.setAttribute("aria-pressed", button.dataset.kind === elements["collection-kind-filter"].value);
   }
@@ -2823,8 +2822,6 @@ function showDestination(destination, navigate = true, view = destination === "b
   const leavingCatalog = ["browse", "search"].includes(currentDestination);
   if (destination !== currentDestination && !catalogConditionsRemembered) rememberCatalogConditions();
   catalogConditionsRemembered = false;
-  // Browse has no search field, so no words may filter it unseen (a /browse?q= link included).
-  if (destination === "browse") elements["search-input"].value = "";
   if (!["browse", "search"].includes(destination)) setScope("posts");
   if (destination === "bookmarks" && leavingCatalog) {
     elements["board-filter"].value = "";
@@ -3153,7 +3150,9 @@ function requestSearch(offset = 0) {
     return;
   }
   elements["search-empty"].hidden = true;
-  if (elements["search-input"].value.trim()) rememberQuery(elements["search-input"].value);
+  if (currentDestination === "search" && elements["search-input"].value.trim()) {
+    rememberQuery(elements["search-input"].value);
+  }
   currentView = "all";
   updateTabs();
   const id = ++messageId;
@@ -5157,14 +5156,6 @@ elements["active-filters"].addEventListener("click", (event) => {
   const key = event.target.closest("[data-clear]")?.dataset.clear;
   if (key) clearFilter(key);
 });
-for (const button of elements["mode-chips"].querySelectorAll("[data-mode]")) {
-  button.addEventListener("click", () => {
-    elements["mode-filter"].value = button.dataset.mode;
-    updateDestinationLayout();
-    syncSearchRoute();
-    renderCurrentView();
-  });
-}
 elements["category-chips"].addEventListener("click", (event) => {
   const button = event.target.closest("[data-category]");
   if (!button) return;
@@ -5547,6 +5538,13 @@ for (const clipped of [elements.reader, elements["reader-pane"]]) {
     clipped.scrollLeft = 0;
     clipped.scrollTop = 0;
   }, { passive: true });
+}
+for (const choice of document.querySelectorAll("button[data-show-hidden]")) {
+  choice.addEventListener("click", () => {
+    settings.showHidden = choice.dataset.showHidden;
+    saveSettings();
+    textLibrary.hiddenVisibilityChanged();
+  });
 }
 for (const choice of document.querySelectorAll("button[data-home-quote]")) {
   choice.addEventListener("click", () => {

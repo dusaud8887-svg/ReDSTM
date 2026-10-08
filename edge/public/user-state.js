@@ -145,6 +145,7 @@ function sanitizeSettings(value, defaults = {}) {
   pick("readerSurface", (value) => readerSurfaces.has(value));
   pick("tapPaging", (value) => toggles.has(value));
   pick("homeQuote", (value) => toggles.has(value));
+  pick("showHidden", (value) => toggles.has(value));
   pick("readingMode", (value) => readingModes.has(value));
   pick("aaAutoFit", (value) => toggles.has(value));
   pick("aaCanvasWidth", (value) => [null, 680, 800].includes(value));
@@ -336,6 +337,21 @@ function canonicalTime(value) {
   return /Z$/i.test(value) ? value : new Date(value).toISOString();
 }
 
+// Works and documents the owner hid from the text library lists (2026-10-08): only the screen
+// hides them. Each key keeps when it was hidden or shown again, so an older backup merged in
+// cannot bring back a choice made later.
+const hiddenKeyPattern = /^(?:work|item):[^\s]{1,400}$/;
+const HIDDEN_LIMIT = 5000;
+export function sanitizeHiddenItems(value) {
+  const hidden = {};
+  for (const [key, mark] of Object.entries(isRecord(value) ? value : {})) {
+    if (!hiddenKeyPattern.test(key) || !isRecord(mark) || !validTimestamp(mark.at) || typeof mark.on !== "boolean") continue;
+    hidden[key] = { at: canonicalTime(mark.at), on: mark.on };
+  }
+  return Object.fromEntries(Object.entries(hidden)
+    .sort(([, left], [, right]) => Date.parse(right.at) - Date.parse(left.at)).slice(0, HIDDEN_LIMIT));
+}
+
 // The text library's reading records and saved items (redstm.textState.v1). They live in their
 // own localStorage key, so backups carry them as an optional `text` section.
 export function sanitizeTextState(value) {
@@ -369,8 +385,12 @@ export function sanitizeTextState(value) {
     if (metadata.tags.length) kept.tags = metadata.tags;
     bookmarks[identity] = kept;
   }
-  // Personal shelves ride along only when the source has them (older backups do not).
-  return { schema_version: 1, history, bookmarks, ...(Array.isArray(source.shelves) ? sanitizeShelfState(source) : {}) };
+  // Personal shelves and hidden items ride along only when the source has them (older backups do not).
+  return {
+    schema_version: 1, history, bookmarks,
+    ...(Array.isArray(source.shelves) ? sanitizeShelfState(source) : {}),
+    ...(isRecord(source.hidden) ? { hidden: sanitizeHiddenItems(source.hidden) } : {}),
+  };
 }
 
 export const BACKUP_FORMAT = "redstm-backup";
@@ -533,6 +553,13 @@ export function mergeTextStates(current, incoming) {
     );
     merged.shelves = shelves.shelves;
     merged.workShelves = shelves.workShelves;
+  }
+  if (other.hidden) {
+    const hidden = { ...(merged.hidden ?? {}) };
+    for (const [key, mark] of Object.entries(other.hidden)) {
+      if (!hidden[key] || newer(hidden[key], mark, "at")) hidden[key] = mark;
+    }
+    merged.hidden = sanitizeHiddenItems(hidden);
   }
   return merged;
 }

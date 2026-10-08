@@ -153,11 +153,6 @@
           </div>
           <section class="search-suggest" id="search-suggest" aria-label="검색 제안" hidden></section>
           <div class="catalog-toolbar" id="catalog-toolbar">
-            <div class="filter-chips" id="mode-chips" hidden>
-              <button type="button" data-mode="all" aria-pressed="true">전체</button>
-              <button type="button" data-mode="prose" aria-pressed="false">소설·일반</button>
-              <button type="button" data-mode="aa" aria-pressed="false">AA</button>
-            </div>
             <div class="filter-chips category-chips" id="category-chips" role="group" aria-label="게시판 분류" hidden></div>
             <div class="filter-chips" id="kind-chips" hidden>
               <button type="button" data-kind="all" aria-pressed="true">전체</button>
@@ -678,6 +673,13 @@
             <div class="segmented segmented-2" role="radiogroup" aria-labelledby="home-quote-label">
               <button type="button" role="radio" data-home-quote="off" aria-checked="false">끄기</button>
               <button type="button" role="radio" data-home-quote="on" aria-checked="false">켜기</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label" id="show-hidden-label">숨긴 항목 보이기<small>텍스트 장서에서 숨긴 작품·문서를 표시해 숨김을 풀 수 있습니다</small></span>
+            <div class="segmented segmented-2" role="radiogroup" aria-labelledby="show-hidden-label">
+              <button type="button" role="radio" data-show-hidden="off" aria-checked="false">끄기</button>
+              <button type="button" role="radio" data-show-hidden="on" aria-checked="false">켜기</button>
             </div>
           </div>
         </fieldset>

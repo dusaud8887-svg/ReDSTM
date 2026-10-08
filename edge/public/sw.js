@@ -900,7 +900,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   var precache_manifest_default = [
     {
       "url": "/",
-      "revision": "25720740b22b43fd"
+      "revision": "d015d743289e55dc"
     },
     {
       "url": "/aa-viewer.js",
@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "f175e5a9fd4a1998"
+      "revision": "f26e220f71f97df8"
     },
     {
       "url": "/arca-media.js",
@@ -1080,11 +1080,11 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/styles/components.css",
-      "revision": "aa135c5a1ed791dc"
+      "revision": "103972b6dd9cd981"
     },
     {
       "url": "/styles/library.css",
-      "revision": "46858c17af14dd02"
+      "revision": "1be45de011e98a5c"
     },
     {
       "url": "/styles/reader.css",
@@ -1104,7 +1104,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "9cc53894646e1477"
+      "revision": "162c60c9bef7bf39"
     },
     {
       "url": "/text-model.js",
@@ -1128,7 +1128,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/user-state.js",
-      "revision": "d77d4e0dd60002cf"
+      "revision": "6c014c7d4099eb8d"
     },
     {
       "url": "/work-header.js",

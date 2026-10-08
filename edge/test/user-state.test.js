@@ -458,3 +458,24 @@ test("history storage budget counts locators and scroll and retains the most rec
   assert.deepEqual(bounded.bookmarks, state.bookmarks);
   assert.equal(Object.keys(state.history).length, 10_000);
 });
+
+// 2026-10-08: hidden text library items merge by when they were hidden or shown again.
+test("merging text states keeps the latest hide or show of each item", () => {
+  const merged = mergeTextStates(
+    { history: {}, bookmarks: {}, hidden: {
+      "work:novel:a": { at: "2026-10-08T00:00:00Z", on: false },
+      "item:manual:x": { at: "2026-10-01T00:00:00Z", on: true },
+    } },
+    { history: {}, bookmarks: {}, hidden: {
+      "work:novel:a": { at: "2026-10-01T00:00:00Z", on: true },
+      "item:arcalive:novel:9:text": { at: "2026-10-02T00:00:00Z", on: true },
+      "bad key": { at: "2026-10-02T00:00:00Z", on: true },
+      "item:manual:y": { at: "nope", on: true },
+    } },
+  );
+  assert.deepEqual(merged.hidden, {
+    "work:novel:a": { at: "2026-10-08T00:00:00Z", on: false },
+    "item:arcalive:novel:9:text": { at: "2026-10-02T00:00:00Z", on: true },
+    "item:manual:x": { at: "2026-10-01T00:00:00Z", on: true },
+  });
+});

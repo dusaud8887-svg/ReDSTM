@@ -593,7 +593,8 @@ test("separates board browsing from keyword search", async ({ page }, testInfo) 
   await page.goto("/browse?board=board_a");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator("#catalog-title")).toHaveText("게시판 둘러보기");
-  await expect(page.locator("#search-input")).toBeHidden();
+  // Browse has its own quick search, without Search's field and match options.
+  await expect(page.locator("#search-input")).toHaveAttribute("placeholder", "이 목록에서 제목·작성자 찾기");
   await expect(page.locator("#search-target")).toBeHidden();
   await expect(page.locator("#search-match")).toBeHidden();
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
@@ -608,7 +609,7 @@ test("separates board browsing from keyword search", async ({ page }, testInfo) 
   await page.locator('[data-scope="collections"]').click();
   await expect(page).toHaveURL(/\/browse\?scope=collections/);
   await expect(page.locator("#catalog-title")).toHaveText("작품 둘러보기");
-  await expect(page.locator("#search-input")).toBeHidden();
+  await expect(page.locator("#search-input")).toHaveAttribute("placeholder", "작품 제목 검색");
   await expect(page.locator("#sort-filter")).toHaveValue("updated");
 
   await page.locator('[data-destination="search"]:visible').first().click();
@@ -618,34 +619,33 @@ test("separates board browsing from keyword search", async ({ page }, testInfo) 
   await expect(page.locator("#search-input")).toBeFocused();
 });
 
-test("browse keeps format chips unique and lists only matching boards", async ({ page }) => {
+// Boards are AA or not (AA is decided by board), so Browse has no format filter; a quick search
+// narrows the list on screen instead (2026-10-08).
+test("browse filters with a quick search instead of a format filter", async ({ page }) => {
   await useBoardFilterFixture(page);
-  await page.goto("/browse");
+  await page.goto("/browse?mode=aa");
   await expect(page.locator("#archive-state")).toHaveText("보존본");
   await expect(page.locator(".mode-field")).toBeHidden();
-  await expect(page.locator("#mode-chips")).toBeVisible();
+  await expect(page.locator("#mode-chips")).toHaveCount(0);
+  await expect(page.locator("#mode-filter")).toHaveValue("all");
   await expect.poll(() => boardFilterLabels(page)).toEqual([
     "전체 게시판", "19금 AA", "자유게시판", "창작집담",
   ]);
   await expect(page.locator("#board-filter optgroup").first()).toHaveAttribute("label", "AA");
 
-  await page.locator('#mode-chips [data-mode="aa"]').click();
-  await expect.poll(() => boardFilterLabels(page)).toEqual(["전체 게시판", "19금 AA"]);
-  await expect(page).toHaveURL(/mode=aa/);
+  const search = page.locator("#search-input");
+  await expect(search).toBeVisible();
+  await expect(search).toHaveAttribute("placeholder", "이 목록에서 제목·작성자 찾기");
+  await search.fill("AA");
   await expect(page.locator(".result-item .result-title")).toHaveText(["AA 글"]);
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("AA");
+  await search.fill("");
+  await expect(page.locator(".result-item")).not.toHaveCount(1);
 
-  await page.locator('#mode-chips [data-mode="prose"]').click();
-  await expect.poll(() => boardFilterLabels(page)).toEqual(["전체 게시판", "자유게시판", "창작집담"]);
-  await expect(page.locator("#board-filter option", { hasText: "19금 AA" })).toHaveCount(0);
-
-  await page.locator('#mode-chips [data-mode="aa"]').click();
-  await setSelect(page, "board-filter", "aa_19");
   await page.locator('[data-scope="collections"]').click();
   await expect(page).toHaveURL(/scope=collections/);
   await expect(page.locator(".collection-kind-field")).toBeHidden();
   await expect(page.locator("#kind-chips")).toBeVisible();
-  await expect.poll(() => boardFilterLabels(page)).toEqual(["전체 게시판", "자유게시판"]);
-  await expect(page.locator("#board-filter")).toHaveValue("");
   await expect(page.locator("#sort-filter")).toHaveValue("updated");
   await expect(page.locator(".result-item", { hasText: "테스트 연작" })).toBeVisible();
 });
@@ -663,7 +663,8 @@ test("drops browse board and mode when opening the library", async ({ page }) =>
   await page.goBack();
   await expect(page).toHaveURL(/board=board_a/);
   await expect(page.locator("#board-filter")).toHaveValue("board_a");
-  await expect(page.locator("#mode-filter")).toHaveValue("aa");
+  // Browse has no format filter, so a mode in its URL never narrows it.
+  await expect(page.locator("#mode-filter")).toHaveValue("all");
 });
 
 test("keeps search format inside filters instead of duplicate chips", async ({ page }) => {
@@ -2204,13 +2205,15 @@ test("Browse never takes Search's words, and each tab keeps its own conditions",
   await page.locator("#search-input").fill("AA");
   await expect(page).toHaveURL(/\/search\?q=AA$/);
   await page.locator('[data-destination="browse"]').filter({ visible: true }).first().click();
-  // Browse has no search field, so the words must not filter it; its board comes back.
+  // Search's words never filter Browse, which keeps its own quick search; its board comes back.
   await expect(page).toHaveURL(/\/browse\?board=write_free$/);
+  await expect(page.locator("#search-input")).toHaveValue("");
   await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
   await page.locator('[data-destination="search"]').filter({ visible: true }).first().click();
   await expect(page.locator("#search-input")).toHaveValue("AA");
-  // A /browse link with words still shows the whole board.
-  await page.goto("/browse?board=write_free&q=AA");
+  // A /browse link with words fills Browse's own quick search.
+  await page.goto("/browse?board=write_free&q=소설");
+  await expect(page.locator("#search-input")).toHaveValue("소설");
   await expect(page.locator(".result-item .result-title")).toHaveText(["소설 글"]);
 });
 

@@ -26,6 +26,7 @@ const LIST_PAGE = 10;
 const RENDER_CHUNK = 400;
 const SORT_LABELS = {
   oldest: "오래된순", latest: "최신순", title: "이름순", longest: "편수 많은순", updated: "최근 갱신순", recent: "최근 읽은순",
+  largest: "용량 큰순",
 };
 // Novel work list filter by this browser's reading records.
 const READ_FILTERS = [["all", "전체"], ["reading", "읽는 중"], ["new", "새 회차"], ["unread", "안 읽음"], ["finished", "다 읽음"]];
@@ -83,6 +84,18 @@ function shortDate(value) {
   return (date.getFullYear() === new Date().getFullYear() ? dateLabel : yearDateLabel).format(date);
 }
 
+function isPlainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// A manual document's size on its row (2026-10-08): whole files run from a few KB to 64 MiB.
+function sizeLabel(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes >= 2 ** 20) return `${(bytes / 2 ** 20).toFixed(1)}MB`;
+  if (bytes >= 2 ** 10) return `${Math.round(bytes / 2 ** 10).toLocaleString("ko-KR")}KB`;
+  return `${bytes.toLocaleString("ko-KR")}B`;
+}
+
 function readState(key = STATE_KEY) {
   try {
     const saved = JSON.parse(localStorage.getItem(key) || "null");
@@ -106,6 +119,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   const search = document.querySelector("#search-input");
   const stateKey = () => shell.stateKey?.() ?? STATE_KEY;
   const history = readState(stateKey());
+  history.hidden = isPlainRecord(history.hidden) ? history.hidden : {};
   const shelvesAdded = ensureShelves(history) | compactTextHistory(history.history);
   const catalogs = new Map();
   const details = new Map();
@@ -126,6 +140,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   let workBoard = "";
   let listKind = "works";
   let hiddenWorks = 0;
+  // Works or documents this redraw left out (or marked, when they are shown).
+  let hiddenItems = 0;
   let renderedQuery = null;
   // Incremental rendering of the shared result list (renderMore).
   let rowWindow = null;
@@ -192,6 +208,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     ensureShelves(incoming);
     history.shelves = incoming.shelves;
     history.workShelves = incoming.workShelves;
+    history.hidden = isPlainRecord(incoming.hidden) ? incoming.hidden : {};
     // The result list is shared with TypeMoon screens; redraw only while the library owns it.
     if (!active) return;
     if (current) {
@@ -201,6 +218,29 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (lane === "saved") catalog = savedEntries();
       renderCatalog();
     }
+  }
+
+  // Hidden works and documents (2026-10-08): only these lists leave them out. 설정 › 숨긴 항목
+  // 보이기 lists them again, marked, so they can be shown again from their row.
+  function hiddenKey(entry, kind) {
+    return kind === "works" ? `work:${lane}:${entry.work_id}` : `item:${identity(entry, "arcalive", null)}`;
+  }
+  function isHidden(entry, kind) {
+    return history.hidden[hiddenKey(entry, kind)]?.on === true;
+  }
+  function listedHere(entry, kind) {
+    if (!isHidden(entry, kind)) return true;
+    hiddenItems += 1;
+    return shell.showHidden?.() === true;
+  }
+  function setHidden(entry, kind, on) {
+    history.hidden[hiddenKey(entry, kind)] = { at: new Date().toISOString(), on };
+    persist();
+    const name = entry.title || "항목";
+    renderCatalog();
+    status.textContent = on
+      ? `${name} 숨김 · 설정의 숨긴 항목 보이기에서 다시 볼 수 있습니다`
+      : `${name} 다시 보임`;
   }
 
   function identity(entry, sourceLane = lane, sourceWork = work) {
@@ -760,7 +800,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       } else if (kind === "shelves") {
         parts = [`${entry.folder_count.toLocaleString("ko-KR")}개 작품`, entry.hidden ? "전체 목록에서 숨김" : ""];
       } else if (kind === "boards" || kind === "categories") {
-        parts = [kind === "boards" ? "게시판" : entry.board, `${entry.folder_count.toLocaleString("ko-KR")}개 글`];
+        parts = [kind === "boards" ? "게시판" : entry.board, `${entry.folder_count.toLocaleString("ko-KR")}개 글`,
+          lane === "manual" ? sizeLabel(entry.folder_bytes) : ""];
       } else if (kind === "works") {
         const workProgressEntry = progress.get(entry.work_id);
         const { newCount } = workState(entry, workProgressEntry);
@@ -776,11 +817,15 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           flatSearch() ? [[entry.board, entry.category].filter(Boolean).join(" · "), "result-board"] : "",
           entry.author, flatSearch() ? "" : entry.category,
           lane === "manual" ? shortDate(entry.created_at) : "",
+          lane === "manual" ? sizeLabel(entry.bytes) : "",
           value >= FINISHED ? "다 읽음" : value > 0 ? `${Math.round(value * 100)}%` : record ? "열어 봄" : "",
         ];
         badges = [history.bookmarks[identity(entry, "arcalive", null)] ? savedMark() : ""];
         button.classList.toggle("read", value >= FINISHED);
       }
+      const hideable = kind === "works" || kind === "posts";
+      const hidden = hideable && isHidden(entry, kind);
+      if (hidden) badges = [...badges, "숨김"];
       const badgeNode = badgeElement(badges);
       if (badgeNode) line.append(badgeNode);
       const meta = metaElement(parts);
@@ -788,6 +833,17 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       else button.append(line);
       const row = document.createElement("li");
       row.append(button);
+      if (hidden) row.classList.add("is-hidden");
+      if (hideable) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "row-hide";
+        toggle.textContent = hidden ? "숨김 해제" : "숨기기";
+        toggle.ariaLabel = `${titleText} ${hidden ? "숨김 해제" : "목록에서 숨기기"}`;
+        toggle.addEventListener("click", () => setHidden(entry, kind, !hidden));
+        row.classList.add("hideable-row");
+        row.append(toggle);
+      }
       if (kind === "works" && lane === "novel") {
         // 분류: move the work to a shelf without opening it.
         const shelf = shelfOf(history, entry.work_id);
@@ -818,6 +874,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (kind === "works" && lane === "novel") {
       if (shelfFilter) status.textContent = `${shelfName(history, shelfFilter)} · ${status.textContent}`;
       else if (hiddenWorks) status.textContent += ` · 숨긴 분류 ${hiddenWorks.toLocaleString("ko-KR")}개 제외`;
+    }
+    if (hiddenItems && (kind === "works" || kind === "posts" || kind === "categories" || kind === "boards")) {
+      status.textContent += shell.showHidden?.() === true
+        ? ` · 숨긴 항목 ${hiddenItems.toLocaleString("ko-KR")}개 표시 중`
+        : ` · 숨긴 항목 ${hiddenItems.toLocaleString("ko-KR")}개 제외`;
     }
     if (!rows.length) {
       const empty = document.createElement("li");
@@ -863,6 +924,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     } else if (sortMode === "recent" && progress) {
       const readAt = (item) => progress.get(item.work_id)?.lastReadAt ?? "";
       copy.sort((left, right) => readAt(right).localeCompare(readAt(left)) || title(left, right));
+    } else if (sortMode === "largest") {
+      copy.sort((left, right) => (right.bytes || 0) - (left.bytes || 0) || title(left, right));
     } else if (sortMode === "longest") {
       copy.sort((left, right) => (right.chapter_count || 0) - (left.chapter_count || 0) || title(left, right));
     } else if (sortMode === "updated") {
@@ -873,6 +936,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function renderCatalog() {
+    hiddenItems = 0;
     renderedQuery = search.value;
     const query = normalize(search.value.trim());
     const progress = worksView() ? progressForLane() : null;
@@ -905,7 +969,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
         return normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query)
           && (!sourceFilter || lane !== "novel" || item.source_site === sourceFilter)
           && inWorkBoard(item)
-          && matchesReadFilter(workState(item, progress.get(item.work_id)));
+          && matchesReadFilter(workState(item, progress.get(item.work_id)))
+          && listedHere(item, "works");
       };
       renderRows(orderedWorks(currentWorks().filter(matchesWork), progress), { kind: "works" });
       return;
@@ -916,7 +981,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       return;
     }
     if (lane === "manual") {
-      const matching = catalog.filter((item) => normalize(`${item.title} ${item.category}`).includes(query));
+      const matching = catalog.filter((item) => normalize(`${item.title} ${item.category}`).includes(query)
+        && listedHere(item, "posts"));
       if (folderCategory || query) {
         // "." (links from before the groups) still lists every document without a folder.
         const scoped = !folderCategory ? matching : matching.filter((item) =>
@@ -926,8 +992,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const folders = new Map();
       for (const item of matching) {
         const key = manualFolder(item);
-        const folder = folders.get(key) || { folder_label: manualFolderLabel(key), folder_key: key, folder_count: 0 };
+        const folder = folders.get(key) || { folder_label: manualFolderLabel(key), folder_key: key, folder_count: 0, folder_bytes: 0 };
         folder.folder_count += 1;
+        folder.folder_bytes += Number(item.bytes) || 0;
         folders.set(key, folder);
       }
       const groupRank = (folder) => folder.folder_key.startsWith(`${NO_FOLDER}#`) ? TITLE_GROUPS.indexOf(folder.folder_key.slice(2)) : -1;
@@ -944,7 +1011,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       }
       return [...grouped.values()].sort((a, b) => a.folder_label.localeCompare(b.folder_label, "ko-KR"));
     };
-    const scope = folderBoard ? catalog.filter((item) => String(item.board || "미분류") === folderBoard) : catalog;
+    const scope = (folderBoard ? catalog.filter((item) => String(item.board || "미분류") === folderBoard) : catalog)
+      .filter((item) => listedHere(item, "posts"));
     const matching = query
       ? scope.filter((item) => normalize(`${item.title || ""} ${item.author || ""} ${item.board || ""} ${item.category || ""}`).includes(query))
       : scope;
@@ -2068,7 +2136,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
 
   function sortOptions() {
     const context = sortContext();
-    if (context === "posts") return [["최신순", "latest"], ["오래된순", "oldest"], ["제목순", "title"]];
+    if (context === "posts") {
+      return [["최신순", "latest"], ["오래된순", "oldest"], ["제목순", "title"],
+        ...(lane === "manual" ? [["용량 큰순", "largest"]] : [])];
+    }
     return context === "chapters"
       ? [["오래된순", "oldest"], ["최신순", "latest"], ["이름순", "title"]]
       : context === "works"
@@ -2123,7 +2194,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     flushPosition();
     return {
       schema_version: 1, history: history.history, bookmarks: history.bookmarks,
-      shelves: history.shelves, workShelves: history.workShelves,
+      shelves: history.shelves, workShelves: history.workShelves, hidden: history.hidden,
     };
   }
 
@@ -2135,6 +2206,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       history.workShelves = { ...(state.workShelves ?? {}) };
       ensureShelves(history);
     }
+    if (isPlainRecord(state.hidden)) history.hidden = { ...state.hidden };
     pruneHistory();
     persist();
     if (!active) return;
@@ -2231,6 +2303,8 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves, adoptState,
+    exportState, importState, previousUnreadCount,
+    // 설정 › 숨긴 항목 보이기 changed: redraw the list it filters.
+    hiddenVisibilityChanged: () => { if (active && !current) renderCatalog(); }, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves, adoptState,
   };
 }

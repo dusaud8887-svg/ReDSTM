@@ -39,6 +39,7 @@ dialog output { color: var(--ink); font-variant-numeric: tabular-nums; }
 .segmented-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .setting-row { display: grid; gap: 8px; }
 .setting-label { color: var(--ink-2); font-size: 13px; }
+.setting-label small { display: block; margin-top: 2px; color: var(--ink-3, var(--ink-2)); font-size: 11px; }
 .range-setting { display: grid; gap: 8px; }
 .range-setting > label { display: flex; justify-content: space-between; color: var(--ink-2); font-size: 13px; }
 .stepper { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 10px; }
