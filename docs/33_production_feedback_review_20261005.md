@@ -45,6 +45,12 @@ text DB는 기존 스키마의 업그레이드 완료 checkpoint만 기록한다
 판정했다고 주장하지 않으며, 기존 네트워크/불완전 댓글 재시도와 full-content checkpoint를
 보존한다. 근거 없는 본문 길이 휴리스틱이나 전체 latest_version 초기화는 적용하지 않는다.
 
+2026-10-08 선별 복구: 잘린 본문 구제는 2026-08-18(`f65ab0a`)부터 이 수정까지만 있었고, 그 기간 WARC는
+운영에 남아 있다(2026-08-06부터). `python -m scripts.requeue_truncated --archive <canonical>`은 그 기간에 수집된
+**현재 버전**의 원 응답 WARC를 읽어 끝 4KiB에 `</html>`이 없는 글만 고르고, `--apply`는 그 글만 frontier
+`pending`으로 되돌린다. 재수집에서 다시 잘리면 위 F01 수정이 기존 버전을 지키고, 온전하면 새 버전이 된다.
+WARC가 없거나 기록을 찾지 못한 글은 `unreadable`로 세고 건드리지 않는다.
+
 로컬 Python 전체 검사와 edge 단위 검사, Ruff·format·mypy·자산 재생성 검사를 수행했다.
 브라우저에서 오프라인/상태 이관 18개, 삭제 경합/페이지 복원/AA 4개를 통과했고,
 네 화면 크기의 AA/페이지/계정 전환 검사 17개 통과·터치 전용 3개 조건부 skip을 확인했다.
