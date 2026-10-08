@@ -479,3 +479,20 @@ test("merging text states keeps the latest hide or show of each item", () => {
     "item:manual:x": { at: "2026-10-01T00:00:00Z", on: true },
   });
 });
+
+// 2026-10-08: 나중에 읽기 entries merge by when they were added or taken out.
+test("merging user states keeps the latest 나중에 읽기 choice per key", () => {
+  const base = { schema_version: 2, settings: {}, history: {}, bookmarks: {}, scroll: {}, viewModes: {}, aaViews: {} };
+  const merged = mergeUserStates(
+    { ...base, later: {
+      "collection:1": { at: "2026-10-08T00:00:00Z", on: false, title: "연작", source: "자유", route: "/collections/1" },
+    } },
+    { ...base, later: {
+      "collection:1": { at: "2026-10-01T00:00:00Z", on: true, title: "연작", source: "자유", route: "/collections/1" },
+      "text:work:novel:novel:toki:7": { at: "2026-10-02T00:00:00Z", on: true, title: "소설", source: "소설", route: "/text?lane=novel&work=x" },
+      "post:board_a:3": { at: "2026-10-02T00:00:00Z", on: true, title: "외부", route: "https://example.com" },
+    } },
+  );
+  assert.deepEqual(Object.keys(merged.later), ["collection:1", "text:work:novel:novel:toki:7"]);
+  assert.equal(merged.later["collection:1"].on, false);
+});

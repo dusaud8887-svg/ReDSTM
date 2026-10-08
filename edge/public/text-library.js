@@ -243,6 +243,26 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       : `${name} 다시 보임`;
   }
 
+  const LANE_NAMES = { novel: "소설", arcalive: "아카라이브", manual: "수동 문서", tuna: "참치어장" };
+  // What 나중에 읽기 stores for the open work, and for the open document (the Reader's 더보기).
+  function workLaterTarget(item = work, sourceLane = lane) {
+    const params = new URLSearchParams({ lane: sourceLane, work: item.work_id });
+    if (sourceLane === "arcalive") params.set("view", "works");
+    return {
+      key: `text:work:${sourceLane}:${item.work_id}`, title: item.title || "작품",
+      source: LANE_NAMES[sourceLane] ?? "텍스트", meta: item.author || "", route: `/text?${params}`,
+    };
+  }
+  function laterTarget() {
+    if (!current) return work ? workLaterTarget() : null;
+    const workTitle = current.work?.title;
+    return {
+      key: `text:${current.identity}`, title: current.entry.title || current.entry.label || workTitle || "문서",
+      source: LANE_NAMES[current.lane] ?? "텍스트",
+      meta: workTitle && workTitle !== current.entry.title ? workTitle : "", route: route(),
+    };
+  }
+
   function identity(entry, sourceLane = lane, sourceWork = work) {
     if (sourceLane === "tuna") return String(entry.chapter_id);
     return sourceLane === "novel"
@@ -645,6 +665,22 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       go.addEventListener("click", () => activate(go));
       actions.append(go);
     }
+    // 나중에 읽기 (2026-10-08): the work goes on the list kept apart from 저장.
+    const laterTarget = workLaterTarget();
+    const later = document.createElement("button");
+    later.type = "button";
+    later.className = "text-work-later";
+    const syncLater = () => {
+      const on = shell.later?.has(laterTarget.key) === true;
+      later.setAttribute("aria-pressed", String(on));
+      later.textContent = on ? "나중에 읽기 ✓" : "나중에 읽기";
+    };
+    syncLater();
+    later.addEventListener("click", () => {
+      shell.later?.toggle(laterTarget);
+      syncLater();
+    });
+    actions.append(later);
     const findWork = document.createElement("button");
     findWork.type = "button";
     findWork.className = "text-work-find";
@@ -2303,7 +2339,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount,
+    exportState, importState, previousUnreadCount, laterTarget,
     // 설정 › 숨긴 항목 보이기 changed: redraw the list it filters.
     hiddenVisibilityChanged: () => { if (active && !current) renderCatalog(); }, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves, adoptState,
   };

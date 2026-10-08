@@ -307,6 +307,28 @@ export function migrateLegacyState({ settings, history, bookmarks } = {}, defaul
   return state;
 }
 
+// 나중에 읽기 (2026-10-08, Kavita's Want to Read): works and documents to read later, apart
+// from 저장 (bookmarks). Each key keeps when it was added or taken out, so a merged backup
+// cannot bring back an older choice. Entries carry what the list shows and the route it opens.
+const laterKeyPattern = /^(?:post|collection|text):[^\s]{1,400}$/;
+const LATER_LIMIT = 2000;
+export function laterMap(value) {
+  if (!isRecord(value)) return {};
+  const entries = [];
+  for (const [key, entry] of Object.entries(value)) {
+    if (!laterKeyPattern.test(key) || !isRecord(entry) || !validTimestamp(entry.at) || typeof entry.on !== "boolean") continue;
+    if (typeof entry.route !== "string" || !entry.route.startsWith("/") || entry.route.length > 2000) continue;
+    entries.push([key, {
+      at: canonicalTime(entry.at), on: entry.on, route: entry.route,
+      title: typeof entry.title === "string" ? entry.title.slice(0, 300) : "",
+      source: typeof entry.source === "string" ? entry.source.slice(0, 60) : "",
+      ...(typeof entry.meta === "string" && entry.meta ? { meta: entry.meta.slice(0, 300) } : {}),
+    }]);
+  }
+  entries.sort((left, right) => Date.parse(right[1].at) - Date.parse(left[1].at));
+  return Object.fromEntries(entries.slice(0, LATER_LIMIT));
+}
+
 function normalizeV2State(value, defaultSettings = {}) {
   if (!isRecord(value) || value.schema_version !== 2) {
     throw new Error("지원하지 않는 상태 파일 형식");
@@ -320,6 +342,7 @@ function normalizeV2State(value, defaultSettings = {}) {
     viewModes: viewModeMap(value.viewModes),
     aaViews: aaViewMap(value.aaViews),
     lastCatalogState: safeCatalogState(value.lastCatalogState),
+    ...(isRecord(value.later) && Object.keys(laterMap(value.later)).length ? { later: laterMap(value.later) } : {}),
   };
 }
 
@@ -529,6 +552,13 @@ export function mergeUserStates(current, incoming) {
   merged.viewModes = { ...other.viewModes, ...merged.viewModes };
   for (const [identity, view] of Object.entries(other.aaViews)) {
     if (!merged.aaViews[identity] || (view.at ?? 0) > (merged.aaViews[identity].at ?? 0)) merged.aaViews[identity] = view;
+  }
+  if (other.later) {
+    const later = { ...(merged.later ?? {}) };
+    for (const [key, entry] of Object.entries(other.later)) {
+      if (!later[key] || newer(later[key], entry, "at")) later[key] = entry;
+    }
+    merged.later = later;
   }
   return normalizeV2State(merged, current?.settings);
 }

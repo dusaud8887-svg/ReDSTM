@@ -329,8 +329,8 @@ body.reading .home { display: none; }
 .collection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
 .collection-actions .collection-continue { margin: 0; }
 /* 작품에서 찾기 · 분류·고정 (P6-3, P6-4): the same pill as the text work 분류 button. */
-:is(#collection-find, #collection-classify, .text-work-find) { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
-:is(#collection-find, #collection-classify, .text-work-find):hover { border-color: var(--accent); color: var(--accent); }
+:is(#collection-find, #collection-classify, .text-work-find, #collection-later, .text-work-later) { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
+:is(#collection-find, #collection-classify, .text-work-find, #collection-later, .text-work-later):hover { border-color: var(--accent); color: var(--accent); }
 .toc-jump { display: flex; gap: 4px; margin-left: auto; }
 /* The number field gives way (an input's default min width pushed 찾기 past the edge and wrapped it). */
 .toc-jump input { min-width: 0; }
@@ -376,6 +376,12 @@ body.reading .home { display: none; }
 .row-hide:hover, .row-hide:focus-visible { border-color: var(--line); color: var(--ink); }
 .result-list li.is-hidden .result-item { opacity: 0.55; }
 .result-list li.is-hidden .row-hide { border-color: var(--line); color: var(--accent); }
+/* 나중에 읽기 (2026-10-08): the pressed state on work pages, and 빼기 on its 기록 list. */
+:is(#collection-later, .text-work-later)[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
+.result-list li.later-row { position: relative; }
+.result-list li.later-row .result-item { padding-right: 5rem; }
+.later-remove { position: absolute; top: 50%; right: 10px; min-width: 44px; min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink-2); font-size: 12px; cursor: pointer; transform: translateY(-50%); }
+.later-remove:hover, .later-remove:focus-visible { border-color: var(--accent); color: var(--accent); }
 .view-tabs.novel-views { grid-template-columns: 1fr 1fr auto; }
 .novel-views .novel-shelf-manage { padding: 0 10px; color: var(--ink-2); font-size: 13px; }
 .text-work-summary .shelf-summary { justify-self: start; min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }

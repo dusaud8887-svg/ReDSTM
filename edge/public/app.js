@@ -99,7 +99,7 @@ const elements = Object.fromEntries(
   [
     "archive-count", "archive-state", "search-input", "search-target", "search-match", "board-filter", "mode-filter", "sort-filter", "collection-kind-filter", "collection-read-filter", "result-bar", "result-status", "result-list", "result-more",
     "reader-pane", "empty-reader", "empty-count", "reader", "reader-kicker", "reader-title", "reader-meta", "collection-context",
-    "scope-tabs", "source-switch", "search-suggest", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-entry-list",
+    "scope-tabs", "source-switch", "search-suggest", "collection-view", "collection-back", "collection-title", "collection-meta", "collection-continue", "collection-later", "collection-entry-list",
     "archive-body", "page-hint", "comments", "comment-count", "comment-list", "comments-toggle", "end-comments", "end-comments-count", "previous-post", "next-post", "previous-post-label", "next-post-label", "bookmark-post", "source-link",
     "reader-topbar-title", "reader-top-bookmark", "chapter-end-note", "end-next-kicker", "end-previous-kicker", "end-list", "end-toc",
     "theme-toggle", "reader-settings", "settings-dialog", "prose-size", "line-height", "prose-width", "prose-margin", "aa-size",
@@ -130,7 +130,7 @@ const elements = Object.fromEntries(
     "discover-day-group", "discover-day-title", "discover-day",
     "reader-bottom-list", "reader-bottom-previous", "reader-bottom-next", "reader-bottom-settings", "reader-bottom-more", "reader-toolbar-more",
     "reader-bottom-previous-label", "reader-bottom-next-label",
-    "reader-more", "reader-more-context", "more-mark-read", "more-mark-read-label", "more-toc", "more-bookmark", "more-bookmark-label", "more-note", "more-source",
+    "reader-more", "reader-more-context", "more-mark-read", "more-mark-read-label", "more-toc", "more-bookmark", "more-bookmark-label", "more-later", "more-later-label", "more-note", "more-source",
     "more-mode", "more-mode-label", "more-mode-reset", "more-immersive", "more-immersive-label",
     "catalog-toggle", "catalog-title", "catalog-subtitle", "home-action", "immersive-exit", "import-review", "import-review-summary", "import-apply", "import-merge", "import-cancel",
     "bookmark-dialog", "bookmark-form", "bookmark-dialog-post", "bookmark-note", "bookmark-tags", "bookmark-remove",
@@ -270,6 +270,7 @@ const textLibrary = createTextLibrary({
     mirrorState: (raw) => mirrorState(TEXT_STATE_KEY, raw),
     stateKey: () => stateKey(TEXT_STATE_KEY),
     showHidden: () => settings.showHidden === "on",
+    later: { has: (key) => laterOn(key), toggle: (target) => toggleLater(target) },
     trackPendingWork: (cancel) => readerSession.track(cancel),
     scheduleFrame: (callback) => readerSession.frame(callback),
     restoreAnchor: (anchor) => {
@@ -515,6 +516,7 @@ function persistUserState() {
     viewModes,
     aaViews,
     lastCatalogState: userState.lastCatalogState,
+    ...(userState.later ? { later: userState.later } : {}),
   };
   let serialized;
   try {
@@ -2134,6 +2136,8 @@ function openReaderMore() {
   const unreadBefore = readerSource === "text" ? textLibrary.previousUnreadCount() : 0;
   elements["more-mark-read"].hidden = unreadBefore === 0;
   elements["more-mark-read-label"].textContent = `이전 회차 모두 읽음 (${unreadBefore.toLocaleString("ko-KR")}화)`;
+  elements["more-later"].hidden = !readerLaterTarget();
+  syncLaterButtons();
   if (!elements["reader-more"].open) {
     moreOpener = document.activeElement;
     elements["reader-more"].showModal();
@@ -2359,6 +2363,7 @@ function savedUrl(state = currentSearchState(), view = currentView) {
   if (view === "history") params.set("view", "recent");
   if (view === "reading") params.set("view", "reading");
   if (view === "excerpts") params.set("view", "excerpts");
+  if (view === "later") params.set("view", "later");
   if (view === "stats") params.set("view", "stats");
   if (state.query) params.set("q", state.query);
   const query = params.toString();
@@ -2394,6 +2399,7 @@ function applyCatalogRoute(destination) {
   currentView = destination === "bookmarks" && params.get("view") === "recent" ? "history" :
     destination === "bookmarks" && params.get("view") === "reading" ? "reading" :
     destination === "bookmarks" && params.get("view") === "excerpts" ? "excerpts" :
+    destination === "bookmarks" && params.get("view") === "later" ? "later" :
     destination === "bookmarks" && params.get("view") === "stats" ? "stats" :
     destination === "bookmarks" ? "bookmarks" : "all";
 }
@@ -2463,7 +2469,8 @@ function updateDestinationLayout() {
     : collections ? (browsing ? "작품 둘러보기" : "작품 검색")
     : browsing ? "게시판 둘러보기" : "글 검색";
   elements["catalog-subtitle"].textContent = saved
-    ? (currentView === "history" ? "최근 읽음" : currentView === "reading" ? "읽는 중" : "저장한 글")
+    ? (currentView === "history" ? "최근 읽음" : currentView === "reading" ? "읽는 중"
+      : currentView === "later" ? "나중에 읽을 작품·글" : "저장한 글")
     : text ? "소설 · 아카라이브"
     : collections ? "연재·번역·AA 목차"
     : browsing ? "게시판별 보존 글" : "제목·작성자·분류로 찾기";
@@ -3225,6 +3232,7 @@ function renderCurrentView() {
   if (currentDestination === "text") return void textLibrary.searchChanged(elements["search-input"].value);
   if (currentView === "reading") return void renderReadingView();
   if (currentView === "excerpts") return void renderExcerptsView();
+  if (currentView === "later") return void renderLaterView();
   if (currentView === "stats") return void renderStatsView();
   if (currentScope === "collections") return void renderCollectionCatalog();
   if (currentView === "all") return requestSearch();
@@ -3240,6 +3248,108 @@ function renderCurrentView() {
     elements["search-widen"].hidden = true;
     elements["result-list"].append(...textSaved.map((item) => textResultElement(item)));
   }
+}
+
+// 나중에 읽기 (2026-10-08, Kavita's Want to Read): works and documents to read later, kept apart
+// from 저장. A target is { key, title, source, meta, route }; its route reopens it.
+function laterOn(key) {
+  return userState.later?.[key]?.on === true;
+}
+function toggleLater(target) {
+  if (!target) return false;
+  const on = !laterOn(target.key);
+  userState.later = {
+    ...(userState.later ?? {}),
+    [target.key]: { title: target.title, source: target.source, meta: target.meta ?? "", route: target.route, at: new Date().toISOString(), on },
+  };
+  persistUserState();
+  showReaderFeedback(on ? "나중에 읽기에 담았습니다" : "나중에 읽기에서 뺐습니다", 1800);
+  syncLaterButtons();
+  if (currentDestination === "bookmarks" && currentView === "later") renderLaterView();
+  return on;
+}
+function readerLaterTarget() {
+  if (readerSource === "text") return textLibrary.laterTarget();
+  if (readerSource !== "typemoon" || !currentSummary) return null;
+  return {
+    key: `post:${postIdentity(currentSummary)}`, title: currentSummary.title || "제목 없음",
+    source: boardLabel(currentSummary.board_id) || "타입문넷", meta: currentSummary.author || "",
+    route: `/read/${currentSummary.board_id}/${currentSummary.external_post_id}`,
+  };
+}
+let collectionLaterTarget = null;
+function syncLaterButtons() {
+  const readerOn = laterOn(readerLaterTarget()?.key ?? "");
+  elements["more-later"].setAttribute("aria-pressed", String(readerOn));
+  elements["more-later-label"].textContent = readerOn ? "나중에 읽기 · 빼기" : "나중에 읽기";
+  const collectionOn = laterOn(collectionLaterTarget?.key ?? "");
+  elements["collection-later"].setAttribute("aria-pressed", String(collectionOn));
+  elements["collection-later"].textContent = collectionOn ? "나중에 읽기 ✓" : "나중에 읽기";
+}
+// Text routes open the way 이어 읽기 does (list under the document); others are plain routes.
+function openLaterRoute(route) {
+  if (route.startsWith("/text?")) {
+    const params = new URLSearchParams(route.slice("/text?".length));
+    const documentRoute = params.has("item");
+    params.delete("item");
+    params.delete("chapter");
+    openTextFromHome({ identity: "", listRoute: `/text?${params}`, route: documentRoute ? route : "", progress: 0 },
+      { listOnly: !documentRoute });
+    return;
+  }
+  history.pushState({ redstmParent: currentRoute() }, "", route);
+  void handleRoute();
+}
+function renderLaterView() {
+  const query = normalized(elements["search-input"].value).trim();
+  const entries = Object.entries(userState.later ?? {})
+    .filter(([, entry]) => entry.on)
+    .filter(([, entry]) => !query || normalized(`${entry.title} ${entry.source} ${entry.meta ?? ""}`).includes(query));
+  elements["search-widen"].hidden = true;
+  elements["search-empty"].hidden = true;
+  elements["result-more"].hidden = true;
+  elements["result-status"].textContent = entries.length
+    ? `나중에 읽기 ${entries.length.toLocaleString("ko-KR")}개 · 이 브라우저` : "나중에 읽을 작품·글이 없습니다";
+  const rows = entries.map(([key, entry]) => {
+    const item = document.createElement("li");
+    item.className = "later-row";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "result-item later-item";
+    button.dataset.key = `later:${key}`;
+    button.dataset.laterRoute = entry.route;
+    const titleLine = document.createElement("span");
+    titleLine.className = "result-title-line";
+    const heading = document.createElement("strong");
+    heading.className = "result-title";
+    heading.textContent = entry.title || "제목 없음";
+    titleLine.append(heading);
+    const meta = document.createElement("span");
+    meta.className = "result-meta";
+    for (const [text, className] of [[entry.source, "result-board"], [entry.meta, ""], [`${collectionDateFormatter.format(new Date(entry.at))} 담음`, ""]]) {
+      if (!text) continue;
+      const part = document.createElement("span");
+      if (className) part.className = className;
+      part.textContent = text;
+      meta.append(part);
+    }
+    button.append(titleLine, meta);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "later-remove";
+    remove.textContent = "빼기";
+    remove.ariaLabel = `${entry.title || "항목"} 나중에 읽기에서 빼기`;
+    remove.addEventListener("click", () => toggleLater({ key, ...entry }));
+    item.append(button, remove);
+    return item;
+  });
+  if (!rows.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty-row";
+    empty.textContent = "작품 화면이나 읽기 화면의 더보기에서 나중에 읽기로 담을 수 있습니다.";
+    rows.push(empty);
+  }
+  elements["result-list"].replaceChildren(...rows);
 }
 
 // A text library row in 보관함; it opens through the text library's own routes.
@@ -3719,6 +3829,11 @@ async function openCollectionDetail(collectionId, navigation = "push", { focusPo
     elements["collection-view"].hidden = false;
     document.body.classList.add("collection-detail-open");
     elements["collection-title"].textContent = collection.title;
+    collectionLaterTarget = {
+      key: `collection:${collection.id}`, title: collection.title, source: boardLabel(collection.board_id) || "타입문넷",
+      meta: collection.kind === "oneshot" ? "단편 묶음" : "연재", route: `/collections/${collection.id}`,
+    };
+    syncLaterButtons();
     document.querySelector("#collection-classify").onclick = () => void personalLibrary.openWork({ key: workKey({ source: "typemoon", id: collection.id }), title: collection.title, source: "typemoon" }).then((opened) => { if (!opened) showReaderFeedback("이 기기에 기록을 저장할 수 없어요", 2200); });
     const unavailable = collection.entries.filter((entry) => !entry.object_key).length;
     void collectionIndex().then((index) => {
@@ -4800,7 +4915,8 @@ elements["result-list"].addEventListener("click", (event) => {
     const withinSession = Boolean(history.state?.redstmReader || history.state?.redstmCollection);
     const navigation = withinSession ? "replace" : "push";
     if (!withinSession) persistCatalogState();
-    if (button.dataset.textListRoute) {
+    if (button.dataset.laterRoute) openLaterRoute(button.dataset.laterRoute);
+    else if (button.dataset.textListRoute) {
       const route = button.dataset.textRoute;
       openTextFromHome({ identity: "", listRoute: button.dataset.textListRoute, route, progress: 0 }, { listOnly: !route });
     } else if (button.dataset.collectionId) void openCollectionDetail(Number(button.dataset.collectionId), navigation);
@@ -4888,6 +5004,11 @@ for (const [id, command] of [["more-toc", "toc"], ["more-bookmark", "bookmark"]]
     readerCommand(command);
   });
 }
+elements["more-later"].addEventListener("click", () => {
+  toggleLater(readerLaterTarget());
+  closeReaderMore();
+});
+elements["collection-later"].addEventListener("click", () => toggleLater(collectionLaterTarget));
 elements["more-note"].addEventListener("click", () => {
   closeReaderMore();
   if (readerSource === "text") openTextBookmarkEditor();

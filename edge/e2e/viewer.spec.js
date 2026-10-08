@@ -2362,3 +2362,37 @@ test("AA touch pan follows both axes when a horizontal drag becomes diagonal", a
   expect(following.x).toBe(edge.x);
   expect(following.y - edge.y).toBeGreaterThan(10);
 });
+
+// 나중에 읽기 (2026-10-08): works and posts kept apart from 저장, listed under 기록 › 나중에.
+test("나중에 읽기 keeps works and posts apart from saved posts", async ({ page }) => {
+  await useCollectionFixture(page, { collectionV2: true });
+  await page.goto("/collections/1");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const later = page.locator("#collection-later");
+  await expect(later).toHaveAttribute("aria-pressed", "false");
+  await later.click();
+  await expect(later).toHaveAttribute("aria-pressed", "true");
+
+  await page.goto("/read/board_a/3");
+  await expect(page.locator("#reader-title")).toHaveText("비소속");
+  await page.evaluate(() => document.querySelector("#more-later").click());
+
+  await page.goto("/saved?view=later");
+  await expect(page.locator('[data-view="later"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#result-list .result-title")).toHaveText(["비소속", "테스트 연작"]);
+  await expect(page.locator("#result-status")).toContainText("나중에 읽기 2개");
+  // Not a bookmark: 저장 stays empty.
+  await page.locator('[data-view="bookmarks"]').click();
+  await expect(page.locator("#result-list .result-title")).toHaveCount(0);
+
+  await page.locator('[data-view="later"]').click();
+  await page.locator("#result-list .result-item", { hasText: "테스트 연작" }).click();
+  await expect(page).toHaveURL(/\/collections\/1$/);
+  await expect(page.locator("#collection-later")).toHaveAttribute("aria-pressed", "true");
+  await page.goBack();
+  await page.locator("#result-list li", { hasText: "비소속" }).locator(".later-remove").click();
+  await expect(page.locator("#result-list .result-title")).toHaveText(["테스트 연작"]);
+  // The list survives a reload.
+  await page.reload();
+  await expect(page.locator("#result-list .result-title")).toHaveText(["테스트 연작"]);
+});

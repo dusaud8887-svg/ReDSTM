@@ -2836,3 +2836,21 @@ test("reading anchors reuse the text model and refresh synchronously after a bod
   expect(result.first).toContain("Paragraph");
   expect(result.second).toContain("Paragraph");
 });
+
+// 나중에 읽기 (2026-10-08) from a text work's header; it reopens the work from 기록 › 나중에.
+test("Text: a novel work goes on 나중에 읽기 and reopens from 기록", async ({ page }) => {
+  await useLongCollection(page, 3);
+  const workId = await useLongNovel(page, 4);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  const later = page.locator(".text-work-later");
+  await expect(later).toHaveText("나중에 읽기");
+  await later.click();
+  await expect(later).toHaveAttribute("aria-pressed", "true");
+  await page.goto("/saved?view=later");
+  const row = page.locator("#result-list .result-item", { hasText: "긴 소설" });
+  await expect(row).toContainText("소설");
+  await row.click();
+  await expect(page).toHaveURL(/\/text\?lane=novel&work=/);
+  await expect(page.locator(".text-work-later")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('#result-list [data-key="chapter:2"]')).toBeVisible();
+});
