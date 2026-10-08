@@ -185,6 +185,23 @@ def _parse_base_anchored(rendered: str, base: datetime) -> datetime | None:
     return None
 
 
+# TypeMoon lists recent posts as "24시간 56분전" / "32분전" / "1일 3시간전": compound or
+# unspaced forms dateparser leaves unparsed, which left created_at_source NULL and sorted
+# those posts after the oldest ones (2026-10-08).
+_COMPACT_RELATIVE = re.compile(
+    r"(?:(?P<days>\d+)\s*일)?\s*(?:(?P<hours>\d+)\s*시간)?\s*"
+    r"(?:(?P<minutes>\d+)\s*분)?\s*(?:(?P<seconds>\d+)\s*초)?\s*전"
+)
+
+
+def _parse_compact_relative(rendered: str, base: datetime | None) -> datetime | None:
+    match = _COMPACT_RELATIVE.fullmatch(rendered)
+    if base is None or match is None or not any(match.groupdict().values()):
+        return None
+    parts = {name: int(value or 0) for name, value in match.groupdict().items()}
+    return base.astimezone(_KST) - timedelta(**parts)
+
+
 def _parse_relative(rendered: str, base: datetime | None) -> datetime | None:
     # dateparser is heavy to import and only needed for the natural-language remainder, so it
     # is loaded lazily. It is restricted to the relative-time parser: that reliably resolves
@@ -224,6 +241,8 @@ def normalize_source_timestamp(value: object, *, base: datetime | None = None) -
     parsed = _parse_absolute(rendered)
     if parsed is None and base is not None:
         parsed = _parse_base_anchored(rendered, base)
+    if parsed is None:
+        parsed = _parse_compact_relative(rendered, base)
     if parsed is None:
         parsed = _parse_relative(rendered, base)
     if parsed is None:

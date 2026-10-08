@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from compression import zstd
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -491,6 +492,25 @@ def test_search_index_appends_is_aa_and_popularity_fields(tmp_path: Path) -> Non
     assert bool(rows[("ss_temp01", 1)][7]) is False
     assert rows[("aa_a01", 2)][8:] == [2, 2]
     assert rows[("ss_temp01", 1)][8:] == [1, 1]
+
+
+def test_search_index_orders_an_undated_post_by_when_it_was_first_listed(
+    tmp_path: Path,
+) -> None:
+    """A post whose source date never parsed was ordered after the oldest ones (오래된순)."""
+    source = tmp_path / "canonical.sqlite"
+    output = tmp_path / "static"
+    _canonical(source)
+    with sqlite3.connect(source) as connection:
+        connection.execute(
+            "UPDATE posts SET created_at_source = NULL, first_seen_at = '2026-10-07T00:00:00+00:00'"
+            " WHERE board_id = 'ss_temp01' AND external_post_id = 1"
+        )
+    export_static(source, output)
+
+    release = json.loads((output / "release.json").read_bytes())
+    rows = _json_zstd(output / release["search"]["object_key"])["posts"]
+    assert (rows[0][0], rows[0][1]) == ("ss_temp01", 1)
 
 
 def test_collection_summaries_total_preserved_views_and_comments(tmp_path: Path) -> None:

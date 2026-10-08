@@ -460,7 +460,10 @@ def _search_row_bytes(
                v.content_sha256, v.comments_sha256, v.capture_origin, v.warc_record_id
         FROM posts AS p
         JOIN post_versions AS v ON v.id = p.latest_version_id
-        ORDER BY p.created_at_source DESC, p.external_post_id DESC, p.board_id DESC
+        -- A post whose source date never parsed sorts by when it was first listed, not after
+        -- the oldest posts (SQLite puts NULL last in DESC; "오래된순" then led with them).
+        ORDER BY COALESCE(p.created_at_source, p.first_seen_at) DESC,
+                 p.external_post_id DESC, p.board_id DESC
         """
     ):
         board_id = str(row["board_id"])

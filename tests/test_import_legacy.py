@@ -119,6 +119,15 @@ def test_normalize_source_timestamp_keeps_a_leap_day_ahead_of_the_capture_clock(
     assert normalize_source_timestamp("02-29", base=early) == "2024-02-28T15:00:00+00:00"
 
 
+def test_normalize_source_timestamp_reads_compact_relative_listing_forms() -> None:
+    base = datetime(2026, 10, 8, 9, 0, tzinfo=_KST)
+    assert normalize_source_timestamp("24시간 56분전", base=base) == "2026-10-06T23:04:00+00:00"
+    assert normalize_source_timestamp("32분전", base=base) == "2026-10-07T23:28:00+00:00"
+    assert normalize_source_timestamp("1일 3시간전", base=base) == "2026-10-06T21:00:00+00:00"
+    assert normalize_source_timestamp("32분전") is None  # A relative form needs its capture time.
+    assert normalize_source_timestamp("전", base=base) is None
+
+
 def test_normalize_source_timestamp_anchors_year_less_and_time_only_forms_to_base() -> None:
     base = datetime(2026, 7, 15, 14, 30, tzinfo=_KST)
     # "MM-DD" earlier in the capture year stays in that year...
