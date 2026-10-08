@@ -72,9 +72,13 @@ jobs:
           path: |
             edge/e2e/visual.spec.js-snapshots
             edge/test-results
+      # A visual diff must not hide the migration and deploy evidence: run them regardless.
       - name: Validate empty and existing-schema D1 migrations
+        if: ${{ !cancelled() }}
         run: npm run test:d1
-      - run: npx wrangler deploy --dry-run --strict
+      - name: Strict Worker deploy dry-run
+        if: ${{ !cancelled() }}
+        run: npx wrangler deploy --dry-run --strict
 
   # One job per viewport project instead of all four in a row: about 4-5 minutes each, side by side.
   edge-e2e:
@@ -140,8 +144,10 @@ jobs:
           uv export --frozen --all-extras --all-groups --no-hashes --no-emit-project --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
           uvx pip-audit==2.10.1 -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --progress-spinner off
       - name: edge lock
+        if: ${{ !cancelled() }}
         run: npm audit --audit-level=high
         working-directory: edge
       - name: text-edge lock
+        if: ${{ !cancelled() }}
         run: npm audit --audit-level=high
         working-directory: text-edge
