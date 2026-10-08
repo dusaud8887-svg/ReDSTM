@@ -316,7 +316,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const withPosts = arcaliveWorks.filter((item) => Array.isArray(item.post_ids));
     for (const item of withPosts) {
       for (const postId of item.post_ids) {
-        const record = history.history[`arcalive:${item.board}:${postId}:text`];
+        // A post saved with its images is the "both" lane copy of the same chapter.
+        const record = history.history[`arcalive:${item.board}:${postId}:text`]
+          || history.history[`arcalive:${item.board}:${postId}:both`];
         if (record) addProgress(progress, item.work_id, record);
       }
     }

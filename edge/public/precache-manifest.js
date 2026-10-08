@@ -206,7 +206,7 @@ export default [
   },
   {
     "url": "/text-library.js",
-    "revision": "7881c5385123c79f"
+    "revision": "9cc53894646e1477"
   },
   {
     "url": "/text-model.js",

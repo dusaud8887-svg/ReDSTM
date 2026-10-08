@@ -329,6 +329,53 @@ def test_arcalive_publisher_emits_work_view_without_changing_file_catalog(tmp_pa
     ]
 
 
+def test_arcalive_works_group_both_lane_posts_once(tmp_path: Path) -> None:
+    """A post saved with images (lane both) joins its work; text wins when both exist."""
+    inbox = tmp_path / "inbox"
+    _incoming_batch(inbox)
+    db_path = tmp_path / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE text_archive_items SET title='긴 연재 제목 1화'")
+        for post_id, content_lane, number in (
+            ("109", "both", 2),
+            ("110", "both", 3),
+            ("110", "text", 3),
+        ):
+            db.execute(
+                """INSERT INTO text_archive_items
+                   (identity,lane,source_site,source_board,source_post_id,source_category,
+                    content_lane,source_url,title,author,content_sha256,bytes,object_key,
+                    batch_id,imported_at)
+                   SELECT ?,lane,source_site,source_board,?,source_category,?,source_url,?,
+                          author,content_sha256,bytes,object_key,batch_id,imported_at
+                   FROM text_archive_items WHERE source_post_id='108'""",
+                (
+                    f"arcalive:novel:{post_id}:{content_lane}",
+                    post_id,
+                    content_lane,
+                    f"긴 연재 제목 {number}화",
+                ),
+            )
+    tree = publisher.build_publish_tree(
+        db_path, tmp_path / "objects", tmp_path / "build", "arcalive"
+    )
+    release = json.loads((tmp_path / "build" / tree["release_key"]).read_text(encoding="utf-8"))
+    assert release["item_count"] == 4
+    work_page = json.loads(
+        (tmp_path / "build" / release["work_catalog_pages"][0]["key"]).read_text(encoding="utf-8")
+    )
+    work = work_page["items"][0]
+    assert work["chapter_count"] == 3
+    assert work["post_ids"] == [108, 109, 110]
+    detail = json.loads((tmp_path / "build" / work["detail_key"]).read_text(encoding="utf-8"))
+    assert [chapter["identity"] for chapter in detail["chapters"]] == [
+        "arcalive:novel:108:text",
+        "arcalive:novel:109:both",
+        "arcalive:novel:110:text",
+    ]
+
+
 def test_arcalive_author_repair_verifies_objects_and_replays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

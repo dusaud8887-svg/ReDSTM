@@ -246,11 +246,15 @@ def _plan_write(stream: TextIO, *values: str) -> None:
 
 
 def _arcalive_works(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    by_post = {
-        (str(row["source_board"]), str(row["source_category"]), int(row["source_post_id"])): row
-        for row in rows
-        if row["content_lane"] == "text"
-    }
+    # Posts saved with their images arrive as lane "both"; when a post has both lanes the
+    # text row stands for it, so a chapter is never listed twice (joint review J4).
+    by_post: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for row in rows:
+        if row["content_lane"] not in {"text", "both"}:
+            continue
+        key = (str(row["source_board"]), str(row["source_category"]), int(row["source_post_id"]))
+        if key not in by_post or row["content_lane"] == "text":
+            by_post[key] = row
     preview = preview_collections(
         PostTitle(
             json.dumps([row["source_board"], row["source_category"]], ensure_ascii=False),
@@ -283,7 +287,7 @@ def _arcalive_works(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], di
             "chapter_count": len(chapters),
             "last_imported_at": max(str(row["imported_at"]) for row in chapters),
             # Reading order; the Reader counts read chapters per work from these
-            # (identity = arcalive:<board>:<post_id>:text) without loading every detail.
+            # (identity = arcalive:<board>:<post_id>:text or :both) without loading every detail.
             "post_ids": [int(row["source_post_id"]) for row in chapters],
         }
         detail = {
@@ -1430,7 +1434,8 @@ def publish_lane(
     metadata_digest = metadata_fingerprint(db_path, lane)
     if lane == "arcalive":
         metadata_digest = hashlib.sha256(
-            f"arcalive-works-v1:{metadata_digest}".encode()
+            # v2: works group "both" posts too; the bump rebuilds an unchanged lane once.
+            f"arcalive-works-v2:{metadata_digest}".encode()
         ).hexdigest()
     # Pre-flight, then the catalog build rechecks between pages without holding the lock
     # while it writes local files. A TypeMoon unit that starts mid-build stops the step.
