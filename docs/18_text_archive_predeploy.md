@@ -131,7 +131,9 @@ DB 연결 시 숫자 source ID로 보완한다.
 2. importer는 producer/schema/batch/manifest digest, path allowlist, symlink/추가 파일, 항목 ≤100,
    배치 ≤32MiB, 파일 ≤2MiB, manifest ≤256KiB, UTF-8/NUL, SHA-256을 검사한다. ready 없음은 no-op이며 receipt를
    쓰지 않는다. 같은 identity+SHA는 duplicate/object 재사용, identity+다른 SHA는
-   `held_conflict`로 보류한다. 새 본문 객체는 content-addressed, local origin은 자동 삭제하지 않는다.
+   `held_conflict`로 보류한다. 단 수동 문서(lane `manual`)는 사용자 자신의 파일이라 다른 SHA가 `accepted`로
+   그 항목의 본문을 교체한다(2026-10-08: 편집·재해독본 반영, 이전 객체는 남는다). 새 본문 객체는
+   content-addressed, local origin은 자동 삭제하지 않는다.
 3. R2 없이 import receipt revision 1을 만들 수 있다. publisher는 lane index를 500항목 페이지로
    나누고 source/canonical IDs 및 content hash를 포함한다. `rclone copyto` 후 `rclone cat`으로
    매 새 immutable object/index/release를 확인한다. TypeMoon publisher나 remote 이름은 호출하지 않는다.

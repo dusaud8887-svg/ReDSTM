@@ -1499,6 +1499,32 @@ def import_batch(
                             }
                         )
                         continue
+                    body = candidate["body"]
+                    if candidate["lane"] == "manual" and isinstance(body, bytes):
+                        # A manual document is the user's own file: its newer body (an edit,
+                        # or a corrected decode, 2026-10-08) replaces the stored one. Other
+                        # lanes keep source IDs immutable and hold the change below.
+                        object_key = _store_object(object_root, body, digest)
+                        db.execute(
+                            """INSERT OR IGNORE INTO text_archive_objects(
+                               sha256,bytes,object_key,first_seen_at) VALUES(?,?,?,?)""",
+                            (digest, len(body), object_key, now),
+                        )
+                        db.execute(
+                            """UPDATE text_archive_items SET content_sha256=?,bytes=?,
+                               object_key=?,batch_id=?,imported_at=? WHERE identity=?""",
+                            (digest, len(body), object_key, batch_id, now, identity),
+                        )
+                        results.append(
+                            {
+                                "identity": identity,
+                                "status": "accepted",
+                                "canonical_work_id": existing["canonical_work_id"],
+                                "canonical_chapter_id": existing["canonical_chapter_id"],
+                                "content_sha256": digest,
+                            }
+                        )
+                        continue
                     db.execute(
                         """INSERT OR IGNORE INTO text_archive_conflicts
                            (batch_id,identity,existing_sha256,incoming_sha256,reason,detected_at)

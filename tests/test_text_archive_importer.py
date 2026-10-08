@@ -82,10 +82,18 @@ def test_manual_document_import_publish_duplicate_and_revision(
     receipt = importer.import_batch(inbox, _BATCHES[1], db_path, objects, receipts)
     assert receipt is not None
     assert receipt["items"][0]["status"] == "duplicate"
+    # The user's own file changed (an edit or a corrected decode): the newer body replaces it.
     _batch(inbox, _BATCHES[2], body=b"modified", item=item)
     receipt = importer.import_batch(inbox, _BATCHES[2], db_path, objects, receipts)
     assert receipt is not None
-    assert receipt["items"][0]["status"] == "held_conflict"
+    assert receipt["items"][0]["status"] == "accepted"
+    assert receipt["items"][0]["content_sha256"] == hashlib.sha256(b"modified").hexdigest()
+    with sqlite3.connect(db_path) as db:
+        replaced = db.execute("SELECT content_sha256,object_key FROM text_archive_items").fetchone()
+        assert db.execute("SELECT COUNT(*) FROM text_archive_conflicts").fetchone()[0] == 0
+    assert replaced[0] == hashlib.sha256(b"modified").hexdigest()
+    assert (objects / replaced[1]).read_bytes() == b"modified"
+    assert (objects / row[2]).read_bytes() == body
 
 
 @pytest.mark.parametrize(
