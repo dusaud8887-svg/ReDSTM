@@ -1,6 +1,8 @@
 {
   "schema": 1,
   "limits": {
+    "availability_page_bytes": 1048576,
+    "availability_page_items": 500,
     "batch_items": 100,
     "batch_bytes": 67108864,
     "file_bytes": 2097152,

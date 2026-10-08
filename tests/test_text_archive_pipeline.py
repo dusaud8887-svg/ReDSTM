@@ -841,6 +841,64 @@ def test_novel_availability_streaming_keeps_snapshot_hash_across_pages(
     assert pointer["snapshot_id"] == hashlib.sha256(publisher._json_bytes(items)).hexdigest()
 
 
+def test_novel_availability_pages_stay_under_the_newtomi_byte_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long Korean metadata closes a page before 500 items instead of exceeding 1 MiB."""
+    inbox = tmp_path / "inbox"
+    batch_id = "20260923T140000Z-pc-00000010"
+    _incoming_novel_batch(inbox, batch_id)
+    db_path = tmp_path / "state" / "text.sqlite"
+    receipts = inbox / "receipts"
+    importer.import_batch(inbox, batch_id, db_path, tmp_path / "objects", receipts)
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        columns = [row[1] for row in db.execute("PRAGMA table_info(text_archive_items)")]
+        original = dict(
+            db.execute("SELECT * FROM text_archive_items WHERE lane='novel'").fetchone()
+        )
+        db.execute("DELETE FROM text_archive_items")
+        rows = []
+        for index in range(1200):
+            row = dict(original)
+            row["identity"] = f"novel_chapter:toki:63670:{index:07d}"
+            row["source_chapter_id"] = row["canonical_chapter_id"] = f"{index:07d}"
+            row["title"] = "가" * 500
+            row["author"] = "나" * 300
+            row["chapter_label"] = "다" * 300
+            rows.append(row)
+        db.executemany(
+            f"INSERT INTO text_archive_items({','.join(columns)}) "
+            f"VALUES({','.join('?' for _ in columns)})",
+            [[row[column] for column in columns] for row in rows],
+        )
+        db.executemany(
+            "INSERT INTO text_archive_publications(key,sha256,verified_at) VALUES(?,?,?)",
+            [
+                (f"item:{row['identity']}", original["content_sha256"], "2026-09-25T00:00:00Z")
+                for row in rows
+            ],
+        )
+    result = publisher.build_availability_snapshot(db_path, receipts)
+    pointer = json.loads((receipts / "availability/novel/current.json").read_text(encoding="utf-8"))
+    manifest = json.loads((inbox / pointer["manifest_key"]).read_text(encoding="utf-8"))
+    sizes = [(inbox / page["key"]).stat().st_size for page in manifest["pages"]]
+    assert result["item_count"] == sum(page["item_count"] for page in manifest["pages"]) == 1200
+    assert manifest["page_count"] > 3 and manifest["page_size"] == 500
+    assert all(0 < page["item_count"] <= 500 for page in manifest["pages"])
+    assert max(sizes) <= publisher._AVAILABILITY_PAGE_BYTES
+    assert max(sizes) > publisher._AVAILABILITY_PAGE_BYTES - 4096
+
+    # One item that cannot fit any page leaves the previous current.json in place.
+    monkeypatch.setattr(publisher, "_AVAILABILITY_PAGE_BYTES", 1024)
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE text_archive_items SET author='라' WHERE source_chapter_id='0000000'")
+    with pytest.raises(ValueError, match="exceeds a page"):
+        publisher.build_availability_snapshot(db_path, receipts)
+    after = json.loads((receipts / "availability/novel/current.json").read_text(encoding="utf-8"))
+    assert after == pointer
+
+
 def test_novel_availability_keeps_newtomi_item_contract(tmp_path: Path) -> None:
     """Newtomi rejects a whole snapshot on one item outside main/side or free access."""
     inbox = tmp_path / "inbox"

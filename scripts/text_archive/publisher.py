@@ -39,6 +39,9 @@ _INDEX_PAGE_SIZE = 500
 _RCLONE_CONFIG = "/etc/redstm-text/rclone.conf"
 _RCLONE_TIMEOUT_S = 5 * 60
 _AVAILABILITY_PAGE_SIZE = 500
+# Newtomi reads each availability page with a 1 MiB cap (_MAX_REMOTE_PAGE_BYTES), so a page
+# closes early when the next item would push its serialized bytes past it.
+_AVAILABILITY_PAGE_BYTES = 1024 * 1024
 # Release manifests kept per lane besides the active one; older unreferenced indexes are pruned.
 _RELEASE_RETENTION = 5
 # Publishing reruns a minute after each run, so five releases can be minutes old. A tab keeps
@@ -1276,12 +1279,35 @@ def build_availability_snapshot(
                 }
             )
 
+        # Bytes of the page envelope with an empty item list; each item adds its own JSON
+        # plus one comma separator.
+        envelope_bytes = len(
+            _json_bytes(
+                {
+                    "schema": 1,
+                    "lane": "novel",
+                    "snapshot_id": snapshot_id,
+                    "page": 999999,
+                    "items": [],
+                }
+            )
+        )
         page_items: list[dict[str, Any]] = []
+        page_bytes = envelope_bytes
         for item in items():
+            item_bytes = len(_json_bytes(item)) - 1 + (1 if page_items else 0)
+            if page_items and page_bytes + item_bytes > _AVAILABILITY_PAGE_BYTES:
+                write_page(page_items)
+                page_items, page_bytes = [], envelope_bytes
+                item_bytes -= 1
+            if page_bytes + item_bytes > _AVAILABILITY_PAGE_BYTES:
+                # current.json keeps the previous snapshot rather than one the PC rejects.
+                raise ValueError(f"availability item {item['identity']} exceeds a page")
             page_items.append(item)
+            page_bytes += item_bytes
             if len(page_items) == _AVAILABILITY_PAGE_SIZE:
                 write_page(page_items)
-                page_items = []
+                page_items, page_bytes = [], envelope_bytes
         if page_items:
             write_page(page_items)
 

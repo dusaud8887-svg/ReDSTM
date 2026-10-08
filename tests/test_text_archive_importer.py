@@ -250,6 +250,8 @@ def test_contract_fixture_hash_and_copies_match() -> None:
     assert fixture["schema"] == 1
     assert len(body) == fixture["body"]["bytes"]
     assert hashlib.sha256(body).hexdigest() == fixture["body"]["sha256"]
+    assert fixture["limits"]["availability_page_items"] == publisher._AVAILABILITY_PAGE_SIZE
+    assert fixture["limits"]["availability_page_bytes"] == publisher._AVAILABILITY_PAGE_BYTES
     for newtomi_copy in (
         Path(r"E:\newtomi\tests\fixtures\text_archive_contract.json"),
         Path(__file__).resolve().parents[2]

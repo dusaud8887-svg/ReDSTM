@@ -148,11 +148,14 @@ DB 연결 시 숫자 source ID로 보완한다.
 5. novel lane의 R2 pointer/readback과 revision-2 receipt 뒤에
    `receipts/availability/novel/snapshots/<snapshot_id>/page-NNNNNN.json`과 `manifest.json`을
    content-addressed/immutable하게 쓴 다음 `current.json`을 마지막에 교체한다. `snapshot_id`는
-   canonical JSON item array SHA-256이며 페이지당 500개다. snapshot에는 실제 R2 readback된 item만
+   canonical JSON item array SHA-256이며 페이지당 최대 500개다. 다음 항목이 페이지 직렬화 크기를 1 MiB
+   (Newtomi 수신 상한)보다 크게 만들면 500개 전에 페이지를 닫는다(2026-10-08 공동 검토 J02). manifest `page_size`는
+   500(최대치)을 유지하고 페이지별 `item_count`가 실제 개수다. 한 항목이 혼자 1 MiB를 넘으면 snapshot을 쓰지 않고
+   이전 `current.json`을 유지한다. snapshot에는 실제 R2 readback된 item만
    들어가고 본문은 없다. 본문 SHA가 바뀌지 않는 재게시의 `published_at`은 유지해 no-op publish가
    무의미한 snapshot 변화를 만들지 않게 한다. Newtomi는 pointer/manifest/page 해시·ID·count를
    검증한 뒤 페이지별 checkpoint를 저장한다. 이전 snapshot에서 빠진 항목은 자동 삭제하지 않는다.
-   snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 500건씩 파일로
+   snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 위 규칙의 페이지로
    내보낸다. 게시 트리는 같은 SQLite 읽기 시점에서 500건 페이지와 JSONL 게시 계획을 파일로
    내보내며, 원문 객체 확인 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
 5-1. PC 상태 전달(2026-10-04, 뉴토미 피드백): publisher는 **매 실행마다**(게시·양보·실패 모두)
