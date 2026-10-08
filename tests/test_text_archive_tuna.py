@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import requests
 
 from scripts.text_archive import publisher, tuna
 from scripts.text_archive.importer import _object_key
@@ -73,10 +74,13 @@ class FakeSite:
         self.responses: dict[int, list[dict[str, Any]]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.status: dict[str, int] = {}
+        self.errors: dict[str, Exception] = {}
 
     def get(self, url: str, *, params: dict[str, Any], **_: Any) -> _Reply:
         path = url.removeprefix(tuna._BASE)
         self.calls.append((path, dict(params)))
+        if path in self.errors:
+            raise self.errors[path]
         if path in self.status:
             return _Reply(self.status[path])
         if path == "/api/boards/anchor/threads":
@@ -330,6 +334,27 @@ def test_failures_back_off_per_thread_and_gone_keeps_saved_responses(
             "SELECT retry_at FROM text_tuna_threads WHERE thread_id=1"
         ).fetchone()[0]
         assert retry_at == 1 + tuna._RETRY_BASE
+
+
+def test_a_network_error_backs_off_the_thread_so_older_threads_proceed(
+    archive: tuple[Path, Path, FakeSite],
+) -> None:
+    db_path, _, site = archive
+    site.threads = [
+        _thread(1, count=2, updated="2026-10-07T02:00:00Z"),
+        _thread(2, count=2, updated="2026-10-07T01:00:00Z"),
+    ]
+    site.responses = {1: [_response(1, 0)], 2: [_response(2, 0), _response(2, 1)]}
+    _step(archive, 0)
+    site.errors["/api/boards/anchor/threads/1/responses"] = requests.ReadTimeout()
+    first = _step(archive, 1)
+    assert first == {"status": "failed", "reason": "network_ReadTimeout", "thread_id": 1}
+    with closing(_db(db_path)) as db:
+        row = db.execute("SELECT failures,retry_at FROM text_tuna_threads WHERE thread_id=1")
+        assert tuple(row.fetchone()) == (1, 1 + tuna._RETRY_BASE)
+        site_failures = db.execute("SELECT value FROM text_tuna_state WHERE key='site_failures'")
+        assert site_failures.fetchone()[0] == "1"
+    assert _step(archive, 2)["thread_id"] == 2
 
 
 def test_repeated_site_failures_cool_the_collector_down(

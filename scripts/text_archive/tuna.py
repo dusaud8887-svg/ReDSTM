@@ -728,6 +728,14 @@ def run_one(
                 # One malformed thread backs off alone instead of stopping every run on it.
                 _thread_backoff(db, int(thread["thread_id"]), now)
                 return {"status": "failed", "reason": str(exc), "thread_id": thread["thread_id"]}
+            except requests.RequestException as exc:
+                # A timeout on the newest thread must not reselect it every run: it backs off
+                # like an HTTP error while the site breaker still counts the failure.
+                _thread_backoff(db, int(thread["thread_id"]), now)
+                return {
+                    **_site_failure(db, now, f"network_{type(exc).__name__}"),
+                    "thread_id": thread["thread_id"],
+                }
         except requests.RequestException as exc:
             return _site_failure(db, now, f"network_{type(exc).__name__}")
         finally:
