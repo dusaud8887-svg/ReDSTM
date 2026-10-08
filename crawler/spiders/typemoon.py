@@ -143,7 +143,6 @@ _MARGIN_LEFT = re.compile(
 )
 # TypeMoon DOM reply indentation is a parser invariant, not an operator setting.
 _COMMENT_DEPTH_INDENT_PX = 15
-_AA_STYLE_HINT = re.compile(r"saitamaar|ms\s*(?:p\s*)?gothic|ipamona|mona", re.IGNORECASE)
 _INTEGER_TOKEN = re.compile(r"(?<![0-9,])[0-9][0-9,]*(?![0-9,])")
 
 
@@ -266,13 +265,10 @@ def _waf_block_headers(response: Any) -> bool:
     return "cloudflare" in server or response.headers.get("cf-ray") is not None
 
 
-def _is_aa(board_id: str, category: str | None, content: Selector) -> bool:
-    if board_id.startswith("aa_") or (category and category.casefold() == "aa"):
-        return True
-    if content.xpath(".//*[contains(concat(' ', normalize-space(@class), ' '), ' AA_Text ')]"):
-        return True
-    styles = [content.attrib.get("style", ""), *content.css("*::attr(style)").getall()]
-    return any(_AA_STYLE_HINT.search(style) for style in styles)
+def _is_aa(board_id: str) -> bool:
+    # Only the AA boards are AA (user decision 2026-10-08). Prose boards carry AA_Text
+    # classes and AA fonts in ordinary novels, so per-post markup no longer decides.
+    return board_id.startswith("aa_")
 
 
 def _comment_depth(node: Selector) -> int:
@@ -1291,7 +1287,7 @@ class TypeMoonSpider(scrapy.Spider):
             views=views if views is not None else 0,
             body_html=body_html,
             body_text=body_text,
-            is_aa=_is_aa(board_id, category, content),
+            is_aa=_is_aa(board_id),
             comments=comments,
             warnings=warnings,
             **capture_metadata,

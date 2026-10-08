@@ -283,7 +283,8 @@ def test_detail_and_comments_use_explicit_selectors() -> None:
     assert post["title"] == "대표 상세 게시물"
     assert post["category"] == "창작"
     assert post["views"] == 1234
-    assert post["is_aa"] is True
+    # AA_Text markup on a prose board no longer makes the post AA.
+    assert post["is_aa"] is False
     assert "첫 문단입니다." in post["body_text"]
     assert len(post["comments"]) == 1
     assert post["comments"][0]["content_text"] == "댓글\n 내용"
@@ -467,46 +468,34 @@ def test_anti_bot_interstitial_listing_trips_network_breaker_not_parse_drift() -
     assert spider.failure_codes == {"network_error"}
 
 
-def test_root_aa_class_alone_does_not_force_aa_mode() -> None:
-    url = "https://www.typemoon.net/write_free21/62068"
+@pytest.mark.parametrize(
+    ("board", "content", "is_aa"),
+    [
+        (
+            "write_free21",
+            "<pre class='AA_Text' style='font-family: Saitamaar'>(´・ω・`)</pre>",
+            False,
+        ),
+        ("write_free21", "<p>일반 산문이다.</p>", False),
+        ("aa_a01", "<p>일반 산문이다.</p>", True),
+    ],
+)
+def test_only_aa_boards_are_aa_whatever_the_post_markup(
+    board: str, content: str, is_aa: bool
+) -> None:
+    url = f"https://www.typemoon.net/{board}/62068"
     response = HtmlResponse(
         url=url,
         body=(
-            "<article class='board-view'><h4><strong>산문</strong></h4>"
+            "<article class='board-view'><h4><strong>AA</strong></h4>"
             "<div class='views'>1</div>"
-            "<div class='wr-content AA_Text'><p>일반 산문이다.</p></div></article>"
+            f"<div class='wr-content AA_Text'>{content}</div></article>"
         ).encode(),
         encoding="utf-8",
         request=Request(url=url),
     )
 
-    assert list(TypeMoonSpider().parse_detail(response))[0]["is_aa"] is False
-
-
-def test_aa_font_hint_ignores_body_text_and_reads_style_attributes() -> None:
-    url = "https://www.typemoon.net/write_free21/62068"
-
-    def detail(content: str) -> HtmlResponse:
-        return HtmlResponse(
-            url=url,
-            body=(
-                "<article class='board-view'><h4><strong>산문</strong></h4>"
-                "<div class='views'>1</div>"
-                f"<div class='wr-content'>{content}</div></article>"
-            ).encode(),
-            encoding="utf-8",
-            request=Request(url=url),
-        )
-
-    prose = list(TypeMoonSpider().parse_detail(detail("<p>Ramona는 Monaco로 떠났다.</p>")))[0]
-    assert prose["is_aa"] is False
-
-    styled = list(
-        TypeMoonSpider().parse_detail(
-            detail("<pre style='font-family: Saitamaar, monospace'>(´・ω・`)</pre>")
-        )
-    )[0]
-    assert styled["is_aa"] is True
+    assert list(TypeMoonSpider().parse_detail(response))[0]["is_aa"] is is_aa
 
 
 def test_comment_identity_and_reply_depth_are_preserved() -> None:

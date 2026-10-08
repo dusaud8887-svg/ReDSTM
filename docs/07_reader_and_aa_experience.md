@@ -251,7 +251,10 @@ style을 통째로 붙이지 않고 아래 한 component 규칙을 유지한다.
 Mode source of truth는 exporter의 `is_aa`다. `AA_Text` class 하나, box-drawing 문자 수, font hint
 하나만으로 browser가 재판정하지 않는다.
 
-- 기본 mode는 exported `is_aa`를 따른다.
+- 기본 mode는 exported `is_aa`를 따른다. `is_aa`는 게시판으로만 정한다(2026-10-08 사용자 결정): TypeMoon `aa_*`
+  게시판과 참치어장(tuna 레인)만 AA이고, 나머지 게시판·아카라이브·소설·수동 텍스트는 본문에 `AA_Text` class나 AA 글꼴이
+  있어도 일반 글이다. 기존 글은 `python -m scripts.reset_aa_by_board --archive <canonical> --apply`로 맞추고 다음 export가
+  바뀐 글을 다시 게시한다.
 - 잘못 판정된 글을 위해 post별 `Prose로 보기 / AA로 보기` override를 제공한다.
 - override는 stable post identity별 local state이며 원본 data를 수정하지 않는다.
 - mode 변경 시 scroll은 가장 가까운 progress ratio로 보정하고 설정은 mode별 값을 유지한다.
