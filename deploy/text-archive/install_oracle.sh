@@ -62,12 +62,10 @@ uv python install 3.14.6 --install-dir /opt/redstm-text/python
 uv venv --python /opt/redstm-text/python/cpython-3.14.6-linux-x86_64-gnu/bin/python3.14 \
   "$release/.venv"
 uv pip install --python "$release/.venv/bin/python" filelock==4.0.10 requests==2.34.2 urllib3==2.8.0
-(cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.collector --help >/dev/null && \
-  sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.publisher --help >/dev/null && \
-  sudo -u redstm-text "$release/.venv/bin/python" \
-  -m scripts.text_archive.media_importer --help >/dev/null && \n  sudo -u redstm-text "$release/.venv/bin/python" \n  -m scripts.text_archive.tuna --help >/dev/null)
+for module in collector publisher media_importer tuna; do
+  (cd "$release" && sudo -u redstm-text "$release/.venv/bin/python" \
+    -m "scripts.text_archive.$module" --help >/dev/null)
+done
 ln -s "$release" /opt/redstm-text/current.next
 mv -Tf /opt/redstm-text/current.next /opt/redstm-text/current
 

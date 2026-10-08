@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import sys
 from contextlib import closing, nullcontext
 from pathlib import Path
 from typing import Any
@@ -477,4 +478,25 @@ def test_tuna_unit_runs_the_module_inside_the_text_lane_limits() -> None:
     timer = Path("deploy/text-archive/redstm-text-tuna.timer").read_text(encoding="utf-8")
     assert "Unit=redstm-text-tuna.service" in timer
     install = Path("deploy/text-archive/install_oracle.sh").read_text(encoding="utf-8")
-    assert "media tuna; do" in install and "scripts.text_archive.tuna --help" in install
+    assert "media tuna; do" in install
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="runs the installer chain under bash")
+def test_installer_preflight_runs_every_module_help(tmp_path: Path) -> None:
+    install = Path("deploy/text-archive/install_oracle.sh").read_text(encoding="utf-8")
+    start = install.index("for module in ")
+    chain = install[start : install.index("\ndone\n", start) + len("\ndone\n")]
+    log = tmp_path / "sudo.log"
+    script = (
+        "set -Eeuo pipefail\n"
+        f'sudo() {{ printf "%s\\n" "$*" >> "{log.as_posix()}"; }}\n'
+        f'release="{tmp_path.as_posix()}"\n{chain}echo reached\n'
+    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "reached"
+    modules = [line.split(" -m ")[1].split()[0] for line in log.read_text().splitlines()]
+    assert modules == [
+        f"scripts.text_archive.{name}"
+        for name in ("collector", "publisher", "media_importer", "tuna")
+    ]
