@@ -464,7 +464,8 @@ def test_publish_groups_threads_into_works_and_prunes_replaced_tails(
     tail_key = f"published/objects/sha256/{tail[:2]}/{tail}.md"
     assert remote[tail_key].decode().startswith("──── #100 ")
 
-    # The running thread grows; its tail is replaced and pruned only after 72 hours.
+    # The running thread grows; its tail is replaced and pruned only after 72 hours and
+    # once no kept release lists it any more.
     site.threads[1] = _thread(
         11, count=130, updated="2026-10-07T02:00:00Z", title="[AA/역극] 별의 노래 (2)"
     )
@@ -478,12 +479,114 @@ def test_publish_groups_threads_into_works_and_prunes_replaced_tails(
         db.execute("UPDATE text_tuna_superseded SET superseded_at='2000-01-01T00:00:00Z'")
         db.execute("UPDATE text_tuna_threads SET tags='[AA/역극/완결]' WHERE thread_id=11")
         db.commit()
+    kept = publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+    assert "objects_removed" not in kept["prune"]
+    assert tail_key in remote and (objects / tail_key.removeprefix("published/")).is_file()
+    # The first release, the last to list the old tail, leaves the retention window.
+    monkeypatch.setattr(publisher, "_RELEASE_RETENTION", 0)
+    with closing(_db(db_path)) as db:
+        db.execute(
+            "UPDATE text_archive_publications SET verified_at='2000-01-01T00:00:00Z' "
+            "WHERE key LIKE 'published/releases/tuna/%'"
+        )
+        db.execute("UPDATE text_tuna_threads SET tags='[AA/역극]' WHERE thread_id=11")
+        db.commit()
     pruned = publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
     assert pruned["prune"]["objects_removed"] == 1
     assert tail_key not in remote
     assert not (objects / tail_key.removeprefix("published/")).exists()
     with closing(_db(db_path)) as db:
         assert db.execute("SELECT COUNT(*) FROM text_tuna_superseded").fetchone()[0] == 0
+
+
+def test_an_unverified_new_tail_keeps_its_verified_version_in_a_partial_release(
+    archive: tuple[Path, Path, FakeSite], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path, objects, site = archive
+    monkeypatch.setattr(publisher, "operation_window", lambda **_: nullcontext())
+    site.threads = [
+        _thread(20, count=5, updated="2026-10-07T00:00:00Z", title="[AA] 갱신 작품 (1)"),
+        _thread(
+            21,
+            count=3,
+            updated="2026-10-06T00:00:00Z",
+            title="[AA] 다른 작품 (1)",
+            username="다른이◆ZZZZZZZZZZ",
+        ),
+    ]
+    site.responses = {
+        20: [_response(20, seq) for seq in range(5)],
+        21: [_response(21, seq) for seq in range(3)],
+    }
+    clock = 0.0
+    while _step(archive, clock)["status"] != "idle":
+        clock += 1
+    build, receipts = tmp_path / "build", tmp_path / "receipts"
+    remote: dict[str, bytes] = {}
+    rclone = _fake_r2(remote)
+    publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+
+    def listed() -> dict[str, str]:
+        pointer = json.loads(remote["published/tuna/release.json"])
+        release = json.loads(remote[pointer["release_key"]])
+        works = json.loads(remote[release["catalog_pages"][0]["key"]])["items"]
+        return {
+            chapter["chapter_id"]: chapter["sha256"]
+            for work in works
+            for chapter in json.loads(remote[work["detail_key"]])["chapters"]
+        }
+
+    first = listed()
+    a = first["tuna:anchor:20:0"]
+    # Thread 20 grows (A -> B) and thread 21 grows too; only 21's new body uploads.
+    site.threads[0] = _thread(
+        20, count=7, updated="2026-10-07T02:00:00Z", title="[AA] 갱신 작품 (1)"
+    )
+    site.threads[1] = _thread(
+        21,
+        count=4,
+        updated="2026-10-07T01:00:00Z",
+        title="[AA] 다른 작품 (1)",
+        username="다른이◆ZZZZZZZZZZ",
+    )
+    site.responses[20] += [_response(20, seq) for seq in range(5, 7)]
+    site.responses[21] += [_response(21, 3)]
+    clock += tuna._REFRESH_SECONDS + tuna._LIST_INTERVAL
+    while _step(archive, clock)["status"] != "idle":
+        clock += 1
+    with closing(_db(db_path)) as db:
+        b = db.execute(
+            "SELECT content_sha256 FROM text_archive_items WHERE identity='tuna:anchor:20:0'"
+        ).fetchone()[0]
+    assert b != a
+    upload = publisher._publish_object_batch
+
+    def without_b(
+        build_root: Path,
+        object_root: Path,
+        remote_name: str,
+        batch: Any,
+        runner: Any,
+        **kwargs: Any,
+    ) -> None:
+        # Thread 21's body in the same batch verifies; B's readback fails.
+        others = [(key, digest) for key, digest in batch if digest != b]
+        upload(build_root, object_root, remote_name, others, runner, **kwargs)
+        if len(others) < len(batch):
+            for key, digest in others:
+                publisher._record_publication(db_path, key, digest)
+            raise OSError("B readback failed")
+
+    monkeypatch.setattr(publisher, "_publish_object_batch", without_b)
+    partial = publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+    second = listed()
+    assert partial["pending_count"] == 1
+    assert second["tuna:anchor:20:0"] == a
+    assert second["tuna:anchor:21:0"] != first["tuna:anchor:21:0"]
+
+    monkeypatch.setattr(publisher, "_publish_object_batch", upload)
+    publisher.publish_lane(db_path, objects, build, receipts, "tuna", runner=rclone)
+    assert listed()["tuna:anchor:20:0"] == b
 
 
 def test_tuna_unit_runs_the_module_inside_the_text_lane_limits() -> None:

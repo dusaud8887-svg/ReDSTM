@@ -68,7 +68,25 @@ CREATE TABLE IF NOT EXISTS text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT
 CREATE TABLE IF NOT EXISTS text_tuna_superseded (
   sha256 TEXT PRIMARY KEY, object_key TEXT NOT NULL, superseded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS text_tuna_last_verified (
+  identity TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL,
+  chapter_label TEXT NOT NULL, content_sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
+  object_key TEXT NOT NULL, source_work_id TEXT NOT NULL, canonical_work_id TEXT NOT NULL,
+  imported_at TEXT NOT NULL
+);
 """
+# Columns an update rewrites; text_tuna_last_verified keeps them for the last version R2 verified.
+TAIL_COLUMNS = (
+    "title",
+    "author",
+    "chapter_label",
+    "content_sha256",
+    "bytes",
+    "object_key",
+    "source_work_id",
+    "canonical_work_id",
+    "imported_at",
+)
 
 
 class TunaError(ValueError):
@@ -487,6 +505,15 @@ def _segment_item(
         )
         return "created"
     # Only this lane changes an item's body: the open last segment of a running thread.
+    # A verified version is kept so a partial publish lists it until the new body verifies.
+    columns = ",".join(TAIL_COLUMNS)
+    db.execute(
+        f"""INSERT OR REPLACE INTO text_tuna_last_verified(identity,{columns})
+            SELECT identity,{columns} FROM text_archive_items i WHERE identity=? AND EXISTS(
+              SELECT 1 FROM text_archive_publications p
+              WHERE p.key='published/'||i.object_key AND p.sha256=i.content_sha256)""",
+        (identity,),
+    )
     db.execute(
         """UPDATE text_archive_items SET title=:title,author=:author,
            chapter_label=:chapter_label,content_sha256=:content_sha256,bytes=:bytes,

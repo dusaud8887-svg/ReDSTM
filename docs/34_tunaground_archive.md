@@ -73,6 +73,7 @@ CREATE TABLE text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- hig
 - 구간이 다 차면 내용이 바뀌지 않는다. 내용 주소 저장이라 같은 본문은 새 객체가 되지 않는다. 바뀌는 것은 진행 중 스레드의 마지막 구간뿐이다.
 - 마지막 구간이 늘면 그 item의 `content_sha256`·`bytes`·`object_key`·`imported_at`을 새 값으로 바꾼다. 이 레인만 item 본문이 바뀔 수 있다. 다른 레인의 "같은 ID에 다른 해시는 충돌 보류" 규칙은 그대로다.
 - 대체된 옛 구간 객체는 72시간 뒤 로컬 객체 저장소와 R2에서 지운다(§6). 그 사이에 열려 있는 탭은 옛 본문을 그대로 읽을 수 있다.
+- 바꾸기 전 버전이 R2 검증을 마친 상태였다면 그 열들을 `text_tuna_last_verified`에 남긴다. 새 본문이 검증되기 전의 부분 게시는 이 마지막 검증 버전을 목록에 그대로 둔다(빠지지 않고, 미검증 본문도 노출하지 않는다). 새 본문이 검증되면 현재 행이 쓰인다(2026-10-08 공동 검토 J03).
 - 열: `source_site='tunaground'`, `source_board='anchor'`, `source_post_id=thread_id`, `source_work_id=series_key`, `source_chapter_id='{thread_id}:{segment}'`, `title`=스레드 제목, `author`=username, `chapter_label`=`#{첫 seq}–{끝 seq}`, `source_url=https://bbs2.tunaground.net/trace/anchor/{id}/{첫 seq}/{끝 seq}`, `batch_id='oracle:tuna'`.
 
 ## 5. 작품 묶기
@@ -116,7 +117,7 @@ CREATE TABLE text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- hig
 
 - catalog: 작품 목록. `work_id`=`tuna:{series_key}`, `title`=series_title, `author`=작가 표시명, `tags`, `thread_count`, `chapter_count`, `latest_label`(가장 최근 스레드 제목), `last_imported_at`, `ended`(마지막 스레드 종료 여부), `detail_key`.
 - detail: `chapters`. 스레드 생성 시각순 다음 segment순으로 정렬한다. 각 회차는 `chapter_id`(= identity), `label`(`{스레드 제목} · #a–b`), `thread_id`, `segment`, `source_url`, `sha256`, `reading_order`를 가진다.
-- 본문 객체·readback·pointer·보존 규칙은 다른 레인과 같다. 추가로 tuna 레인은 현재 item이 참조하지 않는 `published/objects/` 키를 원장의 `verified_at` 72시간 뒤 지운다. 지우는 대상은 `text_tuna_superseded`에 기록된, 이 레인이 대체한 객체뿐이다.
+- 본문 객체·readback·pointer·보존 규칙은 다른 레인과 같다. 추가로 tuna 레인은 현재 item이 참조하지 않는 `published/objects/` 키를 원장의 `verified_at` 72시간 뒤 지운다. 지우는 대상은 `text_tuna_superseded`에 기록된, 이 레인이 대체한 객체뿐이다. 보존 중인 릴리스(현재·최신 5개·최근 24시간)의 detail이 아직 가리키는 본문은 72시간이 지나도 지우지 않고, 그 릴리스가 보존 범위를 벗어난 뒤 지운다(J05).
 
 ## 7. Reader
 

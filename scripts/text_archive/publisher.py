@@ -23,6 +23,7 @@ from crawler.collections import (
     parse_title,
     preview_collections,
 )
+from scripts.text_archive import tuna
 from scripts.text_archive.importer import (
     _chapter_key,
     _connect,
@@ -358,11 +359,31 @@ def build_publish_tree(
                     )
         if verified_only:
             # Shadow only reads on this connection; the durable importer state is untouched.
-            db.execute(
-                "CREATE TEMP VIEW text_archive_items AS SELECT i.* FROM main.text_archive_items i "
+            verified = (
+                "SELECT i.* FROM main.text_archive_items i "
                 "JOIN main.text_archive_publications p "
                 "ON p.key='published/'||i.object_key AND p.sha256=i.content_sha256"
             )
+            if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='text_tuna_last_verified'"
+            ).fetchone():
+                # A tuna tail whose new body is not verified yet keeps its last verified
+                # version instead of dropping out of the release (joint review J03).
+                columns = ",".join(
+                    f"v.{name}" if name in tuna.TAIL_COLUMNS else f"i.{name}"
+                    for (name,) in db.execute(
+                        "SELECT name FROM pragma_table_info('text_archive_items')"
+                    )
+                )
+                verified += (
+                    f" UNION ALL SELECT {columns} FROM main.text_archive_items i "
+                    "JOIN main.text_tuna_last_verified v ON v.identity=i.identity "
+                    "JOIN main.text_archive_publications p "
+                    "ON p.key='published/'||v.object_key AND p.sha256=v.content_sha256 "
+                    "WHERE NOT EXISTS (SELECT 1 FROM main.text_archive_publications q "
+                    "WHERE q.key='published/'||i.object_key AND q.sha256=i.content_sha256)"
+                )
+            db.execute(f"CREATE TEMP VIEW text_archive_items AS {verified}")
         # Keep catalog, object and item passes on one imported snapshot in WAL mode.
         # Headroom is rechecked around this read so a TypeMoon unit that became active
         # after the preflight stops the local build without holding the publish lock.
@@ -378,12 +399,12 @@ def build_publish_tree(
         # Counted in the same snapshot: imports during the body uploads change the lane.
         pending_count = 0
         if verified_only:
-            pending_count = (
-                db.execute(
-                    "SELECT COUNT(*) FROM main.text_archive_items WHERE lane=?", (lane,)
-                ).fetchone()[0]
-                - item_count
-            )
+            pending_count = db.execute(
+                "SELECT COUNT(*) FROM main.text_archive_items i WHERE lane=? AND NOT EXISTS ("
+                "SELECT 1 FROM main.text_archive_publications p "
+                "WHERE p.key='published/'||i.object_key AND p.sha256=i.content_sha256)",
+                (lane,),
+            ).fetchone()[0]
         with (
             plans["items"].open("w", encoding="utf-8", newline="\n") as item_plan,
             plans["objects"].open("w", encoding="utf-8", newline="\n") as object_plan,
@@ -932,6 +953,16 @@ def _retained_keys(db_path: Path, build_root: Path, lane: str, active_release: s
     return keep
 
 
+def _retained_tuna_bodies(build_root: Path, keep: set[str]) -> set[str]:
+    """Body digests the kept tuna releases still list: a replaced tail outlives them."""
+    digests: set[str] = set()
+    for key in keep:
+        if key.startswith("published/indexes/tuna/"):
+            index = json.loads((build_root / key).read_bytes())
+            digests.update(str(chapter["sha256"]) for chapter in index.get("chapters", []))
+    return digests
+
+
 def _superseded_tuna_objects(db: sqlite3.Connection) -> list[tuple[str, str]]:
     """(publication key, object key) of tail segments the tuna lane replaced 72 hours ago."""
     if not db.execute(
@@ -987,7 +1018,14 @@ def _prune_lane(
             )
             if pattern.fullmatch(str(row[0])) and str(row[0]) not in keep
         ]
-        superseded = dict(_superseded_tuna_objects(db)) if lane == "tuna" else {}
+        superseded: dict[str, str] = {}
+        if lane == "tuna":
+            listed = _retained_tuna_bodies(build_root, keep)
+            superseded = {
+                key: object_key
+                for key, object_key in _superseded_tuna_objects(db)
+                if Path(object_key).stem not in listed
+            }
         candidates += list(superseded)
         batch = candidates[:_PRUNE_BATCH_LIMIT]
         # Unclaim first: if the delete dies halfway, a later release re-uploads the key.
