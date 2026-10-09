@@ -25,7 +25,11 @@ function json(status, body) {
 const error = (status, code) => json(status, { error: code });
 
 const objectKey = (path) => `media/arca/${path}`;
-const mediaUrl = (path) => `/api/v1/text/media/arca/${path}`;
+// The URL carries the stored object's ETag. The importer may store new bytes under a key (a new
+// conversion or a repair) while browsers and the Service Worker keep media URLs as immutable, so
+// a new version needs a new URL (2026-10-09 review ④).
+const versionOf = (object) => String(object.etag ?? object.httpEtag ?? "").replaceAll('"', "");
+const mediaUrl = (path, object) => `/api/v1/text/media/arca/${path}?v=${encodeURIComponent(versionOf(object))}`;
 
 function validPaths(value) {
   if (!Array.isArray(value) || !value.length || value.length > MAX_PATHS) return null;
@@ -45,7 +49,7 @@ async function resolve(request, env) {
   const found = await Promise.all(paths.map((path) => env.TEXT_ARCHIVE.head(objectKey(path))));
   const media = {};
   paths.forEach((path, index) => {
-    if (found[index]) media[path] = { url: mediaUrl(path) };
+    if (found[index]) media[path] = { url: mediaUrl(path, found[index]) };
   });
   return json(200, { media });
 }
@@ -56,8 +60,10 @@ async function serve(request, env, path) {
     : await env.TEXT_ARCHIVE.get(objectKey(path));
   const contentType = object?.httpMetadata?.contentType;
   if (!object || !IMAGE_TYPES.has(contentType)) return error(404, "not_found");
+  // Only the current version's URL is immutable; an old or unversioned URL revalidates.
+  const current = new URL(request.url).searchParams.get("v") === versionOf(object);
   const headers = new Headers({
-    "Cache-Control": "private, max-age=31536000, immutable",
+    "Cache-Control": current ? "private, max-age=31536000, immutable" : "private, no-cache",
     "Content-Type": contentType,
     "X-Content-Type-Options": "nosniff",
     "X-Robots-Tag": "noindex, nofollow, noarchive",

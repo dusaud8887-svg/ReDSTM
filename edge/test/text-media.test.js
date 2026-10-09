@@ -6,7 +6,7 @@ import { textMediaResponse } from "../src/text-media.js";
 
 function r2(entries = {}) {
   const objects = new Map(Object.entries(entries));
-  const meta = (key) => ({ httpEtag: '"e"', httpMetadata: { contentType: objects.get(key).type } });
+  const meta = (key) => ({ etag: objects.get(key).etag ?? "e", httpEtag: `"${objects.get(key).etag ?? "e"}"`, httpMetadata: { contentType: objects.get(key).type } });
   return {
     objects,
     head: async (key) => (objects.has(key) ? meta(key) : null),
@@ -44,7 +44,7 @@ test("resolves only the path keys archived in R2", async () => {
   const env = { TEXT_ARCHIVE: r2({ [`media/arca/${pathA}`]: { type: "image/webp", body: "x" } }) };
   const response = await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: [pathA, pathB, pathA] } });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { media: { [pathA]: { url: `/api/v1/text/media/arca/${pathA}` } } });
+  assert.deepEqual(await response.json(), { media: { [pathA]: { url: `/api/v1/text/media/arca/${pathA}?v=e` } } });
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: ["../x"] } })).status, 400);
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: [] } })).status, 400);
   assert.equal((await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: Array(41).fill(pathA) } })).status, 400);
@@ -76,10 +76,16 @@ test("serves archived images with their stored type and immutable caching", asyn
     [`media/arca/${pathA}`]: { type: "image/webp", body: "webp-bytes" },
     [`media/arca/${pathB}`]: { type: "text/html", body: "<script>" },
   }) };
-  const image = await call(env, `/api/v1/text/media/arca/${pathA}`);
+  const image = await call(env, `/api/v1/text/media/arca/${pathA}?v=e`);
   assert.equal(image.status, 200);
   assert.equal(image.headers.get("Content-Type"), "image/webp");
   assert.match(image.headers.get("Cache-Control"), /immutable/);
+  // 2026-10-09 review ④: replaced bytes get a new URL; old and unversioned URLs revalidate.
+  env.TEXT_ARCHIVE.objects.get(`media/arca/${pathA}`).etag = "f";
+  const resolved = await call(env, "/api/v1/text/media/resolve", { method: "POST", json: { paths: [pathA] } });
+  assert.equal((await resolved.json()).media[pathA].url, `/api/v1/text/media/arca/${pathA}?v=f`);
+  assert.equal((await call(env, `/api/v1/text/media/arca/${pathA}?v=e`)).headers.get("Cache-Control"), "private, no-cache");
+  assert.equal((await call(env, `/api/v1/text/media/arca/${pathA}`)).headers.get("Cache-Control"), "private, no-cache");
   assert.equal(image.headers.get("X-Content-Type-Options"), "nosniff");
   assert.equal(await image.text(), "webp-bytes");
   const head = await call(env, `/api/v1/text/media/arca/${pathA}`, { method: "HEAD" });

@@ -115,8 +115,11 @@ registerRoute(path((p) => p.startsWith("/api/v1/text/index/")), ownedStrategy(Ca
 // 8. Immutable text objects.
 registerRoute(path((p) => p.startsWith("/api/v1/text/object/")),
   savedFirst(ownedStrategy(CacheFirst, "text-objects", { plugins: [expiring(1000, 30 * DAY)] })));
-// 9. Media (GET), with ranges for video.
-registerRoute(path((p) => p.startsWith("/api/v1/text/media/")), ownedStrategy(CacheFirst, "media", {
+// 9. Media (GET), with ranges for video. Only versioned URLs (?v=<R2 ETag>) are immutable: an
+// archived image may be replaced under the same key (2026-10-09 review ④).
+const versionedMedia = ({ url }) => url.origin === self.location.origin &&
+  url.pathname.startsWith("/api/v1/text/media/") && url.searchParams.has("v");
+registerRoute(versionedMedia, ownedStrategy(CacheFirst, "media", {
   plugins: [new CacheableResponsePlugin({ statuses: [200] }), new RangeRequestsPlugin(), expiring(1000, 30 * DAY)],
 }));
 // 10. The archive pointer.
@@ -145,6 +148,19 @@ registerRoute(new NavigationRoute(async (context) => {
 // they go into the owner's offline cache, files already there are skipped (so 이어서 저장 resumes),
 // and progress goes back to the pages. One failed file leaves the save partial, never complete.
 const saves = new Map();
+// Size of a body without holding it: a stored Content-Length, else the stream counted chunk by chunk.
+// arrayBuffer() kept whole files in memory, four at a time (2026-10-09 review: 4 × 64 MiB).
+async function bodyBytes(response) {
+  const declared = Number(response.headers.get("Content-Length"));
+  if (Number.isSafeInteger(declared) && declared >= 0 && response.headers.get("Content-Encoding") === null) {
+    await response.body?.cancel();
+    return declared;
+  }
+  let total = 0;
+  const reader = response.body?.getReader();
+  for (let chunk = await reader?.read(); chunk && !chunk.done; chunk = await reader.read()) total += chunk.value.byteLength;
+  return total;
+}
 const ownedTasks = new Map();
 const deletingOwners = new Set();
 let cacheEpoch = 0;
@@ -164,16 +180,17 @@ async function saveOffline({ id, urls, requires = [] }, clientId, account, task)
       try {
         const cached = await cache.match(url);
         if (cached) {
-          bytes += (await cached.clone().arrayBuffer()).byteLength;
+          bytes += await bodyBytes(cached);
         } else {
           const response = await fetch(url, { credentials: "same-origin", signal: task.controller.signal });
           if (response.status !== 200 || authFailure(new Request(url), response)) {
             if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url }, clientId);
             throw new Error(String(response.status));
           }
-          bytes += (await response.clone().arrayBuffer()).byteLength;
           if (task.cancelled) break;
-          await cache.put(url, response);
+          // Both branches of the tee are read together, so neither buffers the whole body.
+          const [size] = await Promise.all([bodyBytes(response.clone()), cache.put(url, response)]);
+          bytes += size;
         }
         done += 1;
       } catch {

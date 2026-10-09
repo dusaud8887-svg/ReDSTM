@@ -13,6 +13,8 @@ import {
   postIdentity,
   sanitizeBookmarkMetadata,
   mergeTextStates,
+  laterMap,
+  laterOrder,
   mergeUserStates,
   mergeAnnotationRecords,
   mergeSessionRecords,
@@ -478,6 +480,14 @@ test("merging text states keeps the latest hide or show of each item", () => {
     "item:arcalive:novel:9:text": { at: "2026-10-02T00:00:00Z", on: true },
     "item:manual:x": { at: "2026-10-01T00:00:00Z", on: true },
   });
+});
+
+// 2026-10-09 review RD-03: one order for the open page and a reload — newest first, key on ties.
+test("나중에 읽기 lists newest first with the key breaking ties", () => {
+  const entry = (at) => ({ at, on: true, title: "t", source: "", route: "/x" });
+  const later = { "post:b": entry("2026-10-01T00:00:00Z"), "post:c": entry("2026-10-02T00:00:00Z"), "post:a": entry("2026-10-01T00:00:00Z") };
+  assert.deepEqual(Object.entries(later).sort(laterOrder).map(([key]) => key), ["post:c", "post:a", "post:b"]);
+  assert.deepEqual(Object.keys(laterMap(later)), ["post:c", "post:a", "post:b"]);
 });
 
 // 2026-10-08: 나중에 읽기 entries merge by when they were added or taken out.

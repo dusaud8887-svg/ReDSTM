@@ -4,6 +4,7 @@ import {
   stateStorageKey,
   defaultUserState,
   exportUserState,
+  laterOrder,
   mergeAnnotationRecords,
   mergeSessionRecords,
   mergeTextStates,
@@ -1856,8 +1857,8 @@ function splitSceneHeaders(root) {
 
 // Arcalive images: show the copies Newtomi archived (docs/20). A failed lookup leaves the body
 // as rendered (live signed links load; expired ones point at the source post).
-// Archived copies never change (R2 keys are CDN path keys), so a path found once is not asked
-// about again in this session; paths still missing are asked again on the next open.
+// A path found once keeps its versioned URL (?v=<R2 ETag>) for this session; a replaced copy gets
+// a new URL on the next page load. Paths still missing are asked again on the next open.
 const archivedMediaUrls = new Map();
 
 async function archiveTextMedia(body, renderId) {
@@ -3302,9 +3303,12 @@ function openLaterRoute(route) {
 }
 function renderLaterView() {
   const query = normalized(elements["search-input"].value).trim();
+  // Newest first by the time it was added, the same order a reload restores (2026-10-09 review
+  // RD-03: in-memory insertion order put a re-added item where it first stood).
   const entries = Object.entries(userState.later ?? {})
     .filter(([, entry]) => entry.on)
-    .filter(([, entry]) => !query || normalized(`${entry.title} ${entry.source} ${entry.meta ?? ""}`).includes(query));
+    .filter(([, entry]) => !query || normalized(`${entry.title} ${entry.source} ${entry.meta ?? ""}`).includes(query))
+    .sort(laterOrder);
   elements["search-widen"].hidden = true;
   elements["search-empty"].hidden = true;
   elements["result-more"].hidden = true;
@@ -6887,6 +6891,32 @@ document.querySelector("#update-apply").addEventListener("click", () => {
   overlays.hideToast(document.querySelector("#update-ready"));
   applyUpdateAtSafePoint();
 });
+// New archive data while this page stays open (2026-10-09 review): the page keeps what it loaded,
+// so a reading session never changes under the reader, and offers a reload when the page comes
+// back into view (at most every ten minutes) and a newer TypeMoon or text release is published.
+const RELEASE_CHECK_MS = 10 * 60 * 1000;
+let releaseCheckedAt = Date.now();
+async function checkForNewRelease() {
+  if (Date.now() - releaseCheckedAt < RELEASE_CHECK_MS || !navigator.onLine) return;
+  releaseCheckedAt = Date.now();
+  let newer = false;
+  try {
+    if (publishedAt) {
+      const response = await fetch("/archive/release.json", { cache: "no-store" });
+      const modified = response.ok ? Date.parse(response.headers.get("Last-Modified") ?? "") : Number.NaN;
+      newer = Number.isFinite(modified) && modified > Date.parse(publishedAt);
+    }
+    newer ||= await textLibrary.hasNewerRelease();
+  } catch {
+    return;
+  }
+  if (newer) overlays.showToast(document.querySelector("#data-ready"));
+}
+document.querySelector("#data-reload").addEventListener("click", () => {
+  overlays.hideToast(document.querySelector("#data-ready"));
+  flushLifecycleState();
+  location.reload();
+});
 document.querySelector("#reset-app-cache").addEventListener("click", async () => {
   if (!confirm("앱 캐시와 내려받은 작품 파일을 지우고 다시 불러옵니다. 표시·메모·읽기 기록은 남습니다.")) return;
   try {
@@ -7411,7 +7441,10 @@ function flushLifecycleState() {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushLifecycleState();
-  else void acquireWakeLock();
+  else {
+    void acquireWakeLock();
+    void checkForNewRelease();
+  }
 });
 window.addEventListener("pagehide", flushLifecycleState);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

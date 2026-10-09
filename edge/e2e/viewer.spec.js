@@ -53,7 +53,7 @@ function aaPostPayload(id, title) {
   return payload;
 }
 
-async function useCollectionFixture(page, { collectionV2 = false, largeStandalone = false, legacyIndex = false, paginated = false, releaseGate } = {}) {
+async function useCollectionFixture(page, { collectionV2 = false, largeStandalone = false, legacyIndex = false, paginated = false, releaseGate, releaseModified } = {}) {
   const standalone = postPayload(3, "비소속");
   if (largeStandalone) standalone.transfer_padding = "x".repeat(1_100_000);
   const collection = {
@@ -114,7 +114,8 @@ async function useCollectionFixture(page, { collectionV2 = false, largeStandalon
     const payload = payloads.get(key);
     if (!payload) return route.fulfill({ status: 404, body: "not found" });
     if (key === "release.json" && releaseGate) await releaseGate();
-    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+    const headers = key === "release.json" && releaseModified ? { "Last-Modified": releaseModified() } : {};
+    return route.fulfill({ contentType: "application/json", headers, body: JSON.stringify(payload) });
   });
   return requested;
 }
@@ -2363,6 +2364,29 @@ test("AA touch pan follows both axes when a horizontal drag becomes diagonal", a
   expect(following.y - edge.y).toBeGreaterThan(10);
 });
 
+// 2026-10-09 review: a page left open keeps its data and offers a reload once a newer release is out.
+test("a newer archive release offers a reload when the page comes back into view", async ({ page }) => {
+  let modified = "Wed, 07 Oct 2026 00:00:00 GMT";
+  await page.clock.install();
+  await useCollectionFixture(page, { releaseModified: () => modified });
+  await page.goto("/");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const toast = page.locator("#data-ready");
+  const comeBack = () => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.clock.fastForward("11:00");
+  await comeBack();
+  await page.waitForTimeout(300);
+  await expect(toast).toBeHidden();  // the same release: nothing to offer
+  modified = "Fri, 09 Oct 2026 00:00:00 GMT";
+  await comeBack();  // checked less than ten minutes ago
+  await page.waitForTimeout(300);
+  await expect(toast).toBeHidden();
+  await page.clock.fastForward("11:00");
+  await comeBack();
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("새로 게시된 자료가 있어요");
+});
+
 // 나중에 읽기 (2026-10-08): works and posts kept apart from 저장, listed under 기록 › 나중에.
 test("나중에 읽기 keeps works and posts apart from saved posts", async ({ page }) => {
   await useCollectionFixture(page, { collectionV2: true });
@@ -2389,7 +2413,12 @@ test("나중에 읽기 keeps works and posts apart from saved posts", async ({ p
   await page.locator("#result-list .result-item", { hasText: "테스트 연작" }).click();
   await expect(page).toHaveURL(/\/collections\/1$/);
   await expect(page.locator("#collection-later")).toHaveAttribute("aria-pressed", "true");
+  // Taken out and added again in this page: it moves to the top without a reload (RD-03).
+  await page.locator("#collection-later").click();
+  await page.locator("#collection-later").click();
+  await expect(page.locator("#collection-later")).toHaveAttribute("aria-pressed", "true");
   await page.goBack();
+  await expect(page.locator("#result-list .result-title")).toHaveText(["테스트 연작", "비소속"]);
   await page.locator("#result-list li", { hasText: "비소속" }).locator(".later-remove").click();
   await expect(page.locator("#result-list .result-title")).toHaveText(["테스트 연작"]);
   // The list survives a reload.

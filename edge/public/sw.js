@@ -900,7 +900,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
   var precache_manifest_default = [
     {
       "url": "/",
-      "revision": "66ed2950598cf92d"
+      "revision": "509a7a277cb7a166"
     },
     {
       "url": "/aa-viewer.js",
@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "3a4c5207e80ff179"
+      "revision": "77bacca2762114d2"
     },
     {
       "url": "/arca-media.js",
@@ -1084,7 +1084,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/styles/library.css",
-      "revision": "b9d8462df1b9e95b"
+      "revision": "30084c0ac32ab77e"
     },
     {
       "url": "/styles/reader.css",
@@ -1104,7 +1104,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "f1eda13cf0f1e2f9"
+      "revision": "d3029d35b2fa8be3"
     },
     {
       "url": "/text-model.js",
@@ -1128,7 +1128,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/user-state.js",
-      "revision": "18358818d0391db1"
+      "revision": "d802a6e685571a45"
     },
     {
       "url": "/work-header.js",
@@ -1230,7 +1230,8 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     path((p2) => p2.startsWith("/api/v1/text/object/")),
     savedFirst(ownedStrategy(M, "text-objects", { plugins: [expiring(1e3, 30 * DAY)] }))
   );
-  q(path((p2) => p2.startsWith("/api/v1/text/media/")), ownedStrategy(M, "media", {
+  var versionedMedia = ({ url }) => url.origin === self.location.origin && url.pathname.startsWith("/api/v1/text/media/") && url.searchParams.has("v");
+  q(versionedMedia, ownedStrategy(M, "media", {
     plugins: [new Q({ statuses: [200] }), new Y(), expiring(1e3, 30 * DAY)]
   }));
   q(path((p2) => p2 === "/archive/release.json"), ownedStrategy(K, "archive-pointer", { networkTimeoutSeconds: 3 }));
@@ -1254,6 +1255,17 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     return await shellRequest() ?? Response.error();
   }, { denylist: [/^\/ops/, /^\/cdn-cgi\//] }));
   var saves = /* @__PURE__ */ new Map();
+  async function bodyBytes(response) {
+    const declared = Number(response.headers.get("Content-Length"));
+    if (Number.isSafeInteger(declared) && declared >= 0 && response.headers.get("Content-Encoding") === null) {
+      await response.body?.cancel();
+      return declared;
+    }
+    let total = 0;
+    const reader = response.body?.getReader();
+    for (let chunk = await reader?.read(); chunk && !chunk.done; chunk = await reader.read()) total += chunk.value.byteLength;
+    return total;
+  }
   var ownedTasks = /* @__PURE__ */ new Map();
   var deletingOwners = /* @__PURE__ */ new Set();
   var cacheEpoch = 0;
@@ -1273,16 +1285,16 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
         try {
           const cached = await cache.match(url);
           if (cached) {
-            bytes += (await cached.clone().arrayBuffer()).byteLength;
+            bytes += await bodyBytes(cached);
           } else {
             const response = await fetch(url, { credentials: "same-origin", signal: task.controller.signal });
             if (response.status !== 200 || authFailure(new Request(url), response)) {
               if (authFailure(new Request(url), response)) tell({ type: "auth-expired", url }, clientId);
               throw new Error(String(response.status));
             }
-            bytes += (await response.clone().arrayBuffer()).byteLength;
             if (task.cancelled) break;
-            await cache.put(url, response);
+            const [size] = await Promise.all([bodyBytes(response.clone()), cache.put(url, response)]);
+            bytes += size;
           }
           done += 1;
         } catch {

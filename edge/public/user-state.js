@@ -325,8 +325,12 @@ export function laterMap(value) {
       ...(typeof entry.meta === "string" && entry.meta ? { meta: entry.meta.slice(0, 300) } : {}),
     }]);
   }
-  entries.sort((left, right) => Date.parse(right[1].at) - Date.parse(left[1].at));
+  entries.sort(laterOrder);
   return Object.fromEntries(entries.slice(0, LATER_LIMIT));
+}
+// Newest first; the key breaks ties so every tab and every reload lists the same order.
+export function laterOrder([leftKey, left], [rightKey, right]) {
+  return Date.parse(right.at) - Date.parse(left.at) || (leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0);
 }
 
 function normalizeV2State(value, defaultSettings = {}) {

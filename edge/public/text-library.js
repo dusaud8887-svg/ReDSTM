@@ -122,7 +122,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   history.hidden = isPlainRecord(history.hidden) ? history.hidden : {};
   const shelvesAdded = ensureShelves(history) | compactTextHistory(history.history);
   const catalogs = new Map();
+  // Work details (chapter arrays) of recently opened works, least recently used first; a long
+  // session opening many works no longer keeps every one (2026-10-09 review).
   const details = new Map();
+  const DETAIL_LIMIT = 24;
+  let detailController = null;
   let lane = "novel";
   let catalog = [];
   let arcaliveWorks = [];
@@ -1175,19 +1179,45 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     return items;
   }
 
+  // A long-open tab keeps the catalogs it loaded, so reading stays consistent; this tells the
+  // page when a loaded lane has a newer published release (2026-10-09 review).
+  async function hasNewerRelease() {
+    for (const [loadedLane, loaded] of catalogs) {
+      const pointer = await json(`/api/v1/text/release/${loadedLane}`).catch(() => null);
+      if (pointer?.sha256 && pointer.sha256 !== loaded.sha256) return true;
+    }
+    return false;
+  }
+
   function workLaneOf(workId) {
     return workId.startsWith("arcalive:") ? "arcalive" : workId.startsWith("tuna:") ? "tuna" : "novel";
   }
 
-  async function workDetail(item, retried = false) {
+  function rememberDetail(workId, detail) {
+    details.delete(workId);
+    details.set(workId, detail);
+    while (details.size > DETAIL_LIMIT) details.delete(details.keys().next().value);
+  }
+
+  // Opening another work cancels the previous work's index request (as bodies are cancelled).
+  function nextDetailSignal() {
+    detailController?.abort();
+    detailController = new AbortController();
+    return detailController.signal;
+  }
+
+  async function workDetail(item, retried = false, signal = undefined) {
     const cached = details.get(item.work_id);
-    if (cached) return cached;
+    if (cached) {
+      rememberDetail(item.work_id, cached);
+      return cached;
+    }
     const hash = item.detail_key?.match(/\/([a-f0-9]{64})\.json$/)?.[1];
     if (!hash) throw new Error("work_index_invalid");
     const detailLane = workLaneOf(item.work_id);
     let detail;
     try {
-      detail = await json(`/api/v1/text/index/${detailLane}/${hash}.json`);
+      detail = await json(`/api/v1/text/index/${detailLane}/${hash}.json`, signal);
     } catch (error) {
       // A long-open tab keeps the catalog it loaded; once later releases replace this work's
       // index and retention prunes it, reread the current release once and find the same work.
@@ -1197,13 +1227,13 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const found = current?.find((entry) => entry.work_id === item.work_id
         || entry.legacy_work_ids?.includes(item.work_id));
       if (!found || found.detail_key === item.detail_key) throw error;
-      return workDetail(found, true);
+      return workDetail(found, true, signal);
     }
     if (detail.schema !== 1 || detail.lane !== detailLane || !Array.isArray(detail.chapters)) {
       throw new Error("work_detail_invalid");
     }
     if (detailLane === "novel" && migrateNovelChapterState(history, item, detail.chapters)) persist();
-    details.set(item.work_id, detail);
+    rememberDetail(item.work_id, detail);
     return detail;
   }
 
@@ -1385,9 +1415,11 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const found = (lane === "arcalive" ? arcaliveWorks : catalog)
         .find((item) => item.work_id === workId || item.legacy_work_ids?.includes(workId));
       if (!found) return open(params);
+      const signal = nextDetailSignal();
       try {
-        chapterSource = (await workDetail(found)).chapters;
+        chapterSource = (await workDetail(found, false, signal)).chapters;
       } catch (error) {
+        if (signal.aborted) return undefined;
         status.textContent = `작품 목차를 불러오지 못했습니다 · ${error.message}`;
         return undefined;
       }
@@ -1404,7 +1436,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   async function openWork(item, shouldNavigate = true, activeRequest = ++requestId) {
-    const detail = await workDetail(item);
+    const signal = nextDetailSignal();
+    let detail;
+    try {
+      detail = await workDetail(item, false, signal);
+    } catch (error) {
+      if (signal.aborted) return;
+      throw error;
+    }
     if (activeRequest !== requestId) return;
     work = item;
     if (shouldNavigate) sortMode = defaultSort();
@@ -2339,7 +2378,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     open, route: routeTo, searchChanged, activate, isReading, inWork, sortContext, setSort, currentRoute,
     leave, changeLane, command, parentRoute, flush: flushPosition, latestReading, currentSort,
     searchPlaceholder, sortOptions, readingWorks, bookmarkDetails, saveBookmarkDetails, removeBookmark,
-    exportState, importState, previousUnreadCount, laterTarget,
+    exportState, importState, previousUnreadCount, laterTarget, hasNewerRelease,
     // 설정 › 숨긴 항목 보이기 changed: redraw the list it filters.
     hiddenVisibilityChanged: () => { if (active && !current) renderCatalog(); }, markPreviousRead, savedItems, kwicContext, openKwicResult, metadataWorks, styleWork, shelfState, applyLibraryShelves, adoptState,
   };

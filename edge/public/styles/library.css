@@ -550,6 +550,9 @@ body.reading .home { display: none; }
 .active-filters { flex-wrap: nowrap; width: auto; }
 /* Chips stay 32px tall; the row gives each a 44px touch height. */
 .catalog-toolbar, .text-sort-chips { min-height: 44px; align-items: center; }
+/* With every chip group and the filter button hidden (TypeMoon Browse since the format chips left,
+   2026-10-08) the empty bar kept 44px between the quick search and the count (2026-10-09 review RD-02). */
+.catalog-toolbar:not(:has(> :not([hidden]))) { display: none; }
 /* The text work header stays above its list, so it keeps a small cover and, beside an open
    chapter, leaves the narrow list its whole height (the barcode waits on the work screen). */
 .text-work-summary .work-head { align-items: start; gap: 12px; }
@@ -587,9 +590,12 @@ body:has(#home-onboarding:not([hidden])) #smart-library:not(:has(#library-pinned
 @media (max-width: 599px) { .personal-library-dialog label { flex-wrap: wrap; } .personal-library-dialog :is(input:not([type="checkbox"]), select) { max-width: 100%; min-width: 0; } }
 
 /* Work page on a phone: the one main action (이어 읽기 / 처음부터) is a full-width filled button
-   on top within thumb reach; the secondary actions share one row and 몇 편? its own row. */
+   on top within thumb reach; the three secondary actions (찾기, 나중에 읽기, 분류·고정) share one
+   row — with two columns 분류·고정 sat alone on a third row (2026-10-09 review RD-02) — and
+   몇 편? its own row. */
 @media (max-width: 759px) {
-  .collection-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+  .collection-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
+  .collection-actions :is(#collection-find, #collection-later, #collection-classify) { padding: 0 6px; }
   :is(.collection-actions, .text-work-actions) .collection-continue { order: -1; grid-column: 1 / -1; min-height: 52px; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-size: 16px; text-align: center; }
   :is(.collection-actions, .text-work-actions) .collection-continue:hover { background: var(--accent-hover); }
   .text-work-actions .collection-continue { flex: 1 0 100%; }

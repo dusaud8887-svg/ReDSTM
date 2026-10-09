@@ -85,13 +85,14 @@ drop/<YYYYMMDDTHHMMSSZ>-media-<8hex>/
 3. 구조 검증(배치 전체 거부): 항목 필드 집합, 경로 키 규칙·중복(경로 키가 곧 R2 키라 `../` 같은 키는 생산자 결함으로 본다), `relative_path` 형식(`files/\d{6}\.(webp|png|jpg|gif)`)·중복, 목록에 없는 파일, 배치 총 크기.
    항목 검증(틀린 항목만 거부): 확장자=`content_type`, 게시글 id, 크기·sha256 일치, 매직 바이트=`content_type`, 접근 거부 이미지 아님, 가로·세로 1–20000.
 4. 올리기: 통과한 항목을 `build/media/<id>/<type>/<경로 키>` symlink로 모아 형식별로 `rclone copy --copy-links --header-upload "Content-Type: <type>"` → `r2text:redstm-text-archive/media/arca/`. 이어서 `rclone hashsum SHA256 --download --checkfile`로 되읽어 확인한다.
-5. sqlite `text_archive_media(path_key PK, sha256, content_type, bytes, width, height, batch_id, stored_at)`에 기록하고 영수증을 쓴다. 같은 경로 키가 다시 오면 다시 올린다(멱등, 같은 키 덮어쓰기).
+5. sqlite `text_archive_media(path_key PK, sha256, content_type, bytes, width, height, batch_id, stored_at)`에 기록하고 영수증을 쓴다. 같은 경로 키가 다시 오면 다시 올린다(멱등, 같은 키 덮어쓰기). 바이트가 바뀌면 R2 ETag가 바뀌어 Reader URL도 바뀐다(§4).
 6. 재시도(텍스트 importer와 같은 `scripts/text_archive/attempts.py`): 배치를 처리하기 전에 `/srv/redstm-text/media-attempts/<id>.json`에 시도를 먼저 기록한다. 구조 검증 실패만 거부 영수증을 쓰고, 그 밖의 모든 예외와 except에 닿지 못하는 강제 종료(OOM·unit timeout)는 원본을 지우지 않은 채 5·15·30·60분 backoff로 남는다. backoff 중인 배치는 건너뛰고 뒤의 준비된 배치를 계속 처리한다. 아직 준비되지 않은 배치는 시도로 세지 않는다.
 
 ## 4. Worker와 Reader
 
-- `POST /api/v1/text/media/resolve` `{paths:[경로 키 ≤40]}`(Reader는 40개씩 나눠 요청) → R2 `head("media/arca/<키>")`를 병렬로 확인해 `{media:{<키>:{url:"/api/v1/text/media/arca/<키>"}}}`.
-- `GET|HEAD /api/v1/text/media/arca/<경로 키>` → R2 본문, `Content-Type`은 저장된 값(이미지 네 형식만), `Cache-Control: private, max-age=31536000, immutable`.
+- `POST /api/v1/text/media/resolve` `{paths:[경로 키 ≤40]}`(Reader는 40개씩 나눠 요청) → R2 `head("media/arca/<키>")`를 병렬로 확인해 `{media:{<키>:{url:"/api/v1/text/media/arca/<키>?v=<R2 ETag>"}}}`.
+- `GET|HEAD /api/v1/text/media/arca/<경로 키>` → R2 본문, `Content-Type`은 저장된 값(이미지 네 형식만). `?v=`가 현재 객체의 ETag와 같을 때만 `Cache-Control: private, max-age=31536000, immutable`, 이전 버전·버전 없는 URL은 `private, no-cache`.
+- 버전 URL(2026-10-09 외부 리뷰 ④): importer는 같은 경로 키에 새 바이트(변환 정책 변경·재처리)를 다시 올릴 수 있는데, URL이 그대로면 브라우저와 Service Worker(`CacheFirst`)가 옛 이미지를 계속 보였다. 그래서 URL에 ETag를 붙이고 Service Worker는 `?v=`가 있는 미디어 URL만 캐시한다. 바뀐 이미지는 다음 페이지 로드의 resolve부터 새 URL로 받고, 옛 URL 캐시는 만료(30일·1,000개)로 빠진다.
 - 쓰기 API는 없다. 대기열·업로드 엔드포인트(`queue`, `queue/result`, `object`)와 크롬 확장은 제거했다. D1 `0008_text_media`의 `text_media`·`text_media_queue` 테이블은 비어 있고 쓰지 않는다(릴리스가 파괴적 마이그레이션을 막아 남겨 둔다).
 - Reader는 텍스트 본문을 그린 뒤 경로 키를 resolve하고 보관본이 있으면 `보관된 이미지`로 바꾼다. 없으면 지금처럼 서명이 살아 있으면 원본, 만료면 `만료된 이미지 링크 · 원문 글에서 보기`.
 
