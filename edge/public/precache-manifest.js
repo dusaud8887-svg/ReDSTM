@@ -2,7 +2,7 @@
 export default [
   {
     "url": "/",
-    "revision": "509a7a277cb7a166"
+    "revision": "ab97596ea4af30b2"
   },
   {
     "url": "/aa-viewer.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "20a8841ee6c93b4e"
+    "revision": "b39f770240ca5c3e"
   },
   {
     "url": "/arca-media.js",
@@ -30,7 +30,7 @@ export default [
   },
   {
     "url": "/capabilities.js",
-    "revision": "c0830f0fb20ae570"
+    "revision": "867a418a48cacc63"
   },
   {
     "url": "/continuous-reader.js",
@@ -170,7 +170,7 @@ export default [
   },
   {
     "url": "/store.js",
-    "revision": "72bc47846be6ddff"
+    "revision": "0de40494d30c214a"
   },
   {
     "url": "/styles/aa.css",
@@ -186,7 +186,7 @@ export default [
   },
   {
     "url": "/styles/library.css",
-    "revision": "30084c0ac32ab77e"
+    "revision": "8a86754751f77241"
   },
   {
     "url": "/styles/reader.css",
@@ -199,6 +199,14 @@ export default [
   {
     "url": "/styles/tokens.css",
     "revision": "707feabfc76d5638"
+  },
+  {
+    "url": "/sync-rules.js",
+    "revision": "833a2619df50a96a"
+  },
+  {
+    "url": "/sync.js",
+    "revision": "8d7f5232573f4875"
   },
   {
     "url": "/text-anchor.js",
@@ -230,7 +238,7 @@ export default [
   },
   {
     "url": "/user-state.js",
-    "revision": "d802a6e685571a45"
+    "revision": "54f5555f07d80be2"
   },
   {
     "url": "/work-header.js",

@@ -141,8 +141,8 @@ export async function openStore(ownerHash, { onClosed } = {}) {
   const storageChanged = (event) => { if (event.key === channelName && event.newValue) emit({ external: true }); };
   if (!channel) globalThis.addEventListener("storage", storageChanged);
   const locked = (callback) => navigator.locks?.request ? navigator.locks.request("redstm-store", callback) : callback();
-  const notify = (keys) => {
-    const message = { keys, deviceId: device.value };
+  const notify = (keys, { remote = false } = {}) => {
+    const message = { keys, deviceId: device.value, ...(remote ? { remote: true } : {}) };
     if (channel) channel.postMessage(message);
     else {
       try { localStorage.setItem(channelName, crypto.randomUUID()); } catch { /* notification cannot undo a committed write */ }
@@ -179,6 +179,41 @@ export async function openStore(ownerHash, { onClosed } = {}) {
     get closed() { return closed; },
     get: (store, key) => db.get(store, key),
     getAll: (store) => db.getAll(store),
+    // Device sync (sync.js): what this device last agreed with the server on.
+    syncMeta: {
+      get: async () => (await db.get("meta", "sync"))?.value ?? null,
+      put: (value) => db.put("meta", { key: "sync", value }),
+    },
+    // Records another device changed, as the server holds them: written without an outbox entry
+    // (they are not this device's changes) and announced like any other write.
+    async applyRemote(changes) {
+      const planned = changes.map((change) => {
+        if (!["annotations", "sessions", "works", "meta"].includes(change.store)) throw new TypeError("지원하지 않는 저장소");
+        if (change.store === "meta" && change.value?.key !== "library") throw new TypeError("지원하지 않는 사용자 설정");
+        return change;
+      });
+      if (!planned.length) return;
+      await locked(async () => {
+        const tx = db.transaction([...new Set(planned.map((change) => change.store))], "readwrite");
+        for (const change of planned) await tx.objectStore(change.store).put(change.value);
+        await tx.done;
+      });
+      notify(planned.map((change) => `${change.store}:${change.value[KEYS[change.store]]}`), { remote: true });
+    },
+    // A finished sync carried every change made before it started: their queued copies can go.
+    async drainOutbox(before) {
+      await locked(async () => {
+        const tx = db.transaction(["meta", "outbox"], "readwrite");
+        const outbox = tx.objectStore("outbox");
+        for (const op of await outbox.getAll()) {
+          if (op.createdAt > before) continue;
+          await outbox.delete(op.opId);
+          const marker = await tx.objectStore("meta").get(pendingKey(op.key));
+          if (marker?.opId === op.opId) await tx.objectStore("meta").delete(pendingKey(op.key));
+        }
+        await tx.done;
+      });
+    },
     async commit(changes) {
       const operations = await locked(() => writeTransaction(db, changes));
       if (operations.length) notify(operations.map((op) => op.key));

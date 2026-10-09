@@ -1,6 +1,7 @@
 import {
   STATE_KEY,
   claimLegacyOwner,
+  conflictId,
   stateStorageKey,
   defaultUserState,
   exportUserState,
@@ -59,6 +60,7 @@ import { renderChapterRun } from "/reader-chrome.js";
 import { openGallery } from "/gallery.js";
 import { annotationAt, annotationRecord, documentAnnotations, excerptList, excerptsMarkdown, MARK_PRIORITY, placeAnnotations, selectionOffsets, tombstone, withNote } from "/annotations.js";
 import { openStore } from "/store.js";
+import { applyEntries, pushOnLeave, syncOnce } from "/sync.js";
 import { featureEnabled } from "/capabilities.js";
 import { createOffline, deleteNamespace } from "/offline.js";
 import { CREDIT, canvasBlob, drawAaScene, drawExcerptCard, drawStatsCard } from "/share-canvas.js";
@@ -2751,6 +2753,7 @@ for (const input of quickSettings.querySelectorAll("[data-quick-setting]")) {
 function openSettings() {
   if (!elements["settings-dialog"].open) elements["settings-dialog"].showModal();
   void renderOfflineStorage();
+  renderSyncStatus();
   elements["settings-dialog"].querySelector("form").scrollTop = 0;
 }
 
@@ -6096,6 +6099,160 @@ function restoreMirroredStates() {
   return statesRestored;
 }
 
+// ---- Device sync (docs/24 §12.7) -------------------------------------------------------------
+// The owner's reading records follow them to every signed-in device: at start, when the page comes
+// back, a minute after a change and every five minutes while it is open; a page being hidden sends
+// what is pending. Display settings stay per device (sync.js).
+const SYNC_INTERVAL_MS = 5 * 60_000;
+const SYNC_AFTER_CHANGE_MS = 60_000;
+const SYNC_FOCUS_GAP_MS = 30_000;
+let syncRun = null;
+let syncTimer = 0;
+let syncDue = 0;
+let syncStatus = { state: "idle" };
+const syncSubscribed = new WeakSet();
+
+const syncEnabled = () => featureEnabled("sync", true);
+
+function syncLocal(store) {
+  return {
+    read: async () => ({
+      userState,
+      textState: textLibrary.exportState(),
+      records: {
+        annotations: await store.getAll("annotations"),
+        sessions: await store.getAll("sessions"),
+        works: await store.getAll("works"),
+        library: (await store.get("meta", "library")) ?? null,
+      },
+    }),
+    apply: (changes, conflicts) => applySyncedChanges(store, changes, conflicts),
+  };
+}
+
+// Server values written here the way another tab's save is taken over (adoptStoredState), then
+// saved; records go to the owner's store without an outbox entry.
+async function applySyncedChanges(store, changes, conflicts) {
+  const result = applyEntries({ userState, textState: textLibrary.exportState() }, changes);
+  if (result.userState) {
+    adoptStoredState(serializeUserState(planImport(JSON.stringify(result.userState), defaultSettings).state));
+    persistUserState();
+  }
+  if (result.textState) textLibrary.importState(result.textState);
+  if (result.records.length) await store.applyRemote(result.records);
+  if (conflicts.length) {
+    await store.commit(conflicts.map((record) => ({ store: "annotations", value: { ...record, id: conflictId(record), conflictOf: record.id } })));
+  }
+  if (result.records.some((change) => change.store === "works" || change.store === "meta")) {
+    await personalLibraryChanged(await loadPersonalLibrary());
+  }
+}
+
+function syncAgo(at) {
+  const minutes = Math.floor((Date.now() - at) / 60_000);
+  if (minutes < 1) return "방금";
+  if (minutes < 60) return `${minutes}분 전`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}시간 전`;
+  return new Date(at).toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
+}
+
+const SYNC_COPY = {
+  idle: () => "확인 중",
+  syncing: () => "동기화 중…",
+  done: (status) => `서버 동기화 완료 · ${syncAgo(status.at)}`,
+  offline: () => "오프라인 · 이 기기에 저장했고 연결되면 동기화합니다",
+  auth: () => "로그인이 만료돼 동기화하지 못했어요 · 새로 고침해 다시 로그인해 주세요",
+  unavailable: () => "이 계정은 서버 동기화를 쓸 수 없어 이 기기에만 저장합니다",
+  local: () => "계정을 확인하지 못해 이 기기에만 저장합니다",
+};
+
+function renderSyncStatus() {
+  const row = document.querySelector("#settings-sync");
+  if (!row) return;
+  const on = syncEnabled();
+  row.hidden = !on;
+  const label = document.querySelector("#sync-status");
+  label.dataset.state = syncStatus.state;
+  label.textContent = (SYNC_COPY[syncStatus.state] ?? (() => "동기화하지 못했어요 · 잠시 뒤 다시 시도합니다"))(syncStatus);
+  document.querySelector("#sync-now").disabled = ["syncing", "unavailable", "local"].includes(syncStatus.state);
+  document.querySelector("#storage-note").textContent = on && !["unavailable", "local"].includes(syncStatus.state)
+    ? "읽기 기록·저장·나중에·표시·메모가 같은 계정으로 로그인한 기기끼리 이어집니다. 글자 크기 같은 화면 설정은 기기마다 따로입니다."
+    : "읽기 기록과 저장한 글은 이 브라우저에만 보관됩니다.";
+}
+
+function setSyncStatus(next) {
+  syncStatus = next;
+  renderSyncStatus();
+}
+
+// The earliest due run wins: a change during a five-minute wait brings the run forward, and
+// position saves every few seconds while reading do not keep pushing it back.
+function scheduleSync(delay) {
+  if (!syncEnabled()) return;
+  const due = Date.now() + delay;
+  if (syncDue && syncDue <= due) return;
+  clearTimeout(syncTimer);
+  syncDue = due;
+  syncTimer = setTimeout(() => {
+    syncDue = 0;
+    void runSync();
+  }, delay);
+}
+
+function runSync() {
+  if (!syncEnabled() || deviceResetting) return Promise.resolve(null);
+  if (syncRun) return syncRun;
+  clearTimeout(syncTimer);
+  syncDue = 0;
+  syncRun = (async () => {
+    const store = await restoreMirroredStates().then(ownerStore);
+    if (!store) {
+      setSyncStatus({ state: "local" });
+      return null;
+    }
+    if (!syncSubscribed.has(store)) {
+      syncSubscribed.add(store);
+      // This device's own saves (not records written from the server) bring the next run forward.
+      store.subscribe((detail) => { if (!detail?.remote) scheduleSync(SYNC_AFTER_CHANGE_MS); });
+    }
+    if (currentSummary) persistReadingPosition();
+    const previous = syncStatus;
+    setSyncStatus({ ...previous, state: "syncing" });
+    const run = () => syncOnce({ local: syncLocal(store), meta: store.syncMeta, deviceId: store.deviceId });
+    // One tab at a time: another tab already running leaves this one as it was.
+    const result = navigator.locks?.request
+      ? await navigator.locks.request(`redstm-sync:${store.name}`, { ifAvailable: true }, (lock) => (lock ? run() : null))
+      : await run();
+    if (!result) {
+      setSyncStatus(previous.state === "syncing" ? { state: "idle" } : previous);
+      return null;
+    }
+    await store.drainOutbox(new Date(result.startedAt).toISOString()).catch(() => {});
+    setSyncStatus({ state: "done", at: Date.now() });
+    return result;
+  })().catch((error) => {
+    setSyncStatus({ state: error?.kind ?? "error", at: syncStatus.at });
+    return null;
+  }).finally(() => {
+    syncRun = null;
+    if (document.visibilityState === "visible") scheduleSync(SYNC_INTERVAL_MS);
+  });
+  return syncRun;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!syncEnabled()) return;
+  if (document.visibilityState === "hidden") {
+    clearTimeout(syncTimer);
+    syncDue = 0;
+    if (!syncRun && ownerDb) {
+      void ownerDb.then((store) => store && pushOnLeave({ local: syncLocal(store), meta: store.syncMeta, deviceId: store.deviceId })).catch(() => {});
+    }
+  } else if (syncStatus.state !== "done" || Date.now() - syncStatus.at > SYNC_FOCUS_GAP_MS) void runSync();
+  else scheduleSync(SYNC_INTERVAL_MS);
+});
+document.querySelector("#sync-now").addEventListener("click", () => void runSync());
+
 // Why the owner's store is not open, so 기록 can say what to do: "identity" (the account was not
 // confirmed — sign in again) or "storage" (this browser refused IndexedDB).
 let ownerStoreProblem = null;
@@ -7013,7 +7170,8 @@ document.querySelector("#other-account-delete").addEventListener("click", async 
 // 이 기기 기록 지우기: this owner's marks, notes, sessions, saved works and their caches. The reading
 // state in localStorage (설정·읽은 위치) stays; 기록 내보내기 first keeps a copy.
 document.querySelector("#clear-device").addEventListener("click", async () => {
-  if (!confirm("이 기기의 표시·메모·독서 기록·내려받은 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요. 지울까요?")) return;
+  const synced = syncEnabled() && syncStatus.state === "done";
+  if (!confirm(`이 기기의 표시·메모·독서 기록·내려받은 작품을 지웁니다. 먼저 기록 내보내기로 백업할 수 있어요.${synced ? " 서버에 동기화된 기록은 그대로이고 다음 동기화 때 다시 받아옵니다." : ""} 지울까요?`)) return;
   const owner = await ownerIdentity();
   const store = await ownerStore();
   if (!owner) return showReaderFeedback("로그인을 확인한 뒤 다시 시도해 주세요", 2400);
@@ -7629,6 +7787,10 @@ const offline = createOffline({
   },
 });
 void restoreMirroredStates();
+renderSyncStatus();
+// After the first screen's own requests.
+if (document.readyState === "complete") scheduleSync(1500);
+else addEventListener("load", () => scheduleSync(1500), { once: true });
 const startOffline = () => void ownerIdentity().then((hash) => {
   offline.setOwner(hash);
   return offline.register();

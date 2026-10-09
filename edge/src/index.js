@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { controlApiResponse } from "./control-api.js";
 import { runControlMaintenance } from "./control-read.js";
+import { ownerHash, pruneSyncOps, syncResponse } from "./sync-api.js";
 import { textArchiveResponse } from "./text-archive.js";
 
 const encoder = new TextEncoder();
@@ -235,9 +236,10 @@ export default {
     if (url.pathname === "/api/v1/me") {
       if (!env.TEAM_DOMAIN || !env.POLICY_AUD) return response("Access user required", 403);
       if (request.method !== "GET") return response("Method not allowed", 405, { Allow: "GET" });
-      const ownerHash = Array.from(await digest(isAuthorized.subject), (byte) => byte.toString(16).padStart(2, "0"))
-        .join("").slice(0, 16);
-      return Response.json({ ownerHash }, { headers: { "Cache-Control": "private, no-store" } });
+      return Response.json({ ownerHash: await ownerHash(isAuthorized.subject) }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+    if (url.pathname.startsWith("/api/v1/sync/")) {
+      return syncResponse(request, env, isAuthorized);
     }
     if (url.pathname.startsWith("/api/v1/text/")) {
       try {
@@ -285,6 +287,8 @@ export default {
     }
   },
   async scheduled(controller, env) {
-    await runControlMaintenance(env, new Date(controller.scheduledTime));
+    const now = new Date(controller.scheduledTime);
+    await runControlMaintenance(env, now);
+    await pruneSyncOps(env, now);
   },
 };

@@ -42,7 +42,7 @@ export const FLAG_NAMES = ["newShell", "miniBar", "typeCovers", "barcode", "find
   "aaGestures", "aaFullscreen", "stats", "offline", "sync", "kwic", "glass", "haptics"];
 
 export function featureEnabled(name, defaultValue = false) {
-  if (!FLAG_NAMES.includes(name) || name === "sync") return false;
+  if (!FLAG_NAMES.includes(name)) return false;
   try {
     const value = JSON.parse(localStorage.getItem("redstm.flags"))?.[name];
     if (typeof value === "boolean") return value;

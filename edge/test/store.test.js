@@ -55,18 +55,23 @@ test("an unchanged legacy source cannot overwrite newer IDB state after a mirror
   assert.deepEqual(pendingLegacy([changed], committed), [changed]);
 });
 
-test("capability fallbacks and flags are explicit; sync and unverified defaults stay off", (context) => {
+test("capability fallbacks and flags are explicit; unverified defaults stay off and sync can be turned off", (context) => {
   const previous = globalThis.localStorage;
   context.after(() => { globalThis.localStorage = previous; });
   globalThis.localStorage = { getItem: () => '{"kwic":true,"tts":true,"sync":true,"haptics":"true"}' };
   assert.equal(featureEnabled("kwic"), true);
   assert.equal(featureEnabled("tts"), false);
-  assert.equal(featureEnabled("sync"), false);
+  assert.equal(featureEnabled("sync"), true);
   assert.equal(featureEnabled("haptics"), false);
   assert.equal(featureEnabled("pageMode"), false);
   assert.equal(capabilities.closeWatcher.detect(), false);
   assert.equal(capabilities.closeWatcher.keeps, "닫기 가능");
   for (const capability of Object.values(capabilities)) assert.equal(capability.minVerified, "");
+  // Sync is on unless the flag turns it off (docs/24 §12.7).
+  globalThis.localStorage = { getItem: () => '{"sync":false}' };
+  assert.equal(featureEnabled("sync", true), false);
+  globalThis.localStorage = { getItem: () => null };
+  assert.equal(featureEnabled("sync", true), true);
 });
 
 test("haptics require opt-in, a gesture, and motion permission; only named actions vibrate", (context) => {

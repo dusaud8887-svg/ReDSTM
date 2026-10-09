@@ -502,7 +502,7 @@ export function sanitizeRecords(value) {
 // of being lost. Returns only the records that change, ready to write in one transaction.
 const sameEdit = (left, right) => left.note === right.note && left.kind === right.kind &&
   JSON.stringify(left.tags ?? []) === JSON.stringify(right.tags ?? []);
-const conflictId = (record) => `${record.id.slice(0, 80)}-c${instant(record.updatedAt).toString(36)}`.slice(0, 100);
+export const conflictId = (record) => `${record.id.slice(0, 80)}-c${instant(record.updatedAt).toString(36)}`.slice(0, 100);
 
 export function mergeAnnotationRecords(current, incoming) {
   const mine = new Map(current.map((record) => [record.id, record]));

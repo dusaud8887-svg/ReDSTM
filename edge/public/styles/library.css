@@ -208,6 +208,10 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .offline-works-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .offline-works-list button { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); color: var(--ink); font-weight: 600; text-align: start; cursor: pointer; }
 .settings-account { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 12px; }
+.settings-sync { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.settings-sync p { display: grid; gap: 2px; margin: 0; font-size: 13px; }
+.settings-sync p span { color: var(--ink-2); }
+.settings-sync p span:is([data-state="auth"], [data-state="server"], [data-state="rejected"], [data-state="error"]) { color: var(--danger-text); }
 .settings-account p { margin: 0; font-size: 13px; }
 .excerpts-export { justify-self: start; min-height: 40px; margin: 4px 0 8px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg); color: var(--ink); font-weight: 600; cursor: pointer; }
 .result-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }

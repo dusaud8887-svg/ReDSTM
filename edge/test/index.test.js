@@ -533,6 +533,7 @@ test("text archive status is served uncached from its fixed key", async () => {
 
 test("scheduled maintenance reconciles stale runs and retains terminal evidence by outcome", async () => {
   const statements = [];
+  const runs = [];
   const env = {
     CONTROL_DB: {
       prepare(sql) {
@@ -541,6 +542,10 @@ test("scheduled maintenance reconciles stale runs and retains terminal evidence 
           bind(...parameters) {
             statement.parameters = parameters;
             return statement;
+          },
+          run() {
+            runs.push(statement);
+            return {};
           },
         };
         return statement;
@@ -555,6 +560,10 @@ test("scheduled maintenance reconciles stale runs and retains terminal evidence 
   await worker.scheduled({ scheduledTime, cron: "0 3 * * *" }, env, {});
 
   assert.equal(statements.length, 7);
+  // Sync operation ids older than 30 days go; the synced rows themselves stay.
+  assert.equal(runs.length, 1);
+  assert.match(runs[0].sql, /^DELETE FROM user_sync_ops WHERE created_at < \?$/);
+  assert.deepEqual(runs[0].parameters, ["2026-06-12T03:00:00.000Z"]);
   // Overdue queued commands expire and lapsed claims are settled even with no runner polling.
   assert.match(statements[4].sql, /SET state = 'expired'/);
   assert.match(statements[5].sql, /SET state = 'queued'.*WHERE state = 'claimed'/s);
