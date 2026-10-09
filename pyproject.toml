@@ -44,6 +44,8 @@ addopts = "-q"
 [tool.ruff]
 target-version = "py314"
 line-length = 100
+# Archived reference material handed over by other agents (docs/done), not project code.
+extend-exclude = ["docs/done"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "W"]
