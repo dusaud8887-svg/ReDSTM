@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "77bacca2762114d2"
+    "revision": "20a8841ee6c93b4e"
   },
   {
     "url": "/arca-media.js",
@@ -174,7 +174,7 @@ export default [
   },
   {
     "url": "/styles/aa.css",
-    "revision": "1c6a728bc3a3a1d8"
+    "revision": "19e5df92ca33e4ea"
   },
   {
     "url": "/styles/base.css",
@@ -190,7 +190,7 @@ export default [
   },
   {
     "url": "/styles/reader.css",
-    "revision": "175fb3438ebdd750"
+    "revision": "539b4f23ae4db759"
   },
   {
     "url": "/styles/shell.css",

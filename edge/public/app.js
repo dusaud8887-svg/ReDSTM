@@ -157,6 +157,8 @@ let statesRestored = null;
 // P6-8 AA scene moves (findAaScenes).
 let aaScenes = [];
 let aaSceneFrame = 0;
+// Scene header tops and the scroll size they were measured at, rather than every scroll frame.
+let aaSceneTops = null;
 let settings;
 let historyEntries;
 // Per-post AA zoom and sideways position (see effectiveAaZoom).
@@ -701,6 +703,7 @@ function applyBoardFilterOptions() {
 
 function applySettings() {
   const root = document.documentElement;
+  aaSceneTops = null;
   const dark = applyAppearance(settings);
   root.style.setProperty("--prose-align", settings.proseAlign === "justify" ? "justify" : "start");
   root.style.setProperty("--prose-size", `${settings.proseSize}px`);
@@ -925,6 +928,7 @@ function scheduleAaScrollCue() {
 // Their positions are measured on use, since zoom and width change them (state at the top).
 function findAaScenes() {
   aaScenes = [];
+  aaSceneTops = null;
   if (currentMode === "aa") {
     const walker = document.createTreeWalker(elements["archive-body"], NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -941,12 +945,22 @@ function aaSceneView() {
   const controls = elements["aa-controls"];
   // A header lands just under the sticky toolbar.
   const offset = (Number.parseFloat(getComputedStyle(controls).top) || 0) + controls.offsetHeight + 8;
-  const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
-  const range = document.createRange();
-  const tops = aaScenes.map((node) => {
-    range.selectNodeContents(node);
-    return range.getBoundingClientRect().top - origin;
-  });
+  // Measured once per layout: a range rect inside a block that skips rendering lays it out again,
+  // which every scroll frame did for every header. The scroll size is part of the key, so a body
+  // still laying out (or a text segment replacing the last) is measured again.
+  const layout = `${scroller.scrollHeight}x${scroller.scrollWidth}`;
+  if (aaSceneTops?.layout !== layout) {
+    const origin = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    const range = document.createRange();
+    aaSceneTops = {
+      layout,
+      tops: aaScenes.map((node) => {
+        range.selectNodeContents(node);
+        return range.getBoundingClientRect().top - origin;
+      }),
+    };
+  }
+  const { tops } = aaSceneTops;
   return { scroller, offset, tops, y: sceneY(tops, { scrollTop: scroller.scrollTop, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight, offset }) };
 }
 
@@ -4352,8 +4366,14 @@ function renderPostBody() {
     canvas.className = "aa-canvas";
     canvas.innerHTML = post.body_html;
     elements["archive-body"].replaceChildren(canvas);
+    void document.fonts.ready.then(() => containHeavyBlocks(canvas, "aa-block"));
   } else {
     elements["archive-body"].innerHTML = post.body_html;
+    const body = elements["archive-body"];
+    const rendered = body.firstElementChild;
+    void document.fonts.ready.then(() => {
+      if (body.firstElementChild === rendered) containHeavyBlocks(body, "reader-block");
+    });
   }
   normalizeReaderTypography(elements["archive-body"]);
   applySettings();
@@ -4365,6 +4385,32 @@ function renderPostBody() {
   findAaScenes();
   applyReadingMode();
   paintAnnotations();
+}
+
+// A heavy body (a word-processor paste: aa_19/6816 is 2.67 MB with 56,805 styled spans) was laid
+// out and painted whole on every scroll frame: 150 ms a frame on a desktop CPU, several hundred on a
+// phone (2026-10-09), in AA and in prose alike. Its innermost blocks skip rendering while off
+// screen. An AA block keeps its measured size in units of the AA font size, so a zoom rescales the
+// placeholders without measuring again; a prose block, whose lines wrap, starts from its measured
+// size and then keeps the size it last rendered at (`auto`). Light bodies, most of them, keep
+// rendering as they did; page mode lays prose out in columns and leaves blocks alone (reader.css).
+const CONTAIN_MIN_ELEMENTS = 2000;
+function containHeavyBlocks(root, className) {
+  if (!root.isConnected || root.getElementsByTagName("*").length < CONTAIN_MIN_ELEMENTS) return;
+  const aa = className === "aa-block";
+  const unit = aa ? Number.parseFloat(getComputedStyle(root).fontSize) : 1;
+  if (!(unit > 0)) return;
+  const blocks = [...root.querySelectorAll("p, div")].filter((block) => !block.querySelector("p, div"));
+  // Every read before any write: one layout for the whole body.
+  const sizes = blocks.map((block) => [block.offsetWidth / unit, block.offsetHeight / unit]);
+  blocks.forEach((block, index) => {
+    const [width, height] = sizes[index];
+    block.classList.add(className);
+    block.style.containIntrinsicSize = aa
+      ? `calc(var(--aa-effective-size) * ${width.toFixed(3)}) calc(var(--aa-effective-size) * ${height.toFixed(3)})`
+      : `auto ${Math.round(width)}px auto ${Math.round(height)}px`;
+  });
+  aaSceneTops = null;
 }
 
 function normalizeReaderTypography(container) {
@@ -7462,6 +7508,10 @@ function updateKeyboardState() {
   readerSession.setKeyboardOpen(editing && shrunk);
 }
 window.visualViewport?.addEventListener("resize", updateKeyboardState);
+// Anything that moves AA lines measures the scene headers again on the next use.
+for (const [target, type] of [[window, "resize"], [document, "fullscreenchange"], [document.fonts, "loadingdone"]]) {
+  target.addEventListener(type, () => { aaSceneTops = null; });
+}
 document.addEventListener("focusout", () => requestAnimationFrame(updateKeyboardState));
 matchMedia("(max-width: 759px)").addEventListener("change", applySettings);
 // Late web fonts can reflow the body; re-apply the saved position only if the reader has not

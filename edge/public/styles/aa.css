@@ -25,6 +25,8 @@
 .aa-canvas[data-width="680"] { width: 680px; min-width: 680px; }
 .aa-canvas[data-width="800"] { width: 800px; min-width: 800px; }
 .archive-body.aa p { margin: 0; }
+/* Heavy AA bodies (app.js containAaBlocks): off-screen blocks skip layout and paint. */
+.archive-body.aa .aa-block { content-visibility: auto; }
 .archive-body.aa :is(pre, .AA_Text, div[style*="font-family"]) { width: fit-content; display: block; margin: 0; padding: 0; white-space: nowrap !important; font-family: inherit !important; font-size: inherit !important; line-height: inherit !important; background: transparent !important; }
 .archive-body.aa.normalize-source-styles :is(font[color], span[style*="color"]) { color: inherit !important; }
 /* 굵게: a stroke painted around each glyph in its own colour. It changes no font, weight, advance or

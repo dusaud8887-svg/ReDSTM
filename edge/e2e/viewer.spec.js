@@ -2303,6 +2303,55 @@ test("search suggests works for partial, typo and Latin-key input and opens one"
 });
 
 
+// 2026-10-09: a word-processor AA paste (aa_19/6816: 2.67 MB, 56,805 styled spans) repainted whole
+// on every scroll frame. Its blocks skip rendering off screen with sizes kept in AA font units.
+test("a heavy AA body keeps blocks off screen out of rendering without losing size, zoom or scenes", async ({ page }) => {
+  await useCollectionFixture(page);
+  const span = (text) => `<span style="font-size:10pt;font-family:&quot;MS PGothic&quot;;color:rgb(51, 51, 51)">${text}</span>`;
+  const block = (index) => `<p style="margin:0px;font-size:12px">${span(`${index + 1} ： ◆trip ： 2024/11/29(金) 22:44:32 ID:abc`)}<br>${
+    Array.from({ length: 30 }, (_, line) => `${span("（　´∀｀）")}${span("＿".repeat(line % 7 === 0 ? 120 : 20))}<br>`).join("")}${span(`끝 ${index + 1}`)}</p>`;
+  await page.route(`**/archive/${aaKey}`, (route) => {
+    const payload = aaPostPayload(1, "무거운 AA");
+    payload.post.body_html = `<div class="AA_Text"><div>${Array.from({ length: 40 }, (_, index) => block(index)).join("")}</div></div>`;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await openPost(page, aaKey);
+  await page.locator("#aa-zoom-reset").click();
+  const blocks = page.locator(".aa-canvas .aa-block");
+  await expect(blocks).toHaveCount(40);
+  await expect(blocks.first()).toHaveAttribute("style", /contain-intrinsic-size: calc\(var\(--aa-effective-size\)/);
+  const pane = page.locator("#reader-pane");
+  const before = await pane.evaluate((element) => ({ width: element.scrollWidth, height: element.scrollHeight, client: element.clientWidth }));
+  expect(before.width).toBeGreaterThan(before.client);  // the widest line still sets the sideways range
+  await expect(page.locator("#aa-scene-output")).toHaveText("장면 1/40");
+  await page.locator("#aa-scene-next").click();
+  await expect(page.locator("#aa-scene-output")).toHaveText("장면 2/40");
+  await page.locator('[data-aa-zoom-delta]').last().click();
+  await expect.poll(() => pane.evaluate((element) => element.scrollHeight)).toBeGreaterThan(before.height * 1.05);
+  await pane.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(page.locator(".aa-canvas")).toContainText("끝 40");
+  await expect.poll(() => page.evaluate(() => {
+    const last = [...document.querySelectorAll(".aa-canvas .aa-block")].at(-1);
+    return last.getBoundingClientRect().height > 0 && last.textContent.includes("끝 40");
+  })).toBe(true);
+});
+
+test("a heavy prose body skips off-screen blocks in scroll mode but not in page mode", async ({ page }) => {
+  await useCollectionFixture(page);
+  await page.route(`**/archive/${standaloneKey}`, (route) => {
+    const payload = postPayload(3, "무거운 글");
+    payload.post.body_html = Array.from({ length: 120 }, (_, index) =>
+      `<p>${Array.from({ length: 20 }, (_, word) => `<span style="font-family:Batang;color:#333">문장 ${index}-${word} </span>`).join("")}</p>`).join("");
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await page.goto("/read/board_a/3");
+  const blocks = page.locator("#archive-body .reader-block");
+  await expect(blocks).toHaveCount(120);
+  await expect.poll(() => blocks.first().evaluate((block) => getComputedStyle(block).contentVisibility)).toBe("auto");
+  await page.evaluate(() => document.body.classList.add("page-mode"));
+  await expect.poll(() => blocks.first().evaluate((block) => getComputedStyle(block).contentVisibility)).toBe("visible");
+});
+
 test("AA touch pan follows both axes when a horizontal drag becomes diagonal", async ({ page }) => {
   await useCollectionFixture(page);
   await page.route(`**/archive/${aaKey}`, (route) => {

@@ -41,6 +41,8 @@ body.continuous-mode #reader-pane { overflow-anchor: none; }
 .archive-body[data-continuous-title]::before { content: attr(data-continuous-title); display: block; margin-bottom: 24px; font: 700 20px/1.5 var(--font-display); white-space: normal; }
 /* Pinch on prose changes the font size (app.js) instead of zooming the page. */
 .archive-body:not(.aa) { touch-action: pan-x pan-y; }
+/* Heavy prose bodies (app.js containHeavyBlocks) skip off-screen blocks; page mode's columns need them laid out. */
+body:not(.page-mode) .archive-body:not(.aa) .reader-block { content-visibility: auto; }
 .setting-hint { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
 @media (hover: hover) and (pointer: fine) { .touch-hint { display: none; } }
 /* Prose paragraph settings stop at an AA canvas and a media figure (DESIGN §8.1). `:scope` keeps
