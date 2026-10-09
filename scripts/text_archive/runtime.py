@@ -131,13 +131,19 @@ def _admit(
     cgroup_root: Path,
     root_path: Path,
 ) -> None:
+    text_lock = FileLock(str(operation_lock))
+    try:
+        text_lock.acquire(timeout=lock_wait_seconds)
+    except (Timeout, OSError) as exc:
+        raise RuntimeWindowError("text_operation_busy") from exc
     if exclusive:
-        text_lock = FileLock(str(operation_lock))
-        try:
-            text_lock.acquire(timeout=lock_wait_seconds)
-        except (Timeout, OSError) as exc:
-            raise RuntimeWindowError("text_operation_busy") from exc
         stack.callback(text_lock.release)
+    else:
+        # Probe only: a light step (collector, Tunaground, media) does not start while a heavy
+        # one (publisher, importer) runs. On the 1 GiB box all three at once starved the
+        # publisher's rclone past its timeout every run (2026-10-09: IO pressure ~55%, steal
+        # ~40%, swapping; Tunaground uploads fell 3,500 segments behind in five hours).
+        text_lock.release()
     # Probe only: text never holds TypeMoon's publish lock, or a text step could fail
     # TypeMoon's publish confirmation, which takes the lock without waiting.
     lock = FileLock(str(publish_lock))

@@ -1198,8 +1198,13 @@ def test_heavy_text_operations_run_one_at_a_time(
         with pytest.raises(runtime.RuntimeWindowError, match="text_operation_busy"):
             with runtime.operation_window(exclusive=True, **options):
                 pytest.fail("a second heavy text step must wait")
-        # The light collector does not take the heavy-step lock.
-        with runtime.operation_window(**options):
+        # A light step (collector) does not start while a heavy one runs...
+        with pytest.raises(runtime.RuntimeWindowError, match="text_operation_busy"):
+            with runtime.operation_window(**options):
+                pytest.fail("a light text step must yield to a heavy one")
+    # ...and holds nothing itself: a heavy step may start while a light one runs.
+    with runtime.operation_window(**options):
+        with runtime.operation_window(exclusive=True, **options):
             pass
 
 
