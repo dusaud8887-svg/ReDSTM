@@ -217,7 +217,8 @@ query가 실패할 수 있으므로 자동 schedule이 control plane에 의존�
 
 ## 6. D1 schema
 
-Control DB 이름은 redstm-control이다. schema는 command/status 책임만 가진다.
+Control DB 이름은 redstm-control이다. schema는 command/status 책임을 가진다. 같은 DB의 `user_sync`·`user_sync_owners`·
+`user_sync_ops`(migration 0009)는 운영 제어가 아니라 기기 간 기록 동기화용이며 계약은 docs/00 ADR-016, docs/24 §12.7에 있다.
 
 ### runner_status
 
@@ -631,6 +632,7 @@ incremental export/publish의 terminal safe code는 기존 `publish.pending`을 
 - failed/security audit: 90일 summary
 - board_status/runner_status: current upsert
 - raw reports/logs: Oracle/local report에만 보존, D1에 복제 금지
+- user_sync: 보존(삭제 tombstone 포함). user_sync_ops: 30일(같은 cron이 정리)
 - 매일 03:00 UTC Worker cron이 8시간을 넘긴 running run/연결 command를 `failed/run_stale`로
   reconcile한 뒤 indexed DELETE를 실행한다. 단 runner가 10분 이내 heartbeat에서
   `active_run_id`로 보고하고 있는 run은 나이와 무관하게 살아 있는 것으로 보고 reconcile하지

@@ -21,7 +21,7 @@
 ## 0. 구현 에이전트에게 (먼저 읽기)
 
 1. **새 라이브러리 조사·프레임워크 재선정은 하지 않는다.** 결정은 §5, 라이브러리는 §11에 확정돼 있다.
-2. §17 결정은 확정됐다. **보류(pass) 항목**(동기화 M5 일부, RUM, `/ops` 매핑)은 구현하지 않는다.
+2. §17 결정은 확정됐다. **보류(pass) 항목**(RUM, `/ops` 매핑)은 구현하지 않는다. 동기화는 2026-10-09 보류를 풀고 구현했다(A6·§12.7).
 3. 작업 단위는 §15 티켓. 티켓당 **손으로 편집하는 파일 ≤ 5**(저장소 규칙). 새 테스트 파일·문서도 센다.
    생성·복사한 바이너리(글꼴, vendor, screenshot 기준 이미지)는 세지 않는다. 넘치면 티켓을 쪼갠다.
 4. 티켓마다 `npm test` · `npm run check` · `npm run lint`(M0 이후 0 error), 변경과 관련된 E2E spec을
@@ -71,7 +71,7 @@ ReDSTM의 기반(보존·검색·Reader·Back 계약·AA parity)은 탄탄하지
 | G9 | 오프라인 | 세 출처 작품 저장 → 앱 종료 → 완전 단절에서 새로 시작 → 목차·본문·이전/다음(T07) |
 | G10 | 품질 | 기존 E2E·axe 통과, 첫 로드 추가 외부 JS ≤ 15KB gzip, 첫 방문 글꼴 ≤ 700KB(서재), 실기기 체크리스트 |
 
-기기 간 이어 읽기는 **QR + 백업 v4 파일 병합**으로 해결한다(서버 동기화는 보류, §17).
+기기 간 이어 읽기는 **서버 동기화**(2026-10-09, §12.7)가 기본이고, QR 위치 링크와 백업 v4 병합도 그대로 쓴다.
 
 ### 1.3 포지셔닝
 
@@ -186,7 +186,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 | D-19 | `text-autospace` 한국어 미적용 | 한글–한자 간격 문제 | — |
 | D-20 | 페이지 모드 = CSS multi-column 배치 + **transform 이동**(탭·pointer 스와이프). `::column` snap은 지원 시 추가 기능 | column 박스는 snap 대상이 아니다(`::column`은 Chromium 전용) | 스크롤 고정 |
 | D-21 | Service Worker(Workbox): **실제 경로표**(§12.6) + 오프라인 snapshot + 자동 skipWaiting 금지 | 이동 중 읽기, 구/신 모듈 혼합 방지 | 앱 캐시 초기화 버튼 |
-| D-22 | 서버 동기화는 **보류**. 기기 간 이동은 QR(위치 링크) + 백업 v4 병합. §12.7 설계는 필요해질 때를 위해 남긴다 | 1인 개인 보존본에 D1 용도 확장·계약 개정 비용이 과함 | §12.7대로 M5 재개 |
+| D-22 | 서버 동기화는 2026-10-09 **구현**(§12.7, docs/00 ADR-016). QR(위치 링크)·백업 v4 병합도 유지 | 원래 보류(1인 보존본에 D1 확장 비용) → 사용자 지시로 재개 | D1 한도에 반복해 닿으면 동기화 주기·범위 축소 |
 | D-23 | AA 핀치 = @use-gesture로 제스처 중 transform, 끝나면 **기존과 같은 연속 배율**로 확정. AA 보존 CSS·JS 규칙은 값 그대로 옮김(§8.16 인벤토리) | 60fps + 선명 + 기존 AA parity | 기존 touchmove 방식 |
 | D-24 | 이미지 = PhotoSwipe 갤러리(긴 세로 이미지 제외) | 핀치·스와이프 | 기존 뷰어 |
 | D-25 | 공유 이미지(발췌·AA·기록) = **Canvas 2D 직접 렌더** → PNG 1080×1350. modern-screenshot 제거 | DOM 캡처는 `data:` 이미지 → 현재 CSP에 막힘. 직접 렌더는 CSP 완화·메모리 폭증 없음 | 텍스트 복사만 |
@@ -331,7 +331,7 @@ AA는 레퍼런스가 없는 ReDSTM 고유 영역이다(§8.16–8.17).
 |---|---|---|---|
 | G1 | SW 앱 셸 + 불변 객체 캐시 | 신규 | M4 |
 | G2 | 작품 오프라인 저장·관리 | 신규 | M4 |
-| G3 | 기기 간 동기화 | 신규 | 보류(QR + 백업 병합으로 대체) |
+| G3 | 기기 간 동기화 | 신규 | 구현(2026-10-09, §12.7) |
 | G4 | 햅틱·전체화면·화면 켜 두기 | 개편 | M2 |
 | G5 | 설치 앱 바로가기 확장 | 개편 | M4 |
 | G6 | 새 화 알림(Push) | 신규 | 범위 밖 |
@@ -700,7 +700,7 @@ v3에서 제거: **modern-screenshot**(D-25, Canvas 직접 렌더로 대체), **
 | `aa-viewer.js` · `gallery.js` | AA·갤러리 | M2 |
 | `annotations.js` · `share-canvas.js` · `stats.js` | 표시·메모·발췌 / Canvas 공유 / 기록 | M3 |
 | `offline.js` · `sw.js` | SW 등록·오프라인 저장 / Service Worker | M4 |
-| `sync.js` | 동기화(보류) | — |
+| `sync.js`·`sync-rules.js` | 기기 간 동기화(§12.7) | `src/sync-api.js`와 규칙 공유 |
 | `kwic-worker.js` · `kwic-core.js` | KWIC | M6 |
 
 순수 로직(색 hash, 바코드 bin, 퍼지 파이프라인, 대응표, locator 복원, snapZoom, KWIC, 통계 집계, 병합 규칙)은 DOM 없이 `node --test`.
@@ -852,39 +852,34 @@ offline[workKey] = {
 - 데이터 release hash와 앱 build hash는 별개로 보존.
 - `offline` 플래그 off = 새 저장 버튼 숨김·진행 중 저장 중단. 기존 snapshot 열람은 유지. SW 제거·캐시 삭제는 설정의 별도 버튼(T24).
 
-### 12.7 동기화 — 보류(재개할 때의 설계)
+### 12.7 동기화 (2026-10-09 구현, docs/00 ADR-016)
 
-- 테이블(D1 migration, 예시 — 최종 형태는 P5-1에서 확정):
+같은 Access 계정으로 로그인한 기기끼리 기록이 이어진다. 원본은 여전히 각 브라우저이고, 동기화가 멈춰도 읽기·저장은 계속된다.
 
-```sql
-CREATE TABLE user_sync (
-  owner_id   TEXT NOT NULL,         -- 서버가 검증한 email의 SHA-256 앞 16자
-  key        TEXT NOT NULL,         -- reading:<source>:<documentId> | annotation:<uuid> | work:<key> | setting:<name> | session:<uuid>
-  value      TEXT,                  -- JSON, 삭제면 NULL
-  deleted    INTEGER NOT NULL DEFAULT 0,
-  server_rev INTEGER NOT NULL,      -- owner별 단조 증가(서버 발급)
-  device_id  TEXT NOT NULL,
-  op_id      TEXT NOT NULL,         -- 멱등 키
-  client_at  INTEGER NOT NULL,      -- 참고용(승자 결정에 쓰지 않음)
-  PRIMARY KEY (owner_id, key)
-);
-CREATE UNIQUE INDEX user_sync_op ON user_sync(owner_id, op_id);
-CREATE INDEX user_sync_rev ON user_sync(owner_id, server_rev);
-```
-- 프로토콜: `POST /api/v1/sync/push {deviceId, ops:[{opId,key,value|null,baseRev}]}` → 같은 opId는 이전 결과 반환(멱등).
-  서버는 도착 순서로 `server_rev`를 발급하고 **서버 도착 순서 LWW**(기기 시계 무관). 응답 `{acked:[opId], conflicts:[{key, serverValue, serverRev}]}`.
-  `GET /api/v1/sync/pull?since=<rev>` → 변경분. 앱 시작·포커스·5분·`pagehide`(sendBeacon)에 push→pull.
-- 데이터별 규칙:
-
-| 데이터 | 규칙 |
-|---|---|
-| 마지막 읽던 위치 | 가장 최근의 **명시적 독서 행동**(회차 열기·스크롤로 위치 저장)이 이긴다. 최고 진도(`maxProgress`)는 별도 필드로 max 병합 |
-| 읽음/미읽음 | 수동 되돌림도 유효한 변경(LWW) |
-| 설정·작품 스타일 | key별 서버 순서 LWW |
-| 주석·메모 | uuid 단위. 삭제는 tombstone을 **영구 보관**(작은 레코드라 compaction 안 함) → 오래된 기기가 되살리지 못함. 충돌 시 서버 값 채택 + 로컬 값은 `충돌 사본`으로 보존 |
-| 독서 세션 | session uuid 단위 추가만(합계를 LWW로 덮지 않음). 일별 합계는 조회 시 계산 |
-- 단일 사용자 운영이면 Worker env `SYNC_OWNER`에 허용 ownerHash를 두고 그 외 요청은 403(선택).
-- `docs/00`(D1 = control plane 전용) 계약 개정 필요.
+- **서버** (`edge/src/sync-api.js`, migration `0009_user_sync.sql`): `user_sync(owner_id, key, value, server_rev, device_id, op_id, updated_at)`
+  PK `(owner_id, key)`, index `(owner_id, server_rev)`; `user_sync_owners(owner_id, rev)` 단조 증가 번호; `user_sync_ops(owner_id, op_id)`
+  멱등 기록(30일 뒤 scheduled maintenance가 정리). owner = 검증된 email의 SHA-256 앞 16자. Basic·서비스 토큰은 403,
+  env `SYNC_OWNERS`가 있으면 그 owner만.
+- **프로토콜**: `POST /api/v1/sync/push {deviceId, ops:[{opId, key, value}]}`(최대 100건, 값 128KB, 본문 1MB) →
+  `{acked, rows:[{key, value, rev}]}` — 각 key가 지금 가진 값. 이미 처리한 opId는 아무것도 바꾸지 않는다.
+  `GET /api/v1/sync/pull?since=<rev>` → `{rows, rev, more}`(500건씩, 오래된 순). SW는 NetworkOnly(§12.6.1).
+- **key** (`edge/public/sync-rules.js`, Worker와 페이지가 공유): `tm.h:<post>` 읽은 기록(+스크롤), `tm.b:` 저장, `tm.later:` 나중에,
+  `tm.view:` 보기 방식, `text.h:`·`text.b:`·`text.hidden:`, `text.shelves`, `annotation:<uuid>`, `session:<uuid>`, `work:<key>`, `library`.
+  화면 설정(글자 크기·서체·테마·작품별 프로필), AA 확대·옆 위치, 목록 위치는 **동기화하지 않는다** — 폰과 큰 화면에서 다르게 쓰는 값이다.
+- **값과 규칙**: `{at, data}` 또는 삭제 `{at, deleted:true}`. `at`은 그 기록의 독서 행동 시각(읽은 `readAt`, 저장 `savedAt`, 나중에·숨김 `at`,
+  표시·메모·작품 `updatedAt`, 세션 `end`); 그런 시각이 없거나 시각은 그대로 내용만 바뀐 경우(메모 수정, 진도)는 바꾼 시각(직전 서버 값보다 뒤).
+  `resolveSync`: 더 나중 행동이 이기고 같은 시각은 내용 비교로 정해 모든 쪽이 같은 값을 낸다. 읽은 기록은 진도 최댓값(maxProgress) 유지.
+  지운 표시·메모(`deletedAt`)는 무엇이 와도 지운 채로 남고, 삭제 tombstone도 영구 보관한다 → 옛 기기가 되살리지 못한다(T12).
+- **페이지** (`edge/public/sync.js`, app.js 연결): 실행마다 ① 이 기기 기록을 key로 펼쳐 마지막으로 서버와 합의한 값과 비교(바뀐 것 = 보낼 후보),
+  ② pull로 다른 기기 변경을 받아 후보와 같은 규칙으로 정리(진 쪽 메모 수정은 `충돌 사본`), ③ 남은 후보 push, ④ 결과를 이 기기에 반영.
+  합의 기준은 서버 값이 **이 기기에 적용된 모습**(echo)이라, 옛 앱 버전이 모르는 필드를 버리거나 공간 때문에 잘린 기록이 이 기기의 변경·삭제로
+  잘못 보내지지 않는다. 한 종류가 통째로 비면(사이트 데이터 삭제) 서버에서 되받고 지우지 않는다. 오래된 순으로 잘린 읽은 기록은 삭제로 보내지 않는다.
+  첫 동기화는 양쪽 기록을 모두 남기고 각 key의 더 나중 것을 쓰며, 텍스트 책장은 이름으로 합친다.
+- **시점**: 시작 1.5초 뒤, 페이지가 다시 보일 때(30초 안 재실행 생략), 이 기기 변경 1분 뒤(읽는 동안 계속 미뤄지지 않게 가장 이른 예정이 이김),
+  보이는 동안 5분마다, 숨겨질 때 남은 변경 keepalive push. 탭 여러 개는 Web Locks로 한 번에 하나. 성공한 실행은 시작 전 outbox를 비운다.
+- **UI**: 설정 › 앱과 기록 `기기 간 동기화` — `서버 동기화 완료 · 방금`/`동기화 중…`/오프라인/로그인 만료/계정 확인 불가 문구와 `지금 동기화`.
+  계정이 없으면(Basic 로컬) `이 기기에만 저장`. `redstm.flags`의 `sync:false`로 끈다.
+- **검증**: `test/sync-api.test.js`(서버·규칙 11), `test/sync.test.js`(두 기기 수렴 11), `e2e/sync.spec.js`(두 브라우저, 4폭).
 
 ### 12.8 성능 예산
 
@@ -956,8 +951,8 @@ aaGestures, aaFullscreen, stats, offline, sync, kwic, glass, haptics`. off = UI�
 | T07 | 세 출처 작품 저장 → 탭 종료 → 완전 단절 cold start → 목차·본문·이전/다음·글꼴 변경·새로고침 | 모두 열림 |
 | T08 | 저장 중 SW 종료·일부 실패·quota | `partial`, 재개·삭제 가능 |
 | T09 | Access redirect·로그인 HTML·401·403·단절 | 캐시 오염 없음, 상태 구분 |
-| T10 | 사용자 A → B 로그인(같은 브라우저) | namespace 분리, A 기록이 B 화면에 보이지 않음(sync 부분은 보류) |
-| T11 | (보류 — 동기화 재개 시) 기기 시계 차이·중복 push·ack 유실 | 누락·중복 없이 서버 순서 승자 |
+| T10 | 사용자 A → B 로그인(같은 브라우저) | namespace 분리, A 기록이 B 화면에 보이지 않음. 서버 동기화도 owner별(`e2e/sync.spec.js`) |
+| T11 | 두 기기·중복 push·ack 유실·첫 동기화·저장소 소실 | 누락·중복 없이 같은 결과(`test/sync.test.js`·`test/sync-api.test.js`) |
 | T12 | 백업 v4 병합: 한 기기에서 지운 주석이 든 옛 백업을 가져오기 | tombstone으로 부활하지 않음 |
 | T13 | 실제 Edge CSP 아래 한글·AA 공유 이미지 | 1080×1350, 글꼴 정확, 실패 시 텍스트 복사 |
 | T14 | clean checkout → `npm ci` → `npm run fonts` | 결과 바이트 동일, 원본 누락 없음 |
@@ -1101,14 +1096,14 @@ aaGestures, aaFullscreen, stats, offline, sync, kwic, glass, haptics`. off = UI�
 | P4-3 | cold-start 오프라인 서재·작품(T07) + 인증 상태(T09) + namespace(§12.6.3) | offline.js, app.js, home.js, e2e/offline.spec.js |
 | P4-4 | SW 업데이트 안전 지점(T23) + 플래그 의미(T24) + 설치 바로가기 | offline.js, sw.js, manifest.webmanifest, app.js |
 
-### M5 — 기기 간 이어 읽기 (서버 동기화 보류)
+### M5 — 기기 간 이어 읽기
 
 | 티켓 | 내용 | 파일 |
 |---|---|---|
 | P5-1 | QR 이어 읽기(uqr): 더보기 `다른 기기에서` → 지금 위치 URL(locator 포함) QR, 받은 기기에서 그 문장으로 열기 | reader-chrome.js, index.html, app.js, text-model.js |
 | P5-2 | 백업 v4 병합 UX 다듬기(주석·기록 포함, 충돌 사본 표시) | app.js, user-state.js, store.js, test/user-state.test.js |
 
-서버 동기화(§12.7)·T10–T12는 재개 결정 전까지 하지 않는다.
+서버 동기화(§12.7)는 2026-10-09 별도로 구현했다(작업 기록 S-1).
 
 ### M6 — 확장
 
@@ -1151,7 +1146,7 @@ P7-3 docs/19·09·07·README 본문 갱신.
 | A3 | IA: 하단 탭 4 + 미니바, 텍스트 → 둘러보기 출처, 보관함 → 기록 | **채택**(기존 URL 전부 유지) | M1 |
 | A4 | 백업 v4(.json.gz, 주석·기록·작품 스타일 선택 필드) | **채택**(v1–v3 가져오기 유지) | M3 |
 | A5 | Service Worker + 오프라인 | **채택, 최소 범위**: 사용자가 `기기에 내려받기`한 작품만 평문 보관, 설정에 `이 기기 기록 지우기`, 권한 철회 시 회수 불가를 명시 | M4 |
-| A6 | 서버 동기화(D1 확장) | **보류(pass)** — QR 이어 읽기 + 백업 병합으로 대체. `docs/00` 계약 변경 없음 | M5는 QR·병합만 |
+| A6 | 서버 동기화(D1 확장) | 2026-09-30 보류 → **2026-10-09 구현**(사용자 지시). `docs/00` 원칙 10·§6.2·ADR-016 개정 | §12.7 |
 | A7 | RUM 수집 | **보류(pass)** — web-vitals 제거, 실기기 확인으로 대체 | — |
 | A8 | `/ops` 토큰 매핑 | **보류(pass)** | — |
 | A9 | 듣기(TTS, P6-1) | **제거**(2026-10-01 사용자 결정) — 계획·UI·설정·단축키에서 뺀다 | — |
@@ -1400,6 +1395,10 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 - P7-1: S22+ 통합 확인 목록을 §14.5에 작성(20항목). 실기기 확인은 사용자 몫이며 결과를 받으면 여기에 기록한다.
 - 로컬 전체 E2E 메모리 부족(2026-10-02): M7 마감 실행이 554번째 테스트부터 `worker process exited unexpectedly (code=3221225794)`(0xC0000142, Windows가 새 Chrome worker를 초기화하지 못함)로 실패하고 Claude Code가 셸을 회수했다. 원인: 16GB RAM을 다른 앱(Codex·ChatGPT·patchright 다운로더·Edge·여러 에이전트 세션)과 나눠 쓰는 중에, 808개 테스트 내내 한 wrangler/workerd 서버가 약 1.7GB까지 커졌고, 셸만 회수돼 Playwright·wrangler·workerd가 고아로 남아 메모리를 계속 잡았다(`reuseExistingServer: true`라 다음 실행이 그 서버를 재사용할 수도 있었음). 대응: `scripts/e2e-local.mjs`(`npm run test:e2e:local`) — project별로 따로 실행해 서버·worker를 매번 새로 띄우고, 포트를 고아 서버가 잡고 있으면 재사용하지 않고 멈춘다. project별 출력 폴더로 trace도 보존. workers=2 유지, CI 변경 없음.
 - **M7 마감·배포(2026-10-03 KST)**: main `b7d292d` CI [37024156285](https://github.com/dusaud8887-svg/ReDSTM/actions/runs/37024156285) python·text-edge·edge 모두 성공(work 기준선 6개는 CI가 생성, `68f21fd`로 커밋). 로컬 `test:e2e:local` 4폭 737 pass/23 skip. 첫 `scripts.release deploy`는 Oracle 설치 단계에서 거절돼 Worker가 자동으로 이전 version(`6df596c2`)으로 돌아갔다 — 원인: 22:31 KST에 시작된 `fill-missing-content` retry가 원 사이트의 느린 응답으로 2시간 동안 진척 0인 채 outage backoff를 반복하며 control lock을 잡고 있었고(그동안 텍스트 수집·미디어·게시도 `typemoon_memory_reserved`로 모두 미룸), 그 느린 응답을 고치는 `63b7db7`은 바로 이 배포에 들어 있었다. 공식 pause marker로 run을 `partial/schedule_paused`로 끝낸 뒤 재배포 성공: Worker `b9171e95`(`git:b7d292d`), Oracle `b7d292d`(previous `6df596c2`), 최종 smoke D1·R2·version 일치(게시글 330,760). Oracle 텍스트 아카이브 release `20261002T155818Z`(publisher SHA 일치). 배포 후 Worker 로그 오류 0, runner idle·`b7d292d` heartbeat, 텍스트 import/media idle. 후속: 거절된 설치를 `oracle_install_not_started_worker_rolled_back`으로 구분해 보고(`docs/12 §7`). **남은 운영 조치(사용자)**: `/ops`에서 누락 본문 채우기 재시작과 `publish-if-changed`(9/30부터 `publish_stale`) — 에이전트의 D1 직접 command 삽입은 권한 정책으로 거부되어 하지 않았다.
+- **S-1 기기 간 동기화(2026-10-09)**: 사용자 지시로 A6 보류를 풀었다. D1 `user_sync`(migration 0009)·`/api/v1/sync/push|pull`·공유 규칙·페이지 엔진·설정 상태줄,
+  `featureEnabled("sync", true)`(기본 켜짐). 원래 §12.7 초안과 다른 점: 상태 전체가 아니라 기록 한 건씩 key로 나누고(전체 덮어쓰기는 다른 기기 기록을 지움),
+  서버 도착 순서 대신 기록이 가진 독서 행동 시각으로 승자를 정했다(오프라인이던 기기가 늦게 올린 옛 위치가 이기지 않도록, 백업 병합 규칙과 같음).
+  화면 설정은 기기별로 남겼다. docs/00 원칙 10·§6.2·ADR-003·ADR-016 개정.
 
 | 날짜 | 내용 |
 |---|---|
@@ -1445,7 +1444,7 @@ speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("ko"));
 | R-MD-03 use-gesture | adopt | P2-5 |
 | R-ST-01 IndexedDB | 신규 데이터 idb, 이전은 P6-6 | §12.4 |
 | R-ST-02 persist | adopt | §12.4 |
-| R-ST-03 동기화 | 보류(QR·백업 병합으로 대체) | §17 |
+| R-ST-03 동기화 | 구현(2026-10-09) | §12.7 |
 | R-ST-04 오프라인 | adopt | M4 |
 | R-ST-05 CRDT | reject | — |
 | R-UI-01 content-visibility | adopt(3,000행 이하) | P1-12 |

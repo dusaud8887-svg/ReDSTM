@@ -189,7 +189,8 @@ Operations live 상태는 active run 중 15초, idle 중 60초 polling하고 bac
 | Pagefind | conditional | body-search evidence와 size gate 필요 |
 | ReplayWeb.page | conditional | selected WACZ replay 요구 때 |
 | web app manifest | adopted | 홈 화면 추가/standalone |
-| 서버 동기화·RUM | 보류 | `24 §17` |
+| 서버 동기화 | 구현(2026-10-09) — 같은 계정 기기끼리 기록 동기화, 화면 설정은 기기별 | `24 §12.7`, `00 ADR-016` |
+| RUM | 보류 | `24 §17` |
 
 fork할 project는 없다.
 

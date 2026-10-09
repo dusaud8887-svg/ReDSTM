@@ -65,9 +65,11 @@ Cloudflare D1: 작은 control plane
    ADR-002를 재승인한다. R2 serving release를 canonical backup이라고 부르지는 않는다.
 8. **원문 WARC와 canonical SQLite가 보존 source of truth다.** 배포 object와 search index는 언제든 재생성 가능한 파생물이다.
 9. **기존 Oracle VM은 disposable crawler runner로 재사용한다.** viewer/API는 올리지 않고 canonical/WARC의 유일본으로 취급하지 않는다. viewer fallback은 home server + Tailscale다.
-10. **D1은 작은 운영 제어면으로만 쓴다.** systemd 자동 스케줄은 D1 없이도 계속 돌고,
+10. **D1은 작은 운영 제어면과 사용자 기록 동기화에만 쓴다.** systemd 자동 스케줄은 D1 없이도 계속 돌고,
     Oracle이 Access service token으로 outbound poll/heartbeat/event를 수행한다. 임의 shell,
-    경로, 인자, restore/delete 명령은 원격에서 실행하지 않는다.
+    경로, 인자, restore/delete 명령은 원격에서 실행하지 않는다. 2026-10-09부터 로그인한 사용자의
+    읽기 기록·저장·표시·메모를 기기 간 동기화하는 `user_sync` 테이블을 둔다(ADR-016). archive
+    본문이나 canonical 데이터는 여전히 D1에 두지 않는다.
 
 ### 0.1 텍스트 장서와 Reader 통합 경계
 
@@ -521,7 +523,7 @@ Oracle runner
        ▼
 private R2 <-> Cloudflare Access -> Worker Static Assets/reader
                                       │
-                                      ├-> browser local user state
+                                      ├-> browser local user state <-> /api/v1/sync <-> D1 user_sync
                                       └-> /ops <-> D1 control plane
                                                      ▲
                                                      └ outbound poll/heartbeat/event
@@ -533,8 +535,9 @@ private R2 <-> Cloudflare Access -> Worker Static Assets/reader
 - crawler와 viewer는 database API가 아니라 versioned file schema를 공유한다.
 - signed URL/CORS 없이 Worker의 private R2 binding으로 같은 origin에서 streaming한다.
 - canonical SQLite가 손상되거나 배포 공급자가 바뀌어도 release object는 표준 zstd JSON(RFC 8878)이다.
-- single user reading state는 `localStorage`와 JSON export/import로 보존한다.
-- D1은 reading state나 archive data가 아니라 제한된 operations status/command/audit에만 쓴다.
+- single user reading state의 원본은 각 브라우저(`localStorage`·IndexedDB)이고 JSON export/import도 유지한다.
+- D1은 archive data를 두지 않는다. 제한된 operations status/command/audit와, 2026-10-09부터 로그인한
+  사용자의 기록 동기화(`user_sync`, ADR-016)에만 쓴다. 동기화가 멈춰도 각 기기의 읽기와 저장은 계속된다.
 
 ### 6.3 process와 publish 규칙
 
@@ -1707,7 +1710,8 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - 결정: 승인
 - 근거: server/volume/remote DB 제거, production runtime dependency 1개, 실제 desktop/mobile gate 통과
 - 조건: viewport test와 별도로 실제 Android full-index memory/background restore를 production 전에 통과
-- 재검토 조건: browser memory가 512MB를 넘거나 tab kill이 재현되거나 device 간 user state sync가 core 요구가 됨
+- 재검토 조건: browser memory가 512MB를 넘거나 tab kill이 재현됨. device 간 user state sync는 2026-10-09
+  ADR-016으로 같은 Worker 안에 추가했다(서버 DB API는 기록 동기화 두 경로뿐).
 
 ### ADR-004: Celery/RabbitMQ/Redis 제외
 
@@ -1836,6 +1840,21 @@ ReDSTM v1은 다음을 모두 만족할 때 완료다.
 - 세부 계약: [`08_operations_control_plane.md`](08_operations_control_plane.md)
 - 재검토 조건: D1 free limits나 Access policy가 실제 status/command 트래픽을 반복 제한하거나,
   outbound polling이 Oracle sync SLO를 침해함
+
+### ADR-016: D1 기반 기기 간 기록 동기화
+
+- 결정: **승인 (2026-10-09, 사용자 지시 "기기간 동기화도 해줘")** — docs/24 D-22·A6의 보류를 해제한다.
+- 범위: Access로 로그인한 사용자(email JWT)만. owner = 서버가 검증한 email의 SHA-256 앞 16자(`/api/v1/me`와 같음).
+  Worker env `SYNC_OWNERS`(쉼표로 구분한 ownerHash)가 있으면 그 owner만 허용한다. Basic 로컬 인증과 서비스 토큰은 403.
+- 데이터: 기록 한 건이 한 key(`user_sync`): TypeMoon 읽은 기록·위치·저장·나중에·보기 방식, 텍스트 장서 읽은 기록·저장·
+  숨김·책장, 표시·메모, 독서 세션, 작품 정보, 스마트 서재. 글자 크기 같은 화면 설정과 AA 확대, 목록 위치는 기기마다 따로 둔다.
+- 규칙: 값은 `{at, data}` 또는 삭제 `{at, deleted:true}`. `at`은 그 기록이 나타내는 독서 행동의 시각(읽은·저장한·고친 시각),
+  그런 시각이 없는 항목은 기기가 바꾼 시각. 더 나중 행동이 이기고 같은 시각은 내용으로 정해 모든 쪽이 같은 결과를 낸다.
+  읽은 기록은 가장 먼 진도를 유지한다. 지운 표시·메모와 삭제 tombstone은 지우지 않아 옛 기기가 되살리지 못한다.
+- 안전: owner별 단조 `server_rev`, op_id 30일 멱등 기록, push 100건·값 128KB·본문 1MB 제한, D1 문장 수 예산 안.
+  저장소가 통째로 비워진 기기는 서버 기록을 지우지 않고 되받는다. 공간 때문에 잘린 오래된 기록은 삭제로 보내지 않는다.
+- 세부: docs/24 §12.7, 구현 `edge/src/sync-api.js`, `edge/public/sync-rules.js`, `edge/public/sync.js`, migration `0009_user_sync.sql`.
+- 재검토 조건: D1 free limits에 동기화 쓰기가 반복해 닿거나, 둘 이상의 사용자가 생김
 
 ## 17. 확정된 사용자 결정
 
