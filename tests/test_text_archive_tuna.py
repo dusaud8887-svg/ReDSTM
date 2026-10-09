@@ -368,6 +368,62 @@ def test_repeated_site_failures_cool_the_collector_down(
     assert _step(archive, 10 + tuna._SITE_COOLDOWN)["status"] == "failed"
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[ruby " + "(" * 2400 + "]空[/ruby]",  # 2026-10-09 review RD-01: 2,416 bytes recursed
+        "[ruby " + "(" * 5000,  # never closed: the end of input serialises the open stack
+        "[ruby " + "( " * 3000 + ")" * 3000 + "]空[/ruby]",
+    ],
+    ids=["closed", "unclosed", "balanced"],
+)
+def test_deep_attribute_parentheses_stay_text_without_recursion(content: str) -> None:
+    text = tuna.tom_to_text(content)
+    assert text.count("(") >= 190  # kept as text, not dropped
+    tuna.render_segment(
+        [
+            {
+                "seq": 0,
+                "username": "u",
+                "content": content,
+                "attachment": None,
+                "created_at": "2026-10-07T00:00:00Z",
+            }
+        ]
+    )
+
+
+def test_an_unrenderable_thread_backs_off_while_older_threads_proceed(
+    archive: tuple[Path, Path, FakeSite], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, _, site = archive
+    site.threads = [
+        _thread(1, count=2, updated="2026-10-07T02:00:00Z"),
+        _thread(2, count=2, updated="2026-10-07T01:00:00Z"),
+    ]
+    site.responses = {1: [_response(1, 0, "깨짐")], 2: [_response(2, 0), _response(2, 1)]}
+    _step(archive, 0)
+    original = tuna.render_segment
+
+    def render(rows: Any) -> bytes:
+        if any("깨짐" in str(row["content"]) for row in rows):
+            raise RecursionError("maximum recursion depth exceeded")
+        return original(rows)
+
+    monkeypatch.setattr(tuna, "render_segment", render)
+    assert _step(archive, 1) == {
+        "status": "failed",
+        "reason": "segment_unrenderable",
+        "thread_id": 1,
+    }
+    assert _step(archive, 2)["thread_id"] == 2
+    with closing(_db(db_path)) as db:
+        assert (
+            db.execute("SELECT retry_at FROM text_tuna_threads WHERE thread_id=1").fetchone()[0]
+            == 1 + tuna._RETRY_BASE
+        )
+
+
 def test_a_malformed_thread_backs_off_alone(archive: tuple[Path, Path, FakeSite]) -> None:
     db_path, _, site = archive
     site.threads = [_thread(3, count=2, updated="2026-10-07T00:00:00Z")]
@@ -407,6 +463,75 @@ def _fake_r2(remote: dict[str, bytes]) -> Any:
         return subprocess.CompletedProcess(argv, 0, b"", b"")
 
     return rclone
+
+
+def test_regrouping_pins_threads_and_keeps_vanished_work_ids_as_aliases(
+    archive: tuple[Path, Path, FakeSite], tmp_path: Path
+) -> None:
+    # 2026-10-09 review: grouping is a heuristic; corrections pin threads instead of
+    # regenerating IDs, and a work key that disappears keeps opening its successor.
+    db_path, objects, site = archive
+    site.threads = [
+        _thread(20, count=2, updated="2026-10-07T03:00:00Z", title="[AA] 별의 노래 (1)"),
+        _thread(21, count=2, updated="2026-10-07T02:00:00Z", title="[AA] 별의 노래 (2)"),
+        _thread(22, count=2, updated="2026-10-07T01:00:00Z", title="[AA] 달의 노래 1"),
+    ]
+    site.responses = {
+        thread: [_response(thread, seq) for seq in range(2)] for thread in (20, 21, 22)
+    }
+    clock = 0.0
+    while _step(archive, clock)["status"] != "idle":
+        clock += 1
+
+    def works() -> dict[str, list[Any]]:
+        with closing(_db(db_path)) as db:
+            groups: dict[str, list[Any]] = {}
+            for row in db.execute(
+                "SELECT canonical_work_id,source_post_id FROM text_archive_items "
+                "WHERE lane='tuna' ORDER BY 1,2"
+            ):
+                groups.setdefault(row[0], []).append(int(row[1]))
+            return groups
+
+    star, moon = (
+        tuna.series_of("[AA] 별의 노래 (1)", "작가◆AbCdEf1234")[0],
+        tuna.series_of("[AA] 달의 노래 1", "작가◆AbCdEf1234")[0],
+    )
+    assert works() == {f"tuna:{star}": [20, 21], f"tuna:{moon}": [22]}
+    with closing(_db(db_path)) as db:
+        # 달의 노래 is really the same story: its work key disappears and becomes an alias.
+        assert tuna.regroup(db, 22, into=20, split=False) == star
+    assert works() == {f"tuna:{star}": [20, 21, 22]}
+    with closing(_db(db_path)) as db:
+        aliases = [
+            tuple(row) for row in db.execute("SELECT old_key,new_key FROM text_tuna_work_aliases")
+        ]
+        assert aliases == [(moon, star)]
+    tree = publisher.build_publish_tree(db_path, objects, tmp_path / "build", "tuna")
+    release = json.loads((tmp_path / "build" / tree["release_key"]).read_text(encoding="utf-8"))
+    page = json.loads(
+        (tmp_path / "build" / release["catalog_pages"][0]["key"]).read_text(encoding="utf-8")
+    )
+    assert page["items"][0]["legacy_work_ids"] == [f"tuna:{moon}"]
+    # A later listing keeps the pin even though the title rule says otherwise.
+    site.threads[2] = _thread(22, count=3, updated="2026-10-08T00:00:00Z", title="[AA] 달의 노래 1")
+    site.responses[22].append(_response(22, 2))
+    _step(archive, clock + tuna._LIST_INTERVAL)
+    assert works() == {f"tuna:{star}": [20, 21, 22]}
+    with closing(_db(db_path)) as db:
+        # Split 21 off on its own; 별의 노래 still has threads, so no alias for it.
+        split = tuna.regroup(db, 21, into=None, split=True)
+        assert split not in (star, moon)
+        # Back to the title rule: 달의 노래 is a live work again, so its alias goes.
+        assert tuna.regroup(db, 22, into=None, split=False) == moon
+        assert db.execute("SELECT COUNT(*) FROM text_tuna_work_aliases").fetchone()[0] == 0
+        assert [
+            tuple(row) for row in db.execute("SELECT thread_id FROM text_tuna_series_overrides")
+        ] == [(21,)]
+    assert works() == {f"tuna:{star}": [20], f"tuna:{split}": [21], f"tuna:{moon}": [22]}
+    with pytest.raises(tuna.TunaError):
+        with closing(_db(db_path)) as db:
+            tuna.regroup(db, 999, into=None, split=True)
 
 
 def test_publish_groups_threads_into_works_and_prunes_replaced_tails(
@@ -628,3 +753,22 @@ def test_installer_preflight_runs_every_module_help(tmp_path: Path) -> None:
         f"scripts.text_archive.{name}"
         for name in ("collector", "publisher", "media_importer", "tuna")
     ]
+
+
+def test_group_cli_pins_lists_and_refuses_unknown_threads(
+    archive: tuple[Path, Path, FakeSite], capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.text_archive import tuna_groups
+
+    db_path, _, site = archive
+    site.threads = [_thread(30, count=1, updated="2026-10-07T00:00:00Z", title="[AA] 하나 (1)")]
+    _step(archive, 0)
+    assert tuna_groups.main(["split", "30"], db_path=db_path) == 0
+    pinned = json.loads(capsys.readouterr().out)
+    assert pinned["thread"] == 30 and pinned["work_id"].startswith("tuna:")
+    tuna_groups.main(["list"], db_path=db_path)
+    listing = json.loads(capsys.readouterr().out)
+    assert [row["thread_id"] for row in listing["pinned"]] == [30]
+    with pytest.raises(SystemExit) as exit_info:
+        tuna_groups.main(["merge", "30", "--into", "999"], db_path=db_path)
+    assert exit_info.value.code == 2

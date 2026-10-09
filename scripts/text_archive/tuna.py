@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS text_tuna_last_verified (
   object_key TEXT NOT NULL, source_work_id TEXT NOT NULL, canonical_work_id TEXT NOT NULL,
   imported_at TEXT NOT NULL
 );
+-- Manual grouping (docs/34 §5): a thread pinned to a work, and work keys that disappeared.
+CREATE TABLE IF NOT EXISTS text_tuna_series_overrides (
+  board TEXT NOT NULL, thread_id INTEGER NOT NULL,
+  series_key TEXT NOT NULL, series_title TEXT NOT NULL, set_at TEXT NOT NULL,
+  PRIMARY KEY (board, thread_id)
+);
+CREATE TABLE IF NOT EXISTS text_tuna_work_aliases (
+  old_key TEXT PRIMARY KEY, new_key TEXT NOT NULL, recorded_at TEXT NOT NULL
+);
 """
 # Columns an update rewrites; text_tuna_last_verified keeps them for the last version R2 verified.
 TAIL_COLUMNS = (
@@ -233,6 +242,10 @@ def parse_tom(text: str) -> list[Any]:
     tokens = _TOKEN.findall(text)
     expecting = False
     just_closed = False
+    # Parentheses past the depth limit stay plain attribute text; their closers are counted
+    # so they do not close an outer group (2026-10-09 review RD-01: 2,416 bytes of "("
+    # recursed past Python's limit in _source and stopped the whole collector run).
+    overflow = 0
     index = 0
     while index < len(tokens):
         token = tokens[index]
@@ -281,10 +294,21 @@ def parse_tom(text: str) -> list[Any]:
                     stack.pop()
             else:
                 _append(nodes, "]")
-        elif token == "(" and context in {"attribute", "nested"}:
+        elif (
+            token == "("
+            and context in {"attribute", "nested"}
+            and not overflow
+            and len(stack) < 198
+        ):
             nested: dict[str, Any] = {"type": "nested", "children": []}
             nodes.append(nested)
             stack.append(("nested", "nested", nested["children"], False))
+        elif token == "(" and context in {"attribute", "nested"}:
+            overflow += 1
+            nodes.append(token)
+        elif token == ")" and context == "nested" and overflow:
+            overflow -= 1
+            nodes.append(token)
         elif token == ")" and context == "nested":
             stack.pop()
         elif token == " " and context in {"attribute", "nested"}:
@@ -392,6 +416,32 @@ def _set_state(db: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
+def _move_thread(db: sqlite3.Connection, thread_id: int, old_key: str, new_key: str) -> None:
+    """Point a thread's items at another work and remember a work key that disappeared.
+
+    Reading records are per segment and survive any move; work-level choices (나중에 읽기,
+    분류) follow the old key through the publisher's legacy_work_ids (2026-10-09 review: a
+    regrouping must not regenerate IDs and drop them)."""
+    db.execute(
+        "UPDATE text_archive_items SET source_work_id=?,canonical_work_id=? "
+        "WHERE lane='tuna' AND source_board=? AND source_post_id=?",
+        (new_key, f"tuna:{new_key}", _BOARD, str(thread_id)),
+    )
+    now = _now()
+    db.execute("DELETE FROM text_tuna_work_aliases WHERE old_key=?", (new_key,))
+    if not db.execute(
+        "SELECT 1 FROM text_tuna_threads WHERE board=? AND series_key=? LIMIT 1", (_BOARD, old_key)
+    ).fetchone():
+        db.execute(
+            "INSERT INTO text_tuna_work_aliases(old_key,new_key,recorded_at) VALUES(?,?,?) "
+            "ON CONFLICT(old_key) DO UPDATE SET new_key=excluded.new_key,"
+            "recorded_at=excluded.recorded_at",
+            (old_key, new_key, now),
+        )
+    # Older aliases that pointed at the vanished key follow it.
+    db.execute("UPDATE text_tuna_work_aliases SET new_key=? WHERE new_key=?", (new_key, old_key))
+
+
 def apply_threads(db: sqlite3.Connection, threads: list[dict[str, Any]]) -> int:
     """Upsert listed threads; returns how many need a response fetch."""
     with db:
@@ -400,6 +450,13 @@ def apply_threads(db: sqlite3.Connection, threads: list[dict[str, Any]]) -> int:
                 "SELECT series_key FROM text_tuna_threads WHERE board=? AND thread_id=?",
                 (_BOARD, thread["thread_id"]),
             ).fetchone()
+            pinned = db.execute(
+                "SELECT series_key,series_title FROM text_tuna_series_overrides "
+                "WHERE board=? AND thread_id=?",
+                (_BOARD, thread["thread_id"]),
+            ).fetchone()
+            if pinned is not None:
+                thread = {**thread, "series_key": pinned[0], "series_title": pinned[1]}
             db.execute(
                 """INSERT INTO text_tuna_threads(board,thread_id,title,username,created_at,
                    updated_at,response_count,ended,series_key,series_title,tags)
@@ -425,16 +482,7 @@ def apply_threads(db: sqlite3.Connection, threads: list[dict[str, Any]]) -> int:
                 ),
             )
             if previous is not None and previous[0] != thread["series_key"]:
-                db.execute(
-                    "UPDATE text_archive_items SET source_work_id=?,canonical_work_id=? "
-                    "WHERE lane='tuna' AND source_board=? AND source_post_id=?",
-                    (
-                        thread["series_key"],
-                        f"tuna:{thread['series_key']}",
-                        _BOARD,
-                        str(thread["thread_id"]),
-                    ),
-                )
+                _move_thread(db, thread["thread_id"], previous[0], thread["series_key"])
             db.execute(
                 "UPDATE text_tuna_threads SET status='active' WHERE board=? AND thread_id=? "
                 "AND status='complete' AND next_seq<response_count",
@@ -458,7 +506,11 @@ def _segment_item(
     ).fetchall()
     if not rows:
         return "empty"
-    body = render_segment(rows)
+    try:
+        body = render_segment(rows)
+    except RecursionError as exc:
+        # Defence in depth behind parse_tom's limit: one thread backs off, the run goes on.
+        raise TunaError("segment_unrenderable") from exc
     if len(body) > _MAX_SEGMENT_BYTES:
         raise TunaError("segment_too_large")
     digest = hashlib.sha256(body).hexdigest()
@@ -582,6 +634,53 @@ def apply_responses(
         "segments": sorted(segments),
         "items": {name: outcomes.count(name) for name in sorted(set(outcomes))},
     }
+
+
+def regroup(db: sqlite3.Connection, thread_id: int, *, into: int | None, split: bool) -> str:
+    """Pin a thread to another thread's work (`into`), to a work of its own (`split`), or,
+    with neither, release the pin so the title rule decides again. Returns the work key."""
+    with db:
+        row = db.execute(
+            "SELECT title,username,series_key FROM text_tuna_threads WHERE board=? AND thread_id=?",
+            (_BOARD, thread_id),
+        ).fetchone()
+        if row is None:
+            raise TunaError("thread_unknown")
+        if into is not None:
+            target = db.execute(
+                "SELECT series_key,series_title FROM text_tuna_threads "
+                "WHERE board=? AND thread_id=?",
+                (_BOARD, into),
+            ).fetchone()
+            if target is None:
+                raise TunaError("thread_unknown")
+            key, title = str(target[0]), str(target[1])
+        elif split:
+            key = hashlib.sha256(f"thread\n{_BOARD}\n{thread_id}".encode()).hexdigest()[:16]
+            title = series_of(str(row[0]), str(row[1]))[1]
+        else:
+            key, title, _tags = series_of(str(row[0]), str(row[1]))
+        if into is not None or split:
+            db.execute(
+                "INSERT INTO text_tuna_series_overrides("
+                "board,thread_id,series_key,series_title,set_at) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(board,thread_id) DO UPDATE SET series_key=excluded.series_key,"
+                "series_title=excluded.series_title,set_at=excluded.set_at",
+                (_BOARD, thread_id, key, title, _now()),
+            )
+        else:
+            db.execute(
+                "DELETE FROM text_tuna_series_overrides WHERE board=? AND thread_id=?",
+                (_BOARD, thread_id),
+            )
+        db.execute(
+            "UPDATE text_tuna_threads SET series_key=?,series_title=? "
+            "WHERE board=? AND thread_id=?",
+            (key, title, _BOARD, thread_id),
+        )
+        if str(row[2]) != key:
+            _move_thread(db, thread_id, str(row[2]), key)
+    return key
 
 
 def _next_thread(db: sqlite3.Connection, clock: float) -> sqlite3.Row | None:

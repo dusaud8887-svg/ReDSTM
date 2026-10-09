@@ -690,6 +690,15 @@ def _tuna_works(
              ON t.board=i.source_board AND t.thread_id=CAST(i.source_post_id AS INTEGER)
            WHERE i.lane='tuna' ORDER BY i.canonical_work_id"""
     )
+    # Work keys that disappeared through a regrouping keep opening their successor (docs/34 §5).
+    aliases: dict[str, list[str]] = {}
+    if db.execute(
+        "SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='text_tuna_work_aliases'"
+    ).fetchone():
+        for alias in db.execute(
+            "SELECT old_key,new_key FROM main.text_tuna_work_aliases ORDER BY old_key"
+        ):
+            aliases.setdefault(f"tuna:{alias['new_key']}", []).append(f"tuna:{alias['old_key']}")
     works: list[dict[str, Any]] = []
     for count, (work_id, work_rows) in enumerate(
         groupby(rows, key=lambda row: str(row["canonical_work_id"])), start=1
@@ -716,6 +725,8 @@ def _tuna_works(
             "last_imported_at": max(str(row["imported_at"]) for row in chapters),
             "ended": bool(latest["ended"]),
         }
+        if aliases.get(work_id):
+            work["legacy_work_ids"] = aliases[work_id]
         detail = {
             "schema": 1,
             "lane": "tuna",

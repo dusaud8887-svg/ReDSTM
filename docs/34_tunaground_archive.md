@@ -15,6 +15,7 @@
 | 접근 방식 | 공개 JSON API(`/api/boards/anchor/...`) | robots.txt는 소유자 결정(2026-10-07)으로 따르지 않는다. HTML(RSC) 파싱보다 가볍고 안정적이다. 요청 간격으로 부하를 제한한다(§3) |
 | 표시 | 텍스트 Reader의 **AA 모드**(TypeMoon AA와 같은 글꼴·확대·맞춤·장면 이동) | 앵커판 본문은 대부분 AA다 |
 | 원문 보존 | 레스 원문 TOM 마크업을 DB에 그대로 둔다. 게시 본문은 그로부터 만든 평문이다 | 표시 규칙이 바뀌어도 다시 만들 수 있다 |
+| 보존 정책 | **최초 관측 보존**(archive)이다. 받은 레스는 `INSERT OR IGNORE`로 그대로 두고, 이후 출처에서 고쳐지거나 지워져도 반영하지 않는다(2026-10-09 외부 리뷰에 따라 명시) | 원본 수정 추적(mirror)은 이미 받은 범위를 다시 요청해야 해 요청량이 크게 는다. 필요해지면 마지막 구간에 한정한 재검사와 레스 revision 정책을 따로 설계한다 |
 
 범위 밖(후속): 참치게시판·상황극판, 옛 아카이브(`archive-data.tunaground.net`, §8), 작성자 필터·앵커 이동 UI.
 
@@ -86,7 +87,23 @@ CREATE TABLE text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- hig
 - `series_key = sha256(트립 + "\n" + casefold(줄기))` 앞 16자.
 - `series_title`은 그 작품에서 가장 최근 스레드의 줄기다. 태그 묶음은 작품 정보(`tags`)로 따로 둔다.
 
-스레드 번호를 붙이는 방식은 작가마다 다르다. 이 규칙은 휴리스틱(v1)이므로 실제 제목 표본 fixture로 테스트한다. 잘못 묶인 사례는 규칙을 고치거나 수동 별칭으로 바로잡는다(후속). 같은 작가가 같은 줄기로 쓴 다른 작품은 한 작품으로 묶일 수 있다. 이 위험은 받아들인다.
+스레드 번호를 붙이는 방식은 작가마다 다르다. 이 규칙은 휴리스틱(v1)이므로 실제 제목 표본 fixture로 테스트한다. 같은 작가가 같은 줄기로 쓴 다른 작품은 한 작품으로 묶일 수 있다. 이 위험은 받아들인다.
+
+**수동 교정(2026-10-09 외부 리뷰):** 잘못 묶인 사례는 규칙을 모두에게 바꾸지 않고 스레드 하나를 고정한다.
+
+```text
+python -m scripts.text_archive.tuna_groups merge <스레드> --into <다른 스레드>  # 그 작품으로 합치기
+python -m scripts.text_archive.tuna_groups split <스레드>                       # 따로 떼기
+python -m scripts.text_archive.tuna_groups auto <스레드>                        # 제목 규칙으로 되돌리기
+python -m scripts.text_archive.tuna_groups list
+```
+
+- 고정은 `text_tuna_series_overrides`에 남고, 이후 목록 갱신이 제목으로 다시 계산해도 고정이 이긴다.
+- 스레드가 다른 작품으로 옮겨져(규칙 변경이든 수동 교정이든) 옛 작품 키에 스레드가 하나도 남지 않으면
+  `text_tuna_work_aliases(old_key → new_key)`에 기록하고, publisher가 새 작품의 `legacy_work_ids`로 싣는다.
+  Reader는 이 별칭으로 옛 작품 ID의 나중에 읽기·분류·주소를 새 작품으로 연다. 옛 키가 다시 살아나면 별칭을 지운다.
+  canonical ID를 일괄 재생성하지 않는다. 읽기 기록은 구간 identity(`tuna:anchor:{thread}:{segment}`)라 옮겨도 그대로다.
+- 바뀐 묶음은 다음 게시에 반영된다.
 
 ## 6. 게시 본문과 게시
 
@@ -112,6 +129,11 @@ CREATE TABLE text_tuna_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- hig
 | 알 수 없는 태그·짝 없는 괄호 | 원문 글자 그대로 |
 
 공백·전각 공백·줄바꿈은 손대지 않는다(정규화하지 않음).
+
+변환기는 태그와 속성 안 괄호를 합쳐 깊이 198까지만 구조로 읽고, 그보다 깊은 `(`·`)`는 글자로 남긴다.
+속성 괄호에 제한이 없어 2,416바이트의 `(` 연속이 재귀 한도를 넘었고, 그 `RecursionError`가 어장별 처리 경계(`TunaError`)를
+빠져나가 같은 최신 어장을 매 실행 다시 골라 수집 전체를 멈출 수 있었다(2026-10-09 외부 리뷰 RD-01). 구간 렌더링의
+`RecursionError`도 `segment_unrenderable`로 바꿔 그 스레드만 backoff하고 다른 스레드는 계속 진행한다.
 
 **게시 트리(publisher lane `tuna`):**
 
