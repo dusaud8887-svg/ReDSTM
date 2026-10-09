@@ -11,6 +11,11 @@
 원격 명령 poll과 텍스트 타이머는 유지한다. `/ops`의 다음 실행 시각은 systemd의 실제 monotonic
 deadline을 UTC로 변환한다. 이하 날짜별 6시간 운영 기록은 변경 전 이력이다.
 
+2026-10-09 운영 교훈: `migrate-canonical`은 `redstm-schedule.timer`가 꺼져 있어야 시작하므로 v5 마이그레이션(10-05 22:09)
+때 끈 타이머가 다시 켜지지 않아 TypeMoon 정기 수집이 4일 동안 돌지 않았다. 마이그레이션 뒤 `deploy`까지 끝나면 반드시
+`sudo systemctl enable --now redstm-schedule.timer`로 켜고, 오래 쉬었다면 `sudo systemctl start redstm-schedule.service`로
+한 번 바로 돌린다(타이머의 첫 실행은 `OnActiveSec=30h` 뒤다). `/ops`의 "자동 수집"이 켜짐인지 확인한다.
+
 2026-09-29 운영 확인: Oracle `current`는 `ccf9b7c3fd481170becdfb1f8220635f2ffe6301`이고
 control timer는 enabled/active, schedule timer는 disabled/inactive다. full baseline과 이후
 verified delta publish·인증 readback은 통과했다. `aa_19` crawl canary는 2026-09-28
