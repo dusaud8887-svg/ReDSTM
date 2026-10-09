@@ -954,7 +954,7 @@ def test_frontier_only_schema_upgrade_reuses_verified_v3_projection_state(
     assert result["release_key"] == legacy_key
     promoted = json.loads(state_path.read_text(encoding="utf-8"))
     assert promoted["source"]["schema_version"] == SCHEMA_VERSION
-    assert export_static_module._projection_compatible_schema_versions() == {3, 4, 5}
+    assert export_static_module._projection_compatible_schema_versions() == {3, 4, 5, 6}
 
 
 def test_interrupted_pointer_promotion_is_recovered_on_retry(

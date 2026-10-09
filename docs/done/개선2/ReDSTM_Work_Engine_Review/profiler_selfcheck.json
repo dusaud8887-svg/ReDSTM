@@ -1,0 +1,6 @@
+{
+  "synthetic_snapshot_only": true,
+  "main_file_sha256_unchanged": true,
+  "write_attempt_rejected": true,
+  "nonempty_wal_rejected": true
+}

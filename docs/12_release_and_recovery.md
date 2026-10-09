@@ -308,6 +308,13 @@ exact v5가 아니면 `canonical_schema_upgrade_pending`으로 거부하므로 v
 `deploy` 순서를 따른다. 적용 증거로 `PRAGMA user_version`(5), `PRAGMA index_info(post_versions_projection_idx)`,
 `schema_migrations`의 version 5 행(sha256·applied_at)을 읽기 전용으로 남긴다([`11`](11_configuration_and_policy.md)).
 
+현재 repository target은 schema v6다(`posts_body_lookup_idx` = `posts(board_id, external_post_id, latest_version_id)`,
+2026-10-09). recovery 후보·본문 없는 글 조회가 `INDEXED BY`로 이 커버링 인덱스를 지정하므로 v5와 같은 bridge 2회 →
+`migrate-canonical` → `deploy` 순서다. 적용 증거는 `PRAGMA user_version`(6), `PRAGMA index_info(posts_body_lookup_idx)`,
+`schema_migrations` version 6 행이다. `migrate-canonical`이 `/srv/redstm/snapshots/canonical-pre-v<N>-*.sqlite`에 만드는
+전체 사본은 자동으로 지워지지 않는다(롤백 지점). 다음 마이그레이션의 사본이 생기고 새 schema가 정상 동작하면 이전 사본을
+수동으로 지운다(루트 여유가 사본 하나 + 5GiB를 넘어야 다음 마이그레이션이 시작된다).
+
 automatic R2 rollback은 publish 시 기록한 predecessor 관계로 pointer와 active ledger를 함께 복구해
 다음 정기 cycle도 bounded delta를 이어 갈 수 있어야 한다. matching ledger가 없는
 `publish_static --activate`는 remote size 확인이 필요할 수 있는 명시적 수동 incident 경로이며 bounded

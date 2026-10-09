@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ReDSTM · 모바일 개편 화면 참조</title>
+<style>
+:root{--page:#fff;--surface:#f6f7f9;--reader:#fbfaf7;--ink:#20242a;--muted:#566171;--line:#e3e7ec;--strong:#b7c0ca;--accent:#b4233d;--soft:#fff0f3;--focus:#1b6edc;--body-size:18px}
+*{box-sizing:border-box}body{margin:0;background:#edf0f3;color:var(--ink);font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif}button,input{font:inherit}button{cursor:pointer;color:inherit}button:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:2px}button:disabled{opacity:.4;cursor:default}button:active:not(:disabled){filter:brightness(.96)}[hidden]{display:none!important}svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}h1,h2,p{margin:0}.layout{max-width:1270px;margin:auto;display:grid;grid-template-columns:270px 412px 250px;gap:42px;padding:36px 24px;align-items:start}.intro{padding-top:14px}.eyebrow{font-size:11px;letter-spacing:.16em;font-weight:750;color:var(--accent)}.intro h1{font-size:31px;line-height:1.3;letter-spacing:-.055em;margin:12px 0 18px}.intro>p{font-size:14px;color:var(--muted);line-height:1.8}.scenes{display:grid;gap:7px;margin:26px 0}.scenes button{display:flex;align-items:center;gap:12px;min-height:48px;border:1px solid transparent;border-radius:10px;padding:10px 14px;background:transparent;text-align:left;font-size:14px}.scenes button span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.scenes button.active{background:#fff;border-color:var(--line);font-weight:700;box-shadow:0 3px 12px #1a273408}.back-demo{width:100%;min-height:48px;background:#fff;border:1px solid var(--strong);border-radius:10px;font-size:13px;font-weight:650}.caveat{margin-top:16px!important;font-size:11px!important;line-height:1.8!important}.device{width:412px;height:840px;max-height:calc(100dvh - 72px);min-height:660px;border:1px solid #c5cbd4;border-radius:26px;overflow:hidden;background:var(--page);box-shadow:0 22px 55px #28344620;position:relative}.screen{height:100%;display:grid;grid-template-rows:56px minmax(0,1fr) auto auto}.top{border-bottom:1px solid var(--line);padding:0 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--page)}.brand{font-size:20px;font-weight:780;letter-spacing:-.04em}.icon{display:grid;place-items:center;width:48px;height:48px;background:none;border:0;border-radius:10px}.top-context{min-width:0;font-size:15px;font-weight:650;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.muted{color:var(--muted)}.small{font-size:12px}.scroll{overflow-y:auto;overscroll-behavior:contain;min-height:0;scroll-behavior:auto}.page-head{padding:18px 20px 13px}.page-head h2{font-size:24px;letter-spacing:-.04em}.page-head p{font-size:13px;color:var(--muted);margin-top:6px}.tabs{display:grid;grid-template-columns:1fr 1fr;padding:0 16px;border-bottom:1px solid var(--line)}.tabs button{height:48px;border:0;background:transparent;border-bottom:2px solid transparent;color:var(--muted);font-size:14px}.tabs button.selected{color:var(--ink);border-color:var(--accent);font-weight:700}.list-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 16px;min-height:52px;font-size:12px;color:var(--muted)}.sort{height:44px;padding:0 8px;border:0;background:none;font-size:13px;display:flex;align-items:center;gap:5px}.sort svg{width:16px;height:16px}.post-row{display:block;width:100%;border:0;border-bottom:1px solid var(--line);padding:15px 20px;background:var(--page);text-align:left;min-height:83px}.post-title{font-size:16px;font-weight:650;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.post-meta{display:flex;gap:9px;align-items:center;color:var(--muted);font-size:12px;margin-top:6px;line-height:1.4}.pill{padding:2px 6px;border-radius:4px;background:var(--surface);font-size:10px;font-weight:650}.load-more{height:52px;width:100%;border:0;background:var(--surface);color:var(--muted);font-size:13px}.board-dock{border-top:1px solid var(--line);height:52px;padding:0 16px;background:var(--page);display:flex;align-items:center;gap:10px;text-align:left;border-inline:0;border-bottom:0;min-width:0}.board-dock .path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:650}.board-dock .path small{color:var(--muted);font-weight:450}.board-dock>svg:first-child{color:var(--accent)}.global-nav{height:62px;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--surface)}.nav-button{border:0;background:none;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;font-size:11px;color:var(--muted);min-width:48px}.nav-button.active{color:var(--accent);font-weight:700}.reader-nav{height:68px;padding:5px 8px;display:grid;grid-template-columns:.85fr 1fr 1.3fr 1fr .85fr;gap:3px;background:var(--page);border-top:1px solid var(--line)}.reader-nav .nav-button{border-radius:10px;font-size:11px}.reader-nav .next{color:var(--accent);background:var(--soft);font-weight:750}.chapter-row{width:100%;min-height:72px;display:grid;grid-template-columns:54px 1fr auto;align-items:center;gap:8px;padding:12px 20px;background:var(--page);border:0;border-bottom:1px solid var(--line);text-align:left}.chapter-row.active{background:var(--soft)}.chapter-row .no{font-size:13px;color:var(--muted)}.chapter-row .chapter-title{font-size:15px;font-weight:600;line-height:1.5}.chapter-row .state{font-size:11px;color:var(--accent)}.resume{display:flex;align-items:center;justify-content:space-between;background:var(--soft);border:1px solid #edd5db;border-radius:12px;min-height:60px;width:calc(100% - 40px);padding:10px 16px;margin:0 20px 16px;color:var(--accent);text-align:left;font-size:14px;font-weight:650}.reader-scroll{background:var(--reader)}.reader-heading{padding:24px 22px 20px}.reader-heading .tag{font-size:12px;color:var(--muted)}.reader-heading h2{font-size:25px;line-height:1.38;letter-spacing:-.035em;margin:10px 0}.reader-heading .details{display:flex;gap:10px;color:var(--muted);font-size:12px}.prose{padding:0 22px 30px;font-family:Georgia,"Noto Serif CJK KR",Batang,serif;font-size:var(--body-size);line-height:1.85;word-break:normal;overflow-wrap:break-word}.prose p{margin:0 0 1.25em}.prose .separator{text-align:center;color:var(--muted);margin:1.8em 0}.body-note{padding:12px 16px;margin:8px 0 28px;border-radius:8px;background:var(--surface);font:12px/1.8 system-ui,sans-serif;color:var(--muted)}.progress{height:2px;position:absolute;top:56px;left:0;background:var(--accent);z-index:2;width:0;pointer-events:none}.chapter-end{padding:20px 20px 30px;border-top:1px solid var(--line);background:var(--page)}.end-label{font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px}.primary{border:0;border-radius:12px;background:var(--accent);color:#fff;padding:16px;width:100%;min-height:64px;display:flex;justify-content:space-between;align-items:center;text-align:left;gap:12px}.primary small{display:block;font-size:11px;opacity:.85;margin-bottom:5px}.primary strong{font-size:16px}.end-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.secondary{min-height:48px;border:1px solid var(--strong);border-radius:10px;background:var(--page);font-size:13px}.below-note{font-size:12px;color:var(--muted);line-height:1.8;margin-top:14px;text-align:center}.shade{position:absolute;inset:0;background:#17202a66;z-index:30;display:flex;align-items:flex-end}.sheet{width:100%;max-height:82%;background:var(--page);color:var(--ink);border-radius:22px 22px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 30px #00000012;overflow:hidden}.handle{width:34px;height:4px;border-radius:10px;background:var(--strong);align-self:center;margin:10px 0 0;flex-shrink:0}.sheet-head{display:flex;align-items:center;justify-content:space-between;padding:7px 16px 10px 20px;border-bottom:1px solid var(--line);flex-shrink:0}.sheet-head h2{font-size:21px;letter-spacing:-.04em}.sheet-head p{font-size:11px;color:var(--muted);margin-top:4px}.sheet-body{overflow-y:auto;overscroll-behavior:contain;padding:12px 20px 22px;min-height:0}.label{font-size:12px;color:var(--muted);display:block;margin:8px 0 10px}.fav-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.fav-row button{min-height:48px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-size:12px;font-weight:600}.group-btn{min-height:50px;display:flex;justify-content:space-between;align-items:center;width:100%;padding:0 4px;background:none;border:0;border-bottom:1px solid var(--line);font-size:14px;font-weight:650}.board-option{width:100%;min-height:50px;border:0;border-radius:8px;background:none;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:14px;text-align:left}.board-option[aria-pressed=true]{color:var(--accent);background:var(--soft);font-weight:650}.sheet-foot{border-top:1px solid var(--line);padding:10px 20px 14px}.sheet-foot button{width:100%;min-height:48px;border:0;background:var(--surface);border-radius:10px;font-weight:650;font-size:14px}.setting-row{display:flex;align-items:center;justify-content:space-between;min-height:52px;gap:12px;font-size:14px}.stepper{display:flex;gap:8px;align-items:center}.stepper button{height:48px;width:48px;border:1px solid var(--strong);border-radius:10px;background:var(--page);font-size:20px}.stepper output{width:42px;text-align:center;font-size:14px}.theme-options{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:5px 0 16px}.theme-options button{min-height:62px;border:1px solid var(--strong);border-radius:10px;font-size:13px}.theme-options .selected{outline:2px solid var(--accent);outline-offset:1px}.preview{padding:16px;margin:12px 0;background:var(--reader);border:1px solid var(--line);border-radius:12px;font-size:var(--body-size);line-height:1.8;font-family:Georgia,Batang,serif}.range-label{display:block;font-size:13px;margin:14px 0 0}.range-label input{width:100%;height:40px;accent-color:var(--accent)}.more-action{min-height:52px;border:0;border-bottom:1px solid var(--line);background:none;width:100%;padding:0 4px;text-align:left;display:flex;align-items:center;gap:12px;font-size:14px}.annotation{padding-top:20px}.annotation .number{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--strong);border-radius:50%;font-size:12px;font-weight:700;margin-bottom:10px}.annotation h3{font-size:16px;line-height:1.5;letter-spacing:-.025em;margin:0 0 10px}.annotation p{font-size:13px;line-height:1.85;color:var(--muted)}.annotation section{padding:0 0 25px;margin:0 0 25px;border-bottom:1px solid #d9dfe5}.annotation .fine{font-size:11px}.toast{position:absolute;bottom:80px;left:20px;right:20px;z-index:50;padding:12px 16px;background:#20242a;color:#fff;border-radius:10px;font-size:12px;line-height:1.6;box-shadow:0 8px 20px #0002}.device.dark{--page:#111318;--surface:#191d25;--reader:#14171c;--ink:#eceef2;--muted:#adb6c4;--line:#303744;--strong:#687586;--accent:#ff8ca1;--soft:#36202a}.device.dark .primary{color:#16171c}.device.paper{--reader:#f5eedf}
+@media(max-width:1150px){.layout{grid-template-columns:250px 412px;justify-content:center;gap:28px}.annotation{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}.annotation section{margin:0}.device{max-height:none}}
+@media(max-width:720px){body{background:#fff}.layout{display:block;padding:0}.intro{padding:20px 16px 14px}.intro h1{font-size:24px;margin:8px 0}.intro>p{font-size:12px}.scenes{display:flex;overflow:auto;gap:6px;margin:14px 0 10px}.scenes button{flex:0 0 auto;border-color:var(--line);padding:8px 10px;font-size:12px}.scenes button span{display:none}.scenes button.active{background:var(--soft);color:var(--accent)}.back-demo{width:auto;padding:0 14px;min-height:42px}.caveat{font-size:10px!important;margin-top:10px!important}.device{width:100%;height:800px;height:88svh;max-height:850px;min-height:580px;border-radius:0;border-inline:0;box-shadow:none}.annotation{display:block;padding:24px 20px}.annotation section{margin-bottom:20px;padding-bottom:20px}.reader-nav{padding-bottom:max(5px,env(safe-area-inset-bottom));height:calc(68px + env(safe-area-inset-bottom))}.global-nav{padding-bottom:env(safe-area-inset-bottom);height:calc(62px + env(safe-area-inset-bottom))}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<main class="layout">
+<aside class="intro">
+<div class="eyebrow">ReDSTM / READING EXPERIENCE</div>
+<h1>다음 화는 가깝게.<br>돌아올 곳은 그대로.</h1>
+<p>모바일 개편 명세의 화면 참조입니다.<br>게시판을 고르고, 200화를 읽고, 다음 화를 넘긴 뒤 목록으로 돌아가 보세요.</p>
+<nav class="scenes" aria-label="개편 시안 화면">
+<button data-scene="browse"><span>01</span>게시판 탐색</button>
+<button data-scene="boards"><span>02</span>게시판 펼치기</button>
+<button data-scene="chapters"><span>03</span>200화 부근 목차</button>
+<button data-scene="reader"><span>04</span>공통 소설 뷰어</button>
+<button data-scene="settings"><span>05</span>읽기 설정</button>
+<button data-scene="end"><span>06</span>회차 끝</button>
+</nav>
+<button class="back-demo" id="back-demo">← Back 동작 시연</button>
+<p class="caveat">예시 작품·본문·건수이며 실서비스 데이터가 아닙니다. 디자인 시안의 화면 전환만 구현했습니다. 실제 브라우저 이력, 인증, 영구 저장, 원격 이미지·AA 렌더러, 접근성 적합성 검증은 별도 구현 대상입니다. 기본 프리뷰는 412 CSS px이며 S22+의 실측값이 아닙니다. 외부 폰트·네트워크 요청은 없습니다.</p>
+</aside>
+<div class="device" id="device">
+  <div class="screen" id="screen">
+    <header class="top" id="top"></header>
+    <div class="scroll" id="scroll"></div>
+    <button class="board-dock" id="board-dock" aria-haspopup="dialog"></button>
+    <nav id="bottom"></nav>
+  </div>
+  <div class="progress" id="progress" hidden></div>
+  <div class="shade" id="shade" hidden><section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1"></section></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+</div>
+<aside class="annotation">
+<section><div class="number">01</div><h3>게시판은 필터가 아니라<br>자주 가는 목적지</h3><p>현재 경로를 하단에 남기고 전용 패널을 위로 펼칩니다. 그룹 접기와 실제 게시판 선택을 구분하고, 즐겨찾기는 패널에서 바로 선택합니다.</p></section>
+<section><div class="number">02</div><h3>앞뒤 이동을 붙이고<br>다음을 가장 선명하게</h3><p>이전·다음 사이의 저장 버튼을 더보기로 옮깁니다. 다음 화는 넓은 중앙 타깃, 목록은 고정된 복귀 기능입니다. 방향은 손에 따라 뒤집지 않습니다.</p></section>
+<section><div class="number">03</div><h3>읽은 회차와<br>돌아갈 위치는 별개</h3><p>200화에서 202화까지 읽어도 원래 목록 위치로 돌아옵니다. 최신순 정렬은 화면 표시만 바꾸고, 다음 화의 순서는 바꾸지 않습니다.</p></section>
+<p class="fine">구현 계약·예외·84개 검증 시나리오는 함께 제공한 Markdown 명세를 기준으로 합니다. 이 시안의 단순 상태 모델을 프로덕션 라우터로 복사하지 마세요.</p>
+</aside>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const paths = {
+home:'<path d="m3 10 9-7 9 7v10h-6v-7H9v7H3Z"/>',
+book:'<path d="M3 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H3Zm18 0h-6a3 3 0 0 0-3 3v14a4 4 0 0 1 4-2h5Z"/>',
+search:'<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/>',
+save:'<path d="M6 3h12v18l-6-4-6 4Z"/>',
+text:'<path d="M6 3h8l5 5v13H6Z M14 3v6h5 M9 13h6 M9 17h6"/>',
+list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/>',
+left:'<path d="m14 5-7 7 7 7"/>',
+right:'<path d="m10 5 7 7-7 7"/>',
+up:'<path d="m6 14 6-6 6 6"/>',
+down:'<path d="m6 9 6 6 6-6"/>',
+more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+close:'<path d="m6 6 12 12M18 6 6 18"/>',
+check:'<path d="m5 12 4 4L19 6"/>',
+star:'<path d="m12 3 2.8 5.8 6.4.9-4.6 4.5 1.1 6.4-5.7-3-5.7 3 1.1-6.4-4.6-4.5 6.4-.9Z"/>',
+settings:'<path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="2" fill="var(--page)"/><circle cx="15" cy="12" r="2" fill="var(--page)"/><circle cx="10" cy="18" r="2" fill="var(--page)"/>',
+aa:'<path d="m3 18 5-12 5 12M5 14h6M16 11h2a3 3 0 0 1 3 3v4M21 14h-3a2 2 0 0 0 0 4h3"/>'
+};
+const icon=(name)=>`<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]||paths.list}</svg>`;
+const esc=(v)=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let page="chapters", chapter=200, sort="oldest", board="자유창작 2관", group="창작", saved=false, fontSize=18, theme="light", overlay=null;
+let returnContext={page:"chapters",scroll:0}, opener=null, timer=null, draftSort="oldest";
+const titles=["닫힌 문 너머의 목소리","우편함에 남은 이름","누군가 기다리는 밤","마지막 배달","창문에 비친 불빛","낯선 주소","도착하지 않은 편지"];
+const chapterName=n=>titles[((n-200)%titles.length+titles.length)%titles.length];
+const screen=$("screen"), scroller=$("scroll");
+const navButton=(action,ico,label,cls="")=>`<button class="nav-button ${cls}" data-action="${action}" type="button">${icon(ico)}<span>${label}</span></button>`;
+function toast(text){clearTimeout(timer);$("toast").textContent=text;$("toast").hidden=false;timer=setTimeout(()=>$("toast").hidden=true,2400)}
+function setSceneActive(name){document.querySelectorAll("[data-scene]").forEach(b=>{b.classList.toggle("active",b.dataset.scene===name);b.setAttribute("aria-current",b.dataset.scene===name?"true":"false")})}
+function renderTop(){
+  $("top").innerHTML=page==="reader"
+    ?`<div class="top-context">밤의 우체국</div><span class="small muted">${chapter} / 300화</span>`
+    :`<div class="brand">ReDSTM</div><button class="icon" data-action="settings" aria-label="읽기 설정">${icon("settings")}</button>`;
+}
+function renderBottom(){
+  const reading=page==="reader";
+  $("board-dock").hidden=page!=="browse";
+  $("board-dock").innerHTML=`${icon("list")}<span class="path"><small>${esc(group)} / </small>${esc(board)}</span>${icon("up")}`;
+  $("board-dock").setAttribute("aria-label",`게시판 선택: ${group}, ${board}`);
+  $("bottom").className=reading?"reader-nav":"global-nav";
+  $("bottom").setAttribute("aria-label",reading?"읽기 도구":"주요 메뉴");
+  $("bottom").innerHTML=reading
+    ?navButton("list","list","목록")+navButton("prev","left","이전 화")+navButton("next","right","다음 화","next")+navButton("settings","aa","설정")+navButton("more","more","더보기")
+    :navButton("home","home","홈")+navButton("browse","book","게시판",page==="browse"?"active":"")+navButton("search","search","검색")+navButton("saved","save","보관함")+navButton("chapters","text","텍스트",page==="chapters"?"active":"");
+  if(reading){$("bottom").querySelector('[data-action=prev]').disabled=chapter<=1;$("bottom").querySelector('[data-action=next]').disabled=chapter>=300}
+}
+function renderBrowse(){
+  const posts=[
+    ["늦은 밤에만 문을 여는 우체국 이야기","달빛우체부","오늘 08:12","소설"],
+    ["어느 용사의 은퇴 계획은 생각보다 평범했다","종이배","어제 22:41","소설"],
+    ["비가 오면 찾아오는 손님 · 24화","느린구름","어제 21:03","연재"],
+    ["마법 도서관의 사서는 오늘도 야근합니다","책갈피","어제 19:15","소설"],
+    ["종말 이후에도 고양이는 배가 고프다","모퉁이","09.24 18:30","단편"],
+    ["오래된 지도에서 발견한 이름 없는 마을","북쪽바람","09.24 12:20","연재"],
+    ["세 번째 초인종이 울리면 문을 열지 마세요","달빛우체부","09.23 23:48","소설"],
+    ["별이 지는 곳에서 다시 만나자","잔물결","09.23 20:05","단편"]
+  ];
+  scroller.innerHTML=`<div class="page-head"><h2>게시판</h2><p>자주 찾는 게시판에서 바로 이어 읽으세요.</p></div>
+  <div class="tabs"><button class="selected" data-action="browse">게시판 글</button><button data-action="chapters">작품</button></div>
+  <div class="list-summary"><span>2,340개 글 <span class="pill">예시</span></span><button class="sort" data-action="filters">정렬·필터 ${icon("down")}</button></div>`
+  +posts.map(([title,author,date,tag])=>`<button class="post-row" data-action="open"><span class="post-title">${esc(title)}</span><span class="post-meta"><span>${esc(author)}</span><span>${date}</span><span class="pill">${tag}</span></span></button>`).join("")
+  +`<button class="load-more" data-action="sample">다음 글 더 보기</button>`;
+}
+function renderChapters(){
+  const nums=Array.from({length:300},(_,i)=>i+1);if(sort==="latest")nums.reverse();
+  scroller.innerHTML=`<div class="page-head"><p>텍스트 장서 · 소설</p><h2 style="margin-top:9px">밤의 우체국</h2><p>예시 작가 · 300화 · 화면 참조용 작품</p></div>
+  <button class="resume" data-action="open"><span>${chapter}화 이어 읽기</span>${icon("right")}</button>
+  <div class="list-summary"><button class="sort" data-action="jump">회차로 이동 ${icon("down")}</button><button class="sort" data-action="sort">${sort==="latest"?"최신순":"회차순"} ${icon("down")}</button></div>`
+  +nums.map(n=>`<button class="chapter-row ${n===chapter?'active':''}" data-chapter="${n}" id="row-${n}"><span class="no">${n}화</span><span class="chapter-title">${chapterName(n)}</span><span class="state">${n===chapter?"읽는 중":n<200?"읽음":""}</span></button>`).join("");
+}
+function renderReader(){
+  scroller.innerHTML=`<header class="reader-heading"><div class="tag">소설 · 밤의 우체국</div><h2>${chapter}화. ${chapterName(chapter)}</h2><div class="details"><span>예시 작가</span><span>본문·작품 모두 시안용 창작</span></div></header>
+  <article class="prose"><p>우체국의 시계가 열두 시를 가리킬 때, 닫힌 문 아래로 편지 한 통이 미끄러져 들어왔다.</p><p>봉투에는 주소도 우표도 없었다. 다만 익숙한 글씨로 내 이름이 적혀 있었다.</p><p>나는 편지를 뒤집었다.</p><p>“아직 불을 끄지 마세요.”</p><p>창밖의 골목은 조용했다. 조금 전까지 내리던 비도 그쳐 있었다. 그런데 문 앞에 놓인 작은 우산 하나만은 여전히 젖어 있었다.</p><p>분명 오늘 처음 보는 우산이었다.</p><p class="separator">＊ ＊ ＊</p><p>배달하지 못한 편지들은 사무실 가장 안쪽 서랍에 보관했다. 주인을 기다리는 물건에는 저마다 다른 무게가 있었다.</p><p>나는 맨 위의 봉투를 꺼냈다. 오래된 종이 냄새 사이로, 방금 내린 비의 냄새가 섞여 있었다.</p><p>그 순간 초인종이 울렸다.</p><p>이번에는 누군지 묻지 않았다. 편지에 적힌 이름을 한 번 더 확인하고 천천히 문을 열었다.</p><div class="body-note">이 본문은 레이아웃 확인을 위한 예시입니다. 실제 자료·이미지·원문 링크를 불러오지 않습니다.</div></article>
+  <section class="chapter-end" id="chapter-end"><p class="end-label">${chapter}화를 끝까지 읽었습니다</p>
+  <button class="primary" data-action="${chapter<300?'next':'list'}"><span><small>${chapter<300?'다음 화':'마지막 회차'}</small><strong>${chapter<300?(chapter+1)+'화. '+chapterName(chapter+1):'작품 목록으로 돌아가기'}</strong></span>${icon("right")}</button>
+  <div class="end-grid"><button class="secondary" data-action="list">목록으로 돌아가기</button><button class="secondary" data-action="toc">작품 목차</button></div>
+  <p class="below-note">다음 화로 이동해도 처음 열었던 목록 위치는 유지됩니다.</p></section>`;
+}
+function render({scroll=0}={}){
+  scroller.className=page==="reader"?"scroll reader-scroll":"scroll";
+  renderTop();renderBottom();
+  $("progress").hidden=page!=="reader";
+  if(page==="browse")renderBrowse();else if(page==="chapters")renderChapters();else renderReader();
+  scroller.scrollTop=scroll;updateProgress();
+}
+function enterReader(n=chapter){
+  if(page!=="reader")returnContext={page,scroll:scroller.scrollTop};
+  chapter=Math.max(1,Math.min(300,Number(n)||200));page="reader";render();setSceneActive("reader");
+}
+function returnList(){
+  page=returnContext.page||"chapters";render({scroll:returnContext.scroll||0});setSceneActive(page==="browse"?"browse":"chapters");
+}
+function closeSheet(){
+  if(!overlay)return;
+  overlay=null;$("shade").hidden=true;screen.inert=false;
+  if(opener?.isConnected)opener.focus({preventScroll:true});
+  opener=null;$("board-dock").setAttribute("aria-expanded","false");
+}
+function openSheet(kind){
+  if(!overlay)opener=document.activeElement;
+  overlay=kind;screen.inert=true;$("shade").hidden=false;
+  const titles={boards:"게시판 선택",settings:"읽기 설정",more:"더보기",toc:"작품 목차",filters:"정렬·필터",jump:"회차로 이동"};
+  const captions={boards:"게시판을 누르면 바로 적용됩니다",settings:"화면에 바로 적용됩니다",more:"현재 회차 · 밤의 우체국",toc:"회차를 바꿔도 목록 복귀점은 유지됩니다",filters:"적용을 눌러 목록에 반영합니다",jump:"원하는 회차 부근을 목록에서 찾습니다"};
+  let content="";
+  if(kind==="boards"){
+    const groups={"창작":["자유창작 1관","자유창작 2관","창작잡담"],"AA":["일반 AA","완결 AA"],"번역":["일반 번역","완결 번역"]};
+    content=`<span class="label">즐겨찾는 게시판</span><div class="fav-row"><button data-board="자유창작 2관" data-group="창작">☆ 자유창작 2관</button><button data-board="일반 AA" data-group="AA">☆ 일반 AA</button></div>`;
+    content+=Object.entries(groups).map(([g,boards],i)=>`<button class="group-btn" data-group-toggle="g${i}" aria-expanded="${g===group}"><span>${g}</span>${icon(g===group?"up":"down")}</button><div id="g${i}" ${g!==group?"hidden":""}>${boards.map(b=>`<button class="board-option" data-board="${b}" data-group="${g}" aria-pressed="${b===board}"><span>${b}</span>${b===board?icon("check"):""}</button>`).join("")}</div>`).join("");
+    $("board-dock").setAttribute("aria-expanded","true");
+  }else if(kind==="settings"){
+    content=`<div class="setting-row"><span>글자 크기</span><div class="stepper"><button data-font="-1" aria-label="글자 크기 줄이기">−</button><output id="size-value">${fontSize}px</output><button data-font="1" aria-label="글자 크기 키우기">+</button></div></div>
+    <div class="preview" id="font-preview">오늘의 마지막 편지는 아직 도착하지 않았다.</div><span class="label">바탕색</span>
+    <div class="theme-options"><button data-theme="light" class="${theme==='light'?'selected':''}" style="background:#fff;color:#20242a">밝게</button><button data-theme="paper" class="${theme==='paper'?'selected':''}" style="background:#f5eedf;color:#20242a">종이</button><button data-theme="dark" class="${theme==='dark'?'selected':''}" style="background:#14171c;color:#eceef2">어둡게</button></div>
+    <label class="range-label">줄 간격 <span id="line-value">1.85</span><input type="range" min="1.5" max="2.2" step=".05" value="1.85" id="line-input"></label><p class="small muted" style="line-height:1.8;margin-top:10px">운영·백업은 일반 설정으로 분리합니다. 이 화면에는 읽기에 필요한 조절만 남깁니다.</p>`;
+  }else if(kind==="more"){
+    content=`<button class="more-action" data-action="save">${icon("save")}${saved?"저장 취소":"이 회차 저장"}</button><button class="more-action" data-action="toc">${icon("list")}작품 목차</button><button class="more-action" data-action="settings">${icon("aa")}읽기 설정</button><button class="more-action" data-action="end">${icon("down")}본문 끝으로 이동</button>`;
+  }else if(kind==="toc"){
+    content=Array.from({length:9},(_,i)=>Math.max(1,chapter-4)+i).filter(n=>n<=300).map(n=>`<button class="board-option" data-toc-chapter="${n}" aria-pressed="${n===chapter}"><span>${n}화. ${chapterName(n)}</span>${n===chapter?icon("check"):""}</button>`).join("");
+  }else if(kind==="filters"){
+    draftSort=sort;content=`<span class="label">정렬</span><button class="board-option" data-draft="latest" aria-pressed="${sort==='latest'}">최신순</button><button class="board-option" data-draft="oldest" aria-pressed="${sort==='oldest'}">오래된순</button><p class="small muted" style="line-height:1.8;margin-top:16px">게시판 선택은 하단 전용 바에서 합니다. 시안에서는 정렬 선택 상태만 보여줍니다.</p>`;
+  }else{
+    content=`<label class="range-label" for="jump-number">회차 번호</label><input id="jump-number" type="number" min="1" max="300" value="200" inputmode="numeric" style="width:100%;min-height:48px;margin-top:12px;padding:8px 12px;border:1px solid var(--strong);border-radius:10px;background:var(--page);color:var(--ink)"><p class="small muted" style="margin-top:12px">1~300화 사이의 번호를 입력하세요.</p>`;
+  }
+  const footer=kind==="filters"?'<button data-action="apply">적용</button>':kind==="jump"?'<button data-action="jump-apply">목록에서 찾기</button>':'<button data-action="close">닫기</button>';
+  $("sheet").innerHTML=`<div class="handle" aria-hidden="true"></div><header class="sheet-head"><div><h2 id="sheet-title">${titles[kind]}</h2><p>${captions[kind]}</p></div><button class="icon" data-action="close" aria-label="닫기">${icon("close")}</button></header><div class="sheet-body">${content}</div><footer class="sheet-foot">${footer}</footer>`;
+  $("sheet").focus({preventScroll:true});
+}
+function showScene(name){
+  closeSheet();
+  if(name==="browse"||name==="boards"){page="browse";render();if(name==="boards")openSheet("boards")}
+  else if(name==="chapters"){page="chapters";render();scrollToChapter(198)}
+  else{
+    page="chapters";render();scrollToChapter(198);enterReader(200);
+    if(name==="settings")openSheet("settings");
+    if(name==="end")scroller.scrollTop=scroller.scrollHeight;
+  }
+  setSceneActive(name);
+}
+function scrollToChapter(n){
+  const row=$("row-"+n);
+  if(row)scroller.scrollTop=row.offsetTop-scroller.offsetTop-8;
+}
+function updateProgress(){
+  if(page!=="reader")return;
+  $("progress").style.width=`${100*scroller.scrollTop/Math.max(1,scroller.scrollHeight-scroller.clientHeight)}%`;
+}
+function action(a){
+  if(a==="close")return closeSheet();
+  if(a==="settings"||a==="more"||a==="toc"||a==="filters"||a==="jump")return openSheet(a);
+  if(a==="apply"){sort=draftSort;closeSheet();toast("조건을 적용했습니다 · 시안의 게시판 행은 예시 데이터입니다");return}
+  if(a==="jump-apply"){const n=Number($("jump-number").value);if(!Number.isInteger(n)||n<1||n>300){$("jump-number").setCustomValidity("1~300 사이의 정수를 입력하세요.");$("jump-number").reportValidity();return}closeSheet();if(page!=="chapters"){page="chapters";render()}scrollToChapter(n);return}
+  if(a==="save"){saved=!saved;openSheet("more");return}
+  if(a==="end"){closeSheet();scroller.scrollTop=scroller.scrollHeight;return}
+  if(a==="list"){closeSheet();return returnList()}
+  if(a==="next"||a==="prev"){if(page!=="reader")return;chapter=Math.max(1,Math.min(300,chapter+(a==="next"?1:-1)));render();return}
+  if(a==="open")return enterReader(200);
+  if(a==="browse"||a==="chapters")return showScene(a);
+  if(a==="sort"){sort=sort==="latest"?"oldest":"latest";render();scrollToChapter(chapter);toast("목록만 재정렬했습니다. 다음 화의 순서는 유지됩니다.");return}
+  toast("이 시안은 게시판·목차·읽기 동선에 집중합니다. 전체 기능은 Markdown 명세를 참고하세요.");
+}
+document.addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.scene)return showScene(b.dataset.scene);
+  if(b.dataset.action)return action(b.dataset.action);
+  if(b.dataset.chapter)return enterReader(b.dataset.chapter);
+  if(b.dataset.tocChapter){const n=b.dataset.tocChapter;closeSheet();return enterReader(n)}
+  if(b.dataset.board){board=b.dataset.board;group=b.dataset.group;closeSheet();page="browse";render();toast(`${board}을 선택했습니다 · 예시 게시판`);return}
+  if(b.dataset.groupToggle){const g=$(b.dataset.groupToggle);g.hidden=!g.hidden;b.setAttribute("aria-expanded",String(!g.hidden));b.innerHTML=`<span>${b.textContent}</span>${icon(g.hidden?"down":"up")}`;return}
+  if(b.dataset.font){fontSize=Math.min(26,Math.max(15,fontSize+Number(b.dataset.font)));$("device").style.setProperty("--body-size",fontSize+"px");$("size-value").value=fontSize+"px";return}
+  if(b.dataset.theme){theme=b.dataset.theme;$("device").classList.toggle("dark",theme==="dark");$("device").classList.toggle("paper",theme==="paper");document.querySelectorAll("[data-theme]").forEach(x=>x.classList.toggle("selected",x.dataset.theme===theme));return}
+  if(b.dataset.draft){draftSort=b.dataset.draft;document.querySelectorAll("[data-draft]").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.draft===draftSort)));return}
+});
+$("board-dock").addEventListener("click",()=>openSheet("boards"));
+$("back-demo").addEventListener("click",()=>{if(overlay)closeSheet();else if(page==="reader")returnList();else toast("시안의 목록 화면입니다. 실제 앱에서는 소유한 상위 경로로 복귀합니다.")});
+$("shade").addEventListener("click",e=>{if(e.target===$("shade"))closeSheet()});
+document.addEventListener("keydown",e=>{
+  if(!overlay)return;
+  if(e.key==="Escape"){e.preventDefault();closeSheet();return}
+  if(e.key==="Tab"){
+    const items=[...$("sheet").querySelectorAll("button,input,select,[tabindex='0']")].filter(x=>!x.disabled&&x.getClientRects().length);
+    if(!items.length)return;
+    const idx=items.indexOf(document.activeElement);
+    if((e.shiftKey&&idx<=0)||(!e.shiftKey&&(idx===items.length-1||idx<0))){e.preventDefault();(e.shiftKey?items[items.length-1]:items[0]).focus()}
+  }
+});
+document.addEventListener("input",e=>{
+  if(e.target.id==="line-input"){
+    $("line-value").textContent=Number(e.target.value).toFixed(2);
+    document.querySelectorAll(".prose,.preview").forEach(x=>x.style.lineHeight=e.target.value);
+  }
+  if(e.target.id==="jump-number")e.target.setCustomValidity("");
+});
+scroller.addEventListener("scroll",updateProgress,{passive:true});
+showScene(new URLSearchParams(location.search).get("scene")||"reader");
+</script>
+</body></html>

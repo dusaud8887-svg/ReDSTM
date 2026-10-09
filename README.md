@@ -138,7 +138,7 @@ detail은 동일 글만 총 3회 재시도한 뒤 영속 frontier가 2분~6시�
 network breaker 뒤 장기 수동 작업은 1건 canary로 원본 회복을 확인한 뒤 정상 20건 직렬 chunk로
 복귀한다. 실행 중 Operations 집계는 5분마다 canonical
 `captures`의 저장·전송 실패·파싱 실패를 읽어 실제 성공/실패를 표시한다. Oracle canonical live와
-repository target은 schema v5다(2026-10-09 읽기 전용 확인; 러너·텍스트 레인 Python 3.14.6의 SQLite 3.53.1).
+repository target은 schema v6다(2026-10-09 recovery 커버링 인덱스; 러너·텍스트 레인 Python 3.14.6의 SQLite 3.53.1).
 자동 모드는 최신 page incremental 뒤 due 실패 20건을 최대 2시간 재처리하고 변경분을
 배포한다. Oracle 정기 실행은 종료 후 30시간(+최대 15분 jitter) 쉬며, 타이머의 첫 활성화·재부팅 뒤에는
 30시간 후 처음 실행한다. 원격 명령 poll과 텍스트 작업 주기는 별도다.

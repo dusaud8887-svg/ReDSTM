@@ -1,0 +1,118 @@
+{
+  "C01": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/commit/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804",
+    "purpose": "검토 HEAD 및 Arcalive 폴더 경로 변경 diff"
+  },
+  "C02": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/crawler/collections.py",
+    "purpose": "제목 파싱·preview grouping 전체"
+  },
+  "C03": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/scripts/preview_collections.py",
+    "purpose": "읽기 전용 preview와 기존/후보 소속 비교"
+  },
+  "C04": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/scripts/import_legacy_auxiliary.py#L180-L240",
+    "purpose": "기존 작품과 회차의 legacy import"
+  },
+  "C05": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/scripts/export_static.py#L1470-L1630",
+    "purpose": "TypeMoon collection summary/detail/membership 게시"
+  },
+  "C06": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/edge/public/text-work.js",
+    "purpose": "브라우저 파서 복제·휴면 grouping·work alias 이행"
+  },
+  "C07": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/edge/public/text-library.js",
+    "purpose": "최신 텍스트 작품/아카 폴더 탐색·catalog loading"
+  },
+  "C08": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/scripts/text_archive/collector.py",
+    "purpose": "parse_work_detail, _apply_work, _apply_episode"
+  },
+  "C09": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/scripts/text_archive/importer.py",
+    "purpose": "스키마·canonical IDs·cross-source matching·마이그레이션"
+  },
+  "C10": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/scripts/text_archive/publisher.py#L20-L340",
+    "purpose": "소설 회차 sort·variant collapse·게시 metadata"
+  },
+  "C11": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/tests/test_text_archive_pipeline.py#L1-L195",
+    "purpose": "본문 hash와 보존 Markdown header fixture"
+  },
+  "C12": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/crawler/archive_pipeline.py",
+    "purpose": "수집 저장 경로"
+  },
+  "C13": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/pyproject.toml",
+    "purpose": "Python 범위·현재 직접/dev 의존성"
+  },
+  "C14": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/docs/16_collection_logic_review_20260920.md",
+    "purpose": "기존 로컬 보존본 조사: 현재 운영 통계가 아님"
+  },
+  "C15": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/crawler/items.py",
+    "purpose": "현재 수집 item에 있는 metadata 필드"
+  },
+  "C16": {
+    "url": "https://github.com/dusaud8887-svg/ReDSTM/blob/4edfb1bbceaa4427e6a6a0a40dbb857f51b08804/crawler/pipelines.py#L1-L205",
+    "purpose": "정규화·HTML/text 분리·lxml 직접 사용"
+  },
+  "E01": {
+    "url": "https://www.unicode.org/reports/tr15/",
+    "purpose": "Unicode UAX #15: 정규화·호환 정규화의 의미"
+  },
+  "E02": {
+    "url": "https://rapidfuzz.github.io/RapidFuzz/Usage/fuzz.html",
+    "purpose": "RapidFuzz 공식 scorer·processor·subset 동작"
+  },
+  "E03": {
+    "url": "https://www.sqlite.org/fts5.html",
+    "purpose": "SQLite FTS5 공식 문서: trigram과 짧은 query 제한"
+  },
+  "E04": {
+    "url": "https://moj-analytical-services.github.io/splink/",
+    "purpose": "Splink 공식 적용 대상·다중 feature·상관성"
+  },
+  "E05": {
+    "url": "https://ekzhu.com/datasketch/lsh.html",
+    "purpose": "datasketch 공식 MinHash LSH: approximate 결과"
+  },
+  "E06": {
+    "url": "https://hypothesis.readthedocs.io/en/latest/stateful.html",
+    "purpose": "Hypothesis stateful testing·invariants"
+  },
+  "E07": {
+    "url": "https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html",
+    "purpose": "scikit-learn TF-IDF·char n-gram 공식 API"
+  },
+  "E08": {
+    "url": "https://schema.org/translationOfWork",
+    "purpose": "Schema.org: 번역과 원작 관계의 분리"
+  },
+  "E09": {
+    "url": "https://www.sqlite.org/backup.html",
+    "purpose": "SQLite 일관된 online backup snapshot"
+  },
+  "E10": {
+    "url": "https://www.sqlite.org/uri.html",
+    "purpose": "SQLite URI mode=ro·immutable의 전제"
+  },
+  "E11": {
+    "url": "https://docs.python.org/3/library/stdtypes.html#str.casefold",
+    "purpose": "Python casefold와 lower의 차이"
+  },
+  "E12": {
+    "url": "https://moj-analytical-services.github.io/splink/topic_guides/theory/fellegi_sunter.html",
+    "purpose": "Fellegi–Sunter 모델: 관측의 우연 일치·동일성 증거"
+  },
+  "E13": {
+    "url": "https://moj-analytical-services.github.io/splink/topic_guides/blocking/blocking_rules.html",
+    "purpose": "Blocking rules: 비교 후보 수와 회수 범위"
+  }
+}

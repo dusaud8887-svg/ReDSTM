@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 APPLICATION_ID = 0x52445354  # RDST
 BODY_COMPRESSION_LEVEL = 3
 RUNTIME_SCHEMA_POLICY = "explicit-v1"
@@ -260,6 +260,15 @@ CREATE INDEX post_versions_projection_idx
 """
 
 
+# Recovery ranks every due frontier row by whether its post has a body. Without
+# latest_version_id in an index each lookup read a posts table page: 49 s for 279k due rows on
+# the 1 GiB Oracle box (2026-10-09). The covering index answers the join from the index alone.
+_SCHEMA_V6 = """
+CREATE INDEX posts_body_lookup_idx
+    ON posts(board_id, external_post_id, latest_version_id);
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -277,6 +286,7 @@ MIGRATIONS = (
     Migration(3, _SCHEMA_V3, False),
     Migration(4, _SCHEMA_V4, True),
     Migration(5, _SCHEMA_V5, True),
+    Migration(6, _SCHEMA_V6, True),
 )
 
 
@@ -496,6 +506,13 @@ def validate_archive_for_release(
             "warc_record_id",
         ]:
             raise RuntimeError("canonical schema v5 physical shape is invalid")
+
+    if user_version >= 6:
+        v6_columns = [
+            str(row[2]) for row in connection.execute("PRAGMA index_info(posts_body_lookup_idx)")
+        ]
+        if v6_columns != ["board_id", "external_post_id", "latest_version_id"]:
+            raise RuntimeError("canonical schema v6 physical shape is invalid")
 
 
 def require_archive_schema(path: str | Path) -> None:

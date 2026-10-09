@@ -593,3 +593,34 @@ def test_listing_change_reopens_only_retry_capped_dead_posts(tmp_path: Path, cod
     assert (reopened is not None) == (code != "permission_denied")
     if reopened is not None:
         assert reopened.attempts == 1
+
+
+def test_recovery_body_rank_reads_the_covering_index_not_posts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 2026-10-09: on production every due row read a posts table page (49 s for 279k rows).
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    store.seed("write_free21", 1, "https://www.typemoon.net/write_free21/1")
+    statements: list[str] = []
+    original = frontier_module.archive_transaction
+
+    @contextmanager
+    def tracing(target: Path, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
+        with original(target, read_only=read_only) as connection:
+            connection.set_trace_callback(statements.append)
+            yield connection
+
+    monkeypatch.setattr(frontier_module, "archive_transaction", tracing)
+    store.recovery_candidates(limit=5)
+    store.recovery_candidates(limit=5, missing_only=True)
+    reads = [sql for sql in statements if "posts AS post" in sql]
+    assert len(reads) >= 2
+    with connect_archive(path, read_only=True) as connection:
+        for sql in reads:
+            plan = " | ".join(
+                str(row["detail"]) for row in connection.execute("EXPLAIN QUERY PLAN " + sql)
+            )
+            assert "COVERING INDEX posts_body_lookup_idx" in plan, plan
+            assert "sqlite_autoindex_posts_2" not in plan, plan

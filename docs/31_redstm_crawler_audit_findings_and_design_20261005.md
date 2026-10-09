@@ -110,9 +110,9 @@ nh3 화이트리스트 / 세션 FileLock 쓰rottle·atomic export / STRICT 스�
 - 이 SELECT는 `BEGIN IMMEDIATE` 안에 있어 약 50초 동안 쓰기 잠금을 쥐었다. 후보는 이후 lease 획득에서 상태를 다시 확인하므로
   잠금이 필요 없다. dead→retry·만료 lease 갱신만 짧은 쓰기 트랜잭션으로 커밋하고, 후보 읽기는 읽기 전용 연결로 옮겼다
   (`test_recovery_candidate_read_holds_no_write_lock`). 선택 결과·공정성 규칙은 그대로다.
-- 남은 비용(실행당 수십 초의 읽기)을 없애려면 `posts(board_id, external_post_id, latest_version_id)` 커버링 색인이 필요하며
-  canonical schema v6 마이그레이션이다(12GB 스냅샷·러너 정지·명시 migration·호환 릴리스 쌍). 실행은 recovery 실행당 1회라
-  지금은 하지 않고, v6가 다른 이유로 필요해질 때 함께 넣는다.
+- 남은 읽기 비용은 canonical schema v6의 `posts_body_lookup_idx(board_id, external_post_id, latest_version_id)` 커버링
+  색인으로 없앴다(같은 날, 사용자 결정). recovery 후보·본문 없는 dead 재개 조회가 `INDEXED BY`로 지정한다(통계가 없으면
+  SQLite가 UNIQUE 자동 색인을 골라 posts 페이지를 다시 읽는다; 실제 SQL의 실행 계획 회귀 테스트).
 
 ### C6 (P2) 강제종료 4실험 테스트 명시화 — 완료
 - E1(리스 만료 회수)·E4(스테일 complete 거부)는 기존 `test_frontier.py::test_expired_lease_recovers_after_process_crash`가 커버.

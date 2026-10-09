@@ -372,7 +372,7 @@ class FrontierStore:
             if missing_only:
                 missing_body_clause = """
                   AND NOT EXISTS (
-                      SELECT 1 FROM posts AS post
+                      SELECT 1 FROM posts AS post INDEXED BY posts_body_lookup_idx
                       WHERE post.board_id = crawl_frontier.board_id
                         AND post.external_post_id = crawl_frontier.external_post_id
                         AND post.latest_version_id IS NOT NULL
@@ -439,7 +439,8 @@ class FrontierStore:
                         ) AS board_rank
                     FROM crawl_frontier AS frontier
                     LEFT JOIN boards AS board ON board.board_id = frontier.board_id
-                    LEFT JOIN posts AS post
+                    -- Covering index (schema v6): the body rank never reads a posts page.
+                    LEFT JOIN posts AS post INDEXED BY posts_body_lookup_idx
                       ON post.board_id = frontier.board_id
                      AND post.external_post_id = frontier.external_post_id
                     WHERE frontier.state IN ('pending', 'retry')
@@ -623,7 +624,7 @@ class FrontierStore:
                   AND last_error_code IN ({", ".join("?" for _ in codes)})
                   {board_clause}
                   AND NOT EXISTS (
-                      SELECT 1 FROM posts AS post
+                      SELECT 1 FROM posts AS post INDEXED BY posts_body_lookup_idx
                       WHERE post.board_id = crawl_frontier.board_id
                         AND post.external_post_id = crawl_frontier.external_post_id
                         AND post.latest_version_id IS NOT NULL
