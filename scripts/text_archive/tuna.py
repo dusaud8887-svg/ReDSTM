@@ -483,6 +483,11 @@ def apply_threads(db: sqlite3.Connection, threads: list[dict[str, Any]]) -> int:
             )
             if previous is not None and previous[0] != thread["series_key"]:
                 _move_thread(db, thread["thread_id"], previous[0], thread["series_key"])
+            # A key with a thread again is a live work, not an alias, also when a brand-new
+            # thread brings it back (2026-10-09 final review).
+            db.execute(
+                "DELETE FROM text_tuna_work_aliases WHERE old_key=?", (thread["series_key"],)
+            )
             db.execute(
                 "UPDATE text_tuna_threads SET status='active' WHERE board=? AND thread_id=? "
                 "AND status='complete' AND next_seq<response_count",

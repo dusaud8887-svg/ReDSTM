@@ -755,6 +755,25 @@ def test_installer_preflight_runs_every_module_help(tmp_path: Path) -> None:
     ]
 
 
+def test_a_new_thread_that_revives_an_aliased_work_removes_the_alias(
+    archive: tuple[Path, Path, FakeSite],
+) -> None:
+    db_path, _, site = archive
+    site.threads = [
+        _thread(40, count=1, updated="2026-10-07T02:00:00Z", title="[AA] 별 (1)"),
+        _thread(41, count=1, updated="2026-10-07T01:00:00Z", title="[AA] 달 (1)"),
+    ]
+    _step(archive, 0)
+    moon = tuna.series_of("[AA] 달 (1)", "작가◆AbCdEf1234")[0]
+    with closing(_db(db_path)) as db:
+        tuna.regroup(db, 41, into=40, split=False)
+        assert db.execute("SELECT old_key FROM text_tuna_work_aliases").fetchone()[0] == moon
+    site.threads.append(_thread(42, count=1, updated="2026-10-08T00:00:00Z", title="[AA] 달 (2)"))
+    _step(archive, tuna._LIST_INTERVAL + 1)
+    with closing(_db(db_path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM text_tuna_work_aliases").fetchone()[0] == 0
+
+
 def test_group_cli_pins_lists_and_refuses_unknown_threads(
     archive: tuple[Path, Path, FakeSite], capsys: pytest.CaptureFixture[str]
 ) -> None:
