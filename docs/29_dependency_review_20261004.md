@@ -121,3 +121,12 @@
 | Ruff | 0.15.22 → **0.16.10** | 위반 0. Markdown 코드 블록도 format 대상이 됨(현재 통과) |
 | Biome · Playwright · Wrangler | 2.5.15 · 1.63.0 · 4.147.0(두 Worker) | lint 경고 수 동일(8), `wrangler types --check`·D1·dry-run 통과, E2E 4개 폭 |
 | undici override | **7.29.1 유지** | Wrangler 4.147의 miniflare가 undici 7.29.1을 정확히 요구 — 8.x로 올리면 그 기대를 깸 |
+
+### 6.2 `uv audit`의 Scrapy PYSEC-2017-83 (2026-10-09 외부 리뷰)
+
+`uv audit`(실험 기능, CI 미사용)은 Scrapy 2.19.0에 `PYSEC-2017-83`(CVE-2017-14158, 메모리 소진 DoS)을 "수정 버전 없음"으로
+표시한다. 같은 취약점의 GitHub 권고 `GHSA-h7wm-ph43-c39p`는 영향 범위를 `>= 0.7, <= 2.15.2`로 적고 있어(2026-10-09
+`gh api advisories/GHSA-h7wm-ph43-c39p` 확인) 설치본은 범위 밖이다. PYSEC 항목에 상한이 빠진 데이터 불일치로 보고 예외나
+버전 변경은 하지 않는다. CI의 `pip-audit==2.10.1`은 이 항목을 보고하지 않는다. 운영 Python은 러너·텍스트 레인 모두 3.14.6이며
+번들 SQLite는 3.53.1이다(WAL 다중 연결 경쟁 수정 3.51.3 이후, 같은 날 Oracle에서 읽기 전용 확인).
+
