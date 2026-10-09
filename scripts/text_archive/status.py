@@ -104,12 +104,35 @@ def _deferrals(path: Path) -> dict[str, dict[str, str]]:
     }
 
 
+def _import_retries(roots: tuple[Path, ...], clock: float) -> dict[str, Any]:
+    """Batches waiting out an import backoff, and why (attempts.py records, no batch IDs)."""
+    waiting = 0
+    reasons: dict[str, int] = {}
+    for root in roots:
+        for path in root.glob("*.json") if root.is_dir() else ():
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                active = float(record["next_at"]) > clock
+                reason = str(record.get("reason") or "")[:_ERROR_CHARS]
+            except OSError, ValueError, KeyError, TypeError:
+                continue
+            if active:
+                waiting += 1
+                reasons[reason] = reasons.get(reason, 0) + 1
+    top = sorted(reasons.items(), key=lambda item: (-item[1], item[0]))[:3]
+    return {"backing_off": waiting, "reasons": dict(top)}
+
+
 def build_status(
     db_path: Path,
     inbox_root: Path,
     *,
     now: float | None = None,
     deferrals_path: Path = DEFERRALS_PATH,
+    attempts_roots: tuple[Path, ...] = (
+        Path("/srv/redstm-text/import-attempts"),
+        Path("/srv/redstm-text/media-attempts"),
+    ),
 ) -> dict[str, Any]:
     """A bounded summary; no bodies, titles, paths or credentials."""
     generated = datetime.now(UTC) if now is None else datetime.fromtimestamp(now, UTC)
@@ -118,6 +141,9 @@ def build_status(
         "generated_at": generated.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "drop": _drop_state(inbox_root),
         "deferrals": _deferrals(deferrals_path),
+        # Repeated import failures for /ops (2026-10-09 review: imported → published lag,
+        # the oldest waiting batch and repeated failure reasons were not visible).
+        "imports": _import_retries(attempts_roots, generated.timestamp()),
     }
     if not db_path.is_file():
         status["database"] = "missing"
@@ -162,13 +188,16 @@ def build_status(
             }
         pc = db.execute(
             """SELECT COUNT(*) AS batches,MAX(imported_at) AS last_batch_at,
-                      SUM(revision=2) AS published_batches
+                      SUM(revision=2) AS published_batches,
+                      MIN(CASE WHEN revision=1 THEN imported_at END) AS oldest_unpublished_at
                FROM text_archive_batches"""
         ).fetchone()
         status["pc"] = {
             "batches": int(pc["batches"] or 0),
             "published_batches": int(pc["published_batches"] or 0),
             "last_batch_at": pc["last_batch_at"],
+            # Imported (receipt revision 1) but not yet published: the oldest shows the lag.
+            "oldest_unpublished_at": pc["oldest_unpublished_at"],
             "held_conflicts": int(
                 db.execute(
                     "SELECT COUNT(*) FROM text_archive_conflicts WHERE batch_id NOT LIKE 'oracle:%'"

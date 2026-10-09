@@ -133,7 +133,9 @@ DB 연결 시 숫자 source ID로 보완한다.
    쓰지 않는다. 같은 identity+SHA는 duplicate/object 재사용, identity+다른 SHA는
    `held_conflict`로 보류한다. 단 수동 문서(lane `manual`)는 사용자 자신의 파일이라 다른 SHA가 `accepted`로
    그 항목의 본문을 교체한다(2026-10-08: 편집·재해독본 반영, 이전 객체는 남는다). 새 본문 객체는
-   content-addressed, local origin은 자동 삭제하지 않는다.
+   content-addressed, local origin은 자동 삭제하지 않는다. 수동 문서는 본문이 같아도(`duplicate`) 새 배치의
+   폴더·생성일·제목으로 `text_manual_documents`와 항목 제목을 갱신한다(2026-10-09 외부 리뷰 ③: Newtomi가 스캔 루트를
+   바꾸면 같은 본문을 새 폴더로 다시 보낸다). 배치는 batch_id(시각) 순으로 수입된다.
 3. R2 없이 import receipt revision 1을 만들 수 있다. publisher는 lane index를 500항목 페이지로
    나누고 source/canonical IDs 및 content hash를 포함한다. `rclone copyto` 후 `rclone cat`으로
    매 새 immutable object/index/release를 확인한다. TypeMoon publisher나 remote 이름은 호출하지 않는다.
@@ -144,6 +146,11 @@ DB 연결 시 숫자 source ID로 보완한다.
    되돌아가지 않는다. 게시할 항목(accepted/duplicate)이 하나도 없는 batch(모두 rejected·held_conflict)는
    게시를 기다리지 않고 다음 publisher 실행에서 바로 revision 2로 확정한다(항목 상태는 그대로, `published_at` 없음;
    2026-10-04 전에는 revision 1로 영원히 남아 PC가 대기로 보았다 — 9/26 `source_identity_invalid` 65개).
+   receipt 파일은 drop이 정리된 지 60일이 지나면 `prune_receipts`가 지운다. PC가 그동안 꺼져 있어 revision 2를 못 읽은
+   batch는 영원히 `imported`로 남았다(2026-10-09 외부 리뷰 JT-01). 그래서 PC는 revision 1을 받은 batch의 receipt가 없으면
+   `drop/.receipt-request-<batch_id>` 폴더를 만들고(최대 1시간에 한 번), importer는 실행마다 그 폴더의 batch receipt를
+   DB `text_archive_batches.receipt_json`에서 다시 쓴다(파일이 없거나 DB revision보다 낮을 때만; drop은 읽기 전용이라
+   요청 폴더는 PC가 receipt를 읽은 뒤 지운다). 요청 폴더는 batch 이름 규칙과 달라 수입 대상이 아니다.
    receipt는 게시 뒤에도 보존한다. 수신 batch(drop)는 2026-10-03부터 뉴토미가 revision 2 receipt나
    거부 status를 읽은 뒤 SFTP로 지운다(media batch와 같은 규칙). 수입 결과는 DB와 objects에 있어 drop 원본이 필요 없고,
    지우지 않으면 2GiB drop이 찬다(10-03에 받은 지 오래된 텍스트 batch 711개·1.1GB가 남아 있어 655개를 서버에서 정리).
@@ -160,6 +167,9 @@ DB 연결 시 숫자 source ID로 보완한다.
    snapshot 작성은 동일한 SQLite 읽기 시점에서 두 번 순회해 해시를 계산하고 위 규칙의 페이지로
    내보낸다. 게시 트리는 같은 SQLite 읽기 시점에서 500건 페이지와 JSONL 게시 계획을 파일로
    내보내며, 원문 객체 확인 전에 읽기 트랜잭션을 끝낸다. 대량 장서의 처리 시간은 별도 실측이 필요하다.
+   긴 읽기 트랜잭션이 checkpoint를 늦춰 WAL을 키울 수 있다는 지적(2026-10-09 외부 리뷰)에 대해 같은 날 운영 DB(5.8GB,
+   소설 53,269·아카라이브 45,373·수동 5,777·참치 50,269항목)의 WAL은 4.3MB였다. `journal_size_limit`은 실행 중 WAL의
+   상한이 아니므로, 두 번 순회의 일관성은 유지하고 WAL 크기를 운영 관찰 항목으로 둔다.
 5-1. PC 상태 전달(2026-10-04, 뉴토미 피드백): publisher는 **매 실행마다**(게시·양보·실패 모두)
    `receipts/publish-status.json`(0640, inbox read group)을 원자 교체한다. 내용은 ID·건수·시각만:
    `last_run{at, outcome: published|deferred|failed, reason}`, `last_success_at`,

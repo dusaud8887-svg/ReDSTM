@@ -94,6 +94,45 @@ def test_manual_document_import_publish_duplicate_and_revision(
     assert replaced[0] == hashlib.sha256(b"modified").hexdigest()
     assert (objects / replaced[1]).read_bytes() == b"modified"
     assert (objects / row[2]).read_bytes() == body
+    # 2026-10-09 review ③: the same body under a new scan root carries a new folder.
+    _batch(inbox, _BATCHES[3], body=b"modified", item={**item, "folder": "책장/작품/회차"})
+    receipt = importer.import_batch(inbox, _BATCHES[3], db_path, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "duplicate"
+    tree = publisher.build_publish_tree(db_path, objects, tmp_path / "build2", "manual")
+    release = json.loads((tmp_path / "build2" / tree["release_key"]).read_text(encoding="utf-8"))
+    page = json.loads(
+        (tmp_path / "build2" / release["catalog_pages"][0]["key"]).read_text(encoding="utf-8")
+    )
+    assert page["items"][0]["category"] == "책장/작품/회차"
+
+
+def test_a_requested_receipt_is_written_again_from_the_database(tmp_path: Path) -> None:
+    # 2026-10-09 review JT-01: the PC was off past the 60-day receipt retention.
+    inbox, db_path, objects = tmp_path / "inbox", tmp_path / "archive.db", tmp_path / "objects"
+    receipts = inbox / "receipts"
+    _batch(inbox, _BATCHES[0])
+    receipt = importer.import_batch(inbox, _BATCHES[0], db_path, objects, receipts)
+    assert receipt is not None
+    final = {**receipt, "revision": 2}
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE text_archive_batches SET revision=2,receipt_json=? WHERE batch_id=?",
+            (json.dumps(final, sort_keys=True), _BATCHES[0]),
+        )
+    db.close()
+    (receipts / f"{_BATCHES[0]}.json").unlink()
+    assert importer.restore_requested_receipts(inbox, db_path) == []  # nothing requested
+    (inbox / "drop" / f".receipt-request-{_BATCHES[0]}").mkdir()
+    (inbox / "drop" / ".receipt-request-20260101T000000Z-pc-ffffffff").mkdir()  # unknown
+    assert importer.restore_requested_receipts(inbox, db_path) == [_BATCHES[0]]
+    restored = json.loads((receipts / f"{_BATCHES[0]}.json").read_text(encoding="utf-8"))
+    assert restored["revision"] == 2 and restored["manifest_sha256"] == receipt["manifest_sha256"]
+    # A receipt already at the database revision is left alone; a stale one is replaced.
+    assert importer.restore_requested_receipts(inbox, db_path) == []
+    (receipts / f"{_BATCHES[0]}.json").write_text(json.dumps(receipt), encoding="utf-8")
+    assert importer.restore_requested_receipts(inbox, db_path) == [_BATCHES[0]]
+    assert importer._next_ready_batch(inbox) is None  # request folders are never batches
 
 
 @pytest.mark.parametrize(
@@ -1286,7 +1325,19 @@ def test_status_reports_deliveries_drop_backlog_and_collector_state(tmp_path: Pa
                 ("marumaru", "marumaru103.com", 4, 1),
             ),
         )
-    document = status.build_status(db_path, inbox, now=1_800_000_000)
+    attempts = tmp_path / "attempts"
+    attempts.mkdir()
+    (attempts / f"{_BATCHES[1]}.json").write_text(
+        json.dumps({"attempts": 2, "next_at": 1_800_000_900, "reason": "import_failed:OSError"})
+    )
+    (attempts / f"{_BATCHES[2]}.json").write_text(
+        json.dumps({"attempts": 1, "next_at": 1, "reason": "import_failed:OSError"})
+    )
+    document = status.build_status(
+        db_path, inbox, now=1_800_000_000, attempts_roots=(attempts, tmp_path / "absent")
+    )
+    assert document["imports"] == {"backing_off": 1, "reasons": {"import_failed:OSError": 1}}
+    assert document["pc"]["oldest_unpublished_at"]  # imported, revision 1
     assert document["generated_at"] == "2027-01-15T08:00:00Z"
     assert document["lanes"]["arcalive"]["items"] == 1
     assert document["lanes"]["arcalive"]["published"] == 0

@@ -127,11 +127,18 @@ test("operations distinguishes published manual documents from imported ones", a
   await useOperationsFixture(page, []);
   await page.route("**/api/v1/text/status", (route) => route.fulfill({ json: {
     schema: 1, generated_at: now,
-    lanes: { manual: { items: 5, published: 3, last_published_at: now } },
+    lanes: { manual: { items: 5, published: 3, last_published_at: now }, tuna: { items: 9, published: 9, last_published_at: now } },
+    pc: { batches: 10, published_batches: 8, oldest_unpublished_at: now },
+    imports: { backing_off: 2, reasons: { "import_failed:OSError": 2 } },
   } }));
   await page.goto("/ops");
   await expect(page.locator("#text-manual")).toHaveText("3 / 5");
   await expect(page.locator("#text-manual-detail")).toContainText("마지막 게시");
+  // 2026-10-09 review: the publication lag and repeated import failures are visible.
+  await expect(page.locator("#text-tuna")).toHaveText("9 / 9");
+  await expect(page.locator("#text-pc-detail")).toContainText("게시 대기 2");
+  await expect(page.locator("#text-import-retries")).toHaveText("2");
+  await expect(page.locator("#text-import-retries-detail")).toHaveText("import_failed:OSError 2");
 });
 
 test("renders bounded operations and confirms a fixed command", async ({ page }, testInfo) => {

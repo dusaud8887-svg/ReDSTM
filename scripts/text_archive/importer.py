@@ -1471,6 +1471,18 @@ def import_batch(
                        FROM text_archive_items WHERE identity=?""",
                     (identity,),
                 ).fetchone()
+                if existing is not None and candidate["lane"] == "manual":
+                    # Folder and creation date follow the newest batch even when the body
+                    # is the same: Newtomi resends a document whose scan root changed
+                    # (2026-10-09 review ③). Batches import in batch_id (time) order.
+                    db.execute(
+                        "UPDATE text_manual_documents SET created_at=?,folder=? WHERE identity=?",
+                        (item["created_at"], item["folder"], identity),
+                    )
+                    db.execute(
+                        "UPDATE text_archive_items SET title=? WHERE identity=?",
+                        (item["title"], identity),
+                    )
                 if existing is not None and existing["content_sha256"] != digest:
                     if _equivalent_text(
                         candidate["lane"],
@@ -1787,6 +1799,52 @@ def _record_batch_rejection(inbox_root: Path, batch_id: str, reason: str) -> Non
         temporary.unlink(missing_ok=True)
 
 
+_RECEIPT_REQUEST = re.compile(r"\.receipt-request-(\d{8}T\d{6}Z-pc-[a-f0-9]{8})")
+
+
+def restore_requested_receipts(inbox_root: Path, db_path: Path) -> list[str]:
+    """Write a receipt again from the database for each drop/.receipt-request-<id> folder.
+
+    publisher.prune_receipts removes receipt files 60 days after the PC cleaned the drop,
+    but the PC may not have read revision 2 yet (2026-10-09 review JT-01). Only a missing
+    receipt or one behind the database revision is written; the drop is read-only here, so
+    the PC removes its request once it has read the receipt."""
+    drop = inbox_root / "drop"
+    if drop.is_symlink() or not drop.is_dir():
+        return []
+    requested = [
+        match.group(1)
+        for entry in drop.iterdir()
+        if (match := _RECEIPT_REQUEST.fullmatch(entry.name)) and not entry.is_symlink()
+    ]
+    if not requested or not db_path.is_file():
+        return []
+    receipts_root = inbox_root / "receipts"
+    restored: list[str] = []
+    db = _connect(db_path, read_only=True)
+    try:
+        for batch_id in sorted(requested)[:100]:
+            row = db.execute(
+                "SELECT receipt_json FROM text_archive_batches WHERE batch_id=?", (batch_id,)
+            ).fetchone()
+            if row is None:
+                continue
+            receipt = json.loads(row["receipt_json"])
+            target = receipts_root / f"{batch_id}.json"
+            try:
+                current = json.loads(target.read_bytes()).get("revision", 0)
+            except OSError, ValueError, AttributeError:
+                current = 0
+            if current >= receipt.get("revision", 0):
+                continue
+            # _write_receipt never lowers a revision the publisher wrote meanwhile.
+            _write_receipt(receipts_root, batch_id, receipt)
+            restored.append(batch_id)
+    finally:
+        db.close()
+    return restored
+
+
 def _next_ready_batch(inbox_root: Path, attempts_root: Path | None = None) -> str | None:
     drop = inbox_root / "drop"
     if drop.is_symlink() or not drop.is_dir():
@@ -1853,6 +1911,14 @@ def main() -> None:
     args = parser.parse_args()
     inbox_root = _INBOX_ROOT
     deadline = time.monotonic() + _DRAIN_SECONDS
+    if not args.batch_id:
+        try:
+            restored = restore_requested_receipts(inbox_root, _DB_PATH)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            print(f"receipt restore failed: {exc!r}", file=sys.stderr)
+        else:
+            if restored:
+                print(json.dumps({"status": "receipts_restored", "batches": restored}))
     seen: set[str] = set()
     imported = 0
     failed = False

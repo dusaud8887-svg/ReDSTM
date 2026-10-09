@@ -225,7 +225,7 @@ function sumCounts(counts, predicate) {
 function renderTextStatus(status) {
   if (status?.schema !== 1) throw new Error("text_status_invalid");
   const lanes = status.lanes || {};
-  for (const [lane, id] of [["arcalive", "text-arcalive"], ["novel", "text-novel"], ["manual", "text-manual"]]) {
+  for (const [lane, id] of [["arcalive", "text-arcalive"], ["novel", "text-novel"], ["manual", "text-manual"], ["tuna", "text-tuna"]]) {
     const value = lanes[lane] || {};
     byId(id).textContent = `${number(value.published)} / ${number(value.items)}`;
     byId(`${id}-detail`).textContent = value.last_published_at
@@ -234,7 +234,15 @@ function renderTextStatus(status) {
   }
   const pc = status.pc || {};
   byId("text-pc-last").textContent = pc.last_batch_at ? age(pc.last_batch_at) : "수신 없음";
-  byId("text-pc-detail").textContent = `배치 ${number(pc.batches)} · 게시 확인 ${number(pc.published_batches)}`;
+  // Imported but not yet published: how many, and since when (the publication lag).
+  const unpublished = (pc.batches || 0) - (pc.published_batches || 0);
+  byId("text-pc-detail").textContent = `배치 ${number(pc.batches)} · 게시 확인 ${number(pc.published_batches)}`
+    + (unpublished > 0 && pc.oldest_unpublished_at ? ` · 게시 대기 ${number(unpublished)} (가장 오래된 ${age(pc.oldest_unpublished_at)})` : "");
+  const imports = status.imports || {};
+  byId("text-import-retries").textContent = number(imports.backing_off);
+  byId("text-import-retries-detail").textContent = Object.keys(imports.reasons || {}).length
+    ? Object.entries(imports.reasons).map(([reason, count]) => `${reason} ${number(count)}`).join(" · ")
+    : "실패 뒤 backoff 중인 배치";
   const media = status.media || {};
   byId("text-media").textContent = number(media.images);
   byId("text-media-detail").textContent = media.last_stored_at
