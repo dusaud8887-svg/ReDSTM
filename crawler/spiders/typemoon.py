@@ -528,7 +528,9 @@ class TypeMoonSpider(scrapy.Spider):
         # validator may cover only the post body, and a 304 would then hide new comments.
         conditional = False
         if self.conditional_details and self.store is not None and expected_comment_count is None:
-            validator = self.store.latest_conditional_validator(url)
+            validator = self.store.latest_conditional_validator(
+                url, board_id=board_id, external_post_id=external_post_id
+            )
             if validator is not None:
                 etag, last_modified = validator
                 if etag is not None:

@@ -3,11 +3,14 @@ from __future__ import annotations
 import multiprocessing
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import crawler.frontier as frontier_module
 from crawler.archive import SCHEMA_VERSION, compress_body, connect_archive
 from crawler.frontier import FrontierLease, FrontierStore, listing_fingerprint, transition_lease
 
@@ -19,6 +22,32 @@ def _claim_then_crash(path: str, now_text: str) -> None:
         now=datetime.fromisoformat(now_text),
     )
     os._exit(17 if len(leases) == 1 else 2)
+
+
+def test_recovery_candidate_read_holds_no_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 2026-10-09: the candidate read took 49 s on the production archive inside BEGIN IMMEDIATE.
+    path = tmp_path / "frontier.sqlite"
+    store = FrontierStore(path)
+    store.initialize()
+    store.seed("write_free21", 1, "https://www.typemoon.net/write_free21/1")
+    statements: list[tuple[bool, str]] = []
+    original = frontier_module.archive_transaction
+
+    @contextmanager
+    def tracing(target: Path, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
+        with original(target, read_only=read_only) as connection:
+            connection.set_trace_callback(
+                lambda sql: statements.append((read_only, " ".join(sql.split())[:20]))
+            )
+            yield connection
+
+    monkeypatch.setattr(frontier_module, "archive_transaction", tracing)
+    assert store.recovery_candidates(limit=5) == [("write_free21", 1)]
+    reads = [read_only for read_only, sql in statements if sql.startswith("WITH candidates")]
+    assert reads == [True]
+    assert (False, "BEGIN IMMEDIATE") in statements  # the requeue updates still write
 
 
 def test_disabled_board_is_excluded_without_losing_its_queue(tmp_path: Path) -> None:

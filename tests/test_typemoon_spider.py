@@ -683,7 +683,10 @@ def test_conditional_detail_carries_stored_validators() -> None:
         def __init__(self) -> None:
             self.validators: tuple[str | None, str | None] | None = None
 
-        def latest_conditional_validator(self, url: str) -> tuple[str | None, str | None] | None:
+        def latest_conditional_validator(
+            self, url: str, *, board_id: str, external_post_id: int
+        ) -> tuple[str | None, str | None] | None:
+            assert url.endswith(f"/{board_id}/{external_post_id}")
             return self.validators
 
     class _Session:

@@ -75,6 +75,17 @@ def _retry_capped(
     )
 
 
+VALIDATOR_QUERY = """
+SELECT capture.etag, capture.last_modified
+FROM posts AS post
+JOIN captures AS capture ON capture.post_id = post.id
+WHERE post.board_id = ? AND post.external_post_id = ?
+  AND capture.url = ? AND capture.entity_type = 'post'
+  AND capture.outcome = 'stored'
+ORDER BY capture.id DESC LIMIT 1
+"""
+
+
 class ArchiveStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -408,7 +419,9 @@ class ArchiveStore:
                     complete_lease(connection, lease, stored_comment_count=len(post.comments))
             return StoreResult(post_id, version_id, capture_cursor.lastrowid, changed)
 
-    def latest_conditional_validator(self, url: str) -> tuple[str | None, str | None] | None:
+    def latest_conditional_validator(
+        self, url: str, *, board_id: str, external_post_id: int
+    ) -> tuple[str | None, str | None] | None:
         """Validators of the latest stored capture for a URL (docs/31 C5).
 
         Only 'stored' captures carry validators — a 4xx/challenge capture must never hand
@@ -416,17 +429,14 @@ class ArchiveStore:
         absent (the origin is not required to send both); a request then carries only the
         field it has. Returns None when the newest stored capture predates validator
         recording, so the next request stays a plain unconditional GET.
+
+        The post's own captures are found through posts(board_id, external_post_id) and
+        captures(post_id, …); a lookup by URL alone scanned every capture per request
+        (2026-10-09 review ⑤), and an index for it would need a canonical schema migration.
         """
         row = None
         with archive_transaction(self.path, read_only=True) as connection:
-            row = connection.execute(
-                """
-                SELECT etag, last_modified FROM captures
-                WHERE url = ? AND entity_type = 'post' AND outcome = 'stored'
-                ORDER BY id DESC LIMIT 1
-                """,
-                (url,),
-            ).fetchone()
+            row = connection.execute(VALIDATOR_QUERY, (board_id, external_post_id, url)).fetchone()
         if row is None:
             return None
         etag = row["etag"]

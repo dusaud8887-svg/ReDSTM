@@ -402,6 +402,11 @@ class FrontierStore:
                 """,
                 (selected_at, selected_at, *([board_id] if board_id is not None else [])),
             )
+        # The candidate read joins every due row with posts: 49 s on the 1 GiB Oracle box with
+        # 279k due rows (2026-10-09 read-only measurement, external review). It needs no write
+        # lock — each candidate is later claimed with a lease that rechecks its state — so the
+        # write transaction above ends before it instead of holding the writer for the whole read.
+        with archive_transaction(self.path, read_only=True) as connection:
             group_order_sql = " ".join(
                 f"WHEN ? THEN {rank}" for rank, _group in enumerate(REDSTM_RECOVERY_GROUP_ORDER)
             )

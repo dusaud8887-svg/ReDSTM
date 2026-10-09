@@ -11,7 +11,7 @@ from crawler.frontier import FrontierLease, FrontierStore, listing_fingerprint, 
 from crawler.items import CapturedPostItem, CommentItem, DiscoveredPostItem
 from crawler.pipelines import NormalizedPost, normalize_captured_post
 from crawler.settings import REDSTM_FRONTIER_MAX_ATTEMPTS, REDSTM_NETWORK_MAX_ATTEMPTS
-from crawler.store import PARSER_VERSION, ArchiveStore
+from crawler.store import PARSER_VERSION, VALIDATOR_QUERY, ArchiveStore
 
 _NOW = datetime(2026, 7, 11, 2, tzinfo=UTC)
 
@@ -727,7 +727,9 @@ def test_conditional_hit_records_unchanged_without_touching_the_version(tmp_path
         etag='"v1"',
         last_modified="Fri, 10 Jul 2026 00:00:00 GMT",
     )
-    assert store.latest_conditional_validator("https://www.typemoon.net/ss_temp01/7") == (
+    assert store.latest_conditional_validator(
+        "https://www.typemoon.net/ss_temp01/7", board_id="ss_temp01", external_post_id=7
+    ) == (
         '"v1"',
         "Fri, 10 Jul 2026 00:00:00 GMT",
     )
@@ -767,6 +769,19 @@ def test_conditional_hit_records_unchanged_without_touching_the_version(tmp_path
         )
 
 
+def test_validator_lookup_uses_the_post_indexes_not_a_capture_scan(tmp_path: Path) -> None:
+    # 2026-10-09 review ⑤: a lookup by URL alone planned as SCAN captures per request.
+    path = tmp_path / "archive.sqlite"
+    _initialize(path)
+    with connect_archive(path, read_only=True) as db:
+        plan = " | ".join(
+            str(row["detail"])
+            for row in db.execute("EXPLAIN QUERY PLAN " + VALIDATOR_QUERY, ("ss_temp01", 7, "u"))
+        )
+    assert "SCAN capture" not in plan and "SCAN post" not in plan, plan
+    assert "captures_post_fetched_idx" in plan, plan
+
+
 def test_validator_requires_a_stored_capture_with_validators(tmp_path: Path) -> None:
     path = tmp_path / "archive.sqlite"
     _initialize(path)
@@ -776,7 +791,7 @@ def test_validator_requires_a_stored_capture_with_validators(tmp_path: Path) -> 
     store.store_post(
         run_id, _post(), captured_at=_NOW, raw_sha256="a" * 64, warc_file="one.warc.gz"
     )
-    assert store.latest_conditional_validator(url) is None
+    assert store.latest_conditional_validator(url, board_id="ss_temp01", external_post_id=7) is None
     store.record_outcome(
         run_id,
         url=url,
@@ -785,7 +800,7 @@ def test_validator_requires_a_stored_capture_with_validators(tmp_path: Path) -> 
         http_status=429,
         error_code="rate_limited",
     )
-    assert store.latest_conditional_validator(url) is None
+    assert store.latest_conditional_validator(url, board_id="ss_temp01", external_post_id=7) is None
 
 
 def test_validator_may_carry_only_one_half(tmp_path: Path) -> None:
@@ -804,7 +819,10 @@ def test_validator_may_carry_only_one_half(tmp_path: Path) -> None:
         warc_file="one.warc.gz",
         etag='"v1"',
     )
-    assert store.latest_conditional_validator(url) == ('"v1"', None)
+    assert store.latest_conditional_validator(url, board_id="ss_temp01", external_post_id=7) == (
+        '"v1"',
+        None,
+    )
 
 
 def test_crash_before_store_leaves_one_clean_capture(tmp_path: Path) -> None:

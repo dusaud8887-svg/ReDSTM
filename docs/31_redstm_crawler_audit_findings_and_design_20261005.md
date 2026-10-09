@@ -87,7 +87,7 @@ nh3 화이트리스트 / 세션 FileLock 쓰rottle·atomic export / STRICT 스�
 - **1단계(validator 기록)**: WARC 미들웨어가 200 응답의 ETag/Last-Modified를 meta로 전달 →
   CapturedPostItem → `store_post(..., etag, last_modified)`가 captures 기존 열에 기록. 304는
   WARC 기록·raw_sha256 발행 자체를 스킵(빈 본문 오염 방지).
-- **2단계(조건부 GET)**: `ArchiveStore.latest_conditional_validator(url)`가 최신 'stored' 캡처의
+- **2단계(조건부 GET)**: `ArchiveStore.latest_conditional_validator(url, board_id=, external_post_id=)`가 최신 'stored' 캡처의
   validator만 반환(4xx/챌린지 캡처의 헤더는 절대 사용 금지; validator 미기록 세대는 무조건 GET).
   `detail_request`가 If-None-Match/If-Modified-Since 부착(REDSTM_CONDITIONAL_DETAILS 플래그).
 - **304 계약**: parse_detail이 304를 outcome='unchanged'로 반환(빈 본문 → parse drift 오분류 차단,
@@ -95,10 +95,24 @@ nh3 화이트리스트 / 세션 FileLock 쓰rottle·atomic export / STRICT 스�
   리스를 완료 — 버전·댓글·프로젝션은 일절 미변경(스토어 버전이 유일한 권위).
 - **canary 절차**: `REDSTM_CONDITIONAL_DETAILS=1`로 단일 보드 먼저 검증(sync.py·recover_queue.py 전달) →
   원본 PHP 세션/캐시 상호작용 확인 후 기본값 전환.
-- **알려진 비용(canary 체크리스트)**: `latest_conditional_validator`는 captures의 url에 인덱스가 없어
-  풀스캔 1회/detail 요청(기본 OFF라 현재 비용 0). canary 통과 시 schema v5 마이그레이션에
-  `captures(url, outcome, id DESC)` 인덱스를 묶어 해소. validator는 ETag/Last-Modified 중 있는 것만
-  부착(부분 가용). UA와 sec-ch-ua major는 파생 함수로 동기화(`_sec_ch_ua`).
+- **조회 비용(2026-10-09 해소)**: URL만으로 찾던 조회는 schema v5에도 맞는 인덱스가 없어 detail 요청마다
+  `SCAN captures`였다(외부 리뷰 ⑤, 실행 계획 확인). 새 마이그레이션 없이 `posts(board_id, external_post_id)`
+  UNIQUE와 `captures_post_fetched_idx(post_id, …)`로 그 글의 캡처만 읽도록 바꿨다(`crawler/store.py`
+  `VALIDATOR_QUERY`, 실행 계획 회귀 테스트 `test_validator_lookup_uses_the_post_indexes_not_a_capture_scan`).
+  v6 인덱스 마이그레이션은 12GB 스냅샷·러너 정지·명시 migration·호환 릴리스 쌍이 필요해 쓰지 않는다.
+  validator는 ETag/Last-Modified 중 있는 것만 부착(부분 가용). UA와 sec-ch-ua major는 파생 함수로 동기화(`_sec_ch_ua`).
+
+### C5-1 recovery 후보 선정 비용 실측 (2026-10-09 외부 리뷰)
+- 운영 canonical(12GB, 1GiB RAM Oracle)에서 읽기 전용 측정: due `pending`/`retry` 278,855행(본문 없는 행 0), 보드별
+  `ROW_NUMBER()` 후보 SELECT 1회 **49.4초**. 분해하면 frontier 색인 범위만 17초(콜드), `posts` 조인이 웜 상태에서도 41초다.
+  `posts`의 `latest_version_id`가 `(board_id, external_post_id)` 색인에 없어 행마다 테이블 페이지를 읽기 때문이고,
+  페이지 캐시(~470MB)가 12GB DB를 담지 못한다.
+- 이 SELECT는 `BEGIN IMMEDIATE` 안에 있어 약 50초 동안 쓰기 잠금을 쥐었다. 후보는 이후 lease 획득에서 상태를 다시 확인하므로
+  잠금이 필요 없다. dead→retry·만료 lease 갱신만 짧은 쓰기 트랜잭션으로 커밋하고, 후보 읽기는 읽기 전용 연결로 옮겼다
+  (`test_recovery_candidate_read_holds_no_write_lock`). 선택 결과·공정성 규칙은 그대로다.
+- 남은 비용(실행당 수십 초의 읽기)을 없애려면 `posts(board_id, external_post_id, latest_version_id)` 커버링 색인이 필요하며
+  canonical schema v6 마이그레이션이다(12GB 스냅샷·러너 정지·명시 migration·호환 릴리스 쌍). 실행은 recovery 실행당 1회라
+  지금은 하지 않고, v6가 다른 이유로 필요해질 때 함께 넣는다.
 
 ### C6 (P2) 강제종료 4실험 테스트 명시화 — 완료
 - E1(리스 만료 회수)·E4(스테일 complete 거부)는 기존 `test_frontier.py::test_expired_lease_recovers_after_process_crash`가 커버.
