@@ -1735,9 +1735,12 @@ test("Find in page mode turns to the matching page and returns to the original p
 });
 
 test("The page-mode scrubber seeks, saves and restores the page rather than vertical scroll", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("redstm.userState.v2", JSON.stringify({
-    schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, history: {},
-  })));
+  // Seed once: reseeding on the reload would erase the saved page before the reader reads it.
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("redstm.userState.v2")) localStorage.setItem("redstm.userState.v2", JSON.stringify({
+      schema_version: 2, settings: { readingMode: "page" }, bookmarks: {}, scroll: {}, viewModes: {}, history: {},
+    }));
+  });
   await useLongCollection(page, 3);
   await page.goto("/read/board_a/2");
   const status = page.locator("#reader-status");
