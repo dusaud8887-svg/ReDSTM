@@ -1120,7 +1120,7 @@ def test_oracle_collector_checkpoints_and_skips_paid_chapters(
         "chapter_saved",
     ]
     assert session.trust_env is False
-    assert ["blacktoon452.com" in session.calls[index] for index in range(3)] == [True, False, True]
+    assert ["blacktoon454.com" in session.calls[index] for index in range(3)] == [True, False, True]
     with sqlite3.connect(db_path) as db:
         rows = db.execute(
             "SELECT source_chapter_id,access,status FROM text_novel_chapters "
@@ -1746,15 +1746,15 @@ def test_oracle_rotates_only_after_repeated_failure_and_valid_json(
         )
     second = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
     assert second["status"] == "listed"
-    assert ["blacktoon452.com" in url for url in session.calls] == [True, True, False]
-    assert "blacktoon453.com" in session.calls[-1]
-    assert collector.configured_sources({}, db_path)[0].host == "blacktoon453.com"
+    assert ["blacktoon454.com" in url for url in session.calls] == [True, True, False]
+    assert "blacktoon455.com" in session.calls[-1]
+    assert collector.configured_sources({}, db_path)[0].host == "blacktoon455.com"
     with sqlite3.connect(db_path) as db:
         assert (
             db.execute(
                 "SELECT source_url FROM text_novel_sources WHERE site='blacktoon'"
             ).fetchone()[0]
-            == "https://blacktoon453.com/novel/24753"
+            == "https://blacktoon455.com/novel/24753"
         )
 
 
@@ -1806,7 +1806,7 @@ def test_oracle_does_not_promote_challenged_candidate(
         )
     result = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
     assert result["status"] == "cooldown"
-    assert collector.configured_sources({}, db_path)[0].host == "blacktoon452.com"
+    assert collector.configured_sources({}, db_path)[0].host == "blacktoon454.com"
     with sqlite3.connect(db_path) as db:
         # The challenge pauses rotation until its cooldown ends, not forever.
         blocked_until = db.execute(
@@ -2685,3 +2685,70 @@ def test_shared_disk_reserve_allows_thirty_gib_free() -> None:
     total = 194 * 1024**3
     assert disk_stop_bytes(total) == text_disk_floor_bytes(total) < 4 * 1024**3 + 1
     assert disk_low_bytes(total) < 5 * 1024**3 + 1 < 30 * 1024**3
+
+
+def test_oracle_rotates_when_the_domain_is_withheld_with_451(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(collector, "operation_window", lambda **_: nullcontext())
+    monkeypatch.setattr(collector, "_REQUEST_GAP", 0)
+    db_path = tmp_path / "text.sqlite"
+    session: Any = FakeSession(
+        FakeResponse(b"<html>legal</html>", status=451),
+        FakeResponse(b"<html>legal</html>", status=451),
+        FakeResponse({"content": [{"id": 24753, "title": "Novel"}], "total": 1, "size": 96}),
+    )
+    sources = collector.configured_sources({})
+    first = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert (first["status"], first["reason"]) == ("held", "http_451")
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE text_collector_state SET next_check_at=0 WHERE source='blacktoon:list'")
+        db.execute(
+            "INSERT INTO text_collector_state(source,next_check_at,updated_at) "
+            "VALUES('marumaru:list',9999999999,'test')"
+        )
+    second = collector.run_one(db_path, tmp_path / "objects", sources, session=session)
+    assert second["status"] == "listed"
+    assert "blacktoon455.com" in session.calls[-1]
+
+
+def test_one_episodes_500_is_not_counted_as_a_host_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counted: list[str] = []
+    monkeypatch.setattr(collector, "_get", lambda *_args: (500, b"{}", {}))
+    monkeypatch.setattr(collector, "_host_failure", lambda _db, unit: counted.append(unit.kind))
+    source = collector.Source("blacktoon", "blacktoon454.com")
+    for kind in ("episode", "work", "list"):
+        unit = collector.RequestUnit(source, kind, "1", "https://blacktoon454.com/api/x/1")
+        assert collector._fetch_with_rotation(MagicMock(), unit, tmp_path / "db")[1] == 500
+    assert counted == ["work", "list"]
+
+
+def test_episode_naming_another_work_is_held_for_review(tmp_path: Path) -> None:
+    assert collector._episode_work_id({"id": 7, "bodyJson": "[]"}) == ""
+    wrapped = {"data": {"episode": {"id": 7, "work": {"id": 48862}}}}
+    assert collector._episode_work_id(wrapped) == "48862"
+    db = importer._connect(tmp_path / "text.sqlite")
+    try:
+        db.executescript(collector._SCHEMA)
+        db.execute(
+            "INSERT INTO text_collector_queue(source,kind,entity_id,parent_work_id,updated_at) "
+            "VALUES('blacktoon','episode','2443225','24961','test')"
+        )
+        unit = collector.RequestUnit(
+            collector.Source("blacktoon", "blacktoon454.com"),
+            "episode",
+            "2443225",
+            "https://blacktoon454.com/api/episodes/2443225",
+        )
+        value = {
+            "id": 2443225,
+            "title": "5화",
+            "bodyJson": [{"kind": "narration", "text": "another work's chapter"}],
+            "work": {"id": 48862, "title": "다른 작품"},
+        }
+        with pytest.raises(collector.CollectorError, match="episode_work_id_invalid"):
+            collector._apply_episode(db, tmp_path / "objects", unit, value, "blacktoon454.com")
+    finally:
+        db.close()

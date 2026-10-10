@@ -127,7 +127,7 @@ def configured_sources(
         finally:
             db.close()
     sources: list[Source] = []
-    for name, default in (("blacktoon", "blacktoon452.com"), ("marumaru", "marumaru102.com")):
+    for name, default in (("blacktoon", "blacktoon454.com"), ("marumaru", "marumaru104.com")):
         host = (
             # A host found by rotation outlives the configured seed (docs/18 §3).
             (remembered.get(name) or values.get(f"REDSTM_TEXT_{name.upper()}_HOST", default))
@@ -340,6 +340,16 @@ def _episode_detail(value: Any) -> tuple[str, str, Any]:
     if body_json is None:
         raise CollectorError("episode_body_missing")
     return chapter_id, str(data.get("title") or "")[:300], body_json
+
+
+def _episode_work_id(value: Any) -> str:
+    """The work an episode response says it belongs to, or '' when it does not say."""
+    data = _payload(value)
+    if isinstance(data, dict) and isinstance(data.get("episode"), dict):
+        data = data["episode"]
+    work = data.get("work") if isinstance(data, dict) else None
+    work_id = work.get("id") if isinstance(work, dict) else None
+    return str(work_id) if isinstance(work_id, (int, str)) and str(work_id).isdigit() else ""
 
 
 def _state(db: sqlite3.Connection, source: str) -> sqlite3.Row | None:
@@ -821,6 +831,10 @@ def _apply_episode(
     if queue_row is None:
         raise CollectorError("episode_queue_entry_missing")
     parent_id = str(queue_row[0])
+    # The sites' work detail has listed other works' episode IDs (2026-10-10: 543 of 1,128
+    # for one Blacktoon work). An episode that names a different work is not this chapter.
+    if _episode_work_id(value) not in {"", parent_id}:
+        raise CollectorError("episode_work_id_invalid")
     try:
         blocks = json.loads(body_json) if isinstance(body_json, str) else body_json
     except json.JSONDecodeError:
@@ -1147,7 +1161,12 @@ def _fetch_with_rotation(
             raise
         status, raw, headers = _get(session, candidate, db_path)
         return _candidate_result(candidate, status, raw, headers)
-    if 500 <= status <= 599:
+    # 451 is the domain itself being withheld (Cloudflare legal block, seen 2026-10-10 on
+    # blacktoon454.com), so the next number is the only way forward. A plain 500 for one
+    # episode is the application failing on that body (not yet prepared), not a dead host.
+    if status == 451 or (
+        500 <= status <= 599 and not (status == 500 and unit.kind == "episode")
+    ):
         candidate = _host_failure(db_path, unit)
         if candidate is not None:
             status, raw, headers = _get(session, candidate, db_path)
