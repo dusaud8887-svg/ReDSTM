@@ -1164,9 +1164,7 @@ def _fetch_with_rotation(
     # 451 is the domain itself being withheld (Cloudflare legal block, seen 2026-10-10 on
     # blacktoon454.com), so the next number is the only way forward. A plain 500 for one
     # episode is the application failing on that body (not yet prepared), not a dead host.
-    if status == 451 or (
-        500 <= status <= 599 and not (status == 500 and unit.kind == "episode")
-    ):
+    if status == 451 or (500 <= status <= 599 and not (status == 500 and unit.kind == "episode")):
         candidate = _host_failure(db_path, unit)
         if candidate is not None:
             status, raw, headers = _get(session, candidate, db_path)
