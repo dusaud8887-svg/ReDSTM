@@ -1506,6 +1506,7 @@ function setReaderSource(source) {
   elements.reader.dataset.source = source ?? "";
   document.body.classList.toggle("reader-active", Boolean(source));
   syncThemeColor();
+  syncReleaseToast();
   if (!source) {
     hideSelectionMenu();
     continuous.reset(); readerDocument = null; continuousPreview = null;
@@ -7097,8 +7098,17 @@ document.querySelector("#update-apply").addEventListener("click", () => {
 // New archive data while this page stays open (2026-10-09 review): the page keeps what it loaded,
 // so a reading session never changes under the reader, and offers a reload when the page comes
 // back into view (at most every ten minutes) and a newer TypeMoon or text release is published.
+// The offer stays off the reader itself (2026-10-10): it waits for a list or an upper page.
 const RELEASE_CHECK_MS = 10 * 60 * 1000;
 let releaseCheckedAt = Date.now();
+let releaseReady = false;
+function syncReleaseToast() {
+  const toast = document.querySelector("#data-ready");
+  const show = releaseReady && !readerSource;
+  if (show === !toast.hidden) return;
+  if (show) overlays.showToast(toast);
+  else overlays.hideToast(toast);
+}
 async function checkForNewRelease() {
   if (Date.now() - releaseCheckedAt < RELEASE_CHECK_MS || !navigator.onLine) return;
   releaseCheckedAt = Date.now();
@@ -7113,10 +7123,13 @@ async function checkForNewRelease() {
   } catch {
     return;
   }
-  if (newer) overlays.showToast(document.querySelector("#data-ready"));
+  if (!newer) return;
+  releaseReady = true;
+  syncReleaseToast();
 }
 document.querySelector("#data-reload").addEventListener("click", () => {
-  overlays.hideToast(document.querySelector("#data-ready"));
+  releaseReady = false;
+  syncReleaseToast();
   flushLifecycleState();
   location.reload();
 });

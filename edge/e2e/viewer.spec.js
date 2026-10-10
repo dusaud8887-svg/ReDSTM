@@ -2436,6 +2436,29 @@ test("a newer archive release offers a reload when the page comes back into view
   await expect(toast).toContainText("새로 게시된 자료가 있어요");
 });
 
+// 2026-10-10: the offer waits outside the reader — a list or an upper page shows it, a post does not.
+test("the newer-release offer stays off the reader and comes back at the list", async ({ page }) => {
+  let modified = "Wed, 07 Oct 2026 00:00:00 GMT";
+  await page.clock.install();
+  await useCollectionFixture(page, { releaseModified: () => modified });
+  await page.goto("/browse");
+  await expect(page.locator("#archive-state")).toHaveText("보존본");
+  const toast = page.locator("#data-ready");
+  await page.locator(".result-item").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  modified = "Fri, 09 Oct 2026 00:00:00 GMT";
+  await page.clock.fastForward("11:00");
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForTimeout(300);
+  await expect(toast).toBeHidden();  // found while reading: held back
+  await page.goBack();
+  await expect(page).toHaveURL(/\/browse$/);
+  await expect(toast).toBeVisible();
+  await page.locator(".result-item").first().click();
+  await expect(page.locator("#reader")).toBeVisible();
+  await expect(toast).toBeHidden();
+});
+
 // 나중에 읽기 (2026-10-08): works and posts kept apart from 저장, listed under 기록 › 나중에.
 test("나중에 읽기 keeps works and posts apart from saved posts", async ({ page }) => {
   await useCollectionFixture(page, { collectionV2: true });
