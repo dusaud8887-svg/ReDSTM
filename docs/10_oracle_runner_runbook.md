@@ -654,6 +654,13 @@ command는 live 통과했다.
   확인한다.
 - 이전 application directory는 즉시 삭제하지 않고 7일 rollback window 동안 보존한다.
 
+상태(2026-10-11): `pm2-ubuntu`, `nginx`, `booktoki-cdp-browser`를 stop/disable했다. 직전 15일 Nginx
+access log에 2xx 응답이 없었고 ReDSTM unit/설정은 해당 port를 참조하지 않는다. 80/443/3000/9222
+listener는 사라졌고 ReDSTM timer는 계속 active다. 111/631(rpcbind, cups snap)과 local-only
+`microsocks-local`(127.0.0.1:1081)은 남아 있다. rollback은
+`sudo systemctl enable --now pm2-ubuntu nginx booktoki-cdp-browser`이며 실행 전 상태와 삭제 manifest는
+`artifacts/phase0/reports/oracle-o4-cleanup-20261011.json`에 있다.
+
 ### Phase O4 — data cleanup
 
 다음을 모두 만족한 뒤 파일별 exact path/size, hash/backup 위치와 reclaim bytes manifest를
@@ -664,7 +671,21 @@ command는 live 통과했다.
 3. Cloudflare release rollback 통과
 4. 집중 canary와 bounded legacy 비교 종료
 
-외부 backup이 deferred인 현재 O4는 실행하지 않는다. 아래 조건은 future cleanup 계약으로만 남긴다.
+외부 backup은 여전히 deferred지만, root volume이 91%(19GB free)까지 차서 사용자가 2026-10-11
+O4 실행을 지시했다. 검증 사본은 E drive의 local 사본이다.
+
+상태(2026-10-11): E source를 다시 hash해 기록값 `e16203a7…5500`과 일치를 확인한 뒤 legacy
+`posts.db`(+wal/shm)와 remote online backup(`db-backups/redstm-phase0-posts-20260710T114500Z.db`)을
+삭제했다(57.6GB). 같은 날 pre-v4 canonical snapshot 12.4GB, current/previous 외 release, journal,
+disabled snap revision과 cache도 정리했다. E에 사본이 없던 작은 고유 파일
+(BookToki DB·session, `.env`, PM2/Nginx 설정)은
+`E:\ReDSTM\backups\legacy-source\oracle-legacy-small-20261011.tgz`로 먼저 내려받았다. 이어서 사용자
+결정으로 legacy project directory 전체(외부 사본이 없던 2026-01 board backup 2개 20.3GB 포함),
+legacy browser cache, BookToki CDP profile과 text archive의 변경 전 backup(2026-09-24~10-06)을
+삭제했다. O3의 7일 보존은 `posts.db` 삭제로 viewer rollback이 성립하지 않아 적용하지 않았고,
+code는 GitHub `Dark-Side-of-Type-Moon@71f4fcb`에 있다. root free는 19GB(91%)에서 114GB(42%)가
+됐고 ReDSTM timer와 current release link는 정상이다. 경로별 내역은
+`artifacts/phase0/reports/oracle-o4-cleanup-20261011.json`에 있다.
 
 삭제 대상은 legacy `posts.db`, remote online backup과 board backup 등 application data다. Oracle
 instance, boot volume, SSH key, VCN/security rules와 마지막 검증 사본은 standing approval의
@@ -695,7 +716,7 @@ Oracle runner 전환 완료는 다음을 모두 의미한다.
 - R2 delta publish와 pointer rollback이 검증된다.
 - D1 outage 중 schedule이 계속되고 duplicate remote command가 한 run만 만든다.
 - public listener는 SSH 외에 없고 viewer는 Cloudflare에서만 제공된다.
-- 외부 backup이 deferred인 동안 legacy data는 삭제하지 않고 Oracle resource도 보존된다.
+- legacy data는 E verified source를 다시 hash한 뒤에만 삭제하고(2026-10-11 실행) Oracle resource는 보존된다.
 
 ## 수집 공백 점검과 따라잡기 (2026-10-03)
 
