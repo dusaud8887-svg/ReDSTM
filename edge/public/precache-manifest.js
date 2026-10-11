@@ -6,7 +6,7 @@ export default [
   },
   {
     "url": "/aa-viewer.js",
-    "revision": "6d02fb2c8ec815b0"
+    "revision": "41c6ba7e055becb5"
   },
   {
     "url": "/annotations.js",
@@ -14,7 +14,7 @@ export default [
   },
   {
     "url": "/app.js",
-    "revision": "af2936e1c7de4599"
+    "revision": "72e2ee4ff5bb5e59"
   },
   {
     "url": "/arca-media.js",

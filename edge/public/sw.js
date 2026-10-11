@@ -904,7 +904,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/aa-viewer.js",
-      "revision": "6d02fb2c8ec815b0"
+      "revision": "41c6ba7e055becb5"
     },
     {
       "url": "/annotations.js",
@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "af2936e1c7de4599"
+      "revision": "72e2ee4ff5bb5e59"
     },
     {
       "url": "/arca-media.js",

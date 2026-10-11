@@ -99,10 +99,12 @@ export function sceneTarget(tops, y, direction) {
 }
 
 
-// The same time-based decay on both axes preserves a fling's angle at any frame rate.
+// The same time-based decay on both axes preserves a fling's angle at any frame rate. A fling
+// coasts its release speed times this many milliseconds (240 until 2026-10-11, a little short).
+const AA_INERTIA_MS = 300;
 export function aaInertiaStep(vx, vy, milliseconds) {
-  const decay = Math.exp(-milliseconds / 240);
-  return { x: vx * 240 * (1 - decay), y: vy * 240 * (1 - decay), vx: vx * decay, vy: vy * decay };
+  const decay = Math.exp(-milliseconds / AA_INERTIA_MS);
+  return { x: vx * AA_INERTIA_MS * (1 - decay), y: vy * AA_INERTIA_MS * (1 - decay), vx: vx * decay, vy: vy * decay };
 }
 
 // Native touch scrolling can lock a gesture to its first axis even in a two-axis scroller.
@@ -115,15 +117,19 @@ export function createAaPan(element, { enabled, scrollers, onMove = () => {} }) 
     cancelAnimationFrame(frame);
     frame = 0;
   }
+  // Scroll offsets read back rounded, which drops the fraction of every step of a slow drag or the
+  // end of a fling. The pan keeps its own position unless something else moved the scroller.
   function moveBy(targets, dx, dy) {
     const { horizontal, vertical } = targets;
-    const x = horizontal.scrollLeft;
-    const y = vertical.scrollTop;
+    const x = Math.abs(horizontal.scrollLeft - targets.left) < 1 ? targets.left : horizontal.scrollLeft;
+    const y = Math.abs(vertical.scrollTop - targets.top) < 1 ? targets.top : vertical.scrollTop;
     const left = Math.max(0, Math.min(horizontal.scrollWidth - horizontal.clientWidth, x + dx));
     const top = Math.max(0, Math.min(vertical.scrollHeight - vertical.clientHeight, y + dy));
     horizontal.scrollLeft = left;
     vertical.scrollTop = top;
-    return { x: horizontal.scrollLeft - x, y: vertical.scrollTop - y, hitX: left !== x + dx, hitY: top !== y + dy };
+    targets.left = left;
+    targets.top = top;
+    return { x: left - x, y: top - y, hitX: left !== x + dx, hitY: top !== y + dy };
   }
   element.addEventListener("touchstart", (event) => {
     cancel();

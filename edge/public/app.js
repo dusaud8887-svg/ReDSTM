@@ -4585,8 +4585,12 @@ function updateReadingProgress() {
   if (!readerSource) return;
   const progress = bodyProgress();
   elements["reading-progress"].style.width = `${progress * 100}%`;
-  elements["reader-topbar-progress"].textContent = `${Math.round(progress * 100)}%`;
-  elements["reader-status"].textContent = paged.active ? `${paged.page + 1} / ${paged.pages}쪽` : `${Math.round(progress * 100)}%`;
+  const percent = `${Math.round(progress * 100)}%`;
+  const status = paged.active ? `${paged.page + 1} / ${paged.pages}쪽` : percent;
+  // Written only when the words change: this runs on every scroll frame, and replacing the text
+  // each time cost a style pass over the whole Reader (most of an AA drag's main-thread time).
+  if (elements["reader-topbar-progress"].textContent !== percent) elements["reader-topbar-progress"].textContent = percent;
+  if (elements["reader-status"].textContent !== status) elements["reader-status"].textContent = status;
   elements["reading-progress"].setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
