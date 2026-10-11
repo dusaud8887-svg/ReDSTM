@@ -1189,10 +1189,22 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     if (response?.status !== 200 || authFailure(request, response)) return false;
     return !new URL(request.url).pathname.endsWith(".js") || /^(?:text|application)\/(?:javascript|ecmascript)(?:;|$)/i.test(response.headers.get("Content-Type") ?? "");
   }
+  var signInCheck = null;
+  function checkSignIn(clientId) {
+    signInCheck ??= fetch("/api/v1/me", { credentials: "same-origin", redirect: "manual", cache: "no-store" }).then((response) => response.type === "opaqueredirect" || [401, 403].includes(response.status), () => false).finally(() => {
+      signInCheck = null;
+    });
+    void signInCheck.then((expired) => {
+      if (expired) tell({ type: "auth-expired" }, clientId);
+    });
+  }
   var guard = {
     async fetchDidSucceed({ request, response, event }) {
       if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url }, event?.clientId);
       return response;
+    },
+    async fetchDidFail({ event }) {
+      if (self.navigator.onLine) checkSignIn(event?.clientId);
     },
     async cacheWillUpdate({ request, response }) {
       return cacheable(request, response) ? response : null;

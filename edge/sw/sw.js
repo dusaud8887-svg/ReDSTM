@@ -1,7 +1,8 @@
 // Service worker (docs/24 §12.6). Routes are registered in the order of the §12.6.1 table and the
 // first match wins. Nothing is imported dynamically. Every caching strategy shares one response
 // check: a redirect, a 3xx/401/403 or an HTML answer to an API request is never cached and tells
-// the page that the sign-in has expired instead of standing in for the real answer.
+// the page that the sign-in has expired instead of standing in for the real answer. A request that
+// fails outright is checked for the same cause.
 
 import {
   CacheableResponsePlugin, CacheFirst, ExpirationPlugin, NavigationRoute, NetworkFirst, NetworkOnly, RangeRequestsPlugin,
@@ -58,10 +59,23 @@ function cacheable(request, response) {
   return !new URL(request.url).pathname.endsWith(".js") ||
     /^(?:text|application)\/(?:javascript|ecmascript)(?:;|$)/i.test(response.headers.get("Content-Type") ?? "");
 }
+// Cloudflare Access answers an expired sign-in with a redirect to another origin, which fails the
+// fetch itself instead of returning a response. One request that does not follow redirects tells
+// that apart from a network failure.
+let signInCheck = null;
+function checkSignIn(clientId) {
+  signInCheck ??= fetch("/api/v1/me", { credentials: "same-origin", redirect: "manual", cache: "no-store" })
+    .then((response) => response.type === "opaqueredirect" || [401, 403].includes(response.status), () => false)
+    .finally(() => { signInCheck = null; });
+  void signInCheck.then((expired) => { if (expired) tell({ type: "auth-expired" }, clientId); });
+}
 const guard = {
   async fetchDidSucceed({ request, response, event }) {
     if (authFailure(request, response)) tell({ type: "auth-expired", url: request.url }, event?.clientId);
     return response;
+  },
+  async fetchDidFail({ event }) {
+    if (self.navigator.onLine) checkSignIn(event?.clientId);
   },
   async cacheWillUpdate({ request, response }) {
     return cacheable(request, response) ? response : null;

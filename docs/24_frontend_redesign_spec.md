@@ -809,6 +809,9 @@ DB "redstm" v1   (owner namespace: 로그인 사용자별 DB 이름 "redstm:<own
 
 - 응답 검사(모든 캐시 전략 공통 plugin): `response.type === "opaqueredirect"`·`redirected`·3xx·401·403·Content-Type `text/html`(API 경로) →
   **캐시하지 않고** 클라이언트에 `auth-expired` 메시지.
+- 요청 자체가 실패한 경우(온라인): Access는 만료된 로그인에 다른 origin으로 302를 보내고 브라우저는 이를 따라가다
+  `Failed to fetch`로 끝내므로 위 응답 검사에 닿지 않는다. 이때 `/api/v1/me`를 `redirect: "manual"`로 한 번 물어
+  `opaqueredirect`·401·403이면 같은 `auth-expired` 메시지를 보낸다(2026-10-11 모바일 실사용).
 - precache 목록은 `scripts/vendor.mjs` 확장(`precache-manifest.json` 생성, 파일 hash 포함)이 만들고 `npm run check`가 현재 파일과 일치하는지 검사.
   precache에는 **셸 + Pretendard core + MaruBuri 700 core**만. 나머지 vendor·글꼴 조각은 사용 시 runtime 캐시(§12.8 예산 3종).
 - SW 원본은 `edge/sw/sw.js`(ESM import), 배포본 `public/sw.js`는 `npm run precache`가 **classic 스크립트 하나로 번들**한다(`npm run check`가 일치 검사). `register("/sw.js")`(classic). module SW는 Chrome이 스크립트와 import를 쿠키 없이 받아 Cloudflare Access 로그인으로 redirect되고 등록이 실패한다(2026-10-03 운영 콘솔 `The script resource is behind a redirect`). SW 안에서 동적 `import()` 금지.

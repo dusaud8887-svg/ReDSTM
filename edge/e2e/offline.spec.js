@@ -55,6 +55,18 @@ test("An HTML sign-in page instead of an archive object is not cached and the pa
   expect(Object.values(caches).flat().filter((path) => path.startsWith("/archive/posts/board_a/2-"))).toEqual([]);
 });
 
+// Cloudflare Access redirects an expired sign-in to another origin, which the browser reports as a
+// failed request rather than a response (2026-10-11, a phone could not open the next episode).
+test("A request that fails because the sign-in redirects elsewhere says the sign-in expired", async ({ page, context }) => {
+  await useLongCollection(context, 3);
+  await page.goto("/");
+  await controlled(page);
+  await context.route("**/archive/posts/board_a/2-*", (route) => route.abort("failed"));
+  await context.route("**/api/v1/me", (route) => route.fulfill({ status: 302, headers: { location: "https://sign-in.invalid/login" } }));
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#auth-dialog")).toBeVisible();
+});
+
 // P4-2 / T08: a work is saved for offline reading through the worker, shows its state in words,
 // becomes partial when a file fails, resumes, appears in settings and is removed again.
 test("A work is saved on this device, resumes after a failed file, and is removed", async ({ page, context }) => {
