@@ -5514,9 +5514,9 @@ for (const button of document.querySelectorAll("[data-bookmark-close]")) {
   button.addEventListener("click", closeBookmarkEditor);
 }
 elements["bookmark-dialog"].addEventListener("cancel", () => { editingBookmarkSummary = null; });
-// Inline images and image links open a full-screen viewer; Back or 닫기 returns to the text.
+// Inline images and image links open a full-screen viewer; Back or 닫기 returns to the text. An AA
+// body too: its pinch only sizes the text, so the viewer is the one way to enlarge a picture there.
 elements["archive-body"].addEventListener("click", (event) => {
-  if (currentMode === "aa") return;
   const trigger = event.target.closest(".media-open, a[data-image], img");
   if (!trigger || !elements["archive-body"].contains(trigger)) return;
   const target = trigger.matches(".media-open") ? trigger.querySelector("img") : trigger;

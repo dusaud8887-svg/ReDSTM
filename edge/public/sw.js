@@ -912,7 +912,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/app.js",
-      "revision": "72e2ee4ff5bb5e59"
+      "revision": "c6e5a34696cf7867"
     },
     {
       "url": "/arca-media.js",

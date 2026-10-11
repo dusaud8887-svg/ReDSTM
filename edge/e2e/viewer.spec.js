@@ -2413,6 +2413,25 @@ test("AA touch pan follows both axes when a horizontal drag becomes diagonal", a
   expect(following.y - edge.y).toBeGreaterThan(10);
 });
 
+// 2026-10-11: an AA body's pinch sizes its text only, so a picture in it opens in the viewer on a tap.
+test("A picture inside an AA body opens in the image viewer", async ({ page, hasTouch }) => {
+  await useCollectionFixture(page);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="4000"><rect width="600" height="4000" fill="#468"/></svg>';
+  await page.route("https://img.example.test/**", (route) => route.fulfill({ contentType: "image/svg+xml", body: svg }));
+  await page.route(`**/archive/${aaKey}`, (route) => {
+    const payload = aaPostPayload(1, "그림");
+    payload.post.body_html = '<div class="AA_Text"><p>＿＿＿</p></div><p><img src="https://img.example.test/page.png" alt=""></p>';
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  await openPost(page, aaKey);
+  await expect(page.locator("#archive-body")).toHaveClass(/(^| )aa( |$)/);
+  const picture = page.locator("#archive-body img").first();
+  await (hasTouch ? picture.tap() : picture.click());
+  const viewer = page.getByRole("dialog", { name: "이미지 보기" });
+  await expect(viewer).toBeVisible();
+  await expect(viewer.locator(".pswp__img").first()).toBeVisible();
+});
+
 // 2026-10-09 review: a page left open keeps its data and offers a reload once a newer release is out.
 test("a newer archive release offers a reload when the page comes back into view", async ({ page }) => {
   let modified = "Wed, 07 Oct 2026 00:00:00 GMT";
