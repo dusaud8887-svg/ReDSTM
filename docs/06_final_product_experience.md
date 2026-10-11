@@ -190,7 +190,9 @@ Home 데이터 소스는 다음으로 고정한다. capture 시각은 export하�
 
 ### 6.2 Library와 Search
 
-- title/author/category/board substring search
+- title/author/category/board substring search. 검색 문자열은 NFKC·소문자에 공백을 뺀 것이라 띄어쓰기가 달라도 찾는다
+  (`오크킹` → `오크 킹`, 2026-10-11; 제안 목록의 `24 §9` 규칙과 같다). 필드 사이는 구분 문자로 끊어 제목 끝과 작성자
+  시작이 이어져 걸리지 않는다. 제목·작성자 한정 검색의 문자열은 처음 쓸 때 한 번 만들어 둔다.
 - query 250ms debounce, stale response discard
 - board와 AA/소설 content mode filter; category는 동일 query의 검색 대상
 - latest/oldest 정렬; views 정렬은 실제 요구 전 제외
@@ -200,6 +202,7 @@ Home 데이터 소스는 다음으로 고정한다. capture 시각은 export하�
 - board filter label은 release `boards[]`의 `name`/`group_name`이 있으면 사용, 없으면 `board_id`
 - result는 한 번에 100건씩 render하고 전체 count는 정확히 표시한다. 남은 결과가 있으면 목록 하단
   "더 보기" 버튼으로 다음 100건을 이어 붙인다(스크롤·이미 로드된 행·reader 앞뒤 글 인접성 유지).
+  목록 끝 1,200px 안에 들어오면 같은 100건을 자동으로 불러온다(2026-10-11, `15` 참조).
   `searchPosts`의 `offset` 창으로 구현하며 board filter/query/정렬과 함께 동작한다
 - 0건일 때 query와 filter를 유지하고 각각 해제 가능
 - keyboard: /, arrows, Enter, Escape

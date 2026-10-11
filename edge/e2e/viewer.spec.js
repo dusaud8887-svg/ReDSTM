@@ -730,6 +730,17 @@ test("restores catalog scroll and focused row after Reader Back", async ({ page 
   await expect(page.locator(".result-item:focus .result-title")).toHaveText(title);
 });
 
+// 2026-10-11: the next page arrives as the end of the list comes near, without the button.
+test("scrolling near the end of a board list loads the next page", async ({ page }) => {
+  await useCollectionFixture(page, { paginated: true });
+  await page.goto("/browse?board=board_a");
+  await expect(page.locator(".result-item")).toHaveCount(100);
+  await expect(page.locator("#result-more")).toContainText("3건");
+  await page.locator("#result-list").evaluate((list) => { list.scrollTop = list.scrollHeight; });
+  await expect(page.locator(".result-item")).toHaveCount(103);
+  await expect(page.locator("#result-more")).toBeHidden();
+});
+
 test("loads more board posts from the local search index", async ({ page }) => {
   await useCollectionFixture(page, { paginated: true });
   await page.goto("/browse?board=board_a");

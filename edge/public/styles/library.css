@@ -146,6 +146,9 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .result-list.loading:empty::after { content: ""; height: 288px; padding: 0; background: repeating-linear-gradient(to bottom, transparent 0 14px, var(--line) 14px 15px, transparent 15px 72px); animation: skeleton-pulse 1.2s ease-in-out infinite alternate; }
 @keyframes skeleton-pulse { to { opacity: .45; } }
 .result-list li { border-top: 1px solid var(--line); }
+/* Rows away from the screen skip layout and paint: a long list (1,000 rows and more after 더 보기)
+   was laid out whole each time it came back from the Reader. A rendered row keeps its real height. */
+.result-list > li:not(.list-sentinel) { content-visibility: auto; contain-intrinsic-size: auto 73px; }
 .result-list li.list-sentinel { height: 1px; border-top: 0; }
 .result-item {
   width: 100%; min-height: 72px; display: grid; align-content: center; gap: 6px; padding: 10px 14px 10px 13px;

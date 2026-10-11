@@ -1449,9 +1449,12 @@ function renderArchiveError(error, fallbackTitle = "아카이브를 열 수 없�
   const offline = error?.code === "offline" || !navigator.onLine;
   const expired = error?.code === "access_expired";
   const title = offline ? "오프라인입니다" : expired ? "로그인이 만료되었습니다" : fallbackTitle;
+  // A request the browser could not complete carries its own English text (Chrome, Safari, Firefox).
+  const unreachable = /failed to fetch|load failed|networkerror/i.test(error?.message ?? "");
   const message = offline
     ? "네트워크 연결을 확인한 뒤 다시 시도하세요."
-    : expired ? "보호된 장서를 계속 보려면 다시 로그인하세요." : error?.message ?? "알 수 없는 오류";
+    : expired ? "보호된 장서를 계속 보려면 다시 로그인하세요."
+      : unreachable ? "서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요." : error?.message ?? "알 수 없는 오류";
   elements["archive-state"].textContent = offline ? "오프라인" : expired ? "로그인 필요" : "연결 오류";
   elements["result-status"].textContent = message;
   elements["result-more"].hidden = true;
@@ -3620,6 +3623,23 @@ function catalogStatus(countText) {
   return note ? `${note} · ${status}` : status;
 }
 
+// Draws the result list. Rows that come out the same stay in place: replacing a long list on
+// every opened post and on every return to it cost a style and layout pass over all of it.
+function drawResultRows(items, build) {
+  const list = elements["result-list"];
+  const rows = list.children;
+  if (!items.length || rows.length !== items.length) {
+    const fragment = document.createDocumentFragment();
+    items.forEach((item, index) => { fragment.append(build(item, index)); });
+    list.replaceChildren(fragment);
+    return;
+  }
+  items.forEach((item, index) => {
+    const row = build(item, index);
+    if (!row.isEqualNode(rows[index])) rows[index].replaceWith(row);
+  });
+}
+
 // status is the bare count text; catalogStatus() adds the active filter labels on top.
 function renderResults(posts, status) {
   renderedResults = posts;
@@ -3627,11 +3647,8 @@ function renderResults(posts, status) {
   elements["search-empty"].hidden = true;
   elements["result-status"].textContent = catalogStatus(status);
   elements["result-list"].classList.remove("loading");
-  elements["result-list"].replaceChildren();
   const lookup = stateLookup();
-  const fragment = document.createDocumentFragment();
-  posts.forEach((post, index) => { fragment.append(resultItemElement(post, index, lookup)); });
-  elements["result-list"].append(fragment);
+  drawResultRows(posts, (post, index) => resultItemElement(post, index, lookup));
   renderWidenActions(!posts.length);
   updateLoadMore();
   restoreCatalogPosition();
@@ -3773,10 +3790,7 @@ function collectionItemElement(collection) {
 function renderCollectionResults() {
   elements["search-empty"].hidden = true;
   elements["result-list"].classList.remove("loading");
-  elements["result-list"].replaceChildren();
-  const fragment = document.createDocumentFragment();
-  for (const collection of renderedCollections) fragment.append(collectionItemElement(collection));
-  elements["result-list"].append(fragment);
+  drawResultRows(renderedCollections, collectionItemElement);
   const shown = renderedCollections.length;
   renderWidenActions(!shown);
   const countText = shown < resultTotal
@@ -5397,6 +5411,16 @@ for (const button of document.querySelectorAll("[data-scope]")) {
   });
 }
 elements["result-more"].addEventListener("click", loadMoreResults);
+// The next 100 rows arrive before the end of the list is reached (2026-10-11); 더 보기 stays as
+// the count of what is left and the manual way. Loaded rows, the Back position (loadedCount) and
+// the Reader's neighbours work as with the button, since both append the same page.
+const RESULT_AUTOLOAD_DISTANCE = 1200;
+elements["result-list"].addEventListener("scroll", () => {
+  const list = elements["result-list"];
+  const more = elements["result-more"];
+  if (more.hidden || more.disabled) return;
+  if (list.scrollHeight - list.scrollTop - list.clientHeight < RESULT_AUTOLOAD_DISTANCE) loadMoreResults();
+}, { passive: true });
 for (const tab of document.querySelectorAll("[data-view]")) {
   tab.addEventListener("click", () => {
     currentView = tab.dataset.view;

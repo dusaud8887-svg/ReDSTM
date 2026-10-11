@@ -47,7 +47,7 @@ Reader를 **“개인 보존 장서에서 읽을 것을 빠르게 고르고, 중
 - desktop rail / mobile bottom navigation의 adaptive shell
 - Home의 검색 진입점, 이어 읽기, 최근 보존 글, 최근 읽은 글
 - `/browse`와 `/search`의 분리, URL query 복원, Back 후 목록 위치·focus 복원
-- 100건 단위 명시적 `더 보기`
+- 100건 단위 이어 붙이기(끝에 가까워지면 자동, `더 보기`는 수동 경로)
 - 작품 summary index, detail shard, membership 지연 로드
 - stable post identity인 `board_id:external_post_id`
 - Reader의 prose/AA 분리, collection 문맥, 저장, 진행률, 설정, 집중 모드
@@ -261,7 +261,10 @@ bottom navigation에는 넣지 않는다.
 - 결과 상태 줄은 `조건 · 건수` 순이다. 실행 시간은 표시하지 않는다.
 - desktop 결과는 full-width ruled list, mobile은 같은 순서의 single-column list다. 표지가 없으므로 카드
   grid를 만들지 않는다.
-- 100건 단위 `더 보기`를 유지한다. 무한 스크롤은 위치·Back·작품 인접성을 흐리므로 도입하지 않는다.
+- 100건 단위로 이어 붙인다. 목록 끝 1,200px 안에 들어오면 다음 100건을 자동으로 불러오고, `더 보기`는 남은 건수 표시와
+  수동 경로로 남긴다(2026-10-11 변경). 처음에는 "무한 스크롤은 위치·Back·작품 인접성을 흐린다"는 이유로 버튼만 두었으나,
+  Back은 불러온 개수(`loadedCount`)와 맨 위 행 anchor로 복원하고 인접성은 이어 붙인 행 순서로 유지되므로 자동 불러오기에서도
+  같은 보장이 성립한다. 텍스트 장서 목록(자동으로 이어 그림)과 동작도 같아진다.
 - mobile에서는 첫 결과가 240px 이내에 보이게 한다. 부가 filter는 `필터` sheet로 접고 선택된 조건은
   result header의 removable chip으로 남긴다.
 

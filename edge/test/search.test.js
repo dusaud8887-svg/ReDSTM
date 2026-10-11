@@ -25,6 +25,12 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.deepEqual(searchPosts(index, { query: "작가 나", target: "author" }).posts.map((post) => post.external_post_id), [2]);
   assert.deepEqual(searchPosts(index, { query: "팬픽", target: "title" }).posts, []);
   assert.deepEqual(searchPosts(index, { limit: 2 }).posts.map((post) => post.external_post_id), [3, 2]);
+  // Spacing does not decide a match: "달빛아래" finds "달빛 아래", in every target.
+  assert.deepEqual(searchPosts(index, { query: "달빛아래" }).posts.map((post) => post.external_post_id), [2]);
+  assert.deepEqual(searchPosts(index, { query: "달빛아래", target: "title" }).posts.map((post) => post.external_post_id), [2]);
+  assert.deepEqual(searchPosts(index, { query: "작가나", target: "author" }).posts.map((post) => post.external_post_id), [2]);
+  // A word does not match across two fields (the end of a title and the start of an author).
+  assert.deepEqual(searchPosts(index, { query: "아래작가" }).posts, []);
   assert.deepEqual(searchPosts(index, { limit: 1, offset: 1 }).posts.map((post) => post.external_post_id), [2]);
   assert.deepEqual(searchPosts(index, { sort: "oldest" }).posts.map((post) => post.external_post_id), [1, 2, 3]);
   assert.deepEqual(searchPosts(index, { category: "팬픽" }).posts.map((post) => post.external_post_id), [3]);

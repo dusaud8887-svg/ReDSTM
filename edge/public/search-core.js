@@ -22,6 +22,15 @@ function normalize(value) {
     .toLowerCase();
 }
 
+// What a search word is looked for in: the text without its spaces, so "오크킹" finds "오크 킹"
+// and "수있게" finds "수 있게". A word that matched with the spaces in still matches without them.
+function searchable(value) {
+  // NFKC has already turned the wide and no-break spaces into plain ones.
+  return normalize(value).replaceAll(" ", "");
+}
+// Fields are joined by a character no query can contain, so a word never matches across two.
+const FIELD_BREAK = "\u0001";
+
 export function prepareSearch(payload) {
   const fields = JSON.stringify(payload?.fields);
   const hasStats = fields === JSON.stringify(SEARCH_FIELDS_WITH_STATS);
@@ -53,7 +62,7 @@ export function prepareSearch(payload) {
       throw new Error("Invalid search index row");
     }
     boards.add(row[0]);
-    terms.push(normalize([row[0], row[2], row[3], row[4]].join(" ")));
+    terms.push(searchable([row[0], row[2], row[3], row[4]].join(FIELD_BREAK)));
     categories.push(normalize(row[4]));
     const isAa = hasIsAa ? Boolean(row[7]) : null;
     modes.push(isAa);
@@ -80,7 +89,19 @@ export function prepareSearch(payload) {
     hasStats,
     identities,
     popularity: new Map(),
+    fieldTerms: new Map(),
   };
+}
+
+// One column's search text, built on the first search limited to that column (제목·작성자) and
+// kept: normalising every row again on each keystroke took about 100 ms for 330,000 posts.
+function fieldTerms(index, column) {
+  let terms = index.fieldTerms.get(column);
+  if (!terms) {
+    terms = index.rows.map((row) => searchable(row[column]));
+    index.fieldTerms.set(column, terms);
+  }
+  return terms;
 }
 
 // Row positions ordered by a popularity column (most first; the newer post wins a tie). Built
@@ -147,6 +168,7 @@ export function searchPosts(
   }
   const tokens = normalize(query).trim().split(/\s+/).filter(Boolean);
   const normalizedCategory = normalize(category);
+  const texts = !tokens.length ? null : target === "title" ? fieldTerms(index, 2) : target === "author" ? fieldTerms(index, 3) : index.terms;
   const posts = [];
   let total = 0;
   // Rows are stored newest first; popularity sorts walk a prebuilt order instead.
@@ -159,11 +181,13 @@ export function searchPosts(
     if (normalizedCategory && index.categories[position] !== normalizedCategory) continue;
     const isAa = index.modes[position];
     if ((mode === "aa" && !isAa) || (mode === "prose" && isAa)) continue;
-    const searchText = target === "title" ? normalize(row[2]) : target === "author" ? normalize(row[3]) : index.terms[position];
-    const tokenMatches = match === "or"
-      ? tokens.some((token) => searchText.includes(token))
-      : tokens.every((token) => searchText.includes(token));
-    if (tokens.length && !tokenMatches) continue;
+    if (texts) {
+      const searchText = texts[position];
+      const tokenMatches = match === "or"
+        ? tokens.some((token) => searchText.includes(token))
+        : tokens.every((token) => searchText.includes(token));
+      if (!tokenMatches) continue;
+    }
     // `total` is the running match index; collect the window [offset, offset + limit).
     if (collect) collect.push(row);
     else if (total >= offset && posts.length < limit) posts.push(result(row, index));
