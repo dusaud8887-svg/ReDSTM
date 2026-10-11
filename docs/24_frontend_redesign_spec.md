@@ -505,6 +505,8 @@ DOM·computed style·screenshot이 이전과 같아야 한다(T06).
 
 PhotoSwipe(dataSource = 글 안 `.media-figure`, 크기는 로드 후 `naturalWidth/Height`), 핀치·더블탭·스와이프·아래로 끌어 닫기, `원본 열기`·`공유`·`n/m`.
 세로 비율 > 1:3 이미지는 세로 스크롤 보기. 만료·미보존 이미지는 제외. Back = overlay 관리자 층 하나.
+본문 안 이미지는 열 너비에 맞추고 높이는 제한하지 않는다(2026-10-11: `max-height: 80vh`가 한 장으로 저장된 긴 AA·웹툰
+컷을 화면 높이로 줄여 읽을 수 없었다). 페이지 모드만 한 쪽 높이(`--page-height`)로 제한한다.
 
 ### 8.19 설정 (M21)
 

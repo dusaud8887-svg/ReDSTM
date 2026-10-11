@@ -190,7 +190,7 @@ export default [
   },
   {
     "url": "/styles/reader.css",
-    "revision": "539b4f23ae4db759"
+    "revision": "fe156068af38f191"
   },
   {
     "url": "/styles/shell.css",

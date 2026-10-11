@@ -54,7 +54,9 @@ body:not(.page-mode) .archive-body:not(.aa) .reader-block { content-visibility: 
 }
 .archive-body :is(h1, h2, h3, h4) { font-family: inherit; line-height: 1.4; }
 .archive-body blockquote { margin: 1.5em 0; padding-left: 1.25em; border-left: 3px solid var(--line-strong); color: var(--ink-2); }
-.archive-body img { max-width: 100%; max-height: 80vh; height: auto; }
+/* Pictures fit the column's width and keep their height: a long strip (an AA page saved as one
+   image, a webtoon cut) shrunk to the screen's height was too small to read (2026-10-11). */
+.archive-body img { max-width: 100%; height: auto; }
 .archive-body a { color: var(--accent); }
 .archive-body hr { margin: 2.5em 0; border: 0; border-top: 1px solid var(--line); }
 .archive-body.plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -65,7 +67,7 @@ body:not(.page-mode) .archive-body:not(.aa) .reader-block { content-visibility: 
 body.page-mode .archive-body.plain-text > .text-chunk { content-visibility: visible; }
 .media-figure { margin: 1.2em 0; }
 .media-open { display: block; width: 100%; padding: 0; border: 0; border-radius: 8px; background: var(--surface); cursor: zoom-in; }
-.media-open img { display: block; max-width: 100%; max-height: 80vh; height: auto; margin: 0 auto; border-radius: 8px; }
+.media-open img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 8px; }
 .media-expired { margin: .6em 0; padding: 8px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--ink-2); font-family: var(--font-ui); font-size: 13px; }
 .media-expired a { color: var(--accent); }
 .media-video video { display: block; width: 100%; max-height: 70vh; border-radius: 8px; background: #000; }

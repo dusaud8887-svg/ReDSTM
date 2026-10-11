@@ -1131,6 +1131,13 @@ test("A very tall picture opens at the screen width instead of a sliver", async 
     }),
   }));
   await page.goto("/read/board_a/2");
+  // In the text it fits the column's width and keeps its height (not shrunk to the screen's height).
+  const inline = page.locator("#archive-body .media-open img");
+  await expect.poll(() => inline.evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
+  const shown = await inline.evaluate((image) => ({ width: image.clientWidth, height: image.clientHeight, column: image.closest(".archive-body").clientWidth }));
+  expect(shown.width).toBeLessThanOrEqual(shown.column);
+  expect(shown.height / shown.width).toBeCloseTo(4.5, 1);
+  expect(shown.height).toBeGreaterThan(page.viewportSize().height);
   await page.locator("#archive-body .media-open").click();
   const viewer = page.getByRole("dialog", { name: "이미지 보기" });
   const box = () => viewer.locator(".pswp__img").first().evaluate((image) => {
