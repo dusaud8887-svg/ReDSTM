@@ -120,8 +120,9 @@ export function searchPosts(
     collect = null,
   } = {},
 ) {
-  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
-    throw new Error("Search result limit must be between 1 and 200");
+  // A page is 100 rows; a list coming back from the Reader asks for all it had loaded at once.
+  if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
+    throw new Error("Search result limit must be between 1 and 5000");
   }
   if (!Number.isSafeInteger(offset) || offset < 0) {
     throw new Error("Search result offset must be a non-negative safe integer");

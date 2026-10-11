@@ -745,8 +745,15 @@ test("loads more board posts from the local search index", async ({ page }) => {
 
   await page.locator(".result-item").last().click();
   await expect(page.locator("#reader-title")).toHaveText("과거 103");
+  // Coming back brings every loaded row at once, not the first page and then the rest.
+  await page.evaluate(() => {
+    const list = document.querySelector("#result-list");
+    window.__listCounts = [];
+    new MutationObserver(() => window.__listCounts.push(list.childElementCount)).observe(list, { childList: true });
+  });
   await page.goBack();
   await expect(page.locator(".result-item")).toHaveCount(103);
+  expect(await page.evaluate(() => window.__listCounts)).not.toContain(100);
   await expect(page.locator(".result-item").last()).toBeFocused();
 });
 

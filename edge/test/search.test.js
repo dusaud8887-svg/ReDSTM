@@ -34,7 +34,7 @@ test("searches Korean metadata with normalization, filters, and stable limits", 
   assert.equal(searchPosts(index, { limit: 1 }).posts[0].is_aa, undefined);
   assert.equal(findPost(index, "aa", 2)?.title, "달빛 아래");
   assert.equal(findPost(index, "aa", 99), null);
-  assert.throws(() => searchPosts(index, { limit: 0 }), /between 1 and 200/);
+  assert.throws(() => searchPosts(index, { limit: 0 }), /between 1 and 5000/);
   assert.throws(() => searchPosts(index, { offset: -1 }), /offset/);
   assert.throws(() => searchPosts(index, { mode: "unknown" }), /mode/);
   assert.throws(() => searchPosts(index, { sort: "unknown" }), /sort/);

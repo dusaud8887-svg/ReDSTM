@@ -145,6 +145,8 @@ for (const dialog of document.querySelectorAll("dialog")) overlays.watch(dialog)
 overlays.watchFullscreen(document);
 
 const RESULT_PAGE_SIZE = 100;
+// The most rows one search request returns (search-core.js): a restored list asks for its pages at once.
+const RESULT_RESTORE_MAX = 5000;
 
 let stateOwner = null;
 try { stateOwner = localStorage.getItem("redstm.owner.v1"); } catch { /* storage blocked */ }
@@ -2781,10 +2783,11 @@ function persistCatalogState() {
   persistUserState();
 }
 
-function restoreCatalogPosition() {
+// The saved list state, while the list on screen is still the one it was saved from.
+function catalogRestoreState() {
   const state = pendingCatalogRestore;
-  if (currentSummary || !state || state.destination !== currentDestination || state.view !== currentView ||
-      (state.scope ?? "posts") !== currentScope) return;
+  if (!state || state.destination !== currentDestination || state.view !== currentView ||
+      (state.scope ?? "posts") !== currentScope) return null;
   const current = currentSearchState();
   if (state.query !== current.query || state.boardId !== current.boardId || (state.category ?? "") !== current.category ||
       (state.mode ?? "all") !== current.mode ||
@@ -2792,7 +2795,19 @@ function restoreCatalogPosition() {
       (state.match ?? "and") !== current.match ||
       (state.collectionKind ?? "all") !== current.collectionKind ||
       (state.collectionRead ?? "all") !== current.collectionRead ||
-      (currentDestination !== "bookmarks" && state.sort !== current.sort)) return;
+      (currentDestination !== "bookmarks" && state.sort !== current.sort)) return null;
+  return state;
+}
+
+// How many rows the first request of a list brings: one page, or everything a list coming back
+// from the Reader had loaded. Asking page by page showed the list unfolding 100 rows at a time.
+function catalogFirstCount() {
+  return Math.min(RESULT_RESTORE_MAX, Math.max(RESULT_PAGE_SIZE, Number(catalogRestoreState()?.loadedCount) || 0));
+}
+
+function restoreCatalogPosition() {
+  const state = currentSummary ? null : catalogRestoreState();
+  if (!state) return;
   requestAnimationFrame(() => {
     const list = elements["result-list"];
     list.scrollTop = Math.max(0, state.scrollTop ?? 0);
@@ -2804,7 +2819,7 @@ function restoreCatalogPosition() {
     const targetLoaded = Math.min(Number(state.loadedCount) || 0, resultTotal);
     if (currentView === "all" && rendered.length < targetLoaded) {
       if (collections) void renderCollectionCatalog(rendered.length);
-      else requestSearch(rendered.length);
+      else requestSearch(rendered.length, Math.min(RESULT_RESTORE_MAX, targetLoaded - rendered.length));
       return;
     }
     pendingCatalogRestore = null;
@@ -3166,7 +3181,7 @@ function renderSearchEmpty() {
   }
 }
 
-function requestSearch(offset = 0) {
+function requestSearch(offset = 0, limit = offset ? RESULT_PAGE_SIZE : catalogFirstCount()) {
   if (currentScope === "collections") {
     void renderCollectionCatalog(offset);
     return;
@@ -3198,7 +3213,7 @@ function requestSearch(offset = 0) {
     sort: elements["sort-filter"].value,
     target: elements["search-target"].value,
     match: elements["search-match"].value,
-    limit: RESULT_PAGE_SIZE,
+    limit,
     offset,
   });
 }
@@ -3685,7 +3700,7 @@ async function renderCollectionCatalog(offset = 0) {
       .sort(collectionComparator(elements["sort-filter"].value));
     collectionProgressById = progress;
     resultTotal = matches.length;
-    renderedCollections = matches.slice(0, offset + RESULT_PAGE_SIZE);
+    renderedCollections = matches.slice(0, offset ? offset + RESULT_PAGE_SIZE : catalogFirstCount());
     renderCollectionResults();
   } catch (error) {
     if (requestId === collectionSearchId) renderArchiveError(error, "작품 목록을 열 수 없음");
