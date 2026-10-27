@@ -9,14 +9,15 @@ import { collectionIndexKey, hashFor, postPayload, useLongCollection } from "./t
 // Reading-flow contracts from docs/19: one history entry per reading session, Back returns to
 // the list viewport the session started from, and reading order never follows the list sort.
 
-async function useLongNovel(page, count) {
+async function useLongNovel(page, count, sourceNumbers = null, labels = null) {
   const releaseHash = "d".repeat(64);
   const catalogHash = "e".repeat(64);
   const detailHash = "c".repeat(64);
   const workId = "novel:fixture:long";
   const bodyHash = (number) => number.toString(16).padStart(64, "a");
   const chapters = Array.from({ length: count }, (_, index) => ({
-    chapter_id: String(index + 1), label: `${index + 1}화`, kind: "main",
+    chapter_id: String(index + 1), label: labels?.[index] ?? (sourceNumbers ? `회차 제목 ${index + 1}` : `${index + 1}화`), kind: "main",
+    ...(sourceNumbers ? { source_episode_number: sourceNumbers[index], reading_order: index } : {}),
     source_site: "fixture", source_chapter_id: String(index + 1), sha256: bodyHash(index + 1),
   }));
   await page.route("**/api/v1/text/**", (route) => {
@@ -735,6 +736,41 @@ test("Text keeps reading when the TypeMoon archive fails, and the error waits fo
   await page.locator('[data-destination="library"]').filter({ visible: true }).first().click();
   await expect(page.locator("#archive-state")).toHaveText("연결 오류");
   await expect(page.locator("#home-title")).toHaveText("아카이브를 열 수 없음");
+});
+
+test("Work search stays in the work list and chapter search survives direct links", async ({ page }) => {
+  const workId = await useLongNovel(page, 5);
+  await page.goto("/text?lane=novel&q=" + encodeURIComponent("긴 소설"));
+  await page.locator("#result-list .result-item", { hasText: "긴 소설" }).click();
+  await expect(page.locator("#search-input")).toHaveValue("");
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["1화", "2화", "3화", "4화", "5화"]);
+  expect(new URL(page.url()).searchParams.has("q")).toBe(false);
+  await page.locator("#search-input").fill("3화");
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["3화"]);
+  await page.locator("#text-work-back").click();
+  await expect(page.locator("#search-input")).toHaveValue("긴 소설");
+  await expect(page.locator("#result-list .result-item", { hasText: "긴 소설" })).toBeVisible();
+  await page.goForward();
+  await expect(page.locator("#search-input")).toHaveValue("3화");
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["3화"]);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}&q=${encodeURIComponent("2화")}`);
+  await expect(page.locator("#search-input")).toHaveValue("2화");
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["2화"]);
+});
+
+test("Unnumbered chapter titles show and search the original episode numbers with gaps", async ({ page }) => {
+  const workId = await useLongNovel(page, 3, [1, 3, 63], ["회차 제목 1", "1화 제목", "회차 제목 3"]);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText([
+    "1화 · 회차 제목 1", "3화 · 1화 제목", "63화 · 회차 제목 3",
+  ]);
+  await page.locator("#result-list .result-item").first().click();
+  await expect(page.getByText("다음 회차 사이에 1개 회차가 목록에 없습니다.", { exact: false })).toBeVisible();
+  await page.goBack();
+  await page.locator("#search-input").fill("63화");
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["63화 · 회차 제목 3"]);
+  await page.locator("#result-list .result-item").click();
+  await expect(page.locator("#reader-title")).toHaveText("63화 · 회차 제목 3");
 });
 
 test("A work not started yet offers its first chapter, and finishing one names the next", async ({ page }) => {

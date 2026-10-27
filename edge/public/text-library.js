@@ -1,5 +1,5 @@
 import { captureListAnchor, loadListPosition, restoreListAnchor, saveListPosition } from "/list-anchor.js";
-import { adjacentInSequence, labelGap } from "/sequence.js";
+import { adjacentInSequence, episodeNumber, labelGap } from "/sequence.js";
 import { fillWorkCover, savedMark, showWorkBarcode } from "/work-header.js";
 import { workKey } from "/type-cover.js";
 import {
@@ -16,6 +16,13 @@ const LANES = new Set(["novel", "arcalive", "manual", "tuna"]);
 const VIEWS = new Set([...LANES, "saved"]);
 const HASH = /^[a-f0-9]{64}$/;
 const FINISHED = 0.95;
+
+function chapterLabel(entry) {
+  const label = entry.label || "회차";
+  const number = entry.source_episode_number;
+  return typeof number === "number" && Number.isFinite(number) && number > 0 && episodeNumber(label) !== number
+    ? `${number}화 · ${label}` : label;
+}
 const HISTORY_LIMIT = 10_000;
 // About 3 MB of UTF-16: the TypeMoon state (≤ ~1 MB) shares the origin's ~5 MB localStorage.
 const TEXT_STATE_CHARS = 1_500_000;
@@ -816,7 +823,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       const line = document.createElement("span");
       line.className = "result-title-line";
       const titleText = folder ? entry.folder_label
-        : chaptersMode ? (entry.label || "회차")
+        : chaptersMode ? chapterLabel(entry)
         : entry.work_id ? (entry.title || entry.work_id)
           : kind === "saved" ? (entry.title || entry.entry?.label || entry.identity)
             : (entry.title || entry.category || entry.identity);
@@ -983,7 +990,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     renderReadChips(progress);
     if (work) {
       const displayed = orderChapters(chapterSource, sortMode);
-      renderRows(displayed.filter((chapter) => normalize(`${chapter.label || ""} ${chapterKind(chapter.kind)}`).includes(query)),
+      renderRows(displayed.filter((chapter) => normalize(`${chapterLabel(chapter)} ${chapterKind(chapter.kind)}`).includes(query)),
         { kind: "chapters" });
       return;
     }
@@ -1446,7 +1453,10 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     }
     if (activeRequest !== requestId) return;
     work = item;
-    if (shouldNavigate) sortMode = defaultSort();
+    if (shouldNavigate) {
+      search.value = "";
+      sortMode = defaultSort();
+    }
     syncBackButton();
     chapterSource = detail.chapters;
     closeReader();
@@ -1477,7 +1487,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       if (!sequence) return null;
       const result = adjacentInSequence(sequence.entries, sequence.index, direction);
       return result.target ? {
-        title: result.target.label || result.target.title || "",
+        title: result.target.label ? chapterLabel(result.target) : result.target.title || "",
         entry: result.target,
         documentId: current.lane === "novel" ? `novel:${result.target.source_site || ""}:${result.target.chapter_id}` : identity(result.target, current.lane),
         sourceLane: current.lane,
@@ -1487,7 +1497,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     const previous = step(-1);
     const next = step(1);
     // Tunaground labels number threads and responses, not chapters, so no gap is reported.
-    const gap = next && current && current.lane !== "tuna" ? labelGap(current.entry.label, next.entry.label) : 0;
+    const currentNumber = current?.entry?.source_episode_number;
+    const nextNumber = next?.entry?.source_episode_number;
+    const gap = next && current && current.lane !== "tuna"
+      ? Number.isFinite(currentNumber) && Number.isFinite(nextNumber)
+        ? Number.isInteger(currentNumber) && Number.isInteger(nextNumber)
+          ? Math.max(0, nextNumber - currentNumber - 1) : 0
+        : labelGap(current.entry.label, next.entry.label)
+      : 0;
     const position = sequence && sequence.index >= 0 ? ` · ${sequence.index + 1}/${sequence.entries.length}` : "";
     const context = current?.work
       ? `${current.work.title}${position}`
@@ -1561,7 +1578,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     history.history[entryIdentity] = {
       ...record,
       readAt: new Date().toISOString(),
-      title: chaptered ? (entry.label || "") : (entry.title || ""),
+      title: chaptered ? chapterLabel(entry) : (entry.title || ""),
       work: itemWork?.title || "",
       ...(itemWork?.work_id ? { workId: itemWork.work_id } : {}),
       total: itemWork?.chapter_count ?? 0,
@@ -1574,7 +1591,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     shell.open({
       kicker: currentLane === "manual" ? "수동 문서" : isTuna ? `참치어장 · ${itemWork?.title || "앵커판"}`
         : isNovel ? (itemWork?.title || "소설") : ["아카라이브", entry.board].filter(Boolean).join(" · "),
-      title: chaptered ? (entry.label || itemWork?.title || "회차") : (entry.title || "아카라이브 글"),
+      title: chaptered ? chapterLabel(entry) : (entry.title || "아카라이브 글"),
       meta: currentLane === "manual" ? [entry.category, entry.created_at ? new Date(entry.created_at).toLocaleDateString("ko-KR") : ""].filter(Boolean).join(" · ")
         : isTuna ? [itemWork?.author || "작가 미상", itemWork?.tags || ""].filter(Boolean).join(" · ")
           : isNovel ? [itemWork?.author || "작가 미상", chapterKind(entry.kind)].filter(Boolean).join(" · ")
@@ -1704,6 +1721,12 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   }
 
   function parentLevelParams() {
+    if (work && window.history.state?.redstmParent) {
+      const parent = new URL(window.history.state.redstmParent, location.origin);
+      if (parent.pathname === "/text" && parent.searchParams.get("lane") === lane && !parent.searchParams.has("work")) {
+        return parent.searchParams;
+      }
+    }
     const params = listParams();
     if (work) params.delete("work");
     else if (lane === "novel" && shelfFilter) params.delete("shelf");
@@ -1717,7 +1740,9 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
   function up() {
     ++requestId;
     const parent = `/text?${parentLevelParams()}`;
-    if (!current && window.history.state?.redstmParent === parent) {
+    const previous = window.history.state?.redstmParent;
+    const previousUrl = previous ? new URL(previous, location.origin) : null;
+    if (!current && previousUrl && `${previousUrl.pathname}?${previousUrl.searchParams}` === parent) {
       window.history.back();
       return;
     }
