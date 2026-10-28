@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -210,7 +211,9 @@ def test_cycle_stops_at_board_boundary_when_time_budget_expires(
     args.max_seconds = 10
     commands: list[list[str]] = []
     clock = iter((0.0, 0.0, 11.0))
-    monkeypatch.setattr("scripts.crawl_cycle.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.time", SimpleNamespace(monotonic=lambda: next(clock), sleep=time.sleep)
+    )
     monkeypatch.setattr("scripts.crawl_cycle.ensure_session_export", lambda *args, **kwargs: None)
 
     def run(command: list[str], **kwargs: object) -> SimpleNamespace:
@@ -297,7 +300,9 @@ def test_cycle_revalidates_session_after_thirty_minutes(
     initial_logins = 0
     validations = 0
     clock = iter((0.0, 0.0, 1_801.0, 1_802.0, 1_803.0))
-    monkeypatch.setattr("scripts.crawl_cycle.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        "scripts.crawl_cycle.time", SimpleNamespace(monotonic=lambda: next(clock), sleep=time.sleep)
+    )
 
     def ensure(*args: object, **kwargs: object) -> None:
         nonlocal initial_logins
