@@ -278,6 +278,9 @@ def parse_work_detail(value: Any) -> WorkDetail:
                 "access": access,
             }
         )
+    expected = data.get("episodeCount")
+    if type(expected) is int and expected > len(normalized):
+        raise CollectorError("work_episodes_incomplete")
     return WorkDetail(work_id, work_title, author, normalized)
 
 

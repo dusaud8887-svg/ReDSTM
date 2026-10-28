@@ -764,6 +764,7 @@ test("Unnumbered chapter titles show and search the original episode numbers wit
   await expect(page.locator("#result-list .result-item .result-title")).toHaveText([
     "1화 · 회차 제목 1", "3화 · 1화 제목", "63화 · 회차 제목 3",
   ]);
+  await expect(page.locator("#text-work-summary .text-work-continue")).toContainText("1화 · 회차 제목 1");
   await page.locator("#result-list .result-item").first().click();
   await expect(page.getByText("다음 회차 사이에 1개 회차가 목록에 없습니다.", { exact: false })).toBeVisible();
   await page.goBack();
@@ -771,6 +772,22 @@ test("Unnumbered chapter titles show and search the original episode numbers wit
   await expect(page.locator("#result-list .result-item .result-title")).toHaveText(["63화 · 회차 제목 3"]);
   await page.locator("#result-list .result-item").click();
   await expect(page.locator("#reader-title")).toHaveText("63화 · 회차 제목 3");
+});
+
+test("Novel chapter jump uses original numbers and never guesses missing numbers", async ({ page }) => {
+  const numbers = [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 63];
+  const workId = await useLongNovel(page, numbers.length, numbers, ["20냥의 품삯"]);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  const input = page.getByRole("spinbutton", { name: "이동할 회차 번호" });
+  await input.fill("63");
+  await page.getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator('#result-list .result-item[data-key="chapter:11"]')).toBeFocused();
+  await input.fill("2");
+  await page.getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#result-status")).toHaveText("2화를 찾지 못했습니다");
+  await input.fill("20");
+  await page.getByRole("button", { name: "찾기", exact: true }).click();
+  await expect(page.locator("#result-status")).toHaveText("20화를 찾지 못했습니다");
 });
 
 test("A work not started yet offers its first chapter, and finishing one names the next", async ({ page }) => {

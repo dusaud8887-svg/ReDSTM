@@ -1112,7 +1112,7 @@ This is generally NOT safe. Learn more at https://bit.ly/wb-precache`;
     },
     {
       "url": "/text-library.js",
-      "revision": "3a204af86dce8ede"
+      "revision": "c2eff9e981520848"
     },
     {
       "url": "/text-model.js",

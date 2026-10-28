@@ -672,7 +672,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
       go.type = "button";
       go.className = "collection-continue text-work-continue";
       go.dataset.continue = "true";
-      go.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${target.label || "회차"}`;
+      go.textContent = `${resume ? "이어 읽기" : "처음부터 읽기"} · ${chapterLabel(target)}`;
       go.addEventListener("click", () => activate(go));
       actions.append(go);
     }
@@ -779,11 +779,14 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
     if (index >= rendered) renderMore(index - rendered + 1 + LIST_PAGE);
   }
 
-  // "몇 화?": the chapter whose label carries that number, else the Nth in reading order.
+  // Novel numbers must come from the source or an explicit label, not the archive's position.
   function jumpToChapter(number, rows) {
     if (!Number.isInteger(number) || number < 1) return;
-    const byLabel = rows.find((chapter) => Number(/(\d+)\s*(?:화|편|장)?/.exec(String(chapter.label || ""))?.[1]) === number);
-    const target = byLabel ?? canonicalChapters(chapterSource)[number - 1];
+    const target = lane === "novel"
+      ? rows.find((chapter) => chapter.source_episode_number === number ||
+          (chapter.source_episode_number == null && episodeNumber(chapter.label) === number))
+      : rows.find((chapter) => Number(/(\d+)\s*(?:화|편|장)?/.exec(String(chapter.label || ""))?.[1]) === number)
+        ?? canonicalChapters(chapterSource)[number - 1];
     if (!target) {
       status.textContent = `${number}화를 찾지 못했습니다`;
       return;
@@ -1672,7 +1675,7 @@ export function createTextLibrary({ onChange = () => {}, readerPane, shell }) {
           current: isCurrentRow(item),
           read: progress >= FINISHED,
           title: current.viewLane === "saved" ? (item.title || item.entry?.label || "저장한 자료")
-            : chapters ? (item.label || "회차") : (item.title || item.category || "글"),
+            : chapters ? chapterLabel(item) : (item.title || item.category || "글"),
           meta: [
             chapters ? chapterKind(item.kind) : current.viewLane === "saved" ? (item.entry?.label || "") : (item.category || ""),
             isCurrentRow(item) ? "" : progress >= FINISHED ? "다 읽음" : progress > 0 ? `${Math.round(progress * 100)}%` : history.history[key] ? "열어 봄" : "",

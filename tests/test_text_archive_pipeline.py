@@ -1904,6 +1904,13 @@ def test_work_title_is_independent_of_episode_order() -> None:
         assert [row["source_toc_position"] for row in detail.episodes] == [0, 1]
 
 
+def test_incomplete_work_detail_is_not_accepted_as_a_complete_toc() -> None:
+    with pytest.raises(collector.CollectorError, match="work_episodes_incomplete"):
+        collector.parse_work_detail(
+            {"work": {"id": 7, "title": "Novel", "episodeCount": 263}, "episodes": []}
+        )
+
+
 def test_work_linking_uses_normalized_title_and_nonempty_author(tmp_path: Path) -> None:
     db = importer._connect(tmp_path / "text.sqlite")
     try:
