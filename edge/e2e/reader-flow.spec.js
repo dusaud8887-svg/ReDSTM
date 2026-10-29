@@ -9,7 +9,7 @@ import { collectionIndexKey, hashFor, postPayload, useLongCollection } from "./t
 // Reading-flow contracts from docs/19: one history entry per reading session, Back returns to
 // the list viewport the session started from, and reading order never follows the list sort.
 
-async function useLongNovel(page, count, sourceNumbers = null, labels = null) {
+async function useLongNovel(page, count, sourceNumbers = null, labels = null, sourcePositions = null) {
   const releaseHash = "d".repeat(64);
   const catalogHash = "e".repeat(64);
   const detailHash = "c".repeat(64);
@@ -18,6 +18,7 @@ async function useLongNovel(page, count, sourceNumbers = null, labels = null) {
   const chapters = Array.from({ length: count }, (_, index) => ({
     chapter_id: String(index + 1), label: labels?.[index] ?? (sourceNumbers ? `회차 제목 ${index + 1}` : `${index + 1}화`), kind: "main",
     ...(sourceNumbers ? { source_episode_number: sourceNumbers[index], reading_order: index } : {}),
+    ...(sourcePositions ? { source_reading_position: sourcePositions[index] } : {}),
     source_site: "fixture", source_chapter_id: String(index + 1), sha256: bodyHash(index + 1),
   }));
   await page.route("**/api/v1/text/**", (route) => {
@@ -788,6 +789,14 @@ test("Novel chapter jump uses original numbers and never guesses missing numbers
   await input.fill("20");
   await page.getByRole("button", { name: "찾기", exact: true }).click();
   await expect(page.locator("#result-status")).toHaveText("20화를 찾지 못했습니다");
+});
+
+test("Recovered source positions are shown as positions, not episode numbers", async ({ page }) => {
+  const workId = await useLongNovel(page, 2, null, ["버려지다", "은자"], [0, 2]);
+  await page.goto(`/text?lane=novel&work=${encodeURIComponent(workId)}`);
+  await expect(page.locator("#result-list .result-item .result-title")).toHaveText([
+    "1번째 · 버려지다", "3번째 · 은자",
+  ]);
 });
 
 test("A work not started yet offers its first chapter, and finishing one names the next", async ({ page }) => {

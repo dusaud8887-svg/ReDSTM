@@ -16,7 +16,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scripts.text_archive import collector, compare_sources, importer, publisher, repair_authors
+from scripts.text_archive import (
+    collector,
+    compare_sources,
+    importer,
+    publisher,
+    recover_order,
+    repair_authors,
+)
 
 _BATCH_ID = "20260923T130000Z-pc-00000001"
 
@@ -169,7 +176,7 @@ def _incoming_batch(inbox: Path) -> None:
     )
 
 
-def _incoming_novel_batch(inbox: Path, batch_id: str) -> None:
+def _incoming_novel_batch(inbox: Path, batch_id: str, number: float | None = None) -> None:
     batch = inbox / "drop" / batch_id
     files = batch / "files"
     files.mkdir(parents=True)
@@ -190,6 +197,8 @@ def _incoming_novel_batch(inbox: Path, batch_id: str) -> None:
         "sha256": hashlib.sha256(body).hexdigest(),
         "relative_path": "files/000001.md",
     }
+    if number is not None:
+        item["source_episode_number"] = number
     (files / "000001.md").write_bytes(body)
     manifest = {
         "schema": 1,
@@ -460,6 +469,30 @@ def test_receipt_finalization_pages_more_than_one_hundred_batches(tmp_path: Path
     assert (receipts / "20260923T130000Z-pc-00000100.json").is_file()
 
 
+def test_imported_episode_number_is_preserved_for_duplicate_body(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    db_path = tmp_path / "state" / "text.sqlite"
+    _incoming_novel_batch(inbox, _BATCH_ID, 63)
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute(
+                "SELECT source_episode_number_normalized FROM text_novel_chapters"
+            ).fetchone()[0]
+            == 63
+        )
+    next_batch = "20260923T130001Z-pc-00000002"
+    _incoming_novel_batch(inbox, next_batch, 64)
+    importer.import_batch(inbox, next_batch, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute(
+                "SELECT source_episode_number_normalized FROM text_novel_chapters"
+            ).fetchone()[0]
+            == 63
+        )
+
+
 def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     _incoming_novel_batch(inbox, _BATCH_ID)
@@ -544,6 +577,109 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
     assert "novel_chapter:toki:63670:42" in chapters[2]["legacy_chapter_ids"]
     catalog = next(page["items"] for page in details if "items" in page)
     assert catalog[0]["latest_label"] == "252화"
+
+
+def test_local_source_positions_order_chapters_and_survive_publishing(tmp_path: Path) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        original = dict(db.execute("SELECT * FROM text_archive_items").fetchone())
+        db.execute(
+            "UPDATE text_novel_chapters SET chapter_label='나중',source_reading_position=5,"
+            "source_order_group='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"
+        )
+        earlier = original.copy()
+        earlier.update(
+            identity="novel_chapter:toki:63670:123",
+            source_chapter_id="123",
+            canonical_chapter_id="novel:toki:63670:123",
+            chapter_label="처음",
+        )
+        columns = ",".join(earlier)
+        placeholders = ",".join("?" for _ in earlier)
+        db.execute(
+            f"INSERT INTO text_archive_items ({columns}) VALUES ({placeholders})",
+            tuple(earlier.values()),
+        )
+        db.execute("""INSERT INTO text_novel_chapters(
+            site,source_work_id,source_chapter_id,chapter_label,chapter_kind,
+            source_reading_position,source_order_group,access,status,last_seen_at)
+            VALUES('toki','63670','123','처음','main',0,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                   'free','complete','now')""")
+    publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "build", "novel")
+    pages = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "build" / "published" / "indexes" / "novel").glob("*.json")
+    ]
+    chapters = next(page["chapters"] for page in pages if "chapters" in page)
+    assert [(row["label"], row["source_reading_position"]) for row in chapters] == [
+        ("처음", 0),
+        ("나중", 5),
+    ]
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE text_novel_chapters SET source_order_group='b' WHERE source_chapter_id='123'"
+        )
+    publisher.build_publish_tree(db_path, tmp_path / "objects", tmp_path / "mixed", "novel")
+    pages = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "mixed" / "published" / "indexes" / "novel").glob("*.json")
+    ]
+    chapters = next(page["chapters"] for page in pages if "chapters" in page)
+    assert all(row["source_reading_position"] is None for row in chapters)
+
+
+def test_position_recovery_backs_up_and_rejects_conflicting_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    plan_path = tmp_path / "plan.json"
+    plan: dict[str, Any] = {
+        "schema": 1,
+        "works": [
+            {
+                "site": "toki",
+                "work_id": "63670",
+                "order_group": "a" * 32,
+                "items": [
+                    {"chapter_id": "8794077", "position": 42, "episode_number": 43},
+                ],
+            }
+        ],
+    }
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    monkeypatch.setattr(recover_order, "operation_window", lambda **kwargs: nullcontext())
+    assert recover_order.recover(db_path, plan_path)["changed"] == 1
+    backup = tmp_path / "before.sqlite"
+    assert recover_order.recover(db_path, plan_path, backup=backup)["changed"] == 1
+    with sqlite3.connect(backup) as db:
+        assert (
+            db.execute("SELECT source_reading_position FROM text_novel_chapters").fetchone()[0]
+            is None
+        )
+    assert recover_order.recover(db_path, plan_path)["changed"] == 0
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute(
+                "SELECT source_episode_number_normalized FROM text_novel_chapters"
+            ).fetchone()[0]
+            == 43
+        )
+    plan["works"][0]["items"][0]["position"] = 41
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(ValueError, match="conflicting position"):
+        recover_order.recover(db_path, plan_path, backup=tmp_path / "second.sqlite")
+    with sqlite3.connect(db_path) as db:
+        assert (
+            db.execute("SELECT source_reading_position FROM text_novel_chapters").fetchone()[0]
+            == 42
+        )
 
 
 def test_publisher_collapses_exact_cross_source_chapter_copies(tmp_path: Path) -> None:

@@ -448,6 +448,7 @@ def build_publish_tree(
                     """SELECT i.*,c.chapter_label AS current_chapter_label,
                               c.chapter_kind AS current_chapter_kind,c.source_episode_number_raw,
                               c.source_episode_number_normalized,c.source_toc_position,
+                              c.source_reading_position,c.source_order_group,
                               c.source_published_at
                        FROM text_archive_items i LEFT JOIN text_novel_chapters c
                          ON c.site=i.source_site AND c.source_work_id=i.source_work_id
@@ -474,7 +475,18 @@ def build_publish_tree(
                         ]
                     )
                     first = chapters[0]
-                    chapters.sort(key=_chapter_sort_key)
+                    positions = [row["source_reading_position"] for row in chapters]
+                    positions_verified = (
+                        len({row["source_site"] for row in chapters}) == 1
+                        and len({row["source_order_group"] for row in chapters}) == 1
+                        and all(row["source_order_group"] for row in chapters)
+                        and all(type(position) is int and position >= 0 for position in positions)
+                        and len(set(positions)) == len(positions)
+                    )
+                    if positions_verified:
+                        chapters.sort(key=lambda row: row["source_reading_position"])
+                    else:
+                        chapters.sort(key=_chapter_sort_key)
                     work = {
                         "work_id": work_id,
                         "source_site": first["source_site"],
@@ -504,6 +516,9 @@ def build_publish_tree(
                                 "source_episode_number_raw": row["source_episode_number_raw"],
                                 "source_episode_number": row["source_episode_number_normalized"],
                                 "source_toc_position": row["source_toc_position"],
+                                "source_reading_position": (
+                                    row["source_reading_position"] if positions_verified else None
+                                ),
                                 "source_published_at": row["source_published_at"],
                                 "source_site": row["source_site"],
                                 "source_chapter_id": row["source_chapter_id"],

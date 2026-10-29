@@ -20,8 +20,12 @@ const FINISHED = 0.95;
 function chapterLabel(entry) {
   const label = entry.label || "회차";
   const number = entry.source_episode_number;
-  return typeof number === "number" && Number.isFinite(number) && number > 0 && episodeNumber(label) !== number
-    ? `${number}화 · ${label}` : label;
+  if (typeof number === "number" && Number.isFinite(number) && number > 0) {
+    return episodeNumber(label) !== number ? `${number}화 · ${label}` : label;
+  }
+  const position = entry.source_reading_position;
+  return episodeNumber(label) === null && Number.isSafeInteger(position) && position >= 0
+    ? `${position + 1}번째 · ${label}` : label;
 }
 const HISTORY_LIMIT = 10_000;
 // About 3 MB of UTF-16: the TypeMoon state (≤ ~1 MB) shares the origin's ~5 MB localStorage.

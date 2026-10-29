@@ -763,8 +763,11 @@ def _apply_work(
                                       ELSE text_novel_chapters.chapter_label END,
                    chapter_kind=CASE WHEN ? THEN excluded.chapter_kind
                                      ELSE text_novel_chapters.chapter_kind END,
-                   source_episode_number_raw=excluded.source_episode_number_raw,
-                   source_episode_number_normalized=excluded.source_episode_number_normalized,
+                   source_episode_number_raw=COALESCE(excluded.source_episode_number_raw,
+                                                      text_novel_chapters.source_episode_number_raw),
+                   source_episode_number_normalized=COALESCE(
+                       excluded.source_episode_number_normalized,
+                       text_novel_chapters.source_episode_number_normalized),
                    source_toc_position=excluded.source_toc_position,
                    source_published_at=COALESCE(excluded.source_published_at,
                                                 text_novel_chapters.source_published_at),

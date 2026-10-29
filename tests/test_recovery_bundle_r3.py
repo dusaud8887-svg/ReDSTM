@@ -202,3 +202,18 @@ def test_metadata_hash_changes_for_link_without_new_body(tmp_path: Path) -> None
         assert metadata_fingerprint(dbpath, "novel") != old
     finally:
         db.close()
+
+
+def test_metadata_hash_accepts_database_before_order_columns(tmp_path: Path) -> None:
+    dbpath = tmp_path / "db.sqlite"
+    db = importer._connect(dbpath)
+    try:
+        with db:
+            db.execute("ALTER TABLE text_novel_chapters DROP COLUMN source_reading_position")
+            db.execute("ALTER TABLE text_novel_chapters DROP COLUMN source_order_group")
+        before = metadata_fingerprint(dbpath, "novel")
+    finally:
+        db.close()
+    db = importer._connect(dbpath)
+    db.close()
+    assert metadata_fingerprint(dbpath, "novel") == before

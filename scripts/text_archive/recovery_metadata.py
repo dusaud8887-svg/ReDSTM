@@ -23,10 +23,16 @@ def metadata_fingerprint(db_path: Path, lane: str) -> str:
             digest.update(json.dumps(list(row), ensure_ascii=False, separators=(",", ":")).encode())
             digest.update(b"\n")
         if lane == "novel":
+            columns = {row[1] for row in db.execute("PRAGMA table_info(text_novel_chapters)")}
+            position = (
+                "c.source_reading_position" if "source_reading_position" in columns else "NULL"
+            )
+            group = "c.source_order_group" if "source_order_group" in columns else "NULL"
             for row in db.execute(
-                """SELECT i.identity,i.text_sha256,c.chapter_label,c.chapter_kind,
+                f"""SELECT i.identity,i.text_sha256,c.chapter_label,c.chapter_kind,
                    c.source_episode_number_raw,c.source_episode_number_normalized,
-                   c.source_toc_position,c.source_published_at
+                   c.source_toc_position,{position},{group},
+                   c.source_published_at
                    FROM text_archive_items i LEFT JOIN text_novel_chapters c
                      ON c.site=i.source_site AND c.source_work_id=i.source_work_id
                      AND c.source_chapter_id=i.source_chapter_id

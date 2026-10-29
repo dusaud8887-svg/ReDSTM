@@ -4,6 +4,7 @@ import argparse
 import codecs
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -50,6 +51,9 @@ _ITEM_FIELDS = {
     "author",
     "chapter_label",
     "chapter_kind",
+    "source_episode_number",
+    "source_reading_position",
+    "source_order_group",
     "access",
     "bytes",
     "sha256",
@@ -112,7 +116,8 @@ CREATE TABLE IF NOT EXISTS text_novel_chapters (
   site TEXT NOT NULL, source_work_id TEXT NOT NULL, source_chapter_id TEXT NOT NULL,
   chapter_label TEXT NOT NULL DEFAULT '', chapter_kind TEXT NOT NULL DEFAULT 'main',
   source_episode_number_raw TEXT, source_episode_number_normalized REAL,
-  source_toc_position INTEGER, source_published_at TEXT,
+  source_toc_position INTEGER, source_reading_position INTEGER, source_order_group TEXT,
+  source_published_at TEXT,
   access TEXT NOT NULL DEFAULT 'unknown', content_sha256 TEXT, status TEXT NOT NULL,
   text_sha256 TEXT,
   last_seen_at TEXT NOT NULL,
@@ -1008,6 +1013,31 @@ def _safe_batch(
         identity_ok, lane, source_site, source_work_id, source_chapter_id = _identity_matches(item)
         if not reason and not identity_ok:
             reason = "source_identity_invalid"
+        number = item.get("source_episode_number")
+        if (
+            not reason
+            and number is not None
+            and (
+                lane != "novel"
+                or type(number) not in (int, float)
+                or not 0 < number <= 1_000_000_000_000
+                or not math.isfinite(number)
+            )
+        ):
+            reason = "source_episode_number_invalid"
+        position, group = item.get("source_reading_position"), item.get("source_order_group")
+        if (
+            not reason
+            and (position is not None or group is not None)
+            and (
+                lane != "novel"
+                or type(position) is not int
+                or not 0 <= position <= 10_000_000
+                or not isinstance(group, str)
+                or re.fullmatch(r"[a-f0-9]{32}", group) is None
+            )
+        ):
+            reason = "source_reading_position_invalid"
         size, digest = item.get("bytes"), item.get("sha256")
         if not reason and (
             not isinstance(size, int)
@@ -1157,6 +1187,8 @@ def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
             ("source_episode_number_raw", "TEXT"),
             ("source_episode_number_normalized", "REAL"),
             ("source_toc_position", "INTEGER"),
+            ("source_reading_position", "INTEGER"),
+            ("source_order_group", "TEXT"),
             ("source_published_at", "TEXT"),
         ):
             if name not in chapter_columns:
@@ -1428,6 +1460,30 @@ def _write_receipt(receipts_root: Path, batch_id: str, receipt: dict[str, Any]) 
         temporary.unlink(missing_ok=True)
 
 
+def _record_episode_number(db: sqlite3.Connection, candidate: dict[str, Any]) -> None:
+    number = candidate["item"].get("source_episode_number")
+    if candidate["lane"] != "novel":
+        return
+    key = (candidate["source_site"], candidate["source_work_id"], candidate["source_chapter_id"])
+    if number is not None:
+        db.execute(
+            """UPDATE text_novel_chapters SET
+               source_episode_number_raw=COALESCE(source_episode_number_raw,?),
+               source_episode_number_normalized=COALESCE(source_episode_number_normalized,?)
+               WHERE site=? AND source_work_id=? AND source_chapter_id=?""",
+            (str(number), number, *key),
+        )
+    position = candidate["item"].get("source_reading_position")
+    group = candidate["item"].get("source_order_group")
+    if position is not None:
+        db.execute(
+            """UPDATE text_novel_chapters SET source_reading_position=?, source_order_group=?
+               WHERE site=? AND source_work_id=? AND source_chapter_id=?
+               AND source_reading_position IS NULL AND source_order_group IS NULL""",
+            (position, group, *key),
+        )
+
+
 def import_batch(
     inbox_root: Path, batch_id: str, db_path: Path, object_root: Path, receipts_root: Path
 ) -> dict[str, Any] | None:
@@ -1490,6 +1546,7 @@ def import_batch(
                         str(existing["object_key"]),
                         candidate["body"],
                     ):
+                        _record_episode_number(db, candidate)
                         canonical_work_id = existing["canonical_work_id"]
                         canonical_chapter_id = existing["canonical_chapter_id"]
                         results.append(
@@ -1559,6 +1616,7 @@ def import_batch(
                     )
                     continue
                 if existing is not None:
+                    _record_episode_number(db, candidate)
                     canonical_work_id = existing["canonical_work_id"]
                     canonical_chapter_id = existing["canonical_chapter_id"]
                     status = "duplicate"
@@ -1715,6 +1773,7 @@ def import_batch(
                                 candidate["source_chapter_id"],
                             ),
                         )
+                        _record_episode_number(db, candidate)
                         _refresh_link_candidates(
                             db, candidate["source_site"], candidate["source_work_id"]
                         )
