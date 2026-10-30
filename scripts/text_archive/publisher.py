@@ -80,7 +80,11 @@ def _check_headroom(headroom: Callable[[], None] | None) -> None:
 
 
 def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
-    """Source episode numbers outrank labels and import time."""
+    """Source episode numbers outrank labels and import time.
+
+    A numbered side story keeps the source's running position (`193화 외전` after 192화);
+    only unnumbered prologue/side/epilogue labels use the label rank.
+    """
     parsed = parse_title(str(row.get("chapter_label") or ""))
     order = parsed.order_key or (9, 9, 9, 10**12, 10**12)
     if row.get("source_episode_number_normalized") is not None:
@@ -88,7 +92,7 @@ def _chapter_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
         order = (
             order[0] if parsed.order_key else 0,
             order[1] if parsed.order_key else 0,
-            order[2] if parsed.order_key else 1,
+            1,
             number,
             number,
         )

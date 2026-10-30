@@ -579,6 +579,24 @@ def test_novel_chapters_publish_in_episode_order_not_import_order(tmp_path: Path
     assert catalog[0]["latest_label"] == "252화"
 
 
+def test_numbered_side_stories_keep_source_running_order() -> None:
+    rows = [
+        {
+            "chapter_label": label,
+            "source_episode_number_normalized": number,
+            "source_chapter_id": str(index),
+        }
+        for index, (label, number) in enumerate((
+            ("193화 외전", 193), ("934화 (외전)에니리스의 꿈(2)", 934), ("192화", 192),
+            ("0화 프롤로그", None), ("1000화 쟁탈전", 1000), ("에필로그", None),
+        ))
+    ]
+    assert [row["chapter_label"] for row in sorted(rows, key=publisher._chapter_sort_key)] == [
+        "0화 프롤로그", "192화", "193화 외전", "934화 (외전)에니리스의 꿈(2)",
+        "1000화 쟁탈전", "에필로그",
+    ]
+
+
 def test_local_source_positions_order_chapters_and_survive_publishing(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     _incoming_novel_batch(inbox, _BATCH_ID)
@@ -680,6 +698,39 @@ def test_position_recovery_backs_up_and_rejects_conflicting_replay(
             db.execute("SELECT source_reading_position FROM text_novel_chapters").fetchone()[0]
             == 42
         )
+
+
+def test_number_recovery_fills_only_missing_episode_numbers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inbox = tmp_path / "inbox"
+    _incoming_novel_batch(inbox, _BATCH_ID)
+    db_path = tmp_path / "state" / "text.sqlite"
+    importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
+    plan_path = tmp_path / "numbers.json"
+    plan: dict[str, Any] = {
+        "schema": "episode_numbers/1", "items": [["toki", "63670", "8794077", 43]],
+    }
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    monkeypatch.setattr(recover_order, "operation_window", lambda **kwargs: nullcontext())
+
+    def number() -> Any:
+        with sqlite3.connect(db_path) as db:
+            return db.execute(
+                "SELECT source_episode_number_normalized FROM text_novel_chapters"
+            ).fetchone()[0]
+
+    assert recover_order.recover_numbers(db_path, plan_path)["changed"] == 1
+    assert number() is None
+    result = recover_order.recover_numbers(db_path, plan_path, backup=tmp_path / "before.sqlite")
+    assert result["changed"] == 1
+    assert number() == 43
+    plan["items"][0][3] = 44
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    assert recover_order.recover_numbers(
+        db_path, plan_path, backup=tmp_path / "second.sqlite"
+    ) == {"planned": 1, "found": 1, "changed": 0, "same": 0, "kept_existing": 1}
+    assert number() == 43
 
 
 def test_publisher_collapses_exact_cross_source_chapter_copies(tmp_path: Path) -> None:
