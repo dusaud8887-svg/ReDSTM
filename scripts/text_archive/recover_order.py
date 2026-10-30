@@ -210,8 +210,11 @@ def recover_numbers(
             if backup:
                 db.commit()
             return {
-                "planned": len(rows), "found": found, "changed": changed,
-                "same": same, "kept_existing": kept,
+                "planned": len(rows),
+                "found": found,
+                "changed": changed,
+                "same": same,
+                "kept_existing": kept,
             }
 
 

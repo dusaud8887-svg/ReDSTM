@@ -586,14 +586,24 @@ def test_numbered_side_stories_keep_source_running_order() -> None:
             "source_episode_number_normalized": number,
             "source_chapter_id": str(index),
         }
-        for index, (label, number) in enumerate((
-            ("193화 외전", 193), ("934화 (외전)에니리스의 꿈(2)", 934), ("192화", 192),
-            ("0화 프롤로그", None), ("1000화 쟁탈전", 1000), ("에필로그", None),
-        ))
+        for index, (label, number) in enumerate(
+            (
+                ("193화 외전", 193),
+                ("934화 (외전)에니리스의 꿈(2)", 934),
+                ("192화", 192),
+                ("0화 프롤로그", None),
+                ("1000화 쟁탈전", 1000),
+                ("에필로그", None),
+            )
+        )
     ]
     assert [row["chapter_label"] for row in sorted(rows, key=publisher._chapter_sort_key)] == [
-        "0화 프롤로그", "192화", "193화 외전", "934화 (외전)에니리스의 꿈(2)",
-        "1000화 쟁탈전", "에필로그",
+        "0화 프롤로그",
+        "192화",
+        "193화 외전",
+        "934화 (외전)에니리스의 꿈(2)",
+        "1000화 쟁탈전",
+        "에필로그",
     ]
 
 
@@ -709,7 +719,8 @@ def test_number_recovery_fills_only_missing_episode_numbers(
     importer.import_batch(inbox, _BATCH_ID, db_path, tmp_path / "objects", inbox / "receipts")
     plan_path = tmp_path / "numbers.json"
     plan: dict[str, Any] = {
-        "schema": "episode_numbers/1", "items": [["toki", "63670", "8794077", 43]],
+        "schema": "episode_numbers/1",
+        "items": [["toki", "63670", "8794077", 43]],
     }
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
     monkeypatch.setattr(recover_order, "operation_window", lambda **kwargs: nullcontext())
@@ -727,9 +738,13 @@ def test_number_recovery_fills_only_missing_episode_numbers(
     assert number() == 43
     plan["items"][0][3] = 44
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
-    assert recover_order.recover_numbers(
-        db_path, plan_path, backup=tmp_path / "second.sqlite"
-    ) == {"planned": 1, "found": 1, "changed": 0, "same": 0, "kept_existing": 1}
+    assert recover_order.recover_numbers(db_path, plan_path, backup=tmp_path / "second.sqlite") == {
+        "planned": 1,
+        "found": 1,
+        "changed": 0,
+        "same": 0,
+        "kept_existing": 1,
+    }
     assert number() == 43
 
 
