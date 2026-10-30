@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import codecs
 import hashlib
 import json
@@ -39,6 +41,7 @@ _SITE_HOSTS = {
     "toonkor": re.compile(r"toonkor\d*\.com\Z", re.I),
     "ondobook": re.compile(r"\d+\.ondobook\.net\Z", re.I),
     "bookkor": re.compile(r"\d+\.bookkor\.com\Z", re.I),
+    "joara": re.compile(r"joara\.com\Z", re.I),
 }
 _ITEM_FIELDS = {
     "identity",
@@ -306,6 +309,16 @@ def _json_file(path: Path, limit: int) -> tuple[dict[str, Any], bytes]:
     return value, raw
 
 
+def _valid_joara_chapter(value: str) -> bool:
+    if not 1 <= len(value) <= 128:
+        return False
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except ValueError, binascii.Error:
+        return False
+    return bool(raw) and base64.b64encode(raw).decode() == value
+
+
 def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None, str | None]:
     kind = item.get("kind")
     if kind == "manual_document":
@@ -343,7 +356,7 @@ def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None,
             or not isinstance(work_id, str)
             or not work_id.isdigit()
             or not isinstance(chapter_id, str)
-            or not chapter_id.isdigit()
+            or not (_valid_joara_chapter(chapter_id) if site == "joara" else chapter_id.isdigit())
         ):
             return False, "novel", "", None, None
         expected = f"novel_chapter:{site}:{work_id}:{chapter_id}"
@@ -358,6 +371,15 @@ def _identity_matches(item: dict[str, Any]) -> tuple[bool, str, str, str | None,
                 and parsed.password is None
                 and parsed.port in {None, 443}
             )
+            if valid_host and site == "joara":
+                query = parse_qs(parsed.query)
+                ids = query.get("cid", [])
+                valid_host = (
+                    parsed.path == "/viewer"
+                    and query.get("bookCode") == [work_id]
+                    and len(ids) == 1
+                    and ids[0].replace(" ", "+") == chapter_id
+                )
             if valid_host and site == "ondobook":
                 query = parse_qs(parsed.query)
                 valid_host = (

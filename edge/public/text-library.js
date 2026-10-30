@@ -43,7 +43,7 @@ const SORT_LABELS = {
 const READ_FILTERS = [["all", "전체"], ["reading", "읽는 중"], ["new", "새 회차"], ["unread", "안 읽음"], ["finished", "다 읽음"]];
 const READ_FILTER_VALUES = new Set(READ_FILTERS.map(([value]) => value));
 const SOURCE_LABELS = {
-  toki: "북토끼", newtoki: "뉴토끼", blacktoon: "블랙툰", marumaru: "마루마루", ondobook: "온도북", bookkor: "북코",
+  toki: "북토끼", newtoki: "뉴토끼", blacktoon: "블랙툰", marumaru: "마루마루", ondobook: "온도북", bookkor: "북코", joara: "조아라",
   sbxh: "SBXH", toonkor: "툰코어",
 };
 const dateLabel = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" });

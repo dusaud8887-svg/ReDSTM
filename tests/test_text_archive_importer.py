@@ -200,6 +200,83 @@ def test_bookkor_chapter_identity_requires_matching_work_and_chapter() -> None:
     )[0]
 
 
+def test_joara_opaque_chapter_identity_must_match_viewer_book_and_chapter() -> None:
+    from urllib.parse import urlencode
+
+    cid = "pWi02JjuwCs5oH4iaWjoWQ=="
+    item = {
+        "kind": "novel_chapter",
+        "site": "joara",
+        "source_work_id": "565434",
+        "source_chapter_id": cid,
+        "identity": f"novel_chapter:joara:565434:{cid}",
+        "source_url": "https://www.joara.com/viewer?"
+        + urlencode({"bookCode": "565434", "cid": cid}),
+    }
+    assert importer._identity_matches(item)[0]
+    for replacement in (
+        {"source_url": item["source_url"].replace("565434", "565435")},
+        {"source_url": item["source_url"] + "&cid=" + cid},
+        {"source_url": item["source_url"].replace("/viewer?", "/book/565434?")},
+        {"source_url": item["source_url"].replace("www.joara.com", "www.joara.com.evil")},
+        {"source_chapter_id": "123", "identity": "novel_chapter:joara:565434:123"},
+        {"site": "toki"},
+    ):
+        assert not importer._identity_matches({**item, **replacement})[0]
+
+
+def test_joara_import_publish_and_duplicate_keep_novel_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from urllib.parse import urlencode
+
+    monkeypatch.setattr(publisher, "_window", nullcontext)
+    cid = "pWi02JjuwCs5oH4iaWjoWQ=="
+    url = "https://www.joara.com/viewer?" + urlencode(
+        {"bookCode": "565434", "cid": cid, "sortno": 1}
+    )
+    body = f"# 1화 제목\n# {url}\n\n본문\n  들여쓰기\n".encode()
+    canonical = importer.canonical_novel_bytes(body)
+    assert canonical is not None
+    item = {
+        "kind": "novel_chapter",
+        "site": "joara",
+        "source_work_id": "565434",
+        "source_chapter_id": cid,
+        "identity": f"novel_chapter:joara:565434:{cid}",
+        "source_url": url,
+        "work_title": "조아라 작품",
+        "author": "작가",
+        "chapter_label": "1화 제목",
+        "chapter_kind": "main",
+        "access": "free",
+        "source_episode_number": 1,
+        "text_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
+    inbox, objects, receipts, database = (
+        tmp_path / "inbox",
+        tmp_path / "objects",
+        tmp_path / "receipts",
+        tmp_path / "db",
+    )
+    _batch(inbox, _BATCHES[0], body=body, item=item)
+    receipt = importer.import_batch(inbox, _BATCHES[0], database, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "accepted"
+    tree = publisher.build_publish_tree(database, objects, tmp_path / "build", "novel")
+    release = json.loads((tmp_path / "build" / tree["release_key"]).read_text())
+    catalog = json.loads((tmp_path / "build" / release["catalog_pages"][0]["key"]).read_text())
+    work = catalog["items"][0]
+    assert work["source_site"] == "joara"
+    assert "novel:joara:565434" in work["legacy_work_ids"]
+    assert work["chapter_count"] == 1
+    _batch(inbox, _BATCHES[1], body=body, item=item)
+    receipt = importer.import_batch(inbox, _BATCHES[1], database, objects, receipts)
+    assert receipt is not None
+    assert receipt["items"][0]["status"] == "duplicate"
+
+
 def test_toonkor_chapter_identity_accepts_only_its_source_host() -> None:
     item = {
         "kind": "novel_chapter",
