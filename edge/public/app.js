@@ -755,6 +755,7 @@ function applySettings() {
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
+  document.querySelector("#quick-prose-font").value = settings.proseFont;
   // The font is judged on the reader's own text: the first lines of the open chapter, if any.
   const preview = document.querySelector("#font-preview");
   preview.textContent = elements["archive-body"].textContent.slice(0, 600).replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
@@ -5841,9 +5842,11 @@ for (const button of document.querySelectorAll("[data-prose-size-delta]")) {
     settings.proseSize = Math.max(min, Math.min(max, settings.proseSize + Number(button.dataset.proseSizeDelta)));
   }));
 }
-elements["prose-font"].addEventListener("change", () => changeTypography(() => {
-  settings.proseFont = elements["prose-font"].value;
-}));
+for (const select of [elements["prose-font"], document.querySelector("#quick-prose-font")]) {
+  select.addEventListener("change", () => changeTypography(() => {
+    settings.proseFont = select.value;
+  }));
+}
 for (const choice of document.querySelectorAll("button[data-prose-align]")) {
   choice.addEventListener("click", () => changeTypography(() => {
     settings.proseAlign = choice.dataset.proseAlign;

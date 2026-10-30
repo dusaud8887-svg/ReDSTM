@@ -134,7 +134,7 @@ function sanitizeSettings(value, defaults = {}) {
 
   pick("theme", (value) => themes.has(value));
   for (const [key, minimum, maximum] of [
-    ["proseSize", 15, 28], ["lineHeight", 1.4, 2.2],
+    ["proseSize", 12, 28], ["lineHeight", 1.4, 2.2],
     ["proseWidth", 560, 960], ["proseMargin", 12, 32], ["aaSize", 9, 24], ["aaZoom", 0.1, 3],
     ["readerDim", 0, 60], ["readerWarm", 0, 25], ["paragraphSpacing", 0, 2], ["textIndent", 0, 2],
   ]) {

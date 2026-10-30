@@ -1094,7 +1094,9 @@ test("Two fingers on prose change the font size and keep the sentence", async ({
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings.proseSize)).toBe(27);
   await expect(page.locator("#aa-zoom-indicator")).toHaveText("글자 27px");
   await pinch(200, 20);
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings.proseSize)).toBe(15);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("redstm.userState.v2")).settings.proseSize)).toBe(12);
+  await page.reload();
+  await expect(page.locator("#archive-body")).toHaveCSS("font-size", "12px");
 });
 
 test("The author in the Reader opens that author's posts without raising the keyboard", async ({ page }) => {
