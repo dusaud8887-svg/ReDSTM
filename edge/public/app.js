@@ -733,6 +733,7 @@ function applySettings() {
     ["[data-home-quote]", "homeQuote", settings.homeQuote],
     ["[data-show-hidden]", "showHidden", settings.showHidden],
     ["[data-reading-mode]", "readingMode", settings.readingMode],
+    ["[data-prose-font]", "proseFont", settings.proseFont],
   ]) {
     for (const choice of document.querySelectorAll(selector)) {
       choice.setAttribute("aria-checked", String(choice.dataset[key] === value));
@@ -755,7 +756,6 @@ function applySettings() {
     elements[`${id}-output`].value = `${value}${suffix}`;
   }
   elements["prose-font"].value = settings.proseFont;
-  document.querySelector("#quick-prose-font").value = settings.proseFont;
   // The font is judged on the reader's own text: the first lines of the open chapter, if any.
   const preview = document.querySelector("#font-preview");
   preview.textContent = elements["archive-body"].textContent.slice(0, 600).replace(/\s+/g, " ").trim().slice(0, 60) || "창밖으로 눈이 내리고 있었다. 그녀는 오래된 책을 덮었다.";
@@ -5842,9 +5842,13 @@ for (const button of document.querySelectorAll("[data-prose-size-delta]")) {
     settings.proseSize = Math.max(min, Math.min(max, settings.proseSize + Number(button.dataset.proseSizeDelta)));
   }));
 }
-for (const select of [elements["prose-font"], document.querySelector("#quick-prose-font")]) {
-  select.addEventListener("change", () => changeTypography(() => {
-    settings.proseFont = select.value;
+elements["prose-font"].addEventListener("change", () => changeTypography(() => {
+  settings.proseFont = elements["prose-font"].value;
+}));
+// The quick panel picks the font in one tap, like its 면·방식 rows.
+for (const choice of document.querySelectorAll("button[data-prose-font]")) {
+  choice.addEventListener("click", () => changeTypography(() => {
+    settings.proseFont = choice.dataset.proseFont;
   }));
 }
 for (const choice of document.querySelectorAll("button[data-prose-align]")) {

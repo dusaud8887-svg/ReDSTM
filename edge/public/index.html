@@ -450,7 +450,11 @@
         <output id="quick-size-output">18</output>
         <button type="button" class="stepper-large" data-prose-size-delta="1" aria-label="글자 크게">가</button>
       </div>
-      <label class="quick-range">본문 서체<select id="quick-prose-font"><option value="serif">마루부리</option><option value="gowun">고운바탕</option><option value="sans">프리텐다드</option></select></label>
+      <div class="segmented" id="quick-prose-font" role="radiogroup" aria-label="본문 서체">
+        <button type="button" role="radio" data-prose-font="serif" aria-checked="false">마루부리</button>
+        <button type="button" role="radio" data-prose-font="gowun" aria-checked="false">고운바탕</button>
+        <button type="button" role="radio" data-prose-font="sans" aria-checked="false">프리텐다드</button>
+      </div>
       <div class="segmented" role="radiogroup" aria-label="읽기 면">
         <button type="button" role="radio" data-reader-surface="default" aria-checked="false">기본</button>
         <button type="button" role="radio" data-reader-surface="paper" aria-checked="false">종이</button>

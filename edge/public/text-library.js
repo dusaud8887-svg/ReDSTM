@@ -46,8 +46,8 @@ const SOURCE_LABELS = {
   toki: "북토끼", newtoki: "뉴토끼", blacktoon: "블랙툰", marumaru: "마루마루", ondobook: "온도북", bookkor: "북코", joara: "조아라",
   sbxh: "SBXH", toonkor: "툰코어",
 };
-const dateLabel = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" });
-const yearDateLabel = new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "numeric", day: "numeric" });
+const dateLabel = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric" });
+const yearDateLabel = new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "long", day: "numeric" });
 
 // Lanes whose catalog is works with a chapter detail (novel; Tunaground threads, docs/34).
 function worksLane(value) {
@@ -87,7 +87,7 @@ function sourceLabel(site) {
   return SOURCE_LABELS[site] ?? (site ? String(site) : "");
 }
 
-// "9. 1." this year, "25. 9. 1." before it.
+// "9월 1일" this year, "25년 9월 1일" before it: the numeric "9. 1." ran into the next word ("9. 1. 갱신").
 function shortDate(value) {
   const time = Date.parse(value ?? "");
   if (!Number.isFinite(time)) return "";

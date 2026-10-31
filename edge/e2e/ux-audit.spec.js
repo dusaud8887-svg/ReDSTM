@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { novelWork, useTextArchive } from "./text-fixture.js";
 import { useLongCollection } from "./typemoon-fixture.js";
 
 // Regressions found by the 2026-10-04 mobile walkthrough (docs/27). Each test fails on the old
@@ -115,4 +116,47 @@ test("몇 편? keeps its 찾기 button on one line inside the screen", async ({ 
   expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize().width - 12);
   expect(await button.evaluate((el) => el.getClientRects().length === 1 && el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   expect(box.height).toBeLessThanOrEqual(48);
+});
+
+// 2026-10-31 walkthrough: details found on the phone screens after the 10-04 fixes.
+
+test("a novel row keeps 분류 and 숨기기 apart", async ({ page }) => {
+  await useTextArchive(page, { novels: [novelWork({ id: 1, title: "긴 소설", chapters: 40 })] });
+  await page.goto("/text");
+  const row = page.locator("#result-list li.shelf-row").first();
+  await expect(row.locator(".shelf-edit")).toBeVisible();
+  const shelf = await row.locator(".shelf-edit").boundingBox();
+  const hide = await row.locator(".row-hide").boundingBox();
+  expect(hide.y).toBeGreaterThanOrEqual(shelf.y + shelf.height);
+  const rowBox = await row.boundingBox();
+  expect(hide.y + hide.height).toBeLessThanOrEqual(rowBox.y + rowBox.height);
+});
+
+test("the quick panel picks the font in one tap and shows 모든 설정 without scrolling", async ({ page }) => {
+  test.skip(!page.viewportSize() || page.viewportSize().width >= 760, "The dock's quick panel is the phone layout");
+  await useLongCollection(page, 4);
+  await page.goto("/read/board_a/2");
+  await expect(page.locator("#archive-body p").first()).toBeVisible();
+  await page.locator("#reader-bottom-settings").click();
+  const sans = page.locator('#quick-prose-font [data-prose-font="sans"]');
+  await sans.click();
+  await expect(sans).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#prose-font")).toHaveValue("sans");
+  const panel = page.locator("#quick-settings");
+  expect(await panel.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
+  await expect(page.locator("#quick-all-settings")).toBeInViewport();
+});
+
+test("a reading-works card shows its whole next step", async ({ page }) => {
+  await useLongCollection(page, 30);
+  await page.goto("/read/board_a/3");
+  await expect(page.locator("#archive-body p").first()).toBeVisible();
+  // Read part of the post so the series counts as being read.
+  await page.locator("#archive-body p").nth(20).scrollIntoViewIfNeeded();
+  await page.mouse.wheel(0, 300);
+  await expect(page.locator("#reader-topbar-progress")).not.toHaveText(/^0%$/);
+  await page.goto("/");
+  const meta = page.locator("#reading-works-list .shelf-card > span:not(.type-cover, .home-badge)").first();
+  await expect(meta).toContainText("이어 읽기");
+  expect(await meta.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 });

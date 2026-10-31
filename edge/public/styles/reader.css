@@ -101,7 +101,8 @@ body.page-mode .archive-body.plain-text > .text-chunk { content-visibility: visi
 .handoff-actions button { min-height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--ink); font-weight: 600; cursor: pointer; }
 /* 읽기 프로필 in the quick panel: one chip per saved profile, the active one pressed. */
 .quick-profiles { display: grid; gap: 6px; }
-.quick-panel { max-height: min(320px, calc(100dvh - 100px)); overflow-y: auto; }
+/* Tall enough on a phone that 모든 설정 at the end is on screen without scrolling the panel. */
+.quick-panel { max-height: min(520px, calc(100dvh - 200px)); overflow-y: auto; }
 .quick-profile-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .quick-profile-list button, .quick-profile-add { min-height: 40px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg); color: var(--ink); font-weight: 600; cursor: pointer; }
 .quick-profile-list button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
@@ -171,7 +172,7 @@ body.autoscroll-open .reader-bottom { visibility: hidden; }
 .comments-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .comments ol { margin: 0; padding: 0; list-style: none; }
 .comment { margin-left: calc(min(var(--depth), 4) * 14px); padding: 14px 0 14px 12px; border-left: 2px solid var(--line); border-bottom: 1px solid var(--line); }
-.comment header { display: flex; gap: 10px; margin-bottom: 6px; color: var(--ink-2); font-size: 11px; }
+.comment header { display: flex; gap: 10px; margin-bottom: 6px; color: var(--ink-2); font-size: 12px; }
 .comment header strong { color: var(--ink); }
 .comment-body { font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
 .comments ol:empty::after { content: "보존된 댓글이 없습니다."; color: var(--ink-2); font-size: 13px; }

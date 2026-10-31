@@ -1208,11 +1208,12 @@ test("Gowun Batang is fetched only when chosen as the body font", async ({ page 
   await useCollectionFixture(page);
   await openPost(page, proseKey);
   await page.locator(page.viewportSize().width < 760 ? "#reader-bottom-settings" : "#reader-settings").click();
-  await expect(page.locator("#quick-prose-font option")).toHaveText(["마루부리", "고운바탕", "프리텐다드"]);
+  await expect(page.locator("#quick-prose-font [role=radio]")).toHaveText(["마루부리", "고운바탕", "프리텐다드"]);
   await expect(page.locator("#gowun-batang-css")).toHaveCount(0);
   expect(fetched).toEqual([]);
 
-  await page.locator("#quick-prose-font").selectOption("gowun");
+  await page.locator('#quick-prose-font [data-prose-font="gowun"]').click();
+  await expect(page.locator('#quick-prose-font [data-prose-font="gowun"]')).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#prose-font")).toHaveValue("gowun");
   await expect(page.locator("#gowun-batang-css")).toHaveCount(1);
   const body = page.locator("#archive-body");

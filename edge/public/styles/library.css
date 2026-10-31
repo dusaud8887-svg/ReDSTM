@@ -162,7 +162,7 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .result-badges { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
 .saved-mark { display: inline-grid; place-items: center; color: var(--accent); }
 .saved-mark svg { width: 16px; height: 16px; fill: currentColor; stroke: currentColor; stroke-width: 1.75; }
-.result-badges span:not(.saved-mark) { max-width: 6rem; overflow: hidden; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); font-size: 11px; font-weight: 680; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.result-badges span:not(.saved-mark) { max-width: 6rem; overflow: hidden; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); font-size: 12px; font-weight: 680; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 /* 기록 › 발췌 (DESIGN §7.8): the quote in the reading face with a ribbon edge, then the note
    and where it came from. */
 .excerpt-card { border-left: 3px solid var(--ribbon); }
@@ -252,7 +252,7 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
 .board-all .board-row { grid-template-columns: minmax(0, 1fr); }
 .board-select { min-width: 0; min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 0; background: transparent; color: var(--ink); font-size: 15px; text-align: left; cursor: pointer; }
 .board-select span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.board-select small { margin-left: auto; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.board-select small { margin-left: auto; color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .board-select[aria-current="true"] { border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 .board-select[aria-current="true"]::after { content: "✓"; font-weight: 800; }
 .board-star { width: 48px; height: 48px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--ink-3); cursor: pointer; }
@@ -307,7 +307,7 @@ body.collection-scope .result-list:empty::after { content: "조건에 맞는 작
   .discover { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 32px; }
   .discover > header { grid-column: 1 / -1; }
 }
-.home-badge { margin-right: 6px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
+.home-badge { margin-right: 6px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
 .reading-works > header, .home-grid section > header, .home-excerpt > header, .home-week > header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-strong); }
 .reading-works h2, .home-grid h2, .home-excerpt h2, .home-week h2 { margin: 0; font-size: 16px; font-weight: 680; }
 .reading-works header button, .home-grid header button, .home-excerpt header button, .home-week header button { min-height: 44px; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 650; cursor: pointer; }
@@ -353,7 +353,7 @@ body.reading .home { display: none; }
 .collection-entry:disabled { color: var(--ink-3); cursor: default; }
 .collection-entry-position { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .collection-entry-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
-.collection-entry-state { min-width: 2.4rem; color: var(--ink-2); font-size: 11px; font-weight: 650; text-align: right; }
+.collection-entry-state { min-width: 2.4rem; color: var(--ink-2); font-size: 12px; font-weight: 650; text-align: right; }
 .collection-entry.read .collection-entry-title { color: var(--ink-2); }
 /* "You were here": the most recently read episode in a table of contents. */
 .collection-entry.current, .result-item.current { box-shadow: inset 3px 0 0 var(--ribbon); background: linear-gradient(90deg, var(--ribbon-soft), transparent 75%); }
@@ -365,13 +365,13 @@ body.reading .home { display: none; }
 .bookmark-dialog-actions button { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .bookmark-dialog-actions #bookmark-save { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .bookmark-dialog-actions #bookmark-remove { color: var(--danger-text); }
-.bookmark-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 11px; }
+.bookmark-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 12px; }
 .result-list li.bookmark-row { position: relative; }
 .result-list li.bookmark-row .result-item { padding-right: 54px; }
-.bookmark-edit { position: absolute; top: 14px; right: 10px; min-width: 36px; min-height: 36px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.bookmark-edit { position: absolute; top: 14px; right: 10px; min-width: 36px; min-height: 36px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink-2); font-size: 12px; cursor: pointer; }
 .bookmark-edit:hover { border-color: var(--accent); color: var(--accent); }
 /* Novel shelves: the 분류 button on work rows, the view tabs, and the shelf dialog. */
-.shelf-edit { position: absolute; top: 14px; right: 10px; min-width: 44px; min-height: 36px; max-width: 5.5rem; overflow: hidden; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink-2); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.shelf-edit { position: absolute; top: 14px; right: 10px; min-width: 44px; min-height: 36px; max-width: 5.5rem; overflow: hidden; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink-2); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .shelf-edit[data-assigned="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
 .shelf-edit:hover { border-color: var(--accent); color: var(--accent); }
 .result-list li.shelf-row { position: relative; }
@@ -379,8 +379,12 @@ body.reading .home { display: none; }
 /* 숨기기 on text library rows (2026-10-08): only the list hides; 설정 › 숨긴 항목 보이기 marks them. */
 .result-list li.hideable-row { position: relative; }
 .result-list li.hideable-row .result-item { padding-right: 6.5rem; }
-.row-hide { position: absolute; right: 10px; bottom: 10px; min-width: 44px; min-height: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.row-hide { position: absolute; right: 10px; bottom: 10px; min-width: 44px; min-height: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink-2); font-size: 12px; cursor: pointer; }
 .row-hide:hover, .row-hide:focus-visible { border-color: var(--line); color: var(--ink); }
+/* A novel row carries both: 분류 on top, 숨기기 under it, never on the same spot. */
+.result-list li.shelf-row.hideable-row .result-item { min-height: 92px; }
+.result-list li.shelf-row .shelf-edit { top: 10px; min-height: 34px; }
+.result-list li.shelf-row .row-hide { top: 50px; bottom: auto; }
 .result-list li.is-hidden .result-item { opacity: 0.55; }
 .result-list li.is-hidden .row-hide { border-color: var(--line); color: var(--accent); }
 /* 나중에 읽기 (2026-10-08): the pressed state on work pages, and 빼기 on its 기록 list. */
@@ -511,7 +515,8 @@ body.reading .home { display: none; }
 .shelf-card { width: 104px; min-height: 0; display: grid; gap: 6px; padding: 0; border: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; }
 .shelf-card:hover { color: var(--ink); }
 .shelf-card > strong { font-size: 13px; font-weight: 600; line-height: 1.35; }
-.shelf-card > span:not(.type-cover, .home-badge) { overflow: hidden; color: var(--ink-2); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+/* Two lines: `0/30편 읽음 · 이어 읽기` is wider than the 104px card, and its action must stay readable. */
+.shelf-card > span:not(.type-cover, .home-badge) { display: -webkit-box; overflow: hidden; color: var(--ink-2); font-size: 12px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; word-break: keep-all; }
 .shelf-card .type-cover-title { color: var(--ink); font-size: 15px; }
 .shelf-card .type-cover-source { color: var(--ink-2); font-size: 12px; }
 .shelf-card .home-badge { justify-self: start; margin: 0; font-size: 12px; }
@@ -566,14 +571,16 @@ body.reading .home { display: none; }
 body.reading-context .text-work-summary :is(.work-cover, .work-barcode) { display: none; }
 
 /* Personal views share the quiet Library chips and source-wide work rows. */
-.smart-library { margin: 24px 0; }
+.smart-library { margin: 28px 0 0; }
 /* DESIGN §9: with no record yet, the onboarding block stands alone; the shelf's condition chips
    (e.g. 10화 이하) would compete with its first step. Pinned works are a record: they keep the shelf. */
 body:has(#home-onboarding:not([hidden])) #smart-library:not(:has(#library-pinned:not([hidden]))) { display: none; }
-.smart-library header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.smart-library h2 { font: 700 18px/1.4 var(--font-display); }
-#smart-library-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.smart-library > header button, #smart-library-chips button { min-height: 44px; padding: 8px 14px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--accent); }
+/* The same header as 읽던 작품·오늘의 발견: one heading size, and 편집 as the quiet header link. */
+.smart-library header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.smart-library h2 { margin: 0; font-size: 16px; font-weight: 680; }
+#smart-library-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.smart-library > header button { min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 650; cursor: pointer; }
+#smart-library-chips button { min-height: 44px; padding: 8px 14px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--accent); cursor: pointer; }
 .personal-library-dialog { width: min(560px, calc(100vw - 24px)); max-height: min(80dvh, 760px); padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-sheet); color: var(--ink); background: var(--surface); box-shadow: var(--e3); }
 .personal-library-dialog::backdrop { background: var(--scrim); }
 .personal-library-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
